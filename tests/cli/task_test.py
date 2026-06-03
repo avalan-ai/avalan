@@ -13,11 +13,14 @@ from rich.console import Console
 
 from avalan.cli.commands import task as task_cmds
 from avalan.task import (
+    ArtifactStoreError,
     SanitizedTaskEvent,
     TaskClientUnsupportedOperationError,
     TaskClientWaitTimeoutError,
     TaskEventCategory,
     TaskKeyPurpose,
+    TaskRetentionAction,
+    TaskRetentionStoreNotFoundError,
     TaskRunState,
     TaskStoreNotFoundError,
     TaskTargetContext,
@@ -233,6 +236,31 @@ class _FakeTaskWorker:
                 return result(self)
             return result
         return SimpleNamespace(processed=False)
+
+
+class _FakeRetentionService:
+    instances: list["_FakeRetentionService"] = []
+    results: tuple[object, ...] = ()
+    error: BaseException | None = None
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.args = args
+        self.kwargs = kwargs
+        self.purposes: object = None
+        self.limit: int | None = None
+        self.instances.append(self)
+
+    async def sweep_expired(
+        self,
+        *,
+        purposes: object = None,
+        limit: int = 100,
+    ) -> object:
+        if self.error is not None:
+            raise self.error
+        self.purposes = purposes
+        self.limit = limit
+        return SimpleNamespace(limit=limit, results=self.results)
 
 
 class CliTaskValidateTestCase(TestCase):
@@ -1254,6 +1282,190 @@ class CliTaskCommandShellTestCase(TestCase):
 
         self.assertFalse(result)
         self.assertIn("io.failure", console.export_text())
+
+    def test_retention_sweep_processes_expired_artifacts(self) -> None:
+        console = Console(record=True, width=160)
+        database = _FakeResource()
+        _FakeRetentionService.instances = []
+        _FakeRetentionService.error = None
+        _FakeRetentionService.results = (
+            SimpleNamespace(action=TaskRetentionAction.DELETED),
+            SimpleNamespace(action=TaskRetentionAction.LOST),
+        )
+
+        with (
+            patch.object(
+                task_cmds, "_task_pgsql_database", return_value=database
+            ),
+            patch.object(task_cmds, "PgsqlTaskStore", return_value=object()),
+            patch.object(
+                task_cmds, "_task_artifact_store", return_value=object()
+            ),
+            patch.object(
+                task_cmds,
+                "TaskRetentionService",
+                _FakeRetentionService,
+            ),
+        ):
+            result = task_cmds.task_retention_sweep(
+                Namespace(
+                    store_dsn="postgresql://user:secret@db/tasks",
+                    store_schema="tasks",
+                    purpose=("input", "output"),
+                    limit=2,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertTrue(database.entered)
+        self.assertEqual(
+            _FakeRetentionService.instances[0].purposes,
+            (
+                task_cmds.TaskArtifactPurpose.INPUT,
+                task_cmds.TaskArtifactPurpose.OUTPUT,
+            ),
+        )
+        self.assertEqual(_FakeRetentionService.instances[0].limit, 2)
+        self.assertIn("Task retention sweep processed 2 artifacts.", output)
+        self.assertIn('"deleted":1', output)
+        self.assertIn('"lost":1', output)
+        self.assertNotIn("secret", output)
+
+    def test_retention_sweep_requires_store_and_artifact_root(self) -> None:
+        missing_store_console = Console(record=True, width=160)
+        with patch.dict(task_cmds.environ, {}, clear=True):
+            missing_store = task_cmds.task_retention_sweep(
+                Namespace(
+                    store_dsn=None, store_schema=None, purpose=(), limit=100
+                ),
+                missing_store_console,
+                self.theme,
+            )
+
+        missing_root_console = Console(record=True, width=160)
+        with (
+            patch.object(task_cmds, "_task_artifact_store", return_value=None),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            missing_root = task_cmds.task_retention_sweep(
+                Namespace(
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    purpose=(),
+                    limit=100,
+                ),
+                missing_root_console,
+                self.theme,
+            )
+
+        self.assertFalse(missing_store)
+        self.assertIn("store.missing", missing_store_console.export_text())
+        self.assertFalse(missing_root)
+        self.assertIn(
+            "artifact_store.missing",
+            missing_root_console.export_text(),
+        )
+
+    def test_retention_sweep_reports_safe_errors(self) -> None:
+        cases = (
+            (
+                Namespace(
+                    store_dsn="postgresql://user:secret@db/tasks",
+                    store_schema=None,
+                    purpose=("bad",),
+                    limit=100,
+                ),
+                None,
+                "retention.sweep",
+            ),
+            (
+                Namespace(
+                    store_dsn="postgresql://user:secret@db/tasks",
+                    store_schema=None,
+                    purpose=(),
+                    limit=0,
+                ),
+                None,
+                "retention.sweep",
+            ),
+            (
+                Namespace(
+                    store_dsn="postgresql://user:secret@db/tasks",
+                    store_schema=None,
+                    purpose=(),
+                    limit=100,
+                ),
+                TaskRetentionStoreNotFoundError("private local path"),
+                "artifact_store.missing",
+            ),
+            (
+                Namespace(
+                    store_dsn="postgresql://user:secret@db/tasks",
+                    store_schema=None,
+                    purpose=(),
+                    limit=100,
+                ),
+                ArtifactStoreError("private artifact path"),
+                "artifact_store.failure",
+            ),
+            (
+                Namespace(
+                    store_dsn="postgresql://user:secret@db/tasks",
+                    store_schema=None,
+                    purpose=(),
+                    limit=100,
+                ),
+                ImportError("private dependency"),
+                "dependency.missing",
+            ),
+            (
+                Namespace(
+                    store_dsn="postgresql://user:secret@db/tasks",
+                    store_schema=None,
+                    purpose=(),
+                    limit=100,
+                ),
+                OSError("private dsn"),
+                "io.failure",
+            ),
+        )
+        for args, error, expected in cases:
+            console = Console(record=True, width=160)
+            database = _FakeResource()
+            _FakeRetentionService.instances = []
+            _FakeRetentionService.error = error
+            _FakeRetentionService.results = ()
+            with (
+                self.subTest(expected=expected),
+                patch.object(
+                    task_cmds, "_task_pgsql_database", return_value=database
+                ),
+                patch.object(
+                    task_cmds, "PgsqlTaskStore", return_value=object()
+                ),
+                patch.object(
+                    task_cmds, "_task_artifact_store", return_value=object()
+                ),
+                patch.object(
+                    task_cmds,
+                    "TaskRetentionService",
+                    _FakeRetentionService,
+                ),
+            ):
+                result = task_cmds.task_retention_sweep(
+                    args,
+                    console,
+                    self.theme,
+                )
+
+            output = console.export_text()
+            self.assertFalse(result)
+            self.assertIn(expected, output)
+            self.assertNotIn("secret", output)
+            self.assertNotIn("private", output)
 
     def test_run_awaitable_requests_interrupt_callback(self) -> None:
         interrupted: list[bool] = []

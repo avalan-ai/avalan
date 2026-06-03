@@ -485,6 +485,14 @@ class TaskStore(Protocol):
         state: "TaskArtifactState | None" = None,
     ) -> tuple["TaskArtifactRecord", ...]: ...
 
+    async def list_retention_artifacts(
+        self,
+        *,
+        expired_at: datetime,
+        purpose: "TaskArtifactPurpose | None" = None,
+        limit: int = 100,
+    ) -> tuple["TaskArtifactRecord", ...]: ...
+
     async def transition_artifact(
         self,
         artifact_id: str,

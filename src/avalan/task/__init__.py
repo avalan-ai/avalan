@@ -200,6 +200,7 @@ from .queue import TaskQueueNotFoundError as TaskQueueNotFoundError
 from .queue import TaskQueueRetry as TaskQueueRetry
 from .queue import TaskQueueSubmission as TaskQueueSubmission
 from .retention import TaskRetentionAction as TaskRetentionAction
+from .retention import TaskRetentionBatchSweep as TaskRetentionBatchSweep
 from .retention import TaskRetentionError as TaskRetentionError
 from .retention import TaskRetentionResult as TaskRetentionResult
 from .retention import TaskRetentionService as TaskRetentionService

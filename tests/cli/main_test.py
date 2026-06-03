@@ -193,6 +193,26 @@ class CliTaskOptionTestCase(TestCase):
                 ["task", "worker", "--queue", "documents"],
                 {"task_command": "worker", "queue": "documents"},
             ),
+            (
+                [
+                    "task",
+                    "retention-sweep",
+                    "--store-dsn",
+                    "postgresql://localhost/tasks",
+                    "--purpose",
+                    "input",
+                    "--purpose",
+                    "output",
+                    "--limit",
+                    "25",
+                ],
+                {
+                    "task_command": "retention-sweep",
+                    "store_dsn": "postgresql://localhost/tasks",
+                    "purpose": ["input", "output"],
+                    "limit": 25,
+                },
+            ),
         ]
 
         for argv, expected in cases:
@@ -918,6 +938,11 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.commands.task",
                 "task_pgsql_status",
             ),
+            (
+                "task_retention_sweep",
+                "avalan.cli.commands.task",
+                "task_retention_sweep",
+            ),
             ("task_run", "avalan.cli.commands.task", "task_run"),
             ("task_worker", "avalan.cli.commands.task", "task_worker"),
         ]
@@ -1051,6 +1076,9 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             task_pgsql_status_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_pgsql_status")
             )
+            task_retention_sweep_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_retention_sweep")
+            )
             task_run_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_run")
             )
@@ -1089,6 +1117,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("task", "pgsql:migrate", task_pgsql_migrate_mock),
                 ("task", "pgsql:stamp", task_pgsql_stamp_mock),
                 ("task", "pgsql:status", task_pgsql_status_mock),
+                ("task", "retention-sweep", task_retention_sweep_mock),
                 ("task", "run", task_run_mock),
                 ("task", "worker", task_worker_mock),
                 ("tokenizer", None, tokenize_mock),

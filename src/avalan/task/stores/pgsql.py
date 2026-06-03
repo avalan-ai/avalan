@@ -1047,6 +1047,42 @@ class PgsqlTaskStore:
             ),
         )
 
+    async def list_retention_artifacts(
+        self,
+        *,
+        expired_at: datetime,
+        purpose: TaskArtifactPurpose | None = None,
+        limit: int = 100,
+    ) -> tuple[TaskArtifactRecord, ...]:
+        assert isinstance(expired_at, datetime)
+        if purpose is not None:
+            assert isinstance(purpose, TaskArtifactPurpose)
+        _assert_positive_limit(limit)
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            await unit.cursor.execute(
+                _SELECT_RETENTION_ARTIFACTS_SQL,
+                (
+                    TaskArtifactState.READY.value,
+                    purpose.value if purpose else None,
+                    purpose.value if purpose else None,
+                    expired_at,
+                    expired_at,
+                    limit,
+                ),
+            )
+            return tuple(
+                _artifact_from_row(row) for row in await unit.cursor.fetchall()
+            )
+
+        return cast(
+            tuple[TaskArtifactRecord, ...],
+            await self._transaction(
+                operation="task_artifact_retention_list",
+                callback=execute,
+            ),
+        )
+
     async def transition_artifact(
         self,
         artifact_id: str,
@@ -1595,6 +1631,29 @@ WHERE "run_id" = %s
   AND (%s::text IS NULL OR "purpose" = %s::text)
   AND (%s::text IS NULL OR "state" = %s::text)
 ORDER BY "created_at", "artifact_id"
+"""
+_SELECT_RETENTION_ARTIFACTS_SQL = """
+SELECT * FROM "task_artifacts"
+WHERE "state" = %s
+  AND (%s::text IS NULL OR "purpose" = %s::text)
+  AND (
+      (
+          "retention" ->> 'expires_at' IS NOT NULL
+          AND ("retention" ->> 'expires_at')::timestamptz <= %s
+      )
+      OR (
+          "retention" ->> 'delete_after_days' IS NOT NULL
+          AND (
+              "created_at"
+              + (
+                  ("retention" ->> 'delete_after_days')::integer
+                  * INTERVAL '1 day'
+              )
+          ) <= %s
+      )
+  )
+ORDER BY "updated_at", "created_at", "artifact_id"
+LIMIT %s
 """
 _UPDATE_ARTIFACT_STATE_SQL = """
 UPDATE "task_artifacts"
@@ -2412,3 +2471,9 @@ def _utc_now() -> datetime:
 
 def _uuid_id() -> str:
     return uuid4().hex
+
+
+def _assert_positive_limit(value: int) -> None:
+    assert isinstance(value, int), "limit must be an integer"
+    assert not isinstance(value, bool), "limit must be an integer"
+    assert value > 0, "limit must be positive"

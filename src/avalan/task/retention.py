@@ -5,6 +5,7 @@ from .artifact import (
     TaskArtifactPurpose,
     TaskArtifactRecord,
     TaskArtifactState,
+    artifact_retention_expired,
 )
 from .store import (
     TaskSnapshotMetadata,
@@ -14,7 +15,7 @@ from .store import (
 
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
 
 
@@ -62,6 +63,20 @@ class TaskRetentionSweep:
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.run_id, "run_id")
         _assert_datetime(self.enforced_at, "enforced_at")
+        assert isinstance(self.results, tuple)
+        for result in self.results:
+            assert isinstance(result, TaskRetentionResult)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskRetentionBatchSweep:
+    enforced_at: datetime
+    limit: int
+    results: tuple[TaskRetentionResult, ...]
+
+    def __post_init__(self) -> None:
+        _assert_datetime(self.enforced_at, "enforced_at")
+        _assert_positive_limit(self.limit)
         assert isinstance(self.results, tuple)
         for result in self.results:
             assert isinstance(result, TaskRetentionResult)
@@ -115,6 +130,42 @@ class TaskRetentionService:
             results=tuple(results),
         )
 
+    async def sweep_expired(
+        self,
+        *,
+        purposes: Collection[TaskArtifactPurpose] | None = None,
+        now: datetime | None = None,
+        limit: int = 100,
+    ) -> TaskRetentionBatchSweep:
+        selected_purposes = _purpose_filter(purposes)
+        enforced_at = now or self._now()
+        _assert_datetime(enforced_at, "now")
+        _assert_positive_limit(limit)
+        results: list[TaskRetentionResult] = []
+        for purpose in _sweep_purposes(selected_purposes):
+            remaining = limit - len(results)
+            if remaining <= 0:
+                break
+            records = await self._store.list_retention_artifacts(
+                expired_at=enforced_at,
+                purpose=purpose,
+                limit=remaining,
+            )
+            for record in records:
+                if not _retention_expired(record, enforced_at):
+                    continue
+                results.append(
+                    await self._enforce_record(
+                        record,
+                        enforced_at=enforced_at,
+                    )
+                )
+        return TaskRetentionBatchSweep(
+            enforced_at=enforced_at,
+            limit=limit,
+            results=tuple(results),
+        )
+
     async def _enforce_record(
         self,
         record: TaskArtifactRecord,
@@ -165,17 +216,7 @@ def _retention_expired(
     record: TaskArtifactRecord,
     enforced_at: datetime,
 ) -> bool:
-    assert isinstance(record, TaskArtifactRecord)
-    _assert_datetime(enforced_at, "enforced_at")
-    retention = record.retention
-    if retention.expires_at is not None:
-        return retention.expires_at <= enforced_at
-    if retention.delete_after_days is not None:
-        expires_at = record.created_at + timedelta(
-            days=retention.delete_after_days
-        )
-        return expires_at <= enforced_at
-    return False
+    return artifact_retention_expired(record, enforced_at)
 
 
 def _retention_metadata(
@@ -232,8 +273,22 @@ def _purpose_filter(
     return frozenset(selected)
 
 
+def _sweep_purposes(
+    purposes: frozenset[TaskArtifactPurpose] | None,
+) -> tuple[TaskArtifactPurpose | None, ...]:
+    if purposes is None:
+        return (None,)
+    return tuple(sorted(purposes, key=lambda purpose: purpose.value))
+
+
 def _assert_datetime(value: datetime, field_name: str) -> None:
     assert isinstance(value, datetime), f"{field_name} must be a datetime"
+
+
+def _assert_positive_limit(value: int) -> None:
+    assert isinstance(value, int), "limit must be an integer"
+    assert not isinstance(value, bool), "limit must be an integer"
+    assert value > 0, "limit must be positive"
 
 
 def _utc_now() -> datetime:

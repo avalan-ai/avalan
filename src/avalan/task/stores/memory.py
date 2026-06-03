@@ -11,6 +11,7 @@ from ..artifact import (
     TaskArtifactRef,
     TaskArtifactRetention,
     TaskArtifactState,
+    artifact_retention_expired,
     assert_artifact_state_collection,
     is_terminal_artifact_state,
     is_valid_artifact_transition,
@@ -600,6 +601,27 @@ class InMemoryTaskStore:
                 and (state is None or record.state == state)
             )
 
+    async def list_retention_artifacts(
+        self,
+        *,
+        expired_at: datetime,
+        purpose: TaskArtifactPurpose | None = None,
+        limit: int = 100,
+    ) -> tuple[TaskArtifactRecord, ...]:
+        assert isinstance(expired_at, datetime)
+        if purpose is not None:
+            assert isinstance(purpose, TaskArtifactPurpose)
+        _assert_positive_limit(limit)
+        async with self._lock:
+            records = tuple(
+                record
+                for record in self._artifacts.values()
+                if record.state == TaskArtifactState.READY
+                and (purpose is None or record.purpose == purpose)
+                and artifact_retention_expired(record, expired_at)
+            )
+            return records[:limit]
+
     async def transition_artifact(
         self,
         artifact_id: str,
@@ -766,3 +788,9 @@ def _utc_now() -> datetime:
 
 def _uuid_id() -> str:
     return uuid4().hex
+
+
+def _assert_positive_limit(value: int) -> None:
+    assert isinstance(value, int), "limit must be an integer"
+    assert not isinstance(value, bool), "limit must be an integer"
+    assert value > 0, "limit must be positive"

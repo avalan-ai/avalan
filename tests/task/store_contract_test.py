@@ -60,6 +60,14 @@ def definition() -> TaskDefinition:
     )
 
 
+def _artifact_ref(artifact_id: str) -> TaskArtifactRef:
+    return TaskArtifactRef(
+        artifact_id=artifact_id,
+        store="local",
+        storage_key=f"{artifact_id[:2]}/{artifact_id}",
+    )
+
+
 class StoreContractAssertions:
     async def asyncSetUp(self) -> None:
         self.clock = SequenceClock()
@@ -420,6 +428,75 @@ class StoreContractAssertions:
             await self.store.list_artifacts(
                 run.run_id,
                 attempt_id=other_attempt.attempt_id,
+            )
+
+    async def test_retention_artifact_discovery_filters_ready_expired_records(
+        self,
+    ) -> None:
+        run = await self._created_run()
+        other_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-a")
+        )
+        input_record = await self.store.append_artifact(
+            run.run_id,
+            ref=_artifact_ref("input-1"),
+            purpose=TaskArtifactPurpose.INPUT,
+            retention=TaskArtifactRetention(delete_after_days=1),
+        )
+        await self.store.append_artifact(
+            run.run_id,
+            ref=_artifact_ref("output-1"),
+            purpose=TaskArtifactPurpose.OUTPUT,
+            retention=TaskArtifactRetention(delete_after_days=30),
+        )
+        converted_record = await self.store.append_artifact(
+            other_run.run_id,
+            ref=_artifact_ref("converted-1"),
+            purpose=TaskArtifactPurpose.CONVERTED,
+            retention=TaskArtifactRetention(
+                expires_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC),
+            ),
+        )
+        await self.store.append_artifact(
+            other_run.run_id,
+            ref=_artifact_ref("lost-1"),
+            purpose=TaskArtifactPurpose.INPUT,
+            state=TaskArtifactState.LOST,
+            retention=TaskArtifactRetention(delete_after_days=1),
+        )
+
+        expired = await self.store.list_retention_artifacts(
+            expired_at=datetime(2026, 1, 3, tzinfo=UTC),
+        )
+        input_expired = await self.store.list_retention_artifacts(
+            expired_at=datetime(2026, 1, 3, tzinfo=UTC),
+            purpose=TaskArtifactPurpose.INPUT,
+        )
+        limited = await self.store.list_retention_artifacts(
+            expired_at=datetime(2026, 1, 3, tzinfo=UTC),
+            limit=1,
+        )
+
+        self.assertEqual(
+            {record.artifact_id for record in expired},
+            {input_record.artifact_id, converted_record.artifact_id},
+        )
+        self.assertEqual(input_expired, (input_record,))
+        self.assertEqual(len(limited), 1)
+        self.assertIn(limited[0], expired)
+        with self.assertRaises(AssertionError):
+            await self.store.list_retention_artifacts(
+                expired_at=cast(Any, "2026-01-03"),
+            )
+        with self.assertRaises(AssertionError):
+            await self.store.list_retention_artifacts(
+                expired_at=datetime(2026, 1, 3, tzinfo=UTC),
+                purpose=cast(Any, "input"),
+            )
+        with self.assertRaises(AssertionError):
+            await self.store.list_retention_artifacts(
+                expired_at=datetime(2026, 1, 3, tzinfo=UTC),
+                limit=0,
             )
 
     async def test_artifact_state_transitions_are_compare_and_swap(

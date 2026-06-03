@@ -2,7 +2,7 @@ from collections.abc import Callable, Collection, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.task import (
@@ -344,6 +344,246 @@ class TaskRetentionServiceTest(IsolatedAsyncioTestCase):
                 TaskArtifactState.READY,
             )
 
+    async def test_sweep_expired_deletes_artifact_bytes_and_keeps_audit(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            task_store = await self._task_store(
+                lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            first_run = await task_store.create_run(
+                TaskExecutionRequest(definition_id="hash-a"),
+                metadata={"tenant": "safe"},
+            )
+            second_run = await task_store.create_run(
+                TaskExecutionRequest(definition_id="hash-a")
+            )
+            artifact_store = LocalArtifactStore(
+                tmp,
+                raw_storage_allowed=True,
+            )
+            input_ref = await artifact_store.put(
+                b"private input",
+                artifact_id="input-1",
+            )
+            output_ref = await artifact_store.put(
+                b"private output",
+                artifact_id="output-1",
+            )
+            converted_ref = await artifact_store.put(
+                b"converted text",
+                artifact_id="converted-1",
+            )
+            unexpired_ref = await artifact_store.put(
+                b"private current",
+                artifact_id="output-2",
+            )
+            await task_store.append_artifact(
+                first_run.run_id,
+                ref=input_ref,
+                purpose=TaskArtifactPurpose.INPUT,
+                retention=TaskArtifactRetention(delete_after_days=1),
+                metadata={"identity": {"sha256": "a" * 64}},
+            )
+            await task_store.append_artifact(
+                first_run.run_id,
+                ref=output_ref,
+                purpose=TaskArtifactPurpose.OUTPUT,
+                retention=TaskArtifactRetention(delete_after_days=1),
+                metadata={"identity": {"sha256": "b" * 64}},
+            )
+            await task_store.append_artifact(
+                second_run.run_id,
+                ref=converted_ref,
+                purpose=TaskArtifactPurpose.CONVERTED,
+                retention=TaskArtifactRetention(delete_after_days=1),
+                metadata={"converter": "markdown"},
+            )
+            await task_store.append_artifact(
+                second_run.run_id,
+                ref=unexpired_ref,
+                purpose=TaskArtifactPurpose.OUTPUT,
+                retention=TaskArtifactRetention(delete_after_days=30),
+            )
+            usage = await task_store.append_usage(
+                first_run.run_id,
+                source=UsageSource.EXACT,
+                totals=UsageTotals(input_tokens=1),
+            )
+            event = await task_store.append_event(
+                first_run.run_id,
+                event_type="engine_start",
+                category=TaskEventCategory.ENGINE,
+                payload={"duration_ms": 1},
+            )
+            service = TaskRetentionService(
+                task_store,
+                {"local": artifact_store},
+            )
+
+            sweep = await service.sweep_expired(
+                now=datetime(2026, 1, 3, tzinfo=UTC),
+                limit=10,
+            )
+
+            self.assertEqual(sweep.limit, 10)
+            self.assertEqual(len(sweep.results), 3)
+            self.assertEqual(
+                {result.purpose for result in sweep.results},
+                {
+                    TaskArtifactPurpose.INPUT,
+                    TaskArtifactPurpose.OUTPUT,
+                    TaskArtifactPurpose.CONVERTED,
+                },
+            )
+            self.assertFalse(Path(tmp, input_ref.storage_key).exists())
+            self.assertFalse(Path(tmp, output_ref.storage_key).exists())
+            self.assertFalse(Path(tmp, converted_ref.storage_key).exists())
+            self.assertTrue(Path(tmp, unexpired_ref.storage_key).exists())
+            for ref in (input_ref, output_ref, converted_ref):
+                record = await task_store.get_artifact(ref.artifact_id)
+                self.assertEqual(record.state, TaskArtifactState.DELETED)
+                audit = cast(
+                    Mapping[str, object], record.metadata["retention"]
+                )
+                self.assertEqual(audit["action"], "deleted")
+                self.assertEqual(audit["reason"], "retention_expired")
+                self.assertNotIn("storage_key", audit)
+            converted = await task_store.get_artifact(
+                converted_ref.artifact_id
+            )
+            self.assertEqual(converted.metadata["converter"], "markdown")
+            self.assertEqual(
+                (await task_store.get_run(first_run.run_id)).metadata[
+                    "tenant"
+                ],
+                "safe",
+            )
+            self.assertEqual(
+                await task_store.list_usage(first_run.run_id),
+                (usage,),
+            )
+            self.assertEqual(
+                await task_store.list_events(first_run.run_id),
+                (event,),
+            )
+
+    async def test_sweep_expired_honors_purpose_filter_and_limit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            task_store = await self._task_store(
+                lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            run = await task_store.create_run(
+                TaskExecutionRequest(definition_id="hash-a")
+            )
+            artifact_store = LocalArtifactStore(
+                tmp,
+                raw_storage_allowed=True,
+            )
+            input_ref = await artifact_store.put(
+                b"private input",
+                artifact_id="input-1",
+            )
+            output_ref = await artifact_store.put(
+                b"private output",
+                artifact_id="output-1",
+            )
+            await task_store.append_artifact(
+                run.run_id,
+                ref=input_ref,
+                purpose=TaskArtifactPurpose.INPUT,
+                retention=TaskArtifactRetention(delete_after_days=1),
+            )
+            await task_store.append_artifact(
+                run.run_id,
+                ref=output_ref,
+                purpose=TaskArtifactPurpose.OUTPUT,
+                retention=TaskArtifactRetention(delete_after_days=1),
+            )
+            service = TaskRetentionService(
+                task_store,
+                {"local": artifact_store},
+            )
+
+            sweep = await service.sweep_expired(
+                purposes={TaskArtifactPurpose.OUTPUT},
+                now=datetime(2026, 1, 3, tzinfo=UTC),
+                limit=1,
+            )
+
+            self.assertEqual(
+                [result.artifact_id for result in sweep.results],
+                [output_ref.artifact_id],
+            )
+            self.assertTrue(Path(tmp, input_ref.storage_key).exists())
+            self.assertFalse(Path(tmp, output_ref.storage_key).exists())
+
+            limited = await service.sweep_expired(
+                purposes={
+                    TaskArtifactPurpose.INPUT,
+                    TaskArtifactPurpose.OUTPUT,
+                },
+                now=datetime(2026, 1, 3, tzinfo=UTC),
+                limit=1,
+            )
+
+            self.assertEqual(
+                [result.artifact_id for result in limited.results],
+                [input_ref.artifact_id],
+            )
+            self.assertFalse(Path(tmp, input_ref.storage_key).exists())
+
+    async def test_sweep_expired_rechecks_store_candidates(self) -> None:
+        with TemporaryDirectory() as tmp:
+            task_store = await self._task_store(
+                lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            run = await task_store.create_run(
+                TaskExecutionRequest(definition_id="hash-a")
+            )
+            artifact_store = LocalArtifactStore(
+                tmp,
+                raw_storage_allowed=True,
+            )
+            ref = await artifact_store.put(
+                b"private output",
+                artifact_id="output-1",
+            )
+            await task_store.append_artifact(
+                run.run_id,
+                ref=ref,
+                purpose=TaskArtifactPurpose.OUTPUT,
+                retention=TaskArtifactRetention(delete_after_days=30),
+            )
+
+            class CandidateStore:
+                async def list_retention_artifacts(
+                    self,
+                    **kwargs: object,
+                ) -> object:
+                    _ = kwargs
+                    return await task_store.list_artifacts(run.run_id)
+
+                async def transition_artifact(
+                    self,
+                    *args: object,
+                    **kwargs: object,
+                ) -> object:
+                    _ = args, kwargs
+                    raise AssertionError("unexpired record was transitioned")
+
+            service = TaskRetentionService(
+                cast(Any, CandidateStore()),
+                {"local": artifact_store},
+            )
+
+            sweep = await service.sweep_expired(
+                now=datetime(2026, 1, 3, tzinfo=UTC),
+            )
+
+            self.assertEqual(sweep.results, ())
+            self.assertTrue(Path(tmp, ref.storage_key).exists())
+
     async def test_invalid_inputs_fail_fast(self) -> None:
         task_store = await self._task_store(
             lambda: datetime(2026, 1, 1, tzinfo=UTC)
@@ -364,6 +604,12 @@ class TaskRetentionServiceTest(IsolatedAsyncioTestCase):
                     Collection[TaskArtifactPurpose],
                     ("input",),
                 ),
+            )
+        with self.assertRaises(AssertionError):
+            await service.sweep_expired(limit=0)
+        with self.assertRaises(AssertionError):
+            await service.sweep_expired(
+                purposes=cast(Collection[TaskArtifactPurpose], ()),
             )
 
     async def _task_store(

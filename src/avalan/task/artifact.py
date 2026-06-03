@@ -17,7 +17,7 @@ from .store import (
 
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import BinaryIO, Protocol
 
@@ -352,6 +352,23 @@ def task_output_artifact_from_value(
             metadata=value.metadata,
         )
     return None
+
+
+def artifact_retention_expired(
+    record: TaskArtifactRecord,
+    expired_at: datetime,
+) -> bool:
+    assert isinstance(record, TaskArtifactRecord)
+    _assert_datetime(expired_at, "expired_at")
+    retention = record.retention
+    if retention.expires_at is not None:
+        return retention.expires_at <= expired_at
+    if retention.delete_after_days is not None:
+        deadline = record.created_at + timedelta(
+            days=retention.delete_after_days
+        )
+        return deadline <= expired_at
+    return False
 
 
 def assert_artifact_state_collection(

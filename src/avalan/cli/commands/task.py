@@ -3,12 +3,14 @@ from ...cli.theme import Theme
 from ...pgsql import PsycopgAsyncDatabase, PsycopgPoolSettings
 from ...task import (
     REDACTED_MARKER,
+    ArtifactStoreError,
     FeatureGateDiagnostic,
     HmacProvider,
     PrivacyField,
     PrivacySanitizationError,
     PrivacySanitizer,
     RunMode,
+    TaskArtifactPurpose,
     TaskClient,
     TaskClientUnsupportedOperationError,
     TaskClientWaitTimeoutError,
@@ -19,6 +21,10 @@ from ...task import (
     TaskKeyMaterial,
     TaskKeyPurpose,
     TaskLoadIssue,
+    TaskRetentionAction,
+    TaskRetentionError,
+    TaskRetentionService,
+    TaskRetentionStoreNotFoundError,
     TaskRunState,
     TaskStoreNotFoundError,
     TaskTargetContext,
@@ -308,6 +314,15 @@ def task_worker(
     )
 
 
+def task_retention_sweep(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Delete expired task artifact bytes."""
+    return _run_awaitable(_task_retention_sweep(args, console))
+
+
 def task_pgsql_status(
     args: Namespace,
     console: Console,
@@ -410,6 +425,59 @@ def task_pgsql_diagnose(
     console.print("Task PostgreSQL diagnostics.", markup=False)
     console.print(table)
     return settings is not None
+
+
+async def _task_retention_sweep(
+    args: Namespace,
+    console: Console,
+) -> bool:
+    dsn = _task_store_dsn(args)
+    if dsn is None:
+        _print_missing_inspection_store(console)
+        return False
+    artifact_store = _task_artifact_store()
+    if artifact_store is None:
+        _print_missing_artifact_store(console)
+        return False
+    try:
+        database = _task_pgsql_database(dsn, _task_store_schema(args))
+        service = TaskRetentionService(
+            PgsqlTaskStore(database),
+            {"local": artifact_store},
+        )
+        async with database:
+            sweep = await service.sweep_expired(
+                purposes=_task_retention_purposes(args),
+                limit=_task_retention_limit(args),
+            )
+    except (
+        AssertionError,
+        ArtifactStoreError,
+        ImportError,
+        OSError,
+        TaskRetentionError,
+    ) as exc:
+        _print_task_retention_error(console, exc)
+        return False
+    counts = _task_retention_counts(sweep.results)
+    console.print(
+        f"Task retention sweep processed {len(sweep.results)} artifact"
+        f"{'s' if len(sweep.results) != 1 else ''}.",
+        markup=False,
+    )
+    console.print(
+        "retention "
+        + _format_task_cli_value(
+            {
+                "deleted": counts[TaskRetentionAction.DELETED],
+                "limit": sweep.limit,
+                "lost": counts[TaskRetentionAction.LOST],
+                "total": len(sweep.results),
+            }
+        ),
+        markup=False,
+    )
+    return True
 
 
 async def _task_run(
@@ -944,6 +1012,45 @@ def _safe_queue_metadata(args: Namespace) -> Mapping[str, object]:
     return {}
 
 
+def _task_retention_purposes(
+    args: Namespace,
+) -> tuple[TaskArtifactPurpose, ...] | None:
+    values = getattr(args, "purpose", ()) or ()
+    assert isinstance(values, list | tuple)
+    purposes: list[TaskArtifactPurpose] = []
+    for value in values:
+        assert isinstance(value, str)
+        try:
+            purposes.append(TaskArtifactPurpose(value))
+        except ValueError as exc:
+            raise AssertionError(
+                "purpose must be a task artifact purpose"
+            ) from exc
+    return tuple(purposes) or None
+
+
+def _task_retention_limit(args: Namespace) -> int:
+    value = getattr(args, "limit", 100)
+    assert isinstance(value, int), "limit must be an integer"
+    assert not isinstance(value, bool), "limit must be an integer"
+    assert value > 0, "limit must be positive"
+    return value
+
+
+def _task_retention_counts(
+    results: Iterable[object],
+) -> Mapping[TaskRetentionAction, int]:
+    counts = {
+        TaskRetentionAction.DELETED: 0,
+        TaskRetentionAction.LOST: 0,
+    }
+    for result in results:
+        action = getattr(result, "action")
+        assert isinstance(action, TaskRetentionAction)
+        counts[action] += 1
+    return counts
+
+
 def _task_cli_queue_name(args: Namespace) -> str | None:
     value = getattr(args, "queue", None)
     if isinstance(value, str) and value.strip():
@@ -982,6 +1089,19 @@ def _print_missing_inspection_store(console: Console) -> None:
     )
 
 
+def _print_missing_artifact_store(console: Console) -> None:
+    console.print("Task artifact store is not configured.", markup=False)
+    console.print(
+        "error artifact_store.missing retention sweep requires a configured"
+        " artifact store.",
+        markup=False,
+    )
+    console.print(
+        "Set AVALAN_TASK_ARTIFACT_ROOT before running retention sweep.",
+        markup=False,
+    )
+
+
 def _print_task_command_error(
     console: Console,
     message: str,
@@ -1008,6 +1128,26 @@ def _print_task_inspection_error(
         console.print("error io.failure", markup=False)
         return
     console.print("error task.inspection", markup=False)
+
+
+def _print_task_retention_error(
+    console: Console,
+    error: BaseException,
+) -> None:
+    console.print("Task retention sweep failed.", markup=False)
+    if isinstance(error, TaskRetentionStoreNotFoundError):
+        console.print("error artifact_store.missing", markup=False)
+        return
+    if isinstance(error, ArtifactStoreError):
+        console.print("error artifact_store.failure", markup=False)
+        return
+    if isinstance(error, ImportError):
+        console.print("error dependency.missing", markup=False)
+        return
+    if isinstance(error, OSError):
+        console.print("error io.failure", markup=False)
+        return
+    console.print("error retention.sweep", markup=False)
 
 
 def _print_task_execution_error(

@@ -538,6 +538,12 @@ def task_pgsql_status(*args: Any, **kwargs: Any) -> Any:
     )
 
 
+def task_retention_sweep(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_retention_sweep")(
+        *args, **kwargs
+    )
+
+
 def task_run(*args: Any, **kwargs: Any) -> Any:
     return _load_command("avalan.cli.commands.task", "task_run")(
         *args, **kwargs
@@ -1737,6 +1743,36 @@ class CLI:
             "--ephemeral",
             action="store_true",
             help="Reject non-durable storage for task workers.",
+        )
+        task_retention_sweep_parser = task_command_parsers.add_parser(
+            name="retention-sweep",
+            description="Delete expired task artifact bytes",
+            parents=[global_parser],
+        )
+        task_retention_sweep_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_retention_sweep_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_retention_sweep_parser.add_argument(
+            "--purpose",
+            action="append",
+            choices=("input", "output", "converted", "intermediate"),
+            default=None,
+            help="Artifact purpose to sweep. Can be passed more than once.",
+        )
+        task_retention_sweep_parser.add_argument(
+            "--limit",
+            type=int,
+            default=100,
+            help="Maximum expired artifacts to process.",
         )
         task_pgsql_parser = task_command_parsers.add_parser(
             name="pgsql",
@@ -3351,6 +3387,8 @@ class CLI:
                         task_inspect(args, console, theme)
                     case "output":
                         task_output(args, console, theme)
+                    case "retention-sweep":
+                        task_retention_sweep(args, console, theme)
                     case "validate":
                         task_validate(args, console, theme)
                     case "pgsql":

@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from json import loads
 from pathlib import Path
 from sys import path as sys_path
@@ -245,6 +245,8 @@ class FakeCursor:
             self.row = self.database.artifacts.get(cast(str, params[0]))
         elif 'INSERT INTO "task_artifacts"' in query:
             self.row = self._insert_artifact(params)
+        elif "LIMIT %s" in query and 'FROM "task_artifacts"' in query:
+            self.rows = self._retention_artifacts(params)
         elif 'FROM "task_artifacts"' in query:
             self.rows = self._artifacts(params)
         elif 'UPDATE "task_artifacts"' in query:
@@ -636,6 +638,23 @@ class FakeCursor:
             and (state is None or row["state"] == state)
         )
 
+    def _retention_artifacts(
+        self,
+        params: tuple[object, ...],
+    ) -> tuple[dict[str, object], ...]:
+        state = cast(str, params[0])
+        purpose = cast(str | None, params[1])
+        expired_at = cast(datetime, params[3])
+        limit = cast(int, params[5])
+        rows = tuple(
+            row
+            for row in self.database.artifacts.values()
+            if row["state"] == state
+            and (purpose is None or row["purpose"] == purpose)
+            and _retention_expired(row, expired_at)
+        )
+        return rows[:limit]
+
     def _next_sequence(
         self,
         rows: dict[str, dict[str, object]],
@@ -652,6 +671,21 @@ class FakeCursor:
             )
             + 1
         )
+
+
+def _retention_expired(
+    row: dict[str, object],
+    expired_at: datetime,
+) -> bool:
+    retention = cast(dict[str, object], row["retention"])
+    expires_at_value = retention.get("expires_at")
+    if isinstance(expires_at_value, str):
+        return datetime.fromisoformat(expires_at_value) <= expired_at
+    delete_after_days = retention.get("delete_after_days")
+    if isinstance(delete_after_days, int):
+        created_at = cast(datetime, row["created_at"])
+        return created_at + timedelta(days=delete_after_days) <= expired_at
+    return False
 
 
 class PgsqlStoreContractTest(
