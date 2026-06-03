@@ -566,6 +566,60 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             {"privacy": STORED_MARKER, "value": "ready"},
         )
 
+    async def test_run_keeps_declared_object_input_with_privacy_marker(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(
+            Node(
+                "A",
+                func=lambda inputs: {
+                    "privacy": inputs["privacy"],
+                    "value": inputs["value"],
+                },
+            )
+        )
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        for marker in (
+            DROPPED_MARKER,
+            ENCRYPTED_MARKER,
+            HASHED_MARKER,
+            REDACTED_MARKER,
+        ):
+            with self.subTest(marker=marker):
+                result = await runner.run(
+                    self._context(
+                        definition=self._context_definition(
+                            input_contract=TaskInputContract.object(
+                                {
+                                    "type": "object",
+                                    "required": ["privacy", "value"],
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "privacy": {
+                                            "type": "string",
+                                            "enum": [marker],
+                                        },
+                                        "value": {"type": "string"},
+                                    },
+                                }
+                            ),
+                            output_contract=TaskOutputContract.object(),
+                            run=TaskRunPolicy.queued("default"),
+                        ),
+                        input_value={
+                            "privacy": marker,
+                            "value": "ready",
+                        },
+                    )
+                )
+
+                self.assertEqual(
+                    result,
+                    {"privacy": marker, "value": "ready"},
+                )
+
     async def test_run_accepts_plain_queued_input(self) -> None:
         flow = Flow()
         flow.add_node(

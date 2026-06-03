@@ -281,6 +281,8 @@ def _task_input_value(context: TaskTargetContext) -> object:
             return value
         return value["value"]
     if value.get("privacy") in _UNAVAILABLE_PRIVACY_MARKERS:
+        if _can_be_declared_object_input(context.definition, value):
+            return value
         raise TaskValidationError(
             (
                 _unsupported_flow_issue(

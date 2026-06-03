@@ -11,6 +11,8 @@ from avalan.event import Event, EventType
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 from avalan.task import (
+    DROPPED_MARKER,
+    ENCRYPTED_MARKER,
     HASHED_MARKER,
     REDACTED_MARKER,
     STORED_MARKER,
@@ -1878,6 +1880,97 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
         self.assertEqual(output.output_summary, {"status": "ready"})
+
+    async def test_queued_flow_keeps_declared_privacy_marker_fields(
+        self,
+    ) -> None:
+        for marker in (
+            DROPPED_MARKER,
+            ENCRYPTED_MARKER,
+            HASHED_MARKER,
+            REDACTED_MARKER,
+        ):
+            with self.subTest(marker=marker):
+                clock = Clock()
+                store = InMemoryTaskStore(clock=lambda: clock.now)
+                queue = InMemoryTaskQueue(store, clock=clock)
+
+                def use_full_input(
+                    inputs: Mapping[str, object],
+                ) -> dict[str, object]:
+                    full_input = cast(
+                        Mapping[str, object],
+                        inputs[FLOW_TASK_INPUT_KEY],
+                    )
+                    return {
+                        "status": "ready",
+                        "privacy": full_input["privacy"],
+                        "value": full_input["value"],
+                    }
+
+                flow = Flow()
+                flow.add_node(Node("A", func=use_full_input))
+                target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+                client = _client(store, queue, target=target, clock=clock)
+                worker = _worker(store, queue, target=target, clock=clock)
+                definition = _definition(
+                    input_contract=TaskInputContract.object(
+                        schema={
+                            "type": "object",
+                            "required": ["privacy", "value"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "privacy": {
+                                    "type": "string",
+                                    "enum": [marker],
+                                },
+                                "value": {"type": "string"},
+                            },
+                        }
+                    ),
+                    output_contract=TaskOutputContract.object(
+                        schema={
+                            "type": "object",
+                            "required": ["status", "privacy", "value"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["ready"],
+                                },
+                                "privacy": {"type": "string"},
+                                "value": {"type": "string"},
+                            },
+                        }
+                    ),
+                    execution=TaskExecutionTarget.flow("flows/report.toml"),
+                    observability=TaskObservabilityPolicy.noop(),
+                )
+
+                submission = await self._enqueue_raw_input(
+                    store,
+                    queue,
+                    definition,
+                    input_value={
+                        "privacy": marker,
+                        "value": "safe marker value",
+                    },
+                )
+                processed = await worker.process_once()
+                output = await client.output(submission.run.run_id)
+
+                self.assertTrue(processed.processed)
+                self.assertIsNotNone(processed.completion)
+                self.assertEqual(
+                    processed.output,
+                    {
+                        "status": "ready",
+                        "privacy": marker,
+                        "value": "safe marker value",
+                    },
+                )
+                self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+                self.assertEqual(output.output_summary, {"status": "ready"})
 
     async def test_queued_flow_rejects_unavailable_input_safely(
         self,
