@@ -14,13 +14,20 @@ from avalan.pgsql import (
     PsycopgPoolSettings,
 )
 from avalan.task import (
+    IdempotencyMode,
+    TaskArtifactPurpose,
+    TaskArtifactRef,
+    TaskArtifactRetention,
     TaskAttemptState,
     TaskDefinition,
     TaskExecutionRequest,
     TaskExecutionTarget,
+    TaskIdempotencyDigest,
+    TaskIdempotencyIdentity,
     TaskInputContract,
     TaskMetadata,
     TaskOutputContract,
+    TaskQueueArtifact,
     TaskQueueItemState,
     TaskRetryPolicy,
     TaskRunPolicy,
@@ -215,6 +222,108 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(len(usage), 1)
         self.assertEqual(usage[0].totals.total_tokens, 8)
 
+    async def test_duplicate_submission_returns_pgsql_queue_context(
+        self,
+    ) -> None:
+        definition_hash = "queue-e2e-duplicate"
+        await self.store.register_definition(
+            _definition(),
+            definition_hash=definition_hash,
+        )
+        identity = _identity(definition_hash)
+        artifact = TaskQueueArtifact(
+            ref=TaskArtifactRef(
+                artifact_id="artifact-pgsql-duplicate",
+                store="local",
+                storage_key="runs/duplicate/input.txt",
+                media_type="text/plain",
+                size_bytes=12,
+            ),
+            purpose=TaskArtifactPurpose.INPUT,
+            retention=TaskArtifactRetention(delete_after_days=1),
+            metadata={"safe": "input"},
+        )
+
+        first = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                input_summary="safe duplicate input",
+                queue="pgsql-e2e",
+            ),
+            queue_name="pgsql-e2e",
+            idempotency=identity,
+            artifacts=(artifact,),
+        )
+        second = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                input_summary="safe duplicate input",
+                queue="pgsql-e2e",
+            ),
+            queue_name="pgsql-e2e",
+            idempotency=identity,
+        )
+        target = RecordingTarget()
+        worker = TaskWorker(
+            self.store,
+            self.queue,
+            target=target,
+            worker_id="pgsql-e2e-worker",
+            queue_name="pgsql-e2e",
+        )
+
+        result = await worker.process_once()
+        third = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                input_summary="safe duplicate input",
+                queue="pgsql-e2e",
+            ),
+            queue_name="pgsql-e2e",
+            idempotency=identity,
+        )
+        depth = await self.queue.depth("pgsql-e2e")
+
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertFalse(third.created)
+        self.assertEqual(second.run.run_id, first.run.run_id)
+        self.assertEqual(third.run.run_id, first.run.run_id)
+        self.assertIsNotNone(first.queue_item)
+        self.assertIsNotNone(second.queue_item)
+        self.assertIsNotNone(third.queue_item)
+        assert first.queue_item is not None
+        assert second.queue_item is not None
+        assert third.queue_item is not None
+        self.assertEqual(
+            second.queue_item.queue_item_id,
+            first.queue_item.queue_item_id,
+        )
+        self.assertEqual(
+            second.queue_item.state,
+            TaskQueueItemState.AVAILABLE,
+        )
+        self.assertEqual(
+            third.queue_item.queue_item_id,
+            first.queue_item.queue_item_id,
+        )
+        self.assertEqual(third.queue_item.state, TaskQueueItemState.DONE)
+        self.assertEqual(third.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(second.artifacts), 1)
+        self.assertEqual(
+            second.artifacts[0].artifact_id,
+            "artifact-pgsql-duplicate",
+        )
+        self.assertEqual(
+            second.artifacts[0].purpose, TaskArtifactPurpose.INPUT
+        )
+        self.assertEqual(second.artifacts[0].metadata, {"safe": "input"})
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(result.completion)
+        self.assertEqual(target.inputs, ["safe duplicate input"])
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(depth.dead, 0)
+
 
 def _definition(*, max_attempts: int = 1) -> TaskDefinition:
     return TaskDefinition(
@@ -224,6 +333,28 @@ def _definition(*, max_attempts: int = 1) -> TaskDefinition:
         execution=TaskExecutionTarget.agent("agent.toml"),
         run=TaskRunPolicy.queued("pgsql-e2e"),
         retry=TaskRetryPolicy(max_attempts=max_attempts),
+    )
+
+
+def _identity(spec_hash: str) -> TaskIdempotencyIdentity:
+    owner = TaskIdempotencyDigest(
+        algorithm="hmac-sha256",
+        digest="a" * 64,
+        key_id="idempotency-v1",
+    )
+    input_digest = TaskIdempotencyDigest(
+        algorithm="hmac-sha256",
+        digest="b" * 64,
+        key_id="idempotency-v1",
+    )
+    return TaskIdempotencyIdentity(
+        identity_key=f"identity-{spec_hash}",
+        task_name="pgsql_queue_e2e",
+        task_version="1",
+        spec_hash=spec_hash,
+        owner_scope=owner,
+        strategy=IdempotencyMode.INPUT_HASH,
+        input=input_digest,
     )
 
 
