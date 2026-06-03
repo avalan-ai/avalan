@@ -297,3 +297,4 @@ from .worker import TaskQueuedTarget as TaskQueuedTarget
 from .worker import TaskWorker as TaskWorker
 from .worker import TaskWorkerError as TaskWorkerError
 from .worker import TaskWorkerProcessResult as TaskWorkerProcessResult
+from .worker import TaskWorkerShutdown as TaskWorkerShutdown

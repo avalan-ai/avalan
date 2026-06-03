@@ -1728,6 +1728,12 @@ class CLI:
             help="Claim lease duration in seconds.",
         )
         task_worker_parser.add_argument(
+            "--heartbeat-seconds",
+            type=float,
+            default=None,
+            help="Optional worker heartbeat interval in seconds.",
+        )
+        task_worker_parser.add_argument(
             "--ephemeral",
             action="store_true",
             help="Reject non-durable storage for task workers.",

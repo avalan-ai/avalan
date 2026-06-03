@@ -25,6 +25,7 @@ from ...task import (
     TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
+    TaskWorkerShutdown,
     require_feature,
     validate_task_definition,
     validate_task_input,
@@ -61,7 +62,7 @@ from argparse import Namespace
 from asyncio import run as asyncio_run
 from base64 import b64decode
 from binascii import Error as BinasciiError
-from collections.abc import Coroutine, Iterable, Mapping
+from collections.abc import Callable, Coroutine, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -294,7 +295,17 @@ def task_worker(
     logger: Logger | None = None,
 ) -> bool:
     """Run a bounded task queue worker."""
-    return _run_awaitable(_task_worker(args, console, hub=hub, logger=logger))
+    shutdown = TaskWorkerShutdown()
+    return _run_awaitable(
+        _task_worker(
+            args,
+            console,
+            hub=hub,
+            logger=logger,
+            shutdown=shutdown,
+        ),
+        on_interrupt=shutdown.request,
+    )
 
 
 def task_pgsql_status(
@@ -653,6 +664,7 @@ async def _task_worker(
     *,
     hub: object | None,
     logger: Logger | None,
+    shutdown: TaskWorkerShutdown | None = None,
 ) -> bool:
     if bool(getattr(args, "ephemeral", False)):
         _print_task_command_error(
@@ -681,6 +693,7 @@ async def _task_worker(
         )
     )
     try:
+        shutdown = shutdown or TaskWorkerShutdown()
         database = _task_pgsql_database(dsn, _task_store_schema(args))
         store = PgsqlTaskStore(database)
         queue = PgsqlTaskQueue(database)
@@ -700,10 +713,16 @@ async def _task_worker(
                 queue_name=getattr(args, "queue", None) or "default",
                 lease_seconds=getattr(args, "lease_seconds", 300),
                 artifact_store=_task_artifact_store(),
+                shutdown=shutdown,
+                heartbeat_seconds=getattr(args, "heartbeat_seconds", None),
             )
             for _index in range(limit):
+                if shutdown.requested:
+                    break
                 result = await worker.process_once()
-                if not result.processed:
+                if not result.processed or bool(
+                    getattr(result, "shutdown_requested", False)
+                ):
                     break
                 processed += 1
                 run = (
@@ -1071,7 +1090,11 @@ def _task_event_cli_values(events: Iterable[object]) -> tuple[object, ...]:
     return tuple(_task_event_cli_value(event) for event in events)
 
 
-def _run_awaitable(awaitable: Coroutine[object, object, bool]) -> bool:
+def _run_awaitable(
+    awaitable: Coroutine[object, object, bool],
+    *,
+    on_interrupt: Callable[[], None] | None = None,
+) -> bool:
     result: bool | BaseException | None = None
 
     def target() -> None:
@@ -1083,7 +1106,13 @@ def _run_awaitable(awaitable: Coroutine[object, object, bool]) -> bool:
 
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(target)
-        future.result()
+        try:
+            future.result()
+        except KeyboardInterrupt:
+            if on_interrupt is not None:
+                on_interrupt()
+                future.result()
+            raise
     if isinstance(result, BaseException):
         raise result
     assert isinstance(result, bool)

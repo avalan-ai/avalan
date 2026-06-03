@@ -1,4 +1,4 @@
-from asyncio import CancelledError
+from asyncio import CancelledError, Event, TimeoutError, sleep
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -43,6 +43,7 @@ from avalan.task import (
     TaskValidationContext,
     TaskValidationIssue,
     TaskWorker,
+    TaskWorkerShutdown,
 )
 from avalan.task.error import classify_task_error
 from avalan.task.idempotency import TaskIdempotencyIdentity
@@ -66,6 +67,19 @@ class FakeTarget(TaskTargetRunner):
         self.contexts.append(context)
         await context.check_cancelled()
         return self.output
+
+
+class WaitingTarget(FakeTarget):
+    def __init__(self) -> None:
+        super().__init__("done")
+        self.started = Event()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        self.started.set()
+        while True:
+            await sleep(0)
+            await context.check_cancelled()
 
 
 class InvalidTarget(FakeTarget):
@@ -114,6 +128,9 @@ class FakeQueue:
         self.item: TaskQueueItem | None = None
         self.completed: TaskQueueCompletion | None = None
         self.retried: TaskQueueRetry | None = None
+        self.heartbeats: list[datetime] = []
+        self.heartbeat_error: BaseException | None = None
+        self.heartbeat_shutdown: TaskWorkerShutdown | None = None
 
     async def enqueue_run(
         self,
@@ -197,7 +214,34 @@ class FakeQueue:
         lease_expires_at: datetime,
         now: datetime | None = None,
     ) -> TaskQueueItem:
-        raise AssertionError("heartbeat should not be used")
+        if self.heartbeat_error is not None:
+            raise self.heartbeat_error
+        assert self.item is not None
+        assert self.item.queue_item_id == queue_item_id
+        assert self.item.claim_token == claim_token
+        heartbeat_at = now or self.now
+        self.heartbeats.append(heartbeat_at)
+        if self.heartbeat_shutdown is not None:
+            self.heartbeat_shutdown.request()
+        self.item = TaskQueueItem(
+            queue_item_id=self.item.queue_item_id,
+            run_id=self.item.run_id,
+            queue_name=self.item.queue_name,
+            state=self.item.state,
+            priority=self.item.priority,
+            available_at=self.item.available_at,
+            attempts=self.item.attempts,
+            created_at=self.item.created_at,
+            updated_at=heartbeat_at,
+            run_state=self.item.run_state,
+            claimed_at=self.item.claimed_at,
+            lease_expires_at=lease_expires_at,
+            worker_id=self.item.worker_id,
+            claim_token=self.item.claim_token,
+            heartbeat_at=heartbeat_at,
+            metadata=self.item.metadata,
+        )
+        return self.item
 
     async def complete(
         self,
@@ -435,6 +479,28 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             run_state=self.run.state,
         )
 
+    async def _claim(self) -> TaskQueueClaim:
+        claim = await self.queue.claim(
+            "default",
+            worker_id="worker-1",
+            lease_expires_at=self.now.replace(hour=1),
+            now=self.now,
+            metadata={"worker_id": "worker-1"},
+        )
+        assert claim is not None
+        return claim
+
+    def _target_context(self, claim: TaskQueueClaim) -> TaskTargetContext:
+        async def check_cancelled() -> None:
+            return None
+
+        return TaskTargetContext(
+            definition=self.definition,
+            execution=claim.attempt.context,
+            input_value={},
+            cancellation_checker=check_cancelled,
+        )
+
     async def test_process_once_completes_claimed_run(self) -> None:
         target = FakeTarget("safe output")
         worker = TaskWorker(
@@ -632,6 +698,171 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             self.queue.completed.run.result.error["code"],
             "runnable.failed",
         )
+
+    async def test_process_once_skips_claim_after_shutdown_request(
+        self,
+    ) -> None:
+        shutdown = TaskWorkerShutdown()
+        shutdown.request()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            shutdown=shutdown,
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertFalse(result.processed)
+        self.assertTrue(result.shutdown_requested)
+        assert self.queue.item is not None
+        self.assertEqual(self.queue.item.state, TaskQueueItemState.AVAILABLE)
+
+    async def test_process_once_finalizes_active_shutdown_as_cancelled(
+        self,
+    ) -> None:
+        shutdown = TaskWorkerShutdown()
+
+        class ShutdownTarget(FakeTarget):
+            async def run(self, context: TaskTargetContext) -> object:
+                self.contexts.append(context)
+                shutdown.request()
+                await context.check_cancelled()
+                return "unreachable"
+
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=ShutdownTarget(),
+            worker_id="worker-1",
+            shutdown=shutdown,
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(
+            self.queue.completed.run.state,
+            TaskRunState.CANCELLED,
+        )
+        self.assertEqual(
+            self.queue.completed.attempt.state,
+            TaskAttemptState.FAILED,
+        )
+
+    async def test_process_once_stops_heartbeat_on_shutdown(self) -> None:
+        shutdown = TaskWorkerShutdown()
+        self.queue.heartbeat_shutdown = shutdown
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=WaitingTarget(),
+            worker_id="worker-1",
+            shutdown=shutdown,
+            heartbeat_seconds=0.001,
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertEqual(len(self.queue.heartbeats), 1)
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(
+            self.queue.completed.run.state,
+            TaskRunState.CANCELLED,
+        )
+
+    async def test_process_once_finalizes_heartbeat_failure(self) -> None:
+        await self._use_definition(
+            _definition(retry=TaskRetryPolicy(max_attempts=1))
+        )
+        self.queue.heartbeat_error = RuntimeError("private heartbeat")
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=WaitingTarget(),
+            worker_id="worker-1",
+            heartbeat_seconds=0.001,
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        self.assertNotIn("private heartbeat", str(self.queue.completed.run))
+
+    async def test_run_target_timeout_cancels_target_and_shutdown_watcher(
+        self,
+    ) -> None:
+        shutdown = TaskWorkerShutdown()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=WaitingTarget(),
+            worker_id="worker-1",
+            shutdown=shutdown,
+            clock=lambda: self.now,
+        )
+        claim = await self._claim()
+
+        with self.assertRaises(TimeoutError):
+            await worker._run_target(
+                self._target_context(claim),
+                claim=claim,
+                timeout=0.001,
+            )
+
+        self.assertFalse(shutdown.requested)
+
+    async def test_run_target_returns_with_heartbeat_enabled(self) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget("safe output"),
+            worker_id="worker-1",
+            heartbeat_seconds=30,
+            clock=lambda: self.now,
+        )
+        claim = await self._claim()
+
+        output = await worker._run_target(
+            self._target_context(claim),
+            claim=claim,
+            timeout=1,
+        )
+
+        self.assertEqual(output, "safe output")
+        self.assertEqual(self.queue.heartbeats, [])
+
+    async def test_heartbeat_claim_returns_after_shutdown_request(
+        self,
+    ) -> None:
+        shutdown = TaskWorkerShutdown()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            shutdown=shutdown,
+            heartbeat_seconds=0.001,
+            clock=lambda: self.now,
+        )
+        claim = await self._claim()
+        shutdown.request()
+
+        await worker._heartbeat_claim(claim)
+
+        self.assertEqual(self.queue.heartbeats, [])
 
     async def test_check_cancelled_raises_cancelled_error(self) -> None:
         worker = TaskWorker(

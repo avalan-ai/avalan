@@ -1,4 +1,5 @@
 from argparse import Namespace
+from collections.abc import Callable
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
@@ -221,11 +222,16 @@ class _FakeTaskWorker:
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.args = args
         self.kwargs = kwargs
+        self.calls = 0
         self.instances.append(self)
 
     async def process_once(self) -> object:
+        self.calls += 1
         if self.results:
-            return self.results.pop(0)
+            result = self.results.pop(0)
+            if callable(result):
+                return result(self)
+            return result
         return SimpleNamespace(processed=False)
 
 
@@ -1094,6 +1100,78 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertIn("Task processed: run-1 succeeded", output)
         self.assertIn("Task worker processed 1 run.", output)
 
+    def test_worker_stops_after_shutdown_request(self) -> None:
+        console = Console(record=True, width=160)
+        database = _FakeResource()
+        _FakeTaskWorker.instances = []
+
+        def stop_after_first(worker: _FakeTaskWorker) -> object:
+            worker.kwargs["shutdown"].request()
+            return SimpleNamespace(
+                processed=True,
+                completion=SimpleNamespace(
+                    run=SimpleNamespace(
+                        run_id="run-1",
+                        state=TaskRunState.SUCCEEDED,
+                    )
+                ),
+                retry=None,
+            )
+
+        _FakeTaskWorker.results = [
+            stop_after_first,
+            SimpleNamespace(
+                processed=True,
+                completion=SimpleNamespace(
+                    run=SimpleNamespace(
+                        run_id="run-2",
+                        state=TaskRunState.SUCCEEDED,
+                    )
+                ),
+                retry=None,
+            ),
+        ]
+
+        with (
+            patch.object(
+                task_cmds, "_task_pgsql_database", return_value=database
+            ),
+            patch.object(task_cmds, "require_feature", return_value=()),
+            patch.object(task_cmds, "PgsqlTaskStore", return_value=object()),
+            patch.object(task_cmds, "PgsqlTaskQueue", return_value=object()),
+            patch.object(
+                task_cmds, "_agent_task_target", return_value=object()
+            ),
+            patch.object(task_cmds, "TaskWorker", _FakeTaskWorker),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            result = task_cmds.task_worker(
+                Namespace(
+                    queue="documents",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema="tasks",
+                    worker_id="worker-a",
+                    once=False,
+                    limit=2,
+                    lease_seconds=30,
+                    heartbeat_seconds=0.25,
+                    ephemeral=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertEqual(_FakeTaskWorker.instances[0].calls, 1)
+        self.assertEqual(
+            _FakeTaskWorker.instances[0].kwargs["heartbeat_seconds"],
+            0.25,
+        )
+        self.assertIn("Task processed: run-1 succeeded", output)
+        self.assertNotIn("run-2", output)
+        self.assertIn("Task worker processed 1 run.", output)
+
     def test_worker_reports_retry_and_counts_missing_run_results(
         self,
     ) -> None:
@@ -1176,6 +1254,52 @@ class CliTaskCommandShellTestCase(TestCase):
 
         self.assertFalse(result)
         self.assertIn("io.failure", console.export_text())
+
+    def test_run_awaitable_requests_interrupt_callback(self) -> None:
+        interrupted: list[bool] = []
+
+        class _Future:
+            def __init__(self, target: Callable[[], None]) -> None:
+                self.target = target
+                self.calls = 0
+
+            def result(self) -> None:
+                self.calls += 1
+                if self.calls == 1:
+                    raise KeyboardInterrupt()
+                self.target()
+
+        class _Executor:
+            def __init__(self, max_workers: int) -> None:
+                self.max_workers = max_workers
+
+            def __enter__(self) -> "_Executor":
+                return self
+
+            def __exit__(
+                self,
+                exc_type: object,
+                exc: object,
+                traceback: object,
+            ) -> None:
+                return None
+
+            def submit(self, target: Callable[[], None]) -> _Future:
+                return _Future(target)
+
+        async def complete() -> bool:
+            return True
+
+        with (
+            patch.object(task_cmds, "ThreadPoolExecutor", _Executor),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            task_cmds._run_awaitable(
+                complete(),
+                on_interrupt=lambda: interrupted.append(True),
+            )
+
+        self.assertEqual(interrupted, [True])
 
     def test_client_context_enters_database_and_stack(self) -> None:
         database = _FakeResource()

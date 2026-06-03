@@ -48,8 +48,21 @@ from .target import (
 from .usage import UsageRecord, usage_observation_from_response
 from .validation import TaskValidationError, validate_task_output
 
-from asyncio import CancelledError, wait_for
+from asyncio import (
+    FIRST_COMPLETED,
+    CancelledError,
+    Event,
+    TimeoutError,
+    create_task,
+    sleep,
+    wait,
+    wait_for,
+)
+from asyncio import (
+    Task as AsyncTask,
+)
 from collections.abc import Awaitable, Callable, Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -74,10 +87,33 @@ class TaskWorkerProcessResult:
     completion: TaskQueueCompletion | None = None
     retry: TaskQueueRetry | None = None
     output: object = None
+    shutdown_requested: bool = False
 
     @property
     def processed(self) -> bool:
         return self.claimed is not None
+
+
+class TaskWorkerShutdown:
+    def __init__(self) -> None:
+        self._requested = False
+        self._event: Event | None = None
+
+    @property
+    def requested(self) -> bool:
+        return self._requested
+
+    def request(self) -> None:
+        self._requested = True
+        if self._event is not None:
+            self._event.set()
+
+    async def wait(self) -> None:
+        if self._requested:
+            return
+        if self._event is None:
+            self._event = Event()
+        await self._event.wait()
 
 
 class TaskWorker:
@@ -98,6 +134,8 @@ class TaskWorker:
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
+        shutdown: TaskWorkerShutdown | None = None,
+        heartbeat_seconds: float | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         assert hasattr(store, "get_run")
@@ -121,9 +159,19 @@ class TaskWorker:
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
         self._observability_sink = observability_sink
+        if heartbeat_seconds is not None:
+            assert isinstance(heartbeat_seconds, int | float)
+            assert not isinstance(heartbeat_seconds, bool)
+            assert heartbeat_seconds > 0
+        self._heartbeat_seconds = heartbeat_seconds
+        if shutdown is not None:
+            assert isinstance(shutdown, TaskWorkerShutdown)
+        self._shutdown = shutdown
         self._clock = clock or _utc_now
 
     async def process_once(self) -> TaskWorkerProcessResult:
+        if self._shutdown_requested():
+            return TaskWorkerProcessResult(shutdown_requested=True)
         now = self._now()
         claim = await self._queue.claim(
             self._queue_name,
@@ -143,6 +191,7 @@ class TaskWorker:
             await self._validate_target(definition)
             output = await self._execute(
                 definition,
+                claim=claim,
                 run=run,
                 attempt=attempt,
                 sanitizer=sanitizer,
@@ -175,6 +224,7 @@ class TaskWorker:
         self,
         definition: TaskDefinition,
         *,
+        claim: TaskQueueClaim,
         run: TaskRun,
         attempt: TaskAttempt,
         sanitizer: PrivacySanitizer,
@@ -207,8 +257,9 @@ class TaskWorker:
             artifact_store=self._artifact_store,
         )
         await self._check_cancelled(run.run_id)
-        output = await wait_for(
-            self._target.run(context),
+        output = await self._run_target(
+            context,
+            claim=claim,
             timeout=definition.run.timeout_seconds,
         )
         await self._check_cancelled(run.run_id)
@@ -224,6 +275,72 @@ class TaskWorker:
         )
         await self._check_cancelled(run.run_id)
         return output
+
+    async def _run_target(
+        self,
+        context: TaskTargetContext,
+        *,
+        claim: TaskQueueClaim,
+        timeout: float | None,
+    ) -> object:
+        if self._shutdown is None and self._heartbeat_seconds is None:
+            return await wait_for(self._target.run(context), timeout=timeout)
+        target_task = create_task(self._target.run(context))
+        heartbeat_task = (
+            create_task(self._heartbeat_claim(claim))
+            if self._heartbeat_seconds is not None
+            else None
+        )
+        shutdown_task = (
+            create_task(self._shutdown.wait())
+            if self._shutdown is not None
+            else None
+        )
+        wait_tasks = {target_task}
+        if heartbeat_task is not None:
+            wait_tasks.add(heartbeat_task)
+        if shutdown_task is not None:
+            wait_tasks.add(shutdown_task)
+        try:
+            done, _pending = await wait(
+                wait_tasks,
+                timeout=timeout,
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
+                await _cancel_task(target_task)
+                raise TimeoutError()  # pragma: no cover
+            if heartbeat_task is not None and heartbeat_task in done:
+                try:
+                    heartbeat_task.result()
+                except BaseException:
+                    await _cancel_task(target_task)
+                    raise  # pragma: no cover
+            if shutdown_task is not None and shutdown_task in done:
+                await _cancel_task(target_task)
+                raise CancelledError()
+            return await target_task
+        finally:
+            if heartbeat_task is not None:
+                await _cancel_task(heartbeat_task)
+            if shutdown_task is not None:
+                await _cancel_task(shutdown_task)
+
+    async def _heartbeat_claim(self, claim: TaskQueueClaim) -> None:
+        assert self._heartbeat_seconds is not None
+        while True:
+            await sleep(self._heartbeat_seconds)
+            if self._shutdown_requested():
+                return
+            now = self._now()
+            await self._queue.heartbeat(
+                claim.queue_item.queue_item_id,
+                claim_token=claim.queue_item.claim_token or "",
+                lease_expires_at=(
+                    now + timedelta(seconds=self._lease_seconds)
+                ),
+                now=now,
+            )
 
     async def _start_claimed_attempt(
         self,
@@ -468,6 +585,8 @@ class TaskWorker:
         return self._observability_sink
 
     async def _check_cancelled(self, run_id: str) -> None:
+        if self._shutdown_requested():
+            raise CancelledError()
         run = await self._store.get_run(run_id)
         if run.state == TaskRunState.CANCEL_REQUESTED:
             raise CancelledError()
@@ -508,6 +627,17 @@ class TaskWorker:
 
     def _now(self) -> datetime:
         return self._clock()
+
+    def _shutdown_requested(self) -> bool:
+        return self._shutdown is not None and self._shutdown.requested
+
+
+async def _cancel_task(task: AsyncTask[object]) -> None:
+    if task.done():
+        return
+    task.cancel()
+    with suppress(CancelledError):
+        await task
 
 
 def _target_runner(
