@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import BinaryIO, cast
@@ -49,6 +50,7 @@ from avalan.task import (
     TaskValidationIssue,
     UsageSource,
     UsageTotals,
+    read_artifact_stream_bytes,
 )
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
@@ -179,6 +181,7 @@ class RejectingTarget(TaskTargetRunner):
 class RecordingArtifactStore:
     def __init__(self) -> None:
         self.puts: list[tuple[bytes, str | None, object]] = []
+        self.deleted: list[TaskArtifactRef] = []
 
     async def put(
         self,
@@ -200,9 +203,42 @@ class RecordingArtifactStore:
             sha256=sha256(content).hexdigest(),
         )
 
+    async def put_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        artifact_id: str | None = None,
+        media_type: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+        max_bytes: int | None = None,
+        expected_size_bytes: int | None = None,
+        expected_sha256: str | None = None,
+    ) -> TaskArtifactRef:
+        content = read_artifact_stream_bytes(
+            stream,
+            max_bytes=max_bytes,
+            expected_size_bytes=expected_size_bytes,
+            expected_sha256=expected_sha256,
+        )
+        return await self.put(
+            content,
+            artifact_id=artifact_id,
+            media_type=media_type,
+            metadata=metadata,
+        )
+
     async def open(self, ref: TaskArtifactRef) -> BinaryIO:
         _ = ref
-        raise NotImplementedError
+        return BytesIO()
+
+    async def open_stream(
+        self,
+        ref: TaskArtifactRef,
+        *,
+        max_bytes: int | None = None,
+    ) -> BinaryIO:
+        _ = max_bytes
+        return await self.open(ref)
 
     async def stat(self, ref: TaskArtifactRef) -> TaskArtifactStat:
         return TaskArtifactStat(
@@ -212,7 +248,7 @@ class RecordingArtifactStore:
         )
 
     async def delete(self, ref: TaskArtifactRef) -> None:
-        _ = ref
+        self.deleted.append(ref)
 
 
 class RecordingQueue:
@@ -294,6 +330,34 @@ class RecordingQueue:
             queue_item=item,
             artifacts=tuple(records),
         )
+
+
+class FailingQueue(RecordingQueue):
+    async def enqueue_run(
+        self,
+        request: TaskExecutionRequest,
+        *,
+        queue_name: str,
+        priority: int = 0,
+        available_at: datetime | None = None,
+        idempotency: TaskIdempotencyIdentity | None = None,
+        idempotency_expires_at: datetime | None = None,
+        artifacts: tuple[TaskQueueArtifact, ...] = (),
+        run_metadata: Mapping[str, object] | None = None,
+        queue_metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueSubmission:
+        _ = (
+            request,
+            queue_name,
+            priority,
+            available_at,
+            idempotency,
+            idempotency_expires_at,
+            artifacts,
+            run_metadata,
+            queue_metadata,
+        )
+        raise RuntimeError("private queue persistence failure")
 
 
 class TaskClientTest(IsolatedAsyncioTestCase):
@@ -775,6 +839,48 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(output.state, TaskRunState.FAILED)
         self.assertFalse(output.ready)
         self.assertEqual(output.error, {"code": "runnable.failed"})
+
+    async def test_enqueue_deletes_materialized_file_when_queue_fails(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Path(root, "private.txt").write_text(
+                "private file body",
+                encoding="utf-8",
+            )
+            store = InMemoryTaskStore()
+            queue = FailingQueue(store)
+            artifact_store = RecordingArtifactStore()
+            client = TaskClient(
+                store,
+                target=_noop_target,
+                queue=cast(TaskQueue, queue),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                definition_hash=lambda task: "client-queue-failure-hash",
+                execution_roots=(root,),
+            )
+
+            with self.assertRaises(RuntimeError) as error:
+                await client.enqueue(
+                    _definition(
+                        input_contract=TaskInputContract.file(),
+                        run=TaskRunPolicy.queued("documents"),
+                    ),
+                    input_value=TaskFileDescriptor.local_path(
+                        "private.txt",
+                        mime_type="text/plain",
+                    ),
+                )
+
+        self.assertEqual(len(artifact_store.puts), 1)
+        self.assertEqual(len(artifact_store.deleted), 1)
+        self.assertEqual(
+            artifact_store.deleted[0].artifact_id,
+            "artifact-1",
+        )
+        self.assertNotIn("private.txt", str(error.exception))
 
     async def test_cancel_requests_queued_run_cancellation(self) -> None:
         store = InMemoryTaskStore()

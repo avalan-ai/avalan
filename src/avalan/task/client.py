@@ -328,37 +328,41 @@ class TaskClient:
             hmac_provider=cast(HmacProvider, self._hmac_provider),
             window=idempotency_key or idempotency_window,
         )
-        return await self._queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_id,
-                input_summary=_snapshot_value(
-                    sanitizer.sanitize(
-                        PrivacyField.INPUT,
-                        input_summary_value,
-                    )
+        try:
+            return await self._queue.enqueue_run(
+                TaskExecutionRequest(
+                    definition_id=definition_id,
+                    input_summary=_snapshot_value(
+                        sanitizer.sanitize(
+                            PrivacyField.INPUT,
+                            input_summary_value,
+                        )
+                    ),
+                    file_summaries=self._file_summaries(
+                        sanitizer,
+                        queued_files,
+                    ),
+                    idempotency_key=(
+                        idempotency.identity_key if idempotency else None
+                    ),
+                    queue=selected_queue_name,
+                    metadata=freeze_snapshot_metadata(metadata),
                 ),
-                file_summaries=self._file_summaries(
-                    sanitizer,
-                    queued_files,
+                queue_name=selected_queue_name,
+                priority=definition.run.priority or 0,
+                available_at=available_at,
+                idempotency=idempotency,
+                idempotency_expires_at=idempotency_expires_at,
+                artifacts=(
+                    *explicit_artifacts,
+                    *self._queue_artifacts(definition, materialized_files),
                 ),
-                idempotency_key=(
-                    idempotency.identity_key if idempotency else None
-                ),
-                queue=selected_queue_name,
-                metadata=freeze_snapshot_metadata(metadata),
-            ),
-            queue_name=selected_queue_name,
-            priority=definition.run.priority or 0,
-            available_at=available_at,
-            idempotency=idempotency,
-            idempotency_expires_at=idempotency_expires_at,
-            artifacts=(
-                *explicit_artifacts,
-                *self._queue_artifacts(definition, materialized_files),
-            ),
-            run_metadata={"runner": "queue"},
-            queue_metadata=queue_metadata,
-        )
+                run_metadata={"runner": "queue"},
+                queue_metadata=queue_metadata,
+            )
+        except BaseException:
+            await self._delete_materialized_files(materialized_files)
+            raise
 
     async def wait(
         self,
@@ -547,6 +551,14 @@ class TaskClient:
             )
             for file in files
         )
+
+    async def _delete_materialized_files(
+        self,
+        files: tuple[TaskMaterializedFile, ...],
+    ) -> None:
+        for file in files:
+            assert self._artifact_store is not None
+            await self._artifact_store.delete(file.ref)
 
     def _explicit_queue_artifacts(
         self,

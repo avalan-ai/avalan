@@ -1,5 +1,7 @@
 from .artifact import (
     ArtifactStore,
+    ArtifactStoreError,
+    ArtifactStorePolicyError,
     TaskArtifactProvenance,
     TaskArtifactPurpose,
     TaskArtifactRef,
@@ -42,11 +44,11 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
-from hmac import compare_digest
 from os import O_NOFOLLOW, O_RDONLY, close, fdopen, fstat
 from os import open as open_file_descriptor
 from pathlib import Path, PurePath, PureWindowsPath
 from stat import S_ISREG
+from typing import BinaryIO, cast
 
 _REMOTE_URL_DISABLED_CODE = "feature.remote_url_file_inputs_disabled"
 
@@ -136,72 +138,30 @@ async def materialize_task_input_files(
         _resolve_descriptor_path(entry, root_paths)
         for entry in materializable_entries
     )
+    validated: list[_ValidatedInputFile] = []
     for result in resolved:
         if isinstance(result, TaskValidationIssue):
             issues.append(result)
         else:
-            issues.extend(
-                _validate_resolved_file(
-                    definition,
-                    result,
-                )
-            )
-    if issues:
-        raise TaskFileMaterializationError(tuple(issues))
-
-    verified: list[_VerifiedInputFile] = []
-    for result in resolved:
-        assert isinstance(result, _ResolvedInputFile)
-        verified_result = _read_verified_file(definition, result)
-        if isinstance(verified_result, TaskValidationIssue):
-            issues.append(verified_result)
-        else:
-            verified.append(verified_result)
+            validated_result = _validate_resolved_file(definition, result)
+            if isinstance(validated_result, tuple):
+                issues.extend(validated_result)
+            else:
+                validated.append(validated_result)
     if issues:
         raise TaskFileMaterializationError(tuple(issues))
 
     materialized: list[TaskMaterializedFile] = []
-    for verified_file in verified:
-        content = verified_file.content
-        digest = verified_file.sha256
-        descriptor = verified_file.resolved.descriptor
-        identity = _safe_file_identity(
-            descriptor,
-            digest,
-            hmac_provider=hmac_provider,
-        )
-        ref = await artifact_store.put(
-            content,
-            media_type=descriptor.mime_type,
-            metadata={
-                "identity": identity,
-                "source_kind": descriptor.source_kind.value,
-            },
-        )
-        if task_store is not None:
-            await task_store.append_artifact(
-                run_id or "",
-                ref=ref,
-                purpose=TaskArtifactPurpose.INPUT,
-                attempt_id=attempt_id,
-                provenance=TaskArtifactProvenance(
-                    operation="materialization",
-                    metadata={
-                        "identity": identity,
-                        "source_kind": descriptor.source_kind.value,
-                    },
-                ),
-                retention=TaskArtifactRetention(
-                    delete_after_days=definition.artifact.retention_days,
-                ),
-                metadata={"identity": identity},
-            )
+    for validated_file in validated:
         materialized.append(
-            TaskMaterializedFile(
-                descriptor=descriptor,
-                descriptor_path=verified_file.resolved.descriptor_path,
-                ref=ref,
-                identity=identity,
+            await _materialize_validated_file(
+                definition,
+                validated_file,
+                artifact_store=artifact_store,
+                hmac_provider=hmac_provider,
+                task_store=task_store,
+                run_id=run_id,
+                attempt_id=attempt_id,
             )
         )
     return tuple(materialized)
@@ -427,10 +387,9 @@ class _ResolvedInputFile:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _VerifiedInputFile:
+class _ValidatedInputFile:
     resolved: _ResolvedInputFile
-    content: bytes
-    sha256: str
+    size_bytes: int
 
 
 def _coerce_file_descriptor(value: object) -> TaskFileDescriptor:
@@ -571,7 +530,7 @@ def _resolve_within_root(reference: str, root: Path) -> Path | None:
         if not candidate.is_absolute():
             candidate = root / candidate
         resolved = candidate.resolve(strict=True)
-    except OSError:
+    except (OSError, ValueError):
         return None
     if not resolved.is_file() or not _is_relative_to(resolved, resolved_root):
         return None
@@ -600,7 +559,7 @@ def _validate_count_limits(
 def _validate_resolved_file(
     definition: TaskDefinition,
     resolved: _ResolvedInputFile,
-) -> tuple[TaskValidationIssue, ...]:
+) -> _ValidatedInputFile | tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
     descriptor = resolved.descriptor
     descriptor_path = resolved.descriptor_path
@@ -640,54 +599,130 @@ def _validate_resolved_file(
                 category=TaskValidationCategory.VALUE,
             )
         )
-    return tuple(issues)
+    if issues:
+        return tuple(issues)
+    return _ValidatedInputFile(resolved=resolved, size_bytes=size)
 
 
-def _read_verified_file(
+async def _materialize_validated_file(
     definition: TaskDefinition,
-    resolved: _ResolvedInputFile,
-) -> _VerifiedInputFile | TaskValidationIssue:
+    validated: _ValidatedInputFile,
+    *,
+    artifact_store: ArtifactStore,
+    hmac_provider: HmacProvider | None,
+    task_store: TaskStore | None,
+    run_id: str | None,
+    attempt_id: str | None,
+) -> TaskMaterializedFile:
+    resolved = validated.resolved
+    descriptor = resolved.descriptor
+    stream_result = _open_verified_file_stream(
+        resolved.path,
+        descriptor_path=resolved.descriptor_path,
+    )
+    if isinstance(stream_result, TaskValidationIssue):
+        raise TaskFileMaterializationError((stream_result,))
+    with stream_result as file:
+        stream = _HashingInputStream(file)
+        try:
+            ref = await artifact_store.put_stream(
+                cast(BinaryIO, stream),
+                media_type=descriptor.mime_type,
+                metadata={"source_kind": descriptor.source_kind.value},
+                max_bytes=_stream_size_limit(definition),
+                expected_size_bytes=validated.size_bytes,
+                expected_sha256=descriptor.sha256,
+            )
+        except ArtifactStorePolicyError as error:
+            issue = _validated_stream_issue(
+                resolved,
+                stream,
+                expected_size_bytes=validated.size_bytes,
+                default_to_limit=True,
+            )
+            assert issue is not None
+            raise TaskFileMaterializationError((issue,)) from error
+        except ArtifactStoreError as error:
+            issue = _validated_stream_issue(
+                resolved,
+                stream,
+                expected_size_bytes=validated.size_bytes,
+                default_to_limit=False,
+            )
+            if issue is None:
+                raise
+            raise TaskFileMaterializationError((issue,)) from error
+    digest = ref.sha256 or stream.sha256
+    identity = _safe_file_identity(
+        descriptor,
+        digest,
+        hmac_provider=hmac_provider,
+    )
+    ref = TaskArtifactRef(
+        artifact_id=ref.artifact_id,
+        store=ref.store,
+        storage_key=ref.storage_key,
+        media_type=ref.media_type,
+        size_bytes=(
+            ref.size_bytes if ref.size_bytes is not None else stream.size_bytes
+        ),
+        sha256=digest,
+        metadata=freeze_snapshot_metadata(
+            {
+                **dict(ref.metadata),
+                "identity": identity,
+                "source_kind": descriptor.source_kind.value,
+            }
+        ),
+    )
+    if task_store is not None:
+        try:
+            await task_store.append_artifact(
+                run_id or "",
+                ref=ref,
+                purpose=TaskArtifactPurpose.INPUT,
+                attempt_id=attempt_id,
+                provenance=TaskArtifactProvenance(
+                    operation="materialization",
+                    metadata={
+                        "identity": identity,
+                        "source_kind": descriptor.source_kind.value,
+                    },
+                ),
+                retention=TaskArtifactRetention(
+                    delete_after_days=definition.artifact.retention_days,
+                ),
+                metadata={"identity": identity},
+            )
+        except BaseException:
+            await artifact_store.delete(ref)
+            raise
+    return TaskMaterializedFile(
+        descriptor=descriptor,
+        descriptor_path=resolved.descriptor_path,
+        ref=ref,
+        identity=identity,
+    )
+
+
+def _open_verified_file_stream(
+    path: Path,
+    *,
+    descriptor_path: str,
+) -> BinaryIO | TaskValidationIssue:
     try:
-        content = _read_file_bytes(
-            resolved.path,
-            limit=_read_size_limit(definition, resolved.descriptor),
-        )
+        return _open_regular_file_stream(path)
     except OSError:
         return _issue(
             code="input.invalid_file",
-            path=f"{resolved.descriptor_path}.reference",
+            path=f"{descriptor_path}.reference",
             message="Task file cannot be read.",
             hint="Pass an available file within an allowlisted root.",
             category=TaskValidationCategory.VALUE,
         )
-    size_issue = _validated_content_size_issue(
-        definition,
-        resolved,
-        len(content),
-    )
-    if size_issue is not None:
-        return size_issue
-    digest = sha256(content).hexdigest()
-    expected_digest = resolved.descriptor.sha256
-    if expected_digest is not None and not compare_digest(
-        digest,
-        expected_digest,
-    ):
-        return _issue(
-            code="input.invalid_file",
-            path=f"{resolved.descriptor_path}.sha256",
-            message="Task file digest does not match the descriptor.",
-            hint="Pass a descriptor whose digest matches the file bytes.",
-            category=TaskValidationCategory.VALUE,
-        )
-    return _VerifiedInputFile(
-        resolved=resolved,
-        content=content,
-        sha256=digest,
-    )
 
 
-def _read_file_bytes(path: Path, *, limit: int | None) -> bytes:
+def _open_regular_file_stream(path: Path) -> BinaryIO:
     file_descriptor = open_file_descriptor(path, O_RDONLY | O_NOFOLLOW)
     try:
         if not S_ISREG(fstat(file_descriptor).st_mode):
@@ -695,28 +730,15 @@ def _read_file_bytes(path: Path, *, limit: int | None) -> bytes:
     except Exception:
         close(file_descriptor)
         raise
-    with fdopen(file_descriptor, "rb") as file:
-        if limit is None:
-            return file.read()
-        content = bytearray()
-        while len(content) <= limit:
-            chunk = file.read(limit + 1 - len(content))
-            if not chunk:
-                break
-            content.extend(chunk)
-            if len(content) > limit:
-                break
-        return bytes(content)
+    return fdopen(file_descriptor, "rb")
 
 
-def _read_size_limit(
+def _stream_size_limit(
     definition: TaskDefinition,
-    descriptor: TaskFileDescriptor,
 ) -> int | None:
     limits = tuple(
         limit
         for limit in (
-            descriptor.size_bytes,
             definition.limits.file_bytes,
             definition.artifact.max_bytes,
         )
@@ -727,14 +749,24 @@ def _read_size_limit(
     return min(limits)
 
 
-def _validated_content_size_issue(
-    definition: TaskDefinition,
+def _validated_stream_issue(
     resolved: _ResolvedInputFile,
-    size: int,
+    stream: "_HashingInputStream",
+    *,
+    expected_size_bytes: int,
+    default_to_limit: bool,
 ) -> TaskValidationIssue | None:
     descriptor = resolved.descriptor
     descriptor_path = resolved.descriptor_path
-    if descriptor.size_bytes is not None and size != descriptor.size_bytes:
+    if stream.read_failed:
+        return _issue(
+            code="input.invalid_file",
+            path=f"{descriptor_path}.reference",
+            message="Task file cannot be read.",
+            hint="Pass an available file within an allowlisted root.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if stream.read_complete and stream.size_bytes != expected_size_bytes:
         return _issue(
             code="input.invalid_file",
             path=f"{descriptor_path}.size_bytes",
@@ -742,11 +774,19 @@ def _validated_content_size_issue(
             hint="Pass a descriptor whose size matches the file bytes.",
             category=TaskValidationCategory.VALUE,
         )
-    limits = (
-        definition.limits.file_bytes,
-        definition.artifact.max_bytes,
-    )
-    if any(limit is not None and size > limit for limit in limits):
+    if (
+        stream.read_complete
+        and descriptor.sha256 is not None
+        and stream.sha256 != descriptor.sha256
+    ):
+        return _issue(
+            code="input.invalid_file",
+            path=f"{descriptor_path}.sha256",
+            message="Task file digest does not match the descriptor.",
+            hint="Pass a descriptor whose digest matches the file bytes.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if default_to_limit:
         return _issue(
             code="input.invalid_file",
             path=f"{descriptor_path}.size_bytes",
@@ -755,6 +795,32 @@ def _validated_content_size_issue(
             category=TaskValidationCategory.VALUE,
         )
     return None
+
+
+class _HashingInputStream:
+    def __init__(self, stream: BinaryIO) -> None:
+        self._stream = stream
+        self._digest = sha256()
+        self.size_bytes = 0
+        self.read_failed = False
+        self.read_complete = False
+
+    @property
+    def sha256(self) -> str:
+        return self._digest.hexdigest()
+
+    def read(self, size: int = -1) -> bytes:
+        try:
+            chunk = self._stream.read(size)
+        except OSError:
+            self.read_failed = True
+            raise
+        assert isinstance(chunk, bytes), "input file stream must return bytes"
+        if not chunk:
+            self.read_complete = True
+        self.size_bytes += len(chunk)
+        self._digest.update(chunk)
+        return chunk
 
 
 def _safe_file_identity(

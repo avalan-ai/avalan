@@ -1,17 +1,26 @@
 from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
 from avalan.task import (
+    ArtifactStoreError,
+    ArtifactStorePolicyError,
     HmacProvider,
     PrivacySanitizationError,
     TaskArtifactPolicy,
+    TaskArtifactProvenance,
     TaskArtifactPurpose,
+    TaskArtifactRecord,
+    TaskArtifactRef,
+    TaskArtifactRetention,
+    TaskArtifactStat,
+    TaskArtifactState,
     TaskDefinition,
     TaskExecutionRequest,
     TaskExecutionTarget,
@@ -28,8 +37,10 @@ from avalan.task import (
     TaskProviderReferenceKind,
     TaskRemoteUrlPolicy,
     materialize_task_input_files,
+    read_artifact_stream_bytes,
     task_file_descriptors_from_input,
 )
+from avalan.task import materialization as task_materialization
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.materialization import (
     task_provider_reference_input_files_from_input,
@@ -172,6 +183,169 @@ class StatFailingPath:
 
 class DirectoryStat:
     st_mode = 0o040000
+
+
+class FailingReadStream:
+    def read(self, size: int = -1) -> bytes:
+        _ = size
+        raise OSError("private path failure")
+
+    def __enter__(self) -> "FailingReadStream":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> None:
+        _ = exc_type, exc, traceback
+
+
+class StreamingOnlyArtifactStore:
+    def __init__(self) -> None:
+        self.puts = 0
+        self.streams: list[tuple[int | None, int | None, str | None]] = []
+        self.deleted: list[TaskArtifactRef] = []
+
+    async def put(
+        self,
+        content: bytes,
+        *,
+        artifact_id: str | None = None,
+        media_type: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskArtifactRef:
+        _ = content, artifact_id, media_type, metadata
+        self.puts += 1
+        raise AssertionError("put bytes should not be used")
+
+    async def put_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        artifact_id: str | None = None,
+        media_type: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+        max_bytes: int | None = None,
+        expected_size_bytes: int | None = None,
+        expected_sha256: str | None = None,
+    ) -> TaskArtifactRef:
+        _ = metadata
+        self.streams.append((max_bytes, expected_size_bytes, expected_sha256))
+        content = read_artifact_stream_bytes(
+            stream,
+            max_bytes=max_bytes,
+            expected_size_bytes=expected_size_bytes,
+            expected_sha256=expected_sha256,
+        )
+        artifact_name = artifact_id or f"artifact-{len(self.streams)}"
+        return TaskArtifactRef(
+            artifact_id=artifact_name,
+            store="memory",
+            storage_key=f"artifacts/{artifact_name}",
+            media_type=media_type,
+            size_bytes=len(content),
+            sha256=sha256(content).hexdigest(),
+        )
+
+    async def open(self, ref: TaskArtifactRef) -> BinaryIO:
+        _ = ref
+        return BytesIO()
+
+    async def open_stream(
+        self,
+        ref: TaskArtifactRef,
+        *,
+        max_bytes: int | None = None,
+    ) -> BinaryIO:
+        _ = max_bytes
+        return await self.open(ref)
+
+    async def stat(self, ref: TaskArtifactRef) -> TaskArtifactStat:
+        return TaskArtifactStat(
+            ref=ref,
+            size_bytes=ref.size_bytes or 0,
+            sha256=ref.sha256 or ("0" * 64),
+        )
+
+    async def delete(self, ref: TaskArtifactRef) -> None:
+        self.deleted.append(ref)
+
+
+class PolicyFailingArtifactStore(StreamingOnlyArtifactStore):
+    async def put_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        artifact_id: str | None = None,
+        media_type: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+        max_bytes: int | None = None,
+        expected_size_bytes: int | None = None,
+        expected_sha256: str | None = None,
+    ) -> TaskArtifactRef:
+        _ = (
+            artifact_id,
+            media_type,
+            metadata,
+            max_bytes,
+            expected_size_bytes,
+            expected_sha256,
+        )
+        while stream.read(2):
+            pass
+        raise ArtifactStorePolicyError("artifact backend policy failure")
+
+
+class BackendFailingArtifactStore(StreamingOnlyArtifactStore):
+    async def put_stream(
+        self,
+        stream: BinaryIO,
+        *,
+        artifact_id: str | None = None,
+        media_type: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+        max_bytes: int | None = None,
+        expected_size_bytes: int | None = None,
+        expected_sha256: str | None = None,
+    ) -> TaskArtifactRef:
+        _ = (
+            stream,
+            artifact_id,
+            media_type,
+            metadata,
+            max_bytes,
+            expected_size_bytes,
+            expected_sha256,
+        )
+        raise ArtifactStoreError("artifact backend failed")
+
+
+class FailingArtifactAppendStore(InMemoryTaskStore):
+    async def append_artifact(
+        self,
+        run_id: str,
+        *,
+        ref: TaskArtifactRef,
+        purpose: TaskArtifactPurpose,
+        state: TaskArtifactState | None = None,
+        attempt_id: str | None = None,
+        provenance: TaskArtifactProvenance | None = None,
+        retention: TaskArtifactRetention | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskArtifactRecord:
+        _ = (
+            run_id,
+            ref,
+            purpose,
+            state,
+            attempt_id,
+            provenance,
+            retention,
+            metadata,
+        )
+        raise RuntimeError("private artifact metadata failure")
 
 
 class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
@@ -416,6 +590,81 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             finally:
                 reader.close()
 
+    async def test_local_file_materialization_uses_streaming_store_contract(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root:
+            Path(root, "input.txt").write_bytes(b"private text")
+            store = StreamingOnlyArtifactStore()
+
+            files = await materialize_task_input_files(
+                _definition(limits=TaskLimitsPolicy(file_bytes=20)),
+                TaskFileDescriptor.local_path(
+                    "input.txt",
+                    mime_type="text/plain",
+                    size_bytes=12,
+                    sha256=sha256(b"private text").hexdigest(),
+                ),
+                roots=(root,),
+                artifact_store=store,
+            )
+
+        self.assertEqual(store.puts, 0)
+        self.assertEqual(
+            store.streams,
+            [(20, 12, sha256(b"private text").hexdigest())],
+        )
+        self.assertEqual(files[0].ref.artifact_id, "artifact-1")
+        self.assertEqual(files[0].ref.size_bytes, 12)
+        self.assertEqual(
+            files[0].ref.sha256, sha256(b"private text").hexdigest()
+        )
+
+    async def test_streaming_policy_failure_returns_size_diagnostic(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root:
+            Path(root, "input.txt").write_bytes(b"private text")
+
+            with self.assertRaises(TaskFileMaterializationError) as error:
+                await materialize_task_input_files(
+                    _definition(limits=TaskLimitsPolicy(file_bytes=20)),
+                    TaskFileDescriptor.local_path(
+                        "input.txt",
+                        mime_type="text/plain",
+                        size_bytes=12,
+                    ),
+                    roots=(root,),
+                    artifact_store=PolicyFailingArtifactStore(),
+                )
+
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues],
+            ["input.size_bytes"],
+        )
+        self.assertNotIn("private text", str(error.exception))
+
+    async def test_backend_write_failure_is_not_recast_as_input_mismatch(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root:
+            Path(root, "input.txt").write_bytes(b"private text")
+
+            with self.assertRaises(ArtifactStoreError) as error:
+                await materialize_task_input_files(
+                    _definition(limits=TaskLimitsPolicy(file_bytes=20)),
+                    TaskFileDescriptor.local_path(
+                        "input.txt",
+                        mime_type="text/plain",
+                        size_bytes=12,
+                    ),
+                    roots=(root,),
+                    artifact_store=BackendFailingArtifactStore(),
+                )
+
+        self.assertNotIn("input.txt", str(error.exception))
+        self.assertNotIn("private text", str(error.exception))
+
     async def test_mapping_descriptor_materializes_with_redacted_identity(
         self,
     ) -> None:
@@ -614,6 +863,40 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             self.assertEqual(records[0].artifact_id, "artifact-1")
             self.assertNotIn("input.txt", str(records[0].summary()))
 
+    async def test_metadata_append_failure_deletes_uploaded_artifact(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root:
+            Path(root, "input.txt").write_bytes(b"private text")
+            artifact_store = StreamingOnlyArtifactStore()
+            task_store = FailingArtifactAppendStore(id_factory=_id_factory())
+            definition = _definition()
+            await task_store.register_definition(
+                definition,
+                definition_hash="definition-1",
+            )
+            run = await task_store.create_run(
+                TaskExecutionRequest(definition_id="definition-1")
+            )
+
+            with self.assertRaises(RuntimeError) as error:
+                await materialize_task_input_files(
+                    definition,
+                    TaskFileDescriptor.local_path(
+                        "input.txt",
+                        mime_type="text/plain",
+                    ),
+                    roots=(root,),
+                    artifact_store=artifact_store,
+                    hmac_provider=cast(HmacProvider, StaticHmacProvider()),
+                    task_store=task_store,
+                    run_id=run.run_id,
+                )
+
+        self.assertEqual(len(artifact_store.deleted), 1)
+        self.assertEqual(artifact_store.deleted[0].artifact_id, "artifact-1")
+        self.assertNotIn("input.txt", str(error.exception))
+
     async def test_malformed_descriptor_returns_existing_validation_issues(
         self,
     ) -> None:
@@ -811,6 +1094,18 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
                     mime_type="text/plain",
                 ),
                 TaskFileDescriptor.local_path(
+                    "..\\outside\\secret.txt",
+                    mime_type="text/plain",
+                ),
+                TaskFileDescriptor.local_path(
+                    str(Path(outside, "secret.txt")),
+                    mime_type="text/plain",
+                ),
+                TaskFileDescriptor.local_path(
+                    "safe\x00secret.txt",
+                    mime_type="text/plain",
+                ),
+                TaskFileDescriptor.local_path(
                     "link/secret.txt",
                     mime_type="text/plain",
                 ),
@@ -842,15 +1137,16 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             outside_path = Path(outside, "secret.txt")
             input_path.write_bytes(b"safe text")
             outside_path.write_bytes(b"private text")
+            open_stream = task_materialization._open_regular_file_stream
 
-            def mutate_after_validation(*_: object) -> tuple[object, ...]:
+            def mutate_before_open(path: Path) -> BinaryIO:
                 input_path.unlink()
                 input_path.symlink_to(outside_path)
-                return ()
+                return open_stream(path)
 
             with patch(
-                "avalan.task.materialization._validate_resolved_file",
-                side_effect=mutate_after_validation,
+                "avalan.task.materialization._open_regular_file_stream",
+                side_effect=mutate_before_open,
             ):
                 with self.assertRaises(TaskFileMaterializationError) as error:
                     await materialize_task_input_files(
@@ -992,14 +1288,15 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
             input_path = Path(root, "secret.txt")
             input_path.write_bytes(b"1234")
+            open_stream = task_materialization._open_regular_file_stream
 
-            def mutate_after_validation(*_: object) -> tuple[object, ...]:
+            def mutate_before_open(path: Path) -> BinaryIO:
                 input_path.write_bytes(b"12345-private")
-                return ()
+                return open_stream(path)
 
             with patch(
-                "avalan.task.materialization._validate_resolved_file",
-                side_effect=mutate_after_validation,
+                "avalan.task.materialization._open_regular_file_stream",
+                side_effect=mutate_before_open,
             ):
                 with self.assertRaises(TaskFileMaterializationError) as error:
                     await materialize_task_input_files(
@@ -1032,14 +1329,15 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
             input_path = Path(root, "secret.txt")
             input_path.write_bytes(b"1234")
+            open_stream = task_materialization._open_regular_file_stream
 
-            def mutate_after_validation(*_: object) -> tuple[object, ...]:
+            def mutate_before_open(path: Path) -> BinaryIO:
                 input_path.write_bytes(b"12345")
-                return ()
+                return open_stream(path)
 
             with patch(
-                "avalan.task.materialization._validate_resolved_file",
-                side_effect=mutate_after_validation,
+                "avalan.task.materialization._open_regular_file_stream",
+                side_effect=mutate_before_open,
             ):
                 with self.assertRaises(TaskFileMaterializationError) as error:
                     await materialize_task_input_files(
@@ -1072,8 +1370,8 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             Path(root, "secret.txt").write_bytes(b"private text")
 
             with patch(
-                "avalan.task.materialization._read_file_bytes",
-                side_effect=OSError("private path failure"),
+                "avalan.task.materialization._open_regular_file_stream",
+                return_value=FailingReadStream(),
             ):
                 with self.assertRaises(TaskFileMaterializationError) as error:
                     await materialize_task_input_files(
