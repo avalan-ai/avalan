@@ -23,6 +23,7 @@ from .queue import (
     TaskQueueAbandonment,
     TaskQueueClaim,
     TaskQueueCompletion,
+    TaskQueueConflictError,
     TaskQueueRetry,
 )
 from .runner import (
@@ -94,6 +95,7 @@ class TaskWorkerProcessResult:
     abandonment: TaskQueueAbandonment | None = None
     output: object = None
     shutdown_requested: bool = False
+    lease_lost: bool = False
 
     @property
     def processed(self) -> bool:
@@ -203,33 +205,51 @@ class TaskWorker:
                 sanitizer=sanitizer,
             )
         except _TaskWorkerShutdownRequested:
-            abandonment = await self._finalize_shutdown(
-                definition,
-                claim=claim,
-            )
+            try:
+                abandonment = await self._finalize_shutdown(
+                    definition,
+                    claim=claim,
+                )
+            except TaskQueueConflictError:
+                return TaskWorkerProcessResult(
+                    claimed=claim,
+                    shutdown_requested=True,
+                    lease_lost=True,
+                )
             return TaskWorkerProcessResult(
                 claimed=claim,
                 abandonment=abandonment,
                 shutdown_requested=True,
             )
+        except TaskQueueConflictError:
+            return TaskWorkerProcessResult(claimed=claim, lease_lost=True)
         except (KeyboardInterrupt, SystemExit):  # pragma: no cover
             raise
         except BaseException as error:
-            retry = await self._finalize_failure(
+            try:
+                retry = await self._finalize_failure(
+                    definition,
+                    claim=claim,
+                    attempt=attempt,
+                    sanitizer=sanitizer,
+                    error=error,
+                )
+            except TaskQueueConflictError:
+                return TaskWorkerProcessResult(
+                    claimed=claim,
+                    lease_lost=True,
+                )
+            return TaskWorkerProcessResult(claimed=claim, retry=retry)
+        try:
+            completion = await self._complete_success(
                 definition,
                 claim=claim,
                 attempt=attempt,
                 sanitizer=sanitizer,
-                error=error,
+                output=output,
             )
-            return TaskWorkerProcessResult(claimed=claim, retry=retry)
-        completion = await self._complete_success(
-            definition,
-            claim=claim,
-            attempt=attempt,
-            sanitizer=sanitizer,
-            output=output,
-        )
+        except TaskQueueConflictError:
+            return TaskWorkerProcessResult(claimed=claim, lease_lost=True)
         return TaskWorkerProcessResult(
             claimed=claim,
             completion=completion,

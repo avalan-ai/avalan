@@ -1,3 +1,5 @@
+from asyncio import Event as AsyncEvent
+from asyncio import sleep
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -40,6 +42,7 @@ from avalan.task import (
     TaskQueueArtifact,
     TaskQueueClaim,
     TaskQueueCompletion,
+    TaskQueueConflictError,
     TaskQueueDepth,
     TaskQueueHealth,
     TaskQueueItem,
@@ -140,6 +143,26 @@ class TextTarget(TaskTargetRunner):
         self.inputs.append(context.input_value)
         await context.check_cancelled()
         return "public answer"
+
+
+class HeartbeatWaitingTarget(TaskTargetRunner):
+    def __init__(self) -> None:
+        self.started = AsyncEvent()
+        self.inputs: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.inputs.append(context.input_value)
+        self.started.set()
+        while True:
+            await sleep(0)
 
 
 class StructuredQueueTarget(TaskTargetRunner):
@@ -279,6 +302,8 @@ class InMemoryTaskQueue:
         self.items: dict[str, TaskQueueItem] = {}
         self.items_by_run_id: dict[str, str] = {}
         self.next_id = 1
+        self.heartbeat_error: BaseException | None = None
+        self.heartbeats: list[datetime] = []
 
     async def enqueue_run(
         self,
@@ -451,7 +476,20 @@ class InMemoryTaskQueue:
         lease_expires_at: datetime,
         now: datetime | None = None,
     ) -> TaskQueueItem:
-        raise AssertionError("heartbeat should not be used")
+        if self.heartbeat_error is not None:
+            raise self.heartbeat_error
+        item = self.items[queue_item_id]
+        assert item.claim_token == claim_token
+        heartbeat_at = now or self.clock.now
+        self.heartbeats.append(heartbeat_at)
+        updated = replace(
+            item,
+            lease_expires_at=lease_expires_at,
+            heartbeat_at=heartbeat_at,
+            updated_at=heartbeat_at,
+        )
+        self.items[queue_item_id] = updated
+        return updated
 
     async def complete(
         self,
@@ -1410,6 +1448,51 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertIn("cancellation", str(output.error))
         self.assertNotIn("private running prompt", str(inspection.as_dict()))
 
+    async def test_heartbeat_claim_conflict_does_not_finalize_run(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = HeartbeatWaitingTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(
+            store,
+            queue,
+            target=target,
+            heartbeat_seconds=0.001,
+            clock=clock,
+        )
+        queue.heartbeat_error = TaskQueueConflictError("private stale token")
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="private heartbeat prompt",
+        )
+        result = await worker.process_once()
+        inspection = await client.inspect(submission.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.lease_lost)
+        self.assertIsNone(result.completion)
+        self.assertIsNone(result.retry)
+        self.assertIsNone(result.abandonment)
+        self.assertEqual(inspection.run.state, TaskRunState.RUNNING)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.RUNNING,
+        )
+        self.assertEqual(depth.claimed, 1)
+        self.assertEqual(depth.dead, 0)
+        self.assertEqual(len(target.inputs), 1)
+        self.assertNotIn("private stale token", str(inspection.as_dict()))
+        self.assertNotIn(
+            "private heartbeat prompt",
+            str(inspection.as_dict()),
+        )
+
     async def test_worker_shutdown_abandons_and_reclaims_queue_task(
         self,
     ) -> None:
@@ -2311,6 +2394,7 @@ def _worker(
     queue_name: str = "default",
     artifact_store: LocalArtifactStore | None = None,
     shutdown: TaskWorkerShutdown | None = None,
+    heartbeat_seconds: float | None = None,
     clock: Clock,
 ) -> TaskWorker:
     return TaskWorker(
@@ -2321,6 +2405,7 @@ def _worker(
         queue_name=queue_name,
         artifact_store=artifact_store,
         shutdown=shutdown,
+        heartbeat_seconds=heartbeat_seconds,
         clock=lambda: clock.now,
     )
 

@@ -29,6 +29,7 @@ from avalan.task import (
     TaskQueueArtifact,
     TaskQueueClaim,
     TaskQueueCompletion,
+    TaskQueueConflictError,
     TaskQueueDepth,
     TaskQueueHealth,
     TaskQueueItem,
@@ -936,6 +937,127 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         assert self.queue.completed is not None
         self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
         self.assertNotIn("private heartbeat", str(self.queue.completed.run))
+
+    async def test_process_once_stops_after_heartbeat_claim_conflict(
+        self,
+    ) -> None:
+        self.queue.heartbeat_error = TaskQueueConflictError(
+            "private stale claim"
+        )
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=WaitingTarget(),
+            worker_id="worker-1",
+            heartbeat_seconds=0.001,
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.lease_lost)
+        self.assertIsNone(result.completion)
+        self.assertIsNone(result.retry)
+        self.assertIsNone(result.abandonment)
+        self.assertIsNone(self.queue.completed)
+        self.assertIsNone(self.queue.retried)
+        self.assertIsNone(self.queue.abandoned)
+        self.assertEqual(
+            (await self.store.get_run(self.run.run_id)).state,
+            TaskRunState.RUNNING,
+        )
+        attempts = await self.store.list_attempts(self.run.run_id)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0].state, TaskAttemptState.RUNNING)
+        self.assertNotIn("private stale claim", str(result))
+
+    async def test_process_once_stops_after_shutdown_finalize_conflict(
+        self,
+    ) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        with (
+            patch.object(
+                worker,
+                "_execute",
+                side_effect=_TaskWorkerShutdownRequested(),
+            ),
+            patch.object(
+                worker,
+                "_finalize_shutdown",
+                side_effect=TaskQueueConflictError("private shutdown claim"),
+            ),
+        ):
+            result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.shutdown_requested)
+        self.assertTrue(result.lease_lost)
+        self.assertIsNone(result.abandonment)
+        self.assertNotIn("private shutdown claim", str(result))
+
+    async def test_process_once_stops_after_failure_finalize_conflict(
+        self,
+    ) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        with (
+            patch.object(
+                worker,
+                "_execute",
+                side_effect=RuntimeError("private target failure"),
+            ),
+            patch.object(
+                worker,
+                "_finalize_failure",
+                side_effect=TaskQueueConflictError("private retry claim"),
+            ),
+        ):
+            result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.lease_lost)
+        self.assertIsNone(result.retry)
+        self.assertNotIn("private retry claim", str(result))
+
+    async def test_process_once_stops_after_success_complete_conflict(
+        self,
+    ) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        with (
+            patch.object(worker, "_execute", return_value="safe output"),
+            patch.object(
+                worker,
+                "_complete_success",
+                side_effect=TaskQueueConflictError("private complete claim"),
+            ),
+        ):
+            result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.lease_lost)
+        self.assertIsNone(result.completion)
+        self.assertNotIn("private complete claim", str(result))
 
     async def test_run_target_timeout_cancels_target_and_shutdown_watcher(
         self,
