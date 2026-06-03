@@ -301,7 +301,7 @@ class TaskWorker:
             claim=claim,
             timeout=definition.run.timeout_seconds,
         )
-        await self._check_run_cancelled(run.run_id)
+        await self._check_cancelled(run.run_id)
         issues = validate_task_output(definition, output)
         if issues:
             raise TaskValidationError(issues)
@@ -312,7 +312,7 @@ class TaskWorker:
             attempt=attempt,
             sanitizer=sanitizer,
         )
-        await self._check_run_cancelled(run.run_id)
+        await self._check_cancelled(run.run_id)
         return output
 
     async def _run_target(

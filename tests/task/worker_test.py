@@ -101,6 +101,17 @@ class PassiveWaitingTarget(FakeTarget):
             await sleep(0)
 
 
+class ShutdownReturningTarget(FakeTarget):
+    def __init__(self, shutdown: TaskWorkerShutdown) -> None:
+        super().__init__("done")
+        self.shutdown = shutdown
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        self.shutdown.request()
+        return "safe output"
+
+
 class DelayedWaitShutdown(TaskWorkerShutdown):
     async def wait(self) -> None:
         await sleep(1)
@@ -908,6 +919,41 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             result.abandonment.queue_item.state,
             TaskQueueItemState.DEAD,
         )
+
+    async def test_process_once_abandons_shutdown_after_target_return(
+        self,
+    ) -> None:
+        shutdown = TaskWorkerShutdown()
+        target = ShutdownReturningTarget(shutdown)
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            shutdown=shutdown,
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.shutdown_requested)
+        self.assertIsNotNone(result.abandonment)
+        assert result.abandonment is not None
+        self.assertIsNone(result.completion)
+        self.assertIsNone(self.queue.completed)
+        self.assertEqual(
+            result.abandonment.run.state,
+            TaskRunState.QUEUED,
+        )
+        self.assertIsNone(result.abandonment.run.result)
+        self.assertEqual(
+            result.abandonment.attempt.state,
+            TaskAttemptState.ABANDONED,
+        )
+        assert self.queue.item is not None
+        self.assertEqual(self.queue.item.state, TaskQueueItemState.AVAILABLE)
+        self.assertEqual(len(target.contexts), 1)
 
     async def test_process_once_stops_heartbeat_on_shutdown(self) -> None:
         shutdown = TaskWorkerShutdown()

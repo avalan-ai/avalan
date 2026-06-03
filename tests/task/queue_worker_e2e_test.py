@@ -291,6 +291,28 @@ class ShutdownOnceTarget(TaskTargetRunner):
         return "public answer"
 
 
+class ShutdownReturningOnceTarget(TaskTargetRunner):
+    def __init__(self, shutdown: TaskWorkerShutdown) -> None:
+        self.shutdown = shutdown
+        self.inputs: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.inputs.append(context.input_value)
+        if len(self.inputs) == 1:
+            self.shutdown.request()
+            return "unused"
+        await context.check_cancelled()
+        return "public answer"
+
+
 class InMemoryTaskQueue:
     def __init__(
         self,
@@ -1599,6 +1621,66 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(final_depth.dead, 0)
         self.assertEqual(len(target.inputs), 2)
         self.assertNotIn("private shutdown prompt", str(inspection.as_dict()))
+
+    async def test_worker_shutdown_after_target_return_reclaims_task(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        shutdown = TaskWorkerShutdown()
+        target = ShutdownReturningOnceTarget(shutdown)
+        client = _client(store, queue, target=target, clock=clock)
+        stopping_worker = _worker(
+            store,
+            queue,
+            target=target,
+            shutdown=shutdown,
+            clock=clock,
+        )
+        replacement_worker = _worker(
+            store,
+            queue,
+            target=target,
+            clock=clock,
+        )
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="private late shutdown prompt",
+        )
+        abandoned = await stopping_worker.process_once()
+        pending = await client.inspect(submission.run.run_id)
+        pending_depth = await queue.depth("default")
+        completed = await replacement_worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(abandoned.processed)
+        self.assertTrue(abandoned.shutdown_requested)
+        self.assertIsNotNone(abandoned.abandonment)
+        self.assertIsNone(abandoned.completion)
+        self.assertEqual(pending.run.state, TaskRunState.QUEUED)
+        self.assertEqual(len(pending.attempts), 1)
+        self.assertEqual(
+            pending.attempts[0].state,
+            TaskAttemptState.ABANDONED,
+        )
+        self.assertEqual(pending_depth.available, 1)
+        self.assertTrue(completed.processed)
+        self.assertIsNotNone(completed.completion)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(inspection.attempts), 2)
+        self.assertEqual(
+            inspection.attempts[1].state,
+            TaskAttemptState.SUCCEEDED,
+        )
+        self.assertEqual(len(target.inputs), 2)
+        self.assertNotIn(
+            "private late shutdown prompt",
+            str(inspection.as_dict()),
+        )
 
     async def test_scheduled_submission_waits_until_available(
         self,
