@@ -327,6 +327,7 @@ class InMemoryTaskQueue:
         self.next_id = 1
         self.heartbeat_error: BaseException | None = None
         self.heartbeats: list[datetime] = []
+        self.abandon_after_claim = False
 
     async def enqueue_run(
         self,
@@ -484,11 +485,20 @@ class InMemoryTaskQueue:
                 metadata=metadata or {},
             )
             self.items[item.queue_item_id] = updated
-            return TaskQueueClaim(
+            claim = TaskQueueClaim(
                 queue_item=updated,
                 run=claimed,
                 attempt=attempt,
             )
+            if self.abandon_after_claim:
+                await self.abandon(
+                    updated.queue_item_id,
+                    claim_token=claim_token,
+                    max_attempts=2,
+                    now=current_time,
+                    metadata=metadata,
+                )
+            return claim
         return None
 
     async def heartbeat(
@@ -1513,6 +1523,62 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private stale token", str(inspection.as_dict()))
         self.assertNotIn(
             "private heartbeat prompt",
+            str(inspection.as_dict()),
+        )
+
+    async def test_stale_claim_before_start_waits_for_fresh_claim(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = TextTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        first_worker = _worker(store, queue, target=target, clock=clock)
+        second_worker = _worker(store, queue, target=target, clock=clock)
+        queue.abandon_after_claim = True
+
+        submission = await client.enqueue(
+            _definition(),
+            input_value="private stale claim prompt",
+        )
+        stale = await first_worker.process_once()
+        pending = await client.inspect(submission.run.run_id)
+        pending_depth = await queue.depth("default")
+        target_inputs_after_stale = tuple(target.inputs)
+        queue.abandon_after_claim = False
+        completed = await second_worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        final_depth = await queue.depth("default")
+
+        self.assertTrue(stale.processed)
+        self.assertTrue(stale.lease_lost)
+        self.assertIsNone(stale.completion)
+        self.assertIsNone(stale.retry)
+        self.assertIsNone(stale.abandonment)
+        self.assertEqual(pending.run.state, TaskRunState.QUEUED)
+        self.assertEqual(len(pending.attempts), 1)
+        self.assertEqual(
+            pending.attempts[0].state,
+            TaskAttemptState.ABANDONED,
+        )
+        self.assertEqual(pending_depth.available, 1)
+        self.assertEqual(target_inputs_after_stale, ())
+        self.assertTrue(completed.processed)
+        self.assertIsNotNone(completed.completion)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(inspection.attempts), 2)
+        self.assertEqual(
+            inspection.attempts[1].state,
+            TaskAttemptState.SUCCEEDED,
+        )
+        self.assertEqual(len(target.inputs), 1)
+        self.assertEqual(final_depth.active, 0)
+        self.assertEqual(final_depth.dead, 0)
+        self.assertNotIn(
+            "private stale claim prompt",
             str(inspection.as_dict()),
         )
 

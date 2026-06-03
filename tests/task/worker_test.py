@@ -39,6 +39,7 @@ from avalan.task import (
     TaskRetryPolicy,
     TaskRunPolicy,
     TaskRunState,
+    TaskStoreConflictError,
     TaskTargetContext,
     TaskTargetRunner,
     TaskValidationCategory,
@@ -167,6 +168,7 @@ class FakeQueue:
         self.heartbeats: list[datetime] = []
         self.heartbeat_error: BaseException | None = None
         self.heartbeat_shutdown: TaskWorkerShutdown | None = None
+        self.abandon_after_claim = False
 
     async def enqueue_run(
         self,
@@ -240,7 +242,16 @@ class FakeQueue:
             heartbeat_at=run.claim.heartbeat_at if run.claim else None,
             metadata=metadata or {},
         )
-        return TaskQueueClaim(queue_item=self.item, run=run, attempt=attempt)
+        claim = TaskQueueClaim(queue_item=self.item, run=run, attempt=attempt)
+        if self.abandon_after_claim:
+            await self.abandon(
+                self.item.queue_item_id,
+                claim_token=claim_token,
+                max_attempts=2,
+                now=now or self.now,
+                metadata=metadata,
+            )
+        return claim
 
     async def heartbeat(
         self,
@@ -822,6 +833,61 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertTrue(result.shutdown_requested)
         assert self.queue.item is not None
         self.assertEqual(self.queue.item.state, TaskQueueItemState.AVAILABLE)
+
+    async def test_process_once_stops_after_claim_expires_before_start(
+        self,
+    ) -> None:
+        self.queue.abandon_after_claim = True
+        target = FakeTarget()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.lease_lost)
+        self.assertIsNone(result.completion)
+        self.assertIsNone(result.retry)
+        self.assertIsNone(result.abandonment)
+        self.assertEqual(target.contexts, [])
+        assert self.queue.item is not None
+        self.assertEqual(self.queue.item.state, TaskQueueItemState.AVAILABLE)
+        self.assertEqual(
+            (await self.store.get_run(self.run.run_id)).state,
+            TaskRunState.QUEUED,
+        )
+        attempts = await self.store.list_attempts(self.run.run_id)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0].state, TaskAttemptState.ABANDONED)
+
+    async def test_process_once_sanitizes_start_claim_conflict(
+        self,
+    ) -> None:
+        target = FakeTarget()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        with patch.object(
+            worker,
+            "_start_claimed_attempt",
+            side_effect=TaskStoreConflictError("private stale start"),
+        ):
+            result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertTrue(result.lease_lost)
+        self.assertEqual(target.contexts, [])
+        self.assertNotIn("private stale start", str(result))
 
     async def test_rejects_heartbeat_interval_not_shorter_than_lease(
         self,

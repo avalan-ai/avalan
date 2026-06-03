@@ -41,6 +41,7 @@ from .store import (
     TaskExecutionResult,
     TaskRun,
     TaskStore,
+    TaskStoreConflictError,
 )
 from .target import (
     CallableTaskTargetRunner,
@@ -197,7 +198,10 @@ class TaskWorker:
             await self._store.get_definition(claim.run.definition_id)
         ).definition
         sanitizer = self._sanitizer(definition)
-        run, attempt = await self._start_claimed_attempt(claim)
+        try:
+            run, attempt = await self._start_claimed_attempt(claim)
+        except TaskStoreConflictError:
+            return TaskWorkerProcessResult(claimed=claim, lease_lost=True)
         try:
             await self._validate_target(definition)
             output = await self._execute(
