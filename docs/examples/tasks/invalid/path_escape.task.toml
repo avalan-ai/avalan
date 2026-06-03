@@ -1,0 +1,14 @@
+[task]
+name = "invalid_path_escape"
+version = "1"
+description = "Invalid example for execution reference path escape."
+
+[input]
+type = "string"
+
+[output]
+type = "text"
+
+[execution]
+type = "agent"
+ref = "../private/agent.toml"

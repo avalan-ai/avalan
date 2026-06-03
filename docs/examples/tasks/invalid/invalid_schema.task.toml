@@ -1,0 +1,20 @@
+[task]
+name = "invalid_schema"
+version = "1"
+description = "Invalid example for a schema that conflicts with the contract."
+
+[input]
+type = "object"
+
+[input.schema]
+type = "array"
+
+[output]
+type = "json"
+
+[output.schema]
+type = "not-a-json-schema-type"
+
+[execution]
+type = "agent"
+ref = "agents/basic_answer.toml"

@@ -1,0 +1,57 @@
+[task]
+name = "structured_json"
+version = "1"
+description = "Answer a structured request with JSON."
+labels = ["example", "json"]
+
+[input]
+type = "object"
+description = "Question object."
+
+[input.schema]
+additionalProperties = false
+required = ["question"]
+type = "object"
+
+[input.schema.properties.priority]
+maximum = 5
+minimum = 1
+type = "integer"
+
+[input.schema.properties.question]
+minLength = 1
+type = "string"
+
+[output]
+type = "json"
+description = "Structured answer."
+
+[output.schema]
+additionalProperties = false
+required = ["answer"]
+type = "object"
+
+[output.schema.properties.answer]
+minLength = 1
+type = "string"
+
+[output.schema.properties.confidence]
+maximum = 1
+minimum = 0
+type = "number"
+
+[execution]
+type = "agent"
+ref = "agents/basic_answer.toml"
+
+[execution.variables]
+style = "concise"
+
+[run]
+timeout_seconds = 120
+idempotency = "input_hash"
+
+[limits]
+input_bytes = 8192
+output_bytes = 8192
+total_tokens = 1500

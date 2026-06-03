@@ -1,0 +1,19 @@
+[task]
+name = "invalid_unsafe_privacy"
+version = "1"
+description = "Invalid example for unsafe raw privacy retention."
+
+[input]
+type = "string"
+
+[output]
+type = "text"
+
+[execution]
+type = "agent"
+ref = "agents/basic_answer.toml"
+
+[privacy]
+input = "store"
+output = "store"
+raw_retention_days = 0

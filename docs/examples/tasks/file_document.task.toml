@@ -1,0 +1,30 @@
+[task]
+name = "file_document"
+version = "1"
+description = "Summarize one local document."
+
+[input]
+type = "file"
+description = "Document file descriptor."
+file_conversions = ["text", "markdown"]
+mime_types = ["text/plain", "text/markdown", "application/pdf"]
+
+[output]
+type = "text"
+description = "Document summary."
+
+[execution]
+type = "agent"
+ref = "agents/document_reader.toml"
+
+[artifact]
+retention_days = 14
+storage = "local"
+max_count = 3
+max_bytes = 1048576
+
+[limits]
+file_count = 1
+file_bytes = 1048576
+output_bytes = 8192
+total_tokens = 2000

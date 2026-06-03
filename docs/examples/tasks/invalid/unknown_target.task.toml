@@ -1,0 +1,14 @@
+[task]
+name = "invalid_unknown_target"
+version = "1"
+description = "Invalid example for unsupported execution targets."
+
+[input]
+type = "string"
+
+[output]
+type = "text"
+
+[execution]
+type = "model"
+ref = "ai://env:OPENAI_API_KEY@openai/gpt-4o-mini"

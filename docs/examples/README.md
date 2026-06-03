@@ -14,6 +14,9 @@ This directory showcases configuration files and small programs that demonstrate
 - [openai_client_agent_messi.py](openai_client_agent_messi.py) – Queries a locally served `agent_messi` through the OpenAI client. Change the message content, `model`, or `base_url`.
 - [openai_client_agent_tool.py](openai_client_agent_tool.py) – Similar client hitting a tool‑enabled agent. Modify the prompt, `model`, or server `base_url`.
 
+## Tasks
+- [tasks](tasks/) – Task definition examples for scalar input, structured JSON, file inputs, file-array comparison, artifact outputs, SDK construction, and intentionally invalid diagnostics.
+
 ## Text generation
 - [text_generation.py](text_generation.py) – Streams tokens from a Llama 3 model. Adjust `model` id, `temperature`, or `max_new_tokens`.
 - [text_generation_openai.py](text_generation_openai.py) – Uses OpenAI models. Set `OPENAI_API_KEY`, then tweak `model`, `temperature`, or `max_new_tokens`.
