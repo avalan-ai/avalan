@@ -11,6 +11,11 @@ from ...entities import (
     MessageFile,
     MessageRole,
 )
+from ...model.file_delivery import (
+    FileDeliveryMode,
+    FileDeliveryProfile,
+    resolve_file_delivery_profile,
+)
 from ..context import TaskInputFile, TaskTargetContext
 from ..definition import (
     TaskDefinition,
@@ -28,7 +33,6 @@ from ..validation import (
 from base64 import b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from json import dumps, loads
 from pathlib import Path
 from tomllib import TOMLDecodeError, load
@@ -195,18 +199,9 @@ async def _agent_event_listener(
             remove_listener(context.event_listener)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _AgentFileCapability:
-    native_files: bool = False
-    text_documents: bool = False
-    urls: bool = False
-    inline_bytes: bool = False
-    object_store_uris: bool = False
-
-
 async def _agent_input(
     context: TaskTargetContext,
-    capability: _AgentFileCapability,
+    profile: FileDeliveryProfile,
 ) -> Input:
     value = _agent_input_value(context.input_value)
     if not context.files:
@@ -219,7 +214,7 @@ async def _agent_input(
                 file=await _agent_message_file(
                     file,
                     context=context,
-                    capability=capability,
+                    profile=profile,
                     path=f"input.files[{index}]",
                 ),
             )
@@ -258,22 +253,30 @@ async def _agent_message_file(
     file: TaskInputFile,
     *,
     context: TaskTargetContext,
-    capability: _AgentFileCapability,
+    profile: FileDeliveryProfile,
     path: str,
 ) -> MessageFile:
     provider_file_id = _metadata_string(file.metadata, "provider_file_id")
-    if provider_file_id is not None and capability.native_files:
+    if provider_file_id is not None and profile.supports_delivery_mode(
+        FileDeliveryMode.PROVIDER_FILE_ID
+    ):
         return _message_file(file, file_id=provider_file_id)
     provider_url = _metadata_string(file.metadata, "provider_file_url")
-    if provider_url is not None and capability.urls:
+    if provider_url is not None and profile.supports_delivery_mode(
+        FileDeliveryMode.HOSTED_URL
+    ):
         return _message_file(file, file_url=provider_url)
     provider_uri = _metadata_string(file.metadata, "provider_uri")
-    if provider_uri is not None and capability.object_store_uris:
+    if (
+        provider_uri is not None
+        and profile.supports_delivery_mode(FileDeliveryMode.OBJECT_STORE_URI)
+        and profile.allows_object_store_uri(provider_uri)
+    ):
         return _message_file(file, file_url=provider_uri)
     if (
         file.artifact_ref is not None
         and context.artifact_store is not None
-        and _can_inline_artifact(file.media_type, capability)
+        and _can_inline_artifact(file.media_type, profile)
     ):
         reader = await context.artifact_store.open(file.artifact_ref)
         try:
@@ -360,12 +363,13 @@ def _file_prompt_text(
 
 def _can_inline_artifact(
     media_type: str | None,
-    capability: _AgentFileCapability,
+    profile: FileDeliveryProfile,
 ) -> bool:
-    if not capability.inline_bytes:
+    if not profile.supports_delivery_mode(FileDeliveryMode.INLINE_BYTES):
         return False
-    return capability.native_files or (
-        capability.text_documents and _is_text_media_type(media_type)
+    return _has_native_file_reference(profile) or (
+        profile.supports_delivery_mode(FileDeliveryMode.INLINE_TEXT)
+        and profile.accepts_mime_type(media_type)
     )
 
 
@@ -381,12 +385,12 @@ def _metadata_string(
 
 def _validate_agent_file_input(
     definition: TaskDefinition,
-    capability: _AgentFileCapability,
+    profile: FileDeliveryProfile,
 ) -> tuple[TaskValidationIssue, ...]:
-    if not _has_file_capability(capability):
+    if not _has_file_capability(profile):
         return (_agent_file_issue(path="input.type"),)
     if (
-        capability.native_files
+        _has_native_file_reference(profile)
         or definition.input.file_conversions
         or (
             bool(definition.input.mime_types)
@@ -413,52 +417,28 @@ def _agent_file_issue(*, path: str) -> TaskValidationIssue:
     )
 
 
-def _has_file_capability(capability: _AgentFileCapability) -> bool:
-    return any(
-        (
-            capability.native_files,
-            capability.text_documents,
-            capability.urls,
-            capability.inline_bytes,
-            capability.object_store_uris,
+def _has_file_capability(profile: FileDeliveryProfile) -> bool:
+    return bool(
+        profile.delivery_modes
+        & frozenset(
+            {
+                FileDeliveryMode.PROVIDER_FILE_ID,
+                FileDeliveryMode.HOSTED_URL,
+                FileDeliveryMode.OBJECT_STORE_URI,
+                FileDeliveryMode.INLINE_BYTES,
+            }
         )
     )
 
 
-def _agent_file_capability(uri: str | None) -> _AgentFileCapability:
-    vendor = _vendor_from_uri(uri)
-    if vendor in {"openai", "anthropic"}:
-        return _AgentFileCapability(
-            native_files=True,
-            text_documents=True,
-            urls=True,
-            inline_bytes=True,
-        )
-    if vendor == "google":
-        return _AgentFileCapability(
-            native_files=True,
-            text_documents=True,
-            urls=True,
-            inline_bytes=True,
-            object_store_uris=True,
-        )
-    if vendor == "bedrock":
-        return _AgentFileCapability(
-            text_documents=True,
-            inline_bytes=True,
-            object_store_uris=True,
-        )
-    return _AgentFileCapability()
+def _has_native_file_reference(profile: FileDeliveryProfile) -> bool:
+    return profile.supports_delivery_mode(
+        FileDeliveryMode.PROVIDER_FILE_ID
+    ) or profile.supports_delivery_mode(FileDeliveryMode.HOSTED_URL)
 
 
-def _vendor_from_uri(uri: str | None) -> str | None:
-    if not isinstance(uri, str) or not uri.startswith("ai://"):
-        return None
-    value = uri.removeprefix("ai://")
-    if "@" in value:
-        value = value.rsplit("@", maxsplit=1)[1]
-    vendor = value.split("/", maxsplit=1)[0].strip().lower()
-    return vendor or None
+def _agent_file_capability(uri: str | None) -> FileDeliveryProfile:
+    return resolve_file_delivery_profile(uri)
 
 
 def _is_text_media_type(media_type: str | None) -> bool:

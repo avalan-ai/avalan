@@ -37,6 +37,7 @@ from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.store import TaskExecutionContext
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
+from avalan.task.targets import agent as agent_module
 
 
 class FakeResponse:
@@ -386,6 +387,36 @@ uri = "ai://env:KEY@google/gemini-2.0-flash"
             uri = runner._agent_uri(self._definition())
 
         self.assertIsNone(uri)
+        self.assertFalse(agent_module._is_text_media_type(None))
+
+    def test_unknown_agent_provider_rejects_file_contract(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://env:KEY@unknown/model"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            issues = self._run_validate(
+                runner,
+                self._definition(input_contract=TaskInputContract.file()),
+            )
+
+        self.assertEqual(
+            [issue.code for issue in issues], ["input.invalid_file"]
+        )
+        self.assertEqual(issues[0].path, "input.type")
+        rendered = " ".join(issues[0].as_dict().values())
+        self.assertNotIn("unknown/model", rendered)
 
     def _run_validate(
         self,
@@ -612,6 +643,7 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
     async def test_run_maps_provider_urls_at_execution_time(self) -> None:
         url_loader = FakeLoader(response="accepted")
         uri_loader = FakeLoader(response="accepted")
+        s3_loader = FakeLoader(response="accepted")
 
         await AgentTaskTargetRunner(
             url_loader,
@@ -647,9 +679,26 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
                 ),
             )
         )
+        await AgentTaskTargetRunner(
+            s3_loader,
+            uri="ai://env:KEY@bedrock/us.anthropic.claude",
+        ).run(
+            self._context(
+                self._definition(),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:uri",
+                        media_type="text/plain",
+                        metadata={"provider_uri": "s3://bucket/object"},
+                    ),
+                ),
+            )
+        )
 
         url_file = cast(Message, url_loader.inputs[0]).content
         uri_file = cast(Message, uri_loader.inputs[0]).content
+        s3_file = cast(Message, s3_loader.inputs[0]).content
         self.assertEqual(
             cast(list[Any], url_file)[1].file["file_url"],
             "https://example.test/file",
@@ -658,6 +707,34 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             cast(list[Any], uri_file)[1].file["file_url"],
             "gs://bucket/object",
         )
+        self.assertEqual(
+            cast(list[Any], s3_file)[1].file["file_url"],
+            "s3://bucket/object",
+        )
+
+    async def test_run_rejects_unsupported_provider_uri_scheme(self) -> None:
+        runner = AgentTaskTargetRunner(
+            FakeLoader(),
+            uri="ai://env:KEY@bedrock/us.anthropic.claude",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:uri",
+                            media_type="text/plain",
+                            metadata={"provider_uri": "gs://bucket/object"},
+                        ),
+                    ),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
 
     async def test_run_appends_files_to_message_inputs(self) -> None:
         message_loader = FakeLoader(response="accepted")
