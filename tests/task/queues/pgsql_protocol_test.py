@@ -255,6 +255,8 @@ class FakeCursor:
             self.row = self._select_idempotency(params)
         elif 'INSERT INTO "task_idempotency_keys"' in query:
             self.row = self._insert_idempotency(params)
+        elif 'SELECT * FROM "task_artifacts"' in query:
+            self.rows = self._artifacts_for_run(params)
         elif 'INSERT INTO "task_artifacts"' in query:
             self.row = self._insert_artifact(params)
         elif 'SELECT "run_id", "state", "queue_name"' in query:
@@ -272,6 +274,11 @@ class FakeCursor:
             in query
         ):
             self.row = self._fenced_queue_item(params)
+        elif (
+            'SELECT q.*, r."state" AS "run_state"' in query
+            and 'WHERE q."run_id" = %s' in query
+        ):
+            self.row = self._queue_item_for_run(params)
         elif 'UPDATE "task_queue_items" q' in query and "candidate" in query:
             self.row = self._claim_queue_item(params)
         elif 'UPDATE "task_queue_items" q' in query:
@@ -647,6 +654,25 @@ class FakeCursor:
         self.database.artifacts[artifact_id] = row
         return row
 
+    def _artifacts_for_run(
+        self,
+        params: tuple[object, ...],
+    ) -> tuple[dict[str, object], ...]:
+        run_id = cast(str, params[0])
+        return tuple(
+            sorted(
+                (
+                    row
+                    for row in self.database.artifacts.values()
+                    if row["run_id"] == run_id
+                ),
+                key=lambda row: (
+                    cast(datetime, row["created_at"]),
+                    cast(str, row["artifact_id"]),
+                ),
+            )
+        )
+
     def _insert_queue_item(
         self,
         params: tuple[object, ...],
@@ -717,6 +743,28 @@ class FakeCursor:
             }
         )
         return self._with_run_state(row)
+
+    def _queue_item_for_run(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        run_id = cast(str, params[0])
+        rows = tuple(
+            self._with_run_state(row)
+            for row in self.database.queue_items.values()
+            if row["run_id"] == run_id
+        )
+        if not rows:
+            return None
+        return sorted(
+            rows,
+            key=lambda row: (
+                cast(datetime, row["updated_at"]),
+                cast(datetime, row["created_at"]),
+                cast(str, row["queue_item_id"]),
+            ),
+            reverse=True,
+        )[0]
 
     def _heartbeat_queue_item(
         self,
@@ -1175,10 +1223,23 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
 
     async def test_enqueue_run_returns_existing_idempotent_run(self) -> None:
         identity = self._identity()
+        artifact = TaskQueueArtifact(
+            ref=TaskArtifactRef(
+                artifact_id="artifact-duplicate",
+                store="local",
+                storage_key="runs/run-duplicate/input.txt",
+                media_type="text/plain",
+                size_bytes=12,
+            ),
+            purpose=TaskArtifactPurpose.INPUT,
+            retention=TaskArtifactRetention(delete_after_days=2),
+            metadata={"safe": "metadata"},
+        )
         existing = await self.queue.enqueue_run(
             TaskExecutionRequest(definition_id="hash-a", queue="default"),
             queue_name="default",
             idempotency=identity,
+            artifacts=(artifact,),
         )
 
         duplicate = await self.queue.enqueue_run(
@@ -1190,7 +1251,16 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertTrue(existing.created)
         self.assertFalse(duplicate.created)
         self.assertEqual(duplicate.run.run_id, existing.run.run_id)
-        self.assertIsNone(duplicate.queue_item)
+        self.assertIsNotNone(duplicate.idempotency)
+        assert duplicate.idempotency is not None
+        self.assertFalse(duplicate.idempotency.created)
+        self.assertEqual(duplicate.queue_item, existing.queue_item)
+        self.assertEqual(len(duplicate.artifacts), 1)
+        self.assertEqual(
+            duplicate.artifacts[0].artifact_id,
+            "artifact-duplicate",
+        )
+        self.assertEqual(duplicate.artifacts[0].metadata, {"safe": "metadata"})
         self.assertEqual(
             [
                 run_id
@@ -1200,6 +1270,30 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             [existing.run.run_id],
         )
         self.assertEqual(len(self.database.queue_items), 1)
+
+    async def test_enqueue_run_existing_idempotent_run_without_queue_item(
+        self,
+    ) -> None:
+        identity = self._identity()
+        existing = await self.queue.enqueue_run(
+            TaskExecutionRequest(definition_id="hash-a", queue="default"),
+            queue_name="default",
+            idempotency=identity,
+        )
+        self.database.queue_items = {}
+
+        duplicate = await self.queue.enqueue_run(
+            TaskExecutionRequest(definition_id="hash-a", queue="default"),
+            queue_name="default",
+            idempotency=identity,
+        )
+
+        self.assertTrue(existing.created)
+        self.assertFalse(duplicate.created)
+        self.assertEqual(duplicate.run.run_id, existing.run.run_id)
+        self.assertIsNone(duplicate.queue_item)
+        self.assertEqual(duplicate.artifacts, ())
+        self.assertEqual(self.database.queue_items, {})
 
     async def test_enqueue_run_replaces_expired_idempotency_key(self) -> None:
         identity = self._identity()

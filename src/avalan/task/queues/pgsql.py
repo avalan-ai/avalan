@@ -182,13 +182,20 @@ class PgsqlTaskQueue:
                         raise TaskQueueConflictError(
                             "idempotency reservation target was not found"
                         )
+                    run = _run_from_row(row)
                     return TaskQueueSubmission(
-                        run=_run_from_row(row),
+                        run=run,
                         created=False,
+                        queue_item=await _queue_item_for_run(
+                            unit,
+                            run.run_id,
+                            run_state=run.state,
+                        ),
                         idempotency=TaskIdempotencyReservationResult(
                             reservation=existing,
                             created=False,
                         ),
+                        artifacts=await _artifacts_for_run(unit, run.run_id),
                     )
 
             run_id = self._new_id()
@@ -928,6 +935,21 @@ FROM "task_runs"
 WHERE "run_id" = %s
 """
 
+_SELECT_QUEUE_ITEM_FOR_RUN_SQL = """
+SELECT q.*, r."state" AS "run_state"
+FROM "task_queue_items" q
+JOIN "task_runs" r ON r."run_id" = q."run_id"
+WHERE q."run_id" = %s
+ORDER BY q."updated_at" DESC, q."created_at" DESC, q."queue_item_id" DESC
+LIMIT 1
+"""
+
+_SELECT_QUEUE_ARTIFACTS_FOR_RUN_SQL = """
+SELECT * FROM "task_artifacts"
+WHERE "run_id" = %s
+ORDER BY "created_at", "artifact_id"
+"""
+
 _INSERT_QUEUE_ITEM_SQL = """
 INSERT INTO "task_queue_items" (
     "queue_item_id",
@@ -1524,6 +1546,29 @@ async def _queueable_run_row(
     if run_state not in {TaskRunState.VALIDATED, TaskRunState.QUEUED}:
         raise TaskQueueConflictError("task run is not ready for queueing")
     return row
+
+
+async def _queue_item_for_run(
+    unit: PgsqlUnitOfWork,
+    run_id: str,
+    *,
+    run_state: TaskRunState,
+) -> TaskQueueItem | None:
+    await unit.cursor.execute(_SELECT_QUEUE_ITEM_FOR_RUN_SQL, (run_id,))
+    row = await unit.cursor.fetchone()
+    if row is None:
+        return None
+    return _queue_item_from_row(row, run_state=run_state)
+
+
+async def _artifacts_for_run(
+    unit: PgsqlUnitOfWork,
+    run_id: str,
+) -> tuple[TaskArtifactRecord, ...]:
+    await unit.cursor.execute(_SELECT_QUEUE_ARTIFACTS_FOR_RUN_SQL, (run_id,))
+    return tuple(
+        _artifact_from_row(row) for row in await unit.cursor.fetchall()
+    )
 
 
 def _queued_request(
