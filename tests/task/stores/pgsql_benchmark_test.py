@@ -191,6 +191,29 @@ class PgsqlBenchmarkCaseTest(TestCase):
             ),
         )
 
+    def test_queue_load_issues_detect_extra_attempts(self) -> None:
+        profile = TaskPgsqlQueueLoadProfile(
+            worker_count=2,
+            run_count=3,
+            queue_count=1,
+            lease_seconds=30,
+            max_attempts=2,
+            abandon_limit=1,
+            pool_size=4,
+            postgresql_version="16.3",
+        )
+
+        issues = task_pgsql_queue_load_issues(
+            profile,
+            claimed_run_ids=("run-1", "run-2", "run-3"),
+            attempt_count=4,
+            stale_token_commits=0,
+            reaped_claims=0,
+            elapsed_seconds=1.0,
+        )
+
+        self.assertEqual(issues, ("queue.extra_attempt",))
+
     def test_event_volume_issues_accept_indexed_unpartitioned_profile(
         self,
     ) -> None:

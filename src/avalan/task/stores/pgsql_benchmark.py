@@ -356,6 +356,8 @@ def task_pgsql_queue_load_issues(
         issues.append("queue.claims_missing")
     if attempt_count < len(unique_claims):
         issues.append("queue.lost_attempt")
+    if attempt_count > len(unique_claims):
+        issues.append("queue.extra_attempt")
     if stale_token_commits:
         issues.append("queue.stale_token_commit")
     if reaped_claims > profile.abandon_limit:
