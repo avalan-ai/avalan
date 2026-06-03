@@ -165,6 +165,10 @@ class StatFailingPath:
         raise OSError("private stat failure")
 
 
+class DirectoryStat:
+    st_mode = 0o040000
+
+
 class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
     async def test_non_file_input_returns_no_materialized_files(self) -> None:
         files = await materialize_task_input_files(
@@ -664,6 +668,51 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
                     )
                     self.assertNotIn("secret.txt", str(error.exception))
 
+    async def test_symlink_swap_after_validation_is_rejected(self) -> None:
+        with (
+            TemporaryDirectory() as root,
+            TemporaryDirectory() as outside,
+            TemporaryDirectory() as artifacts,
+        ):
+            input_path = Path(root, "secret.txt")
+            outside_path = Path(outside, "secret.txt")
+            input_path.write_bytes(b"safe text")
+            outside_path.write_bytes(b"private text")
+
+            def mutate_after_validation(*_: object) -> tuple[object, ...]:
+                input_path.unlink()
+                input_path.symlink_to(outside_path)
+                return ()
+
+            with patch(
+                "avalan.task.materialization._validate_resolved_file",
+                side_effect=mutate_after_validation,
+            ):
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(),
+                        TaskFileDescriptor.local_path(
+                            "secret.txt",
+                            mime_type="text/plain",
+                        ),
+                        roots=(root,),
+                        artifact_store=LocalArtifactStore(
+                            artifacts,
+                            raw_storage_allowed=True,
+                            id_factory=lambda: "artifact-1",
+                        ),
+                    )
+
+            self.assertEqual(
+                [(issue.code, issue.path) for issue in error.exception.issues],
+                [("input.invalid_file", "input.reference")],
+            )
+            self.assertFalse(
+                any(path.is_file() for path in Path(artifacts).rglob("*"))
+            )
+            self.assertNotIn("secret.txt", str(error.exception))
+            self.assertNotIn("private text", str(error.exception))
+
     async def test_structured_input_traversal_fails_closed(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as outside:
             Path(outside, "secret.txt").write_bytes(b"private text")
@@ -858,9 +907,8 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
             Path(root, "secret.txt").write_bytes(b"private text")
 
-            with patch.object(
-                Path,
-                "read_bytes",
+            with patch(
+                "avalan.task.materialization._read_file_bytes",
                 side_effect=OSError("private path failure"),
             ):
                 with self.assertRaises(TaskFileMaterializationError) as error:
@@ -883,6 +931,37 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             )
             self.assertNotIn("secret.txt", str(error.exception))
             self.assertNotIn("private path failure", str(error.exception))
+
+    async def test_non_regular_file_read_returns_safe_diagnostic(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            Path(root, "secret.txt").write_bytes(b"private text")
+
+            with patch(
+                "avalan.task.materialization.fstat",
+                return_value=DirectoryStat(),
+            ):
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(),
+                        TaskFileDescriptor.local_path(
+                            "secret.txt",
+                            mime_type="text/plain",
+                        ),
+                        roots=(root,),
+                        artifact_store=LocalArtifactStore(
+                            artifacts,
+                            raw_storage_allowed=True,
+                        ),
+                    )
+
+            self.assertEqual(
+                [issue.path for issue in error.exception.issues],
+                ["input.reference"],
+            )
+            self.assertNotIn("secret.txt", str(error.exception))
+            self.assertNotIn("private text", str(error.exception))
 
     async def test_stat_failure_returns_safe_diagnostic(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:

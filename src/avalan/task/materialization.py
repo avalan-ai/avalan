@@ -40,7 +40,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from hmac import compare_digest
+from os import O_NOFOLLOW, O_RDONLY, close, fdopen, fstat
+from os import open as open_file_descriptor
 from pathlib import Path, PurePath, PureWindowsPath
+from stat import S_ISREG
 
 _REMOTE_URL_DISABLED_CODE = "feature.remote_url_file_inputs_disabled"
 
@@ -565,10 +568,17 @@ def _read_verified_file(
 
 
 def _read_file_bytes(path: Path, *, limit: int | None) -> bytes:
-    if limit is None:
-        return path.read_bytes()
-    content = bytearray()
-    with path.open("rb") as file:
+    file_descriptor = open_file_descriptor(path, O_RDONLY | O_NOFOLLOW)
+    try:
+        if not S_ISREG(fstat(file_descriptor).st_mode):
+            raise OSError
+    except Exception:
+        close(file_descriptor)
+        raise
+    with fdopen(file_descriptor, "rb") as file:
+        if limit is None:
+            return file.read()
+        content = bytearray()
         while len(content) <= limit:
             chunk = file.read(limit + 1 - len(content))
             if not chunk:
@@ -576,7 +586,7 @@ def _read_file_bytes(path: Path, *, limit: int | None) -> bytes:
             content.extend(chunk)
             if len(content) > limit:
                 break
-    return bytes(content)
+        return bytes(content)
 
 
 def _read_size_limit(
