@@ -828,6 +828,119 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
                 self.assertNotIn("token_id", inspection_value)
                 self.assertNotIn("file-private", inspection_value)
 
+    async def test_sdk_provider_reference_modes_run_directly(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "openai-url",
+                "ai://env:KEY@openai/gpt-4o-mini",
+                TaskClient.hosted_url(
+                    "openai",
+                    "https://files.example.test/openai-private.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=2048,
+                    owner_scope="tenant-secret",
+                ),
+                "file_url",
+                "https://files.example.test/openai-private.pdf",
+            ),
+            (
+                "anthropic-file-id",
+                "ai://env:KEY@anthropic/claude-3-5-sonnet",
+                TaskClient.provider_file_id(
+                    "anthropic",
+                    "file-anthropic-private",
+                    mime_type="application/pdf",
+                    size_bytes=2048,
+                    owner_scope="tenant-secret",
+                ),
+                "file_id",
+                "file-anthropic-private",
+            ),
+            (
+                "google-object-uri",
+                "ai://env:KEY@google/gemini-2.0-flash",
+                TaskClient.object_store_uri(
+                    "google",
+                    "gs://bucket/google-private.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=2048,
+                    owner_scope="tenant-secret",
+                ),
+                "file_url",
+                "gs://bucket/google-private.pdf",
+            ),
+            (
+                "bedrock-object-uri",
+                "ai://env:KEY@bedrock/us.anthropic.claude",
+                TaskClient.object_store_uri(
+                    "bedrock",
+                    "s3://bucket/bedrock-private.txt",
+                    mime_type="text/plain",
+                    size_bytes=2048,
+                    owner_scope="tenant-secret",
+                ),
+                "file_url",
+                "s3://bucket/bedrock-private.txt",
+            ),
+        )
+
+        for name, uri, descriptor, reference_key, reference in cases:
+            with self.subTest(provider=name):
+                with TemporaryDirectory() as root_name:
+                    root = Path(root_name)
+                    _write_provider_task_workspace(
+                        root,
+                        provider_uri=uri,
+                        mime_type=descriptor.mime_type or "text/plain",
+                    )
+                    provider_client = ProviderFakeClient(
+                        reference_key=reference_key,
+                        reference=reference,
+                        mime_type=descriptor.mime_type or "text/plain",
+                    )
+                    loader = ProviderFakeLoader(provider_client)
+                    client = TaskClient(
+                        InMemoryTaskStore(
+                            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                        ),
+                        target=AgentTaskTargetRunner(loader, ref_base=root),
+                        hmac_provider=StaticHmacProvider(),
+                        execution_roots=(root,),
+                        definition_hash=lambda task: (
+                            f"provider-sdk-{name}-e2e"
+                        ),
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                    )
+
+                    result = await client.run(
+                        _provider_definition(
+                            mime_type=descriptor.mime_type or "text/plain"
+                        ),
+                        input_value=descriptor,
+                    )
+                    inspection = await client.inspect(result.run.run_id)
+
+                self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+                self.assertEqual(result.output, "provider accepted")
+                self.assertEqual(loader.entered, 1)
+                self.assertEqual(loader.exited, 1)
+                self.assertEqual(len(loader.inputs), 1)
+                self.assertEqual(provider_client.inputs, loader.inputs)
+                block = _only_file_block(loader.inputs[0])
+                self.assertEqual(block.file[reference_key], reference)
+                self.assertEqual(block.file["mime_type"], descriptor.mime_type)
+                self.assertEqual(len(inspection.events), 1)
+                self.assertEqual(len(inspection.usage), 1)
+                self.assertEqual(inspection.usage_totals.total_tokens, 8)
+                self.assertEqual(inspection.artifacts, ())
+                inspection_value = str(inspection.as_dict())
+                self.assertNotIn(reference, inspection_value)
+                self.assertNotIn("tenant-secret", inspection_value)
+                self.assertNotIn("private-provider-token", inspection_value)
+                self.assertNotIn("token_id", inspection_value)
+
     async def test_sdk_provider_inline_file_runs_directly(self) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
@@ -1153,6 +1266,54 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
         self.assertEqual(error.exception.issues[0].path, "input.conversions")
         self.assertNotIn("file-private", str(error.exception))
+
+    async def test_provider_object_store_scheme_rejects_before_execution(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            _write_provider_task_workspace(
+                root,
+                provider_uri="ai://env:KEY@google/gemini-2.0-flash",
+            )
+            provider_client = ProviderFakeClient(
+                reference_key="file_url",
+                reference="s3://bucket/google-private.pdf",
+                mime_type="application/pdf",
+            )
+            loader = ProviderFakeLoader(provider_client)
+            client = TaskClient(
+                InMemoryTaskStore(
+                    clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                ),
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "provider-object-uri-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            result = await client.run(
+                _provider_definition(),
+                input_value=TaskClient.object_store_uri(
+                    "google",
+                    "s3://bucket/google-private.pdf",
+                    mime_type="application/pdf",
+                    owner_scope="tenant-secret",
+                ),
+            )
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(loader.paths, [])
+        self.assertEqual(loader.inputs, [])
+        self.assertEqual(provider_client.inputs, [])
+        error_summary = cast(Mapping[str, object], result.run.result.error)
+        self.assertEqual(error_summary["category"], "input_contract")
+        self.assertEqual(error_summary["code"], "input_contract.failed")
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("s3://bucket/google-private.pdf", inspection_value)
+        self.assertNotIn("tenant-secret", inspection_value)
 
     async def test_loaded_text_task_runs_directly_and_inspects_safely(
         self,
