@@ -268,34 +268,45 @@ async def materialize_task_input_files(
     if issues:
         raise TaskFileMaterializationError(tuple(issues))
 
+    validated_by_path = {
+        file.resolved.descriptor_path: file for file in validated
+    }
+    materializable_entries = tuple(
+        entry
+        for entry in descriptor_entries
+        if entry.descriptor.source_kind
+        in {TaskFileSourceKind.LOCAL_PATH, TaskFileSourceKind.REMOTE_URL}
+    )
     materialized: list[TaskMaterializedFile] = []
-    for validated_file in validated:
-        materialized.append(
-            await _materialize_validated_file(
-                definition,
-                validated_file,
-                artifact_store=artifact_store,
-                hmac_provider=hmac_provider,
-                task_store=task_store,
-                run_id=run_id,
-                attempt_id=attempt_id,
-            )
-        )
-    for remote_entry in remote_entries:
-        materialized.append(
-            await _materialize_remote_url_file(
-                definition,
-                remote_entry,
-                artifact_store=artifact_store,
-                hmac_provider=hmac_provider,
-                remote_url_policy=remote_url_policy,
-                remote_url_http_client=remote_url_http_client,
-                remote_url_resolver=remote_url_resolver,
-                task_store=task_store,
-                run_id=run_id,
-                attempt_id=attempt_id,
-            )
-        )
+    for entry in materializable_entries:
+        match entry.descriptor.source_kind:
+            case TaskFileSourceKind.LOCAL_PATH:
+                materialized.append(
+                    await _materialize_validated_file(
+                        definition,
+                        validated_by_path[entry.path],
+                        artifact_store=artifact_store,
+                        hmac_provider=hmac_provider,
+                        task_store=task_store,
+                        run_id=run_id,
+                        attempt_id=attempt_id,
+                    )
+                )
+            case TaskFileSourceKind.REMOTE_URL:
+                materialized.append(
+                    await _materialize_remote_url_file(
+                        definition,
+                        entry,
+                        artifact_store=artifact_store,
+                        hmac_provider=hmac_provider,
+                        remote_url_policy=remote_url_policy,
+                        remote_url_http_client=remote_url_http_client,
+                        remote_url_resolver=remote_url_resolver,
+                        task_store=task_store,
+                        run_id=run_id,
+                        attempt_id=attempt_id,
+                    )
+                )
     return tuple(materialized)
 
 

@@ -855,6 +855,58 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             self.assertNotIn("report-a.txt", str(files[0].identity))
             self.assertNotIn("private report", str(files[1].identity))
 
+    async def test_mixed_file_array_preserves_descriptor_order(self) -> None:
+        content = b"remote text"
+        client = FakeRemoteClient(
+            {
+                "https://example.test/private.txt": _remote_response(content),
+            }
+        )
+        store = StreamingOnlyArtifactStore()
+        with TemporaryDirectory() as root:
+            Path(root, "local.txt").write_bytes(b"local text")
+
+            files = await materialize_task_input_files(
+                _definition(input_contract=TaskInputContract.file_array()),
+                [
+                    TaskFileDescriptor.remote_url(
+                        "https://example.test/private.txt",
+                        mime_type="text/plain",
+                    ),
+                    TaskFileDescriptor.local_path(
+                        "local.txt",
+                        mime_type="text/plain",
+                    ),
+                ],
+                roots=(root,),
+                artifact_store=store,
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    max_bytes=100,
+                ),
+                remote_url_http_client=client,
+                remote_url_resolver=FakeRemoteResolver(),
+            )
+
+        self.assertEqual(
+            [file.descriptor_path for file in files],
+            ["input[0]", "input[1]"],
+        )
+        self.assertEqual(
+            [file.ref.artifact_id for file in files],
+            ["artifact-1", "artifact-2"],
+        )
+        self.assertEqual(
+            [file.ref.metadata["source_kind"] for file in files],
+            ["remote_url", "local_path"],
+        )
+        self.assertEqual(
+            client.calls,
+            [("https://example.test/private.txt", 10.0)],
+        )
+        self.assertNotIn("private.txt", str(files[0].ref.metadata))
+        self.assertNotIn("local.txt", str(files[1].ref.metadata))
+
     async def test_structured_input_rejects_invalid_descriptors_safely(
         self,
     ) -> None:
