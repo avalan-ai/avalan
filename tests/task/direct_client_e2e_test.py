@@ -1,12 +1,14 @@
+from base64 import b64decode
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import BinaryIO, cast
+from typing import Any, BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
 
+from avalan.entities import Message, MessageContentFile
 from avalan.event import Event, EventType
 from avalan.task import (
     HASHED_MARKER,
@@ -28,6 +30,7 @@ from avalan.task import (
     TaskInputType,
     TaskKeyMaterial,
     TaskKeyPurpose,
+    TaskLimitsPolicy,
     TaskMetadata,
     TaskObservabilityPolicy,
     TaskOutputContract,
@@ -45,6 +48,7 @@ from avalan.task import (
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.targets import AgentTaskTargetRunner
 
 
 def _write_text_task_workspace(root: Path) -> Path:
@@ -221,6 +225,88 @@ capture_events = false
     return task_path
 
 
+def _write_provider_task_workspace(
+    root: Path,
+    *,
+    provider_uri: str,
+    mime_type: str = "application/pdf",
+    conversions: tuple[str, ...] = (),
+    max_bytes: int = 4096,
+) -> Path:
+    (root / "agents").mkdir()
+    (root / "agents" / "provider.toml").write_text(
+        f"""
+[agent]
+name = "Provider reviewer"
+task = "Review the supplied file."
+
+[engine]
+uri = "{provider_uri}"
+""",
+        encoding="utf-8",
+    )
+    conversion_lines = "".join(
+        f'file_conversions = ["{conversion}"]\n' for conversion in conversions
+    )
+    task_path = root / "provider.task.toml"
+    task_path.write_text(
+        f"""
+[task]
+name = "provider_file_review"
+version = "1"
+
+[input]
+type = "file"
+{conversion_lines}mime_types = ["{mime_type}"]
+
+[output]
+type = "text"
+
+[execution]
+type = "agent"
+ref = "agents/provider.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 60
+
+[limits]
+file_bytes = {max_bytes}
+
+[observability]
+metrics = true
+trace = false
+capture_events = true
+""",
+        encoding="utf-8",
+    )
+    return task_path
+
+
+def _provider_definition(
+    *,
+    mime_type: str = "application/pdf",
+    conversions: tuple[str, ...] = (),
+    file_bytes: int | None = 4096,
+) -> TaskDefinition:
+    return TaskDefinition(
+        task=TaskMetadata(name="provider_file_review", version="1"),
+        input=TaskInputContract.file(
+            conversions=conversions,
+            mime_types=(mime_type,),
+        ),
+        output=TaskOutputContract.text(),
+        execution=TaskExecutionTarget.agent("agents/provider.toml"),
+        run=TaskRunPolicy.direct(timeout_seconds=60),
+        limits=TaskLimitsPolicy(file_bytes=file_bytes),
+        observability=TaskObservabilityPolicy(
+            metrics=True,
+            trace=False,
+            capture_events=True,
+        ),
+    )
+
+
 class StaticHmacProvider:
     def hmac_key(
         self,
@@ -267,6 +353,18 @@ class PrefixingTextConverter:
             content=f"{prefix}{content.decode()}".encode(),
             media_type="text/plain",
             metadata={"prefix": prefix},
+        )
+
+
+class PrefixingPdfTextConverter(PrefixingTextConverter):
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return TaskFileConverterCapability(
+            source_mime_types=("application/pdf",),
+            output_mime_types=("text/plain",),
+            supports_streaming=False,
+            max_input_bytes=1024,
+            max_output_bytes=1024,
         )
 
 
@@ -440,7 +538,521 @@ class DirectCancellingTarget(TaskTargetRunner):
         return {"status": "ready", "count": 1, "summary": "unused"}
 
 
+class ProviderFakeResponse:
+    input_token_count = 5
+    output_token_count = 3
+    total_token_count = 8
+
+    def __init__(self, text: str = "provider accepted") -> None:
+        self.text = text
+
+    async def to_str(self) -> str:
+        return self.text
+
+
+class ProviderFakeEventManager:
+    def __init__(self) -> None:
+        self.listeners: list[Callable[[Event], Awaitable[None] | None]] = []
+
+    def add_listener(
+        self,
+        listener: Callable[[Event], Awaitable[None] | None],
+    ) -> None:
+        self.listeners.append(listener)
+
+    def remove_listener(
+        self,
+        listener: Callable[[Event], Awaitable[None] | None],
+    ) -> None:
+        self.listeners.remove(listener)
+
+    async def emit_token(self) -> None:
+        for listener in tuple(self.listeners):
+            result = listener(
+                Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={
+                        "token": "private-provider-token",
+                        "token_id": 72,
+                        "file_id": "file-private",
+                    },
+                )
+            )
+            if result is not None:
+                await result
+
+
+class ProviderFakeOrchestrator:
+    def __init__(self, loader: "ProviderFakeLoader") -> None:
+        self._loader = loader
+        self.event_manager = loader.event_manager
+
+    async def __aenter__(self) -> "ProviderFakeOrchestrator":
+        self._loader.entered += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        self._loader.exited += 1
+        return None
+
+    async def __call__(self, input: object) -> ProviderFakeResponse:
+        self._loader.inputs.append(input)
+        await self.event_manager.emit_token()
+        return ProviderFakeResponse()
+
+
+class ProviderFakeLoader:
+    def __init__(self) -> None:
+        self.event_manager = ProviderFakeEventManager()
+        self.paths: list[str] = []
+        self.inputs: list[object] = []
+        self.entered = 0
+        self.exited = 0
+
+    async def from_file(
+        self,
+        path: str,
+        *,
+        agent_id: object | None,
+        disable_memory: bool = False,
+        uri: str | None = None,
+        tool_settings: object | None = None,
+    ) -> ProviderFakeOrchestrator:
+        _ = agent_id, disable_memory, uri, tool_settings
+        self.paths.append(path)
+        return ProviderFakeOrchestrator(self)
+
+
+def _file_blocks(input_value: object) -> tuple[MessageContentFile, ...]:
+    assert isinstance(input_value, Message)
+    content = input_value.content
+    assert isinstance(content, list)
+    return tuple(
+        block
+        for block in cast(list[Any], content)
+        if isinstance(block, MessageContentFile)
+    )
+
+
+def _only_file_block(input_value: object) -> MessageContentFile:
+    blocks = _file_blocks(input_value)
+    assert len(blocks) == 1
+    return blocks[0]
+
+
 class DirectClientE2ETest(IsolatedAsyncioTestCase):
+    async def test_loaded_provider_references_run_directly_and_inspect_safely(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "openai",
+                "ai://env:KEY@openai/gpt-4o-mini",
+                TaskClient.provider_file_id(
+                    "openai",
+                    "file-private",
+                    mime_type="application/pdf",
+                    size_bytes=2048,
+                    owner_scope="tenant-secret",
+                    identity_hmac="hmac-value",
+                ),
+                "file_id",
+                "file-private",
+            ),
+            (
+                "anthropic",
+                "ai://env:KEY@anthropic/claude-3-5-sonnet",
+                TaskClient.hosted_url(
+                    "anthropic",
+                    "https://files.example.test/private.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=2048,
+                    owner_scope="tenant-secret",
+                ),
+                "file_url",
+                "https://files.example.test/private.pdf",
+            ),
+            (
+                "google",
+                "ai://env:KEY@google/gemini-2.0-flash",
+                TaskClient.object_store_uri(
+                    "google",
+                    "gs://bucket/private.pdf",
+                    mime_type="application/pdf",
+                    size_bytes=2048,
+                    owner_scope="tenant-secret",
+                ),
+                "file_url",
+                "gs://bucket/private.pdf",
+            ),
+            (
+                "bedrock",
+                "ai://env:KEY@bedrock/us.anthropic.claude",
+                TaskClient.object_store_uri(
+                    "bedrock",
+                    "s3://bucket/private.txt",
+                    mime_type="text/plain",
+                    size_bytes=2048,
+                    owner_scope="tenant-secret",
+                ),
+                "file_url",
+                "s3://bucket/private.txt",
+            ),
+        )
+
+        for name, uri, descriptor, reference_key, reference in cases:
+            with self.subTest(provider=name):
+                with TemporaryDirectory() as root_name:
+                    root = Path(root_name)
+                    definition = TaskDefinitionLoader().load(
+                        _write_provider_task_workspace(
+                            root,
+                            provider_uri=uri,
+                            mime_type=descriptor.mime_type or "text/plain",
+                        )
+                    )
+                    store = InMemoryTaskStore(
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                    )
+                    loader = ProviderFakeLoader()
+                    client = TaskClient(
+                        store,
+                        target=AgentTaskTargetRunner(
+                            loader,
+                            ref_base=root,
+                        ),
+                        hmac_provider=StaticHmacProvider(),
+                        execution_roots=(root,),
+                        definition_hash=lambda task: (
+                            f"provider-{name}-direct-e2e"
+                        ),
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                    )
+
+                    validation = await client.validate(
+                        definition,
+                        input_value=descriptor,
+                    )
+                    result = await client.run(
+                        definition,
+                        input_value=descriptor,
+                        metadata={"tenant": "safe"},
+                    )
+                    inspection = await client.inspect(result.run.run_id)
+
+                self.assertTrue(validation.valid)
+                self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+                self.assertEqual(result.output, "provider accepted")
+                self.assertEqual(loader.entered, 1)
+                self.assertEqual(loader.exited, 1)
+                self.assertEqual(len(loader.inputs), 1)
+                block = _only_file_block(loader.inputs[0])
+                self.assertEqual(block.file[reference_key], reference)
+                self.assertEqual(block.file["mime_type"], descriptor.mime_type)
+                self.assertEqual(len(inspection.events), 1)
+                self.assertEqual(
+                    inspection.events[0].event_type, "token_generated"
+                )
+                self.assertEqual(len(inspection.usage), 1)
+                self.assertEqual(inspection.usage_totals.input_tokens, 5)
+                self.assertEqual(inspection.usage_totals.output_tokens, 3)
+                self.assertEqual(inspection.usage_totals.total_tokens, 8)
+                self.assertEqual(inspection.artifacts, ())
+                input_summary = cast(
+                    Mapping[str, object],
+                    inspection.run.request.input_summary,
+                )
+                self.assertEqual(input_summary["privacy"], HASHED_MARKER)
+                inspection_value = str(inspection.as_dict())
+                self.assertNotIn(reference, inspection_value)
+                self.assertNotIn("tenant-secret", inspection_value)
+                self.assertNotIn("private-provider-token", inspection_value)
+                self.assertNotIn("token_id", inspection_value)
+                self.assertNotIn("file-private", inspection_value)
+
+    async def test_sdk_provider_inline_file_runs_directly(self) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            _write_provider_task_workspace(
+                root,
+                provider_uri="ai://env:KEY@openai/gpt-4o-mini",
+            )
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: "inline-input",
+            )
+            ref = await artifact_store.put(
+                b"private inline bytes",
+                media_type="application/pdf",
+                metadata={"filename": "secret.pdf"},
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            loader = ProviderFakeLoader()
+            client = TaskClient(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                definition_hash=lambda task: "provider-inline-direct-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            result = await client.run(
+                _provider_definition(),
+                input_value=TaskClient.provider_file_id(
+                    "openai",
+                    "file-private",
+                    mime_type="application/pdf",
+                    size_bytes=ref.size_bytes,
+                ),
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:inline-input",
+                        artifact_ref=ref,
+                        media_type="application/pdf",
+                        size_bytes=ref.size_bytes,
+                        metadata={"filename": "secret.pdf"},
+                    ),
+                ),
+            )
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        content = _file_blocks(loader.inputs[0])
+        self.assertEqual(len(content), 2)
+        self.assertEqual(
+            b64decode(content[0].file["file_data"]),
+            b"private inline bytes",
+        )
+        self.assertEqual(content[0].file["mime_type"], "application/pdf")
+        self.assertEqual(content[1].file["file_id"], "file-private")
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private inline bytes", inspection_value)
+        self.assertNotIn("secret.pdf", inspection_value)
+        self.assertNotIn("file-private", inspection_value)
+
+    async def test_sdk_provider_conversion_uses_converted_artifact(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            (root / "source.pdf").write_bytes(b"private pdf body")
+            _write_provider_task_workspace(
+                root,
+                provider_uri="ai://env:KEY@bedrock/us.anthropic.claude",
+                mime_type="application/pdf",
+                conversions=("text",),
+            )
+            artifact_ids = iter(("input-artifact", "converted-artifact"))
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            loader = ProviderFakeLoader()
+            client = TaskClient(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                file_converters={"text": PrefixingPdfTextConverter()},
+                execution_roots=(root,),
+                definition_hash=lambda task: "provider-converted-direct-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            result = await client.run(
+                _provider_definition(
+                    mime_type="application/pdf",
+                    conversions=("text",),
+                ),
+                input_value=TaskClient.local_file(
+                    "source.pdf",
+                    mime_type="application/pdf",
+                    conversions=(
+                        TaskClient.file_conversion(
+                            "text",
+                            options={"prefix": "converted: "},
+                        ),
+                    ),
+                    metadata={"filename": "source.pdf"},
+                ),
+            )
+            inspection = await client.inspect(result.run.run_id)
+            artifacts = await store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        block = _only_file_block(loader.inputs[0])
+        self.assertEqual(
+            b64decode(block.file["file_data"]),
+            b"converted: private pdf body",
+        )
+        self.assertEqual(block.file["mime_type"], "text/plain")
+        self.assertEqual(
+            [artifact.purpose for artifact in artifacts],
+            [TaskArtifactPurpose.INPUT, TaskArtifactPurpose.CONVERTED],
+        )
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private pdf body", inspection_value)
+        self.assertNotIn("source.pdf", inspection_value)
+
+    async def test_provider_inline_limit_failure_is_sanitized(self) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            _write_provider_task_workspace(
+                root,
+                provider_uri="ai://env:KEY@openai/gpt-4o-mini",
+                max_bytes=4,
+            )
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=lambda: "large-inline-input",
+            )
+            ref = await artifact_store.put(
+                b"private large inline bytes",
+                media_type="application/pdf",
+                metadata={"filename": "large-secret.pdf"},
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            loader = ProviderFakeLoader()
+            client = TaskClient(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                definition_hash=lambda task: "provider-inline-limit-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            result = await client.run(
+                _provider_definition(file_bytes=4),
+                input_value=TaskClient.provider_file_id(
+                    "openai",
+                    "file-private",
+                    mime_type="application/pdf",
+                ),
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:large-inline-input",
+                        artifact_ref=ref,
+                        media_type="application/pdf",
+                        size_bytes=ref.size_bytes,
+                        metadata={"filename": "large-secret.pdf"},
+                    ),
+                ),
+            )
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(loader.inputs, [])
+        error_summary = cast(Mapping[str, object], result.run.result.error)
+        self.assertEqual(error_summary["category"], "input_contract")
+        self.assertEqual(error_summary["code"], "input_contract.failed")
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private large inline bytes", inspection_value)
+        self.assertNotIn("large-secret.pdf", inspection_value)
+        self.assertNotIn("file-private", inspection_value)
+
+    async def test_provider_mismatch_failure_is_sanitized(self) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_provider_task_workspace(
+                    root,
+                    provider_uri="ai://env:KEY@anthropic/claude-3-5-sonnet",
+                )
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            loader = ProviderFakeLoader()
+            client = TaskClient(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "provider-mismatch-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            result = await client.run(
+                definition,
+                input_value=TaskClient.provider_file_id(
+                    "openai",
+                    "file-private",
+                    mime_type="application/pdf",
+                    owner_scope="tenant-secret",
+                ),
+            )
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(loader.inputs, [])
+        error_summary = cast(Mapping[str, object], result.run.result.error)
+        self.assertEqual(error_summary["category"], "input_contract")
+        self.assertEqual(error_summary["code"], "input_contract.failed")
+        self.assertNotIn("file-private", str(error_summary))
+        self.assertNotIn("tenant-secret", str(inspection.as_dict()))
+
+    async def test_provider_reference_conversion_rejects_before_execution(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_provider_task_workspace(
+                    root,
+                    provider_uri="ai://env:KEY@openai/gpt-4o-mini",
+                    conversions=("text",),
+                )
+            )
+            loader = ProviderFakeLoader()
+            client = TaskClient(
+                InMemoryTaskStore(),
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "provider-invalid-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            with self.assertRaises(TaskValidationError) as error:
+                await client.run(
+                    definition,
+                    input_value={
+                        "source_kind": "provider_reference",
+                        "reference": "file-private",
+                        "provider_reference": {
+                            "kind": "provider_file_id",
+                            "provider": "openai",
+                            "reference": "file-private",
+                        },
+                        "conversions": [{"name": "text"}],
+                    },
+                )
+
+        self.assertEqual(loader.paths, [])
+        self.assertEqual(loader.inputs, [])
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.conversions")
+        self.assertNotIn("file-private", str(error.exception))
+
     async def test_loaded_text_task_runs_directly_and_inspects_safely(
         self,
     ) -> None:
