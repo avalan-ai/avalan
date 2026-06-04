@@ -95,6 +95,14 @@ class TaskArtifactTest(TestCase):
         self.assertNotIn(
             "storage_key", cast(Mapping[str, object], ref.summary())
         )
+        self.assertNotIn("sha256", cast(Mapping[str, object], ref.summary()))
+        self.assertEqual(
+            cast(
+                Mapping[str, object],
+                ref.summary(include_sha256=True),
+            )["sha256"],
+            "a" * 64,
+        )
         summary = cast(Mapping[str, object], record.summary())
         self.assertEqual(summary["artifact_id"], "artifact-1")
         self.assertEqual(summary["purpose"], "converted")

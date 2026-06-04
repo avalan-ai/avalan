@@ -31,6 +31,8 @@ from avalan.task import (
     TaskExecutionResult,
     TaskExecutionTarget,
     TaskFileConversionError,
+    TaskFileConversionPageCollection,
+    TaskFileConversionPageResult,
     TaskFileConversionRequest,
     TaskFileConversionResult,
     TaskFileConverterCapability,
@@ -75,6 +77,7 @@ from avalan.task.runner import (
     build_task_executable_input_files,
     task_execution_file_entries_from_value,
     task_execution_file_entries_value,
+    task_input_files_from_materialized,
 )
 from avalan.task.stores import InMemoryTaskStore
 
@@ -377,6 +380,78 @@ class FailingTextConverter:
         options: Mapping[str, object] | None = None,
     ) -> TaskFileConversionResult:
         raise TaskFileConversionError("private conversion failure")
+
+
+class PrefixTextConverter:
+    name = "text"
+    version = "test"
+    capability = TaskFileConverterCapability(
+        source_mime_types=("text/plain",),
+        output_mime_types=("text/plain",),
+        supports_streaming=False,
+        max_input_bytes=1024,
+        max_output_bytes=1024,
+    )
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = source_media_type, options
+        return TaskFileConversionResult(
+            content=b"converted:" + content,
+            media_type="text/plain",
+            metadata={},
+        )
+
+
+class PdfPageConverter:
+    name = "pdf_image"
+    version = "test"
+
+    def __init__(
+        self,
+        pages: tuple[TaskFileConversionPageResult, ...],
+    ) -> None:
+        self.pages = pages
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return TaskFileConverterCapability(
+            source_mime_types=("application/pdf",),
+            output_mime_types=("image/png",),
+            supports_streaming=False,
+            max_input_bytes=1024,
+            max_output_bytes=1024,
+            max_pages=8,
+            max_pixels=10_000,
+        )
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        raise AssertionError("page converter must use page output")
+
+    async def convert_pages(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionPageCollection:
+        _ = content, source_media_type, options
+        return TaskFileConversionPageCollection(
+            pages=self.pages,
+            metadata={"backend": "test"},
+        )
 
 
 class RejectingTarget(TaskTargetRunner):
@@ -1193,6 +1268,158 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
                 [TaskArtifactPurpose.INPUT],
             )
 
+    async def test_page_file_conversion_expands_materialized_input(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            Path(root, "input.pdf").write_bytes(b"%PDF private")
+            target = RecordingTarget("short summary")
+            artifact_ids = iter(("source-pdf", "page-1", "page-2"))
+            runner = DirectTaskRunner(
+                self.store,
+                target=cast(TaskDirectTarget, target),
+                hmac_provider=self.hmac_provider,
+                artifact_store=LocalArtifactStore(
+                    artifacts,
+                    raw_storage_allowed=True,
+                    id_factory=lambda: next(artifact_ids),
+                ),
+                file_converters={
+                    "pdf_image": PdfPageConverter(
+                        (
+                            TaskFileConversionPageResult(
+                                page_index=1,
+                                page_count=2,
+                                content=b"page one",
+                                media_type="image/png",
+                                width_pixels=10,
+                                height_pixels=20,
+                                metadata={"filename": "private-page.png"},
+                            ),
+                            TaskFileConversionPageResult(
+                                page_index=2,
+                                page_count=2,
+                                content=b"page two",
+                                media_type="image/png",
+                                width_pixels=30,
+                                height_pixels=40,
+                            ),
+                        )
+                    )
+                },
+                definition_hash=lambda task: "hash-page-file-input",
+                execution_roots=(root,),
+            )
+
+            result = await runner.run(
+                definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("pdf_image",),
+                        mime_types=("application/pdf",),
+                    )
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "input.pdf",
+                    mime_type="application/pdf",
+                    conversions=(TaskFileConversionRequest(name="pdf_image"),),
+                ),
+            )
+            records = await self.store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(target.contexts), 1)
+        files = target.contexts[0].files
+        self.assertEqual(
+            [file.logical_path for file in files],
+            ["artifact:page-1", "artifact:page-2"],
+        )
+        self.assertEqual(
+            [file.media_type for file in files],
+            ["image/png", "image/png"],
+        )
+        self.assertEqual([file.size_bytes for file in files], [8, 8])
+        self.assertEqual(
+            [record.purpose for record in records],
+            [
+                TaskArtifactPurpose.INPUT,
+                TaskArtifactPurpose.CONVERTED,
+                TaskArtifactPurpose.CONVERTED,
+            ],
+        )
+        self.assertEqual(
+            [record.artifact_id for record in records],
+            ["source-pdf", "page-1", "page-2"],
+        )
+        converted = records[1:]
+        self.assertEqual(converted[0].metadata["page_index"], 1)
+        self.assertEqual(converted[1].metadata["page_index"], 2)
+        self.assertEqual(converted[0].metadata["format"], "png")
+        identity = cast(
+            Mapping[str, object], converted[0].metadata["identity"]
+        )
+        self.assertEqual(identity["privacy"], "<hmac-sha256>")
+        rendered = str(tuple(record.summary() for record in converted))
+        self.assertNotIn("private-page.png", rendered)
+        self.assertNotIn("%PDF private", rendered)
+        assert converted[0].ref.sha256 is not None
+        assert converted[1].ref.sha256 is not None
+        self.assertNotIn(converted[0].ref.sha256, rendered)
+        self.assertNotIn(converted[1].ref.sha256, rendered)
+
+    async def test_page_file_conversion_requires_recording_context(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as artifacts:
+            materialized = TaskMaterializedFile(
+                descriptor=TaskFileDescriptor.artifact(
+                    "source-pdf",
+                    mime_type="application/pdf",
+                    conversions=(TaskFileConversionRequest(name="pdf_image"),),
+                ),
+                descriptor_path="input",
+                ref=TaskArtifactRef(
+                    artifact_id="source-pdf",
+                    store="local",
+                    storage_key="source-pdf",
+                    media_type="application/pdf",
+                    size_bytes=12,
+                ),
+                identity={},
+            )
+
+            with self.assertRaises(TaskValidationError) as error:
+                await task_input_files_from_materialized(
+                    definition(
+                        input_contract=TaskInputContract.file(
+                            conversions=("pdf_image",),
+                            mime_types=("application/pdf",),
+                        )
+                    ),
+                    (materialized,),
+                    artifact_store=LocalArtifactStore(
+                        artifacts,
+                        raw_storage_allowed=True,
+                    ),
+                    file_converters={
+                        "pdf_image": PdfPageConverter(
+                            (
+                                TaskFileConversionPageResult(
+                                    page_index=1,
+                                    page_count=1,
+                                    content=b"page",
+                                    media_type="image/png",
+                                    width_pixels=10,
+                                    height_pixels=10,
+                                ),
+                            )
+                        )
+                    },
+                    task_store=None,
+                )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertNotIn("source-pdf", str(error.exception))
+
     async def test_shared_input_file_builder_materializes_inputs(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
             Path(root, "input.txt").write_bytes(b"private text")
@@ -1589,6 +1816,159 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             "input.conversions[0]",
         )
         self.assertNotIn("unknown", str(error.exception))
+
+    async def test_converted_input_file_wrapper_handles_none_and_scalar(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as artifacts:
+            artifact_ids = iter(("source-text", "converted-text"))
+            artifact_store = LocalArtifactStore(
+                artifacts,
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            source_ref = await artifact_store.put(
+                b"private text",
+                media_type="text/plain",
+            )
+            runner = DirectTaskRunner(
+                self.store,
+                target=cast(TaskDirectTarget, RecordingTarget("unused")),
+                hmac_provider=self.hmac_provider,
+                artifact_store=artifact_store,
+                file_converters={"text": PrefixTextConverter()},
+            )
+            definition_value = definition(
+                input_contract=TaskInputContract.file(conversions=("text",))
+            )
+            await self.store.register_definition(
+                definition_value,
+                definition_hash="definition-scalar-wrapper",
+            )
+            run = await self.store.create_run(
+                TaskExecutionRequest(definition_id="definition-scalar-wrapper")
+            )
+            attempt = await self.store.create_attempt(run.run_id)
+            native = TaskMaterializedFile(
+                descriptor=TaskFileDescriptor.local_path(
+                    "input.txt",
+                    mime_type="text/plain",
+                ),
+                descriptor_path="input",
+                ref=source_ref,
+                identity={},
+            )
+            converted = TaskMaterializedFile(
+                descriptor=TaskFileDescriptor.local_path(
+                    "input.txt",
+                    mime_type="text/plain",
+                    conversions=(TaskFileConversionRequest(name="text"),),
+                ),
+                descriptor_path="input",
+                ref=source_ref,
+                identity={},
+            )
+
+            self.assertIsNone(
+                await runner._converted_input_file(
+                    definition_value,
+                    native,
+                    index=0,
+                    run=run,
+                    attempt=attempt,
+                )
+            )
+            file = await runner._converted_input_file(
+                definition_value,
+                converted,
+                index=0,
+                run=run,
+                attempt=attempt,
+            )
+
+        assert file is not None
+        self.assertEqual(file.logical_path, "artifact:converted-text")
+        self.assertEqual(file.media_type, "text/plain")
+        self.assertEqual(file.size_bytes, len(b"converted:private text"))
+
+    async def test_converted_input_file_wrapper_rejects_page_collection(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as artifacts:
+            artifact_ids = iter(("source-pdf", "page-1", "page-2"))
+            artifact_store = LocalArtifactStore(
+                artifacts,
+                raw_storage_allowed=True,
+                id_factory=lambda: next(artifact_ids),
+            )
+            source_ref = await artifact_store.put(
+                b"%PDF private",
+                media_type="application/pdf",
+            )
+            runner = DirectTaskRunner(
+                self.store,
+                target=cast(TaskDirectTarget, RecordingTarget("unused")),
+                hmac_provider=self.hmac_provider,
+                artifact_store=artifact_store,
+                file_converters={
+                    "pdf_image": PdfPageConverter(
+                        (
+                            TaskFileConversionPageResult(
+                                page_index=1,
+                                page_count=2,
+                                content=b"page one",
+                                media_type="image/png",
+                                width_pixels=10,
+                                height_pixels=20,
+                            ),
+                            TaskFileConversionPageResult(
+                                page_index=2,
+                                page_count=2,
+                                content=b"page two",
+                                media_type="image/png",
+                                width_pixels=10,
+                                height_pixels=20,
+                            ),
+                        )
+                    )
+                },
+            )
+            definition_value = definition(
+                input_contract=TaskInputContract.file(
+                    conversions=("pdf_image",),
+                    mime_types=("application/pdf",),
+                )
+            )
+            await self.store.register_definition(
+                definition_value,
+                definition_hash="definition-page-wrapper",
+            )
+            run = await self.store.create_run(
+                TaskExecutionRequest(definition_id="definition-page-wrapper")
+            )
+            attempt = await self.store.create_attempt(run.run_id)
+            materialized = TaskMaterializedFile(
+                descriptor=TaskFileDescriptor.local_path(
+                    "input.pdf",
+                    mime_type="application/pdf",
+                    conversions=(TaskFileConversionRequest(name="pdf_image"),),
+                ),
+                descriptor_path="input",
+                ref=source_ref,
+                identity={},
+            )
+
+            with self.assertRaises(TaskValidationError) as error:
+                await runner._converted_input_file(
+                    definition_value,
+                    materialized,
+                    index=0,
+                    run=run,
+                    attempt=attempt,
+                )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertNotIn("%PDF private", str(error.exception))
 
     async def test_file_materialization_failure_finalizes_run(
         self,

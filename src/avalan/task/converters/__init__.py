@@ -13,6 +13,7 @@ from ..artifact import (
 )
 from ..feature_gate import TaskFeature, feature_available
 from ..input import TaskFileConversionRequest
+from ..privacy import HASHED_MARKER
 from ..store import TaskSnapshotMetadata, TaskStore, freeze_snapshot_metadata
 
 from collections.abc import Mapping
@@ -580,6 +581,11 @@ async def convert_task_artifact_pages(
             record_metadata = freeze_snapshot_metadata(
                 {
                     "converter": _converter_identity(converter),
+                    "dimensions": {
+                        "height_pixels": page.height_pixels,
+                        "width_pixels": page.width_pixels,
+                    },
+                    "format": _media_type_format(page.media_type),
                     "identity": identity,
                     "media_type": ref.media_type,
                     "page_count": page.page_count,
@@ -747,7 +753,6 @@ def _page_conversion_metadata(
             "options": options,
             "page_count": page.page_count,
             "page_index": page.page_index,
-            "result": page.metadata,
             "source_artifact_id": source_ref.artifact_id,
             "source_media_type": source_ref.media_type,
             "target_media_type": page.media_type,
@@ -755,7 +760,7 @@ def _page_conversion_metadata(
                 "height_pixels": page.height_pixels,
                 "width_pixels": page.width_pixels,
             },
-            "collection": collection.metadata,
+            "format": _media_type_format(page.media_type),
         }
     )
 
@@ -772,10 +777,15 @@ def _converter_identity(converter: FileConverter) -> TaskSnapshotMetadata:
 def _content_identity(ref: TaskArtifactRef) -> TaskSnapshotMetadata:
     value: dict[str, object] = {}
     if ref.sha256 is not None:
-        value["sha256"] = ref.sha256
+        value["privacy"] = HASHED_MARKER
     if ref.size_bytes is not None:
         value["size_bytes"] = ref.size_bytes
     return freeze_snapshot_metadata(value)
+
+
+def _media_type_format(media_type: str) -> str:
+    _, separator, suffix = media_type.partition("/")
+    return suffix if separator else media_type
 
 
 def _assert_converter(converter: FileConverter) -> None:

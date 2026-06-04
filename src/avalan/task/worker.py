@@ -38,7 +38,7 @@ from .runner import (
     _snapshot_value,
     _task_error_with_attempt_counts,
     task_execution_file_entries_from_value,
-    task_input_files_from_materialized,
+    task_input_file_groups_from_materialized,
 )
 from .state import TaskAttemptState, TaskRunState
 from .store import (
@@ -591,7 +591,7 @@ class TaskWorker:
             if not materialized:
                 return tuple(entry.file for entry in entries)
             converted = iter(
-                await task_input_files_from_materialized(
+                await task_input_file_groups_from_materialized(
                     definition,
                     materialized,
                     artifact_store=self._artifact_store,
@@ -603,11 +603,10 @@ class TaskWorker:
             )
             files: list[TaskInputFile] = []
             for entry in entries:
-                files.append(
-                    next(converted)
-                    if entry.materialized_file is not None
-                    else entry.file
-                )
+                if entry.materialized_file is not None:
+                    files.extend(next(converted))
+                    continue
+                files.append(entry.file)
             return tuple(files)
         records = await self._store.list_artifacts(
             run.run_id,

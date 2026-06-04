@@ -36,6 +36,8 @@ from avalan.task import (
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
+    TaskFileConversionPageCollection,
+    TaskFileConversionPageResult,
     TaskFileConversionRequest,
     TaskFileConversionResult,
     TaskFileConverterCapability,
@@ -212,6 +214,61 @@ class PrefixTextConverter:
             content=b"converted:" + content,
             media_type="text/plain",
             metadata={"status": "ready"},
+        )
+
+
+class PdfPageConverter:
+    name = "pdf_image"
+    version = "test"
+    capability = TaskFileConverterCapability(
+        source_mime_types=("application/pdf",),
+        output_mime_types=("image/png",),
+        supports_streaming=False,
+        max_input_bytes=1024,
+        max_output_bytes=1024,
+        max_pages=8,
+        max_pixels=10_000,
+    )
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        raise AssertionError("page converter must use page output")
+
+    async def convert_pages(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionPageCollection:
+        _ = content, source_media_type, options
+        return TaskFileConversionPageCollection(
+            pages=(
+                TaskFileConversionPageResult(
+                    page_index=1,
+                    page_count=2,
+                    content=b"first page image",
+                    media_type="image/png",
+                    width_pixels=10,
+                    height_pixels=20,
+                    metadata={"filename": "private-page.png"},
+                ),
+                TaskFileConversionPageResult(
+                    page_index=2,
+                    page_count=2,
+                    content=b"second page image",
+                    media_type="image/png",
+                    width_pixels=30,
+                    height_pixels=40,
+                ),
+            ),
+            metadata={"backend": "test"},
         )
 
 
@@ -1099,6 +1156,101 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private source", str(inspection.as_dict()))
         self.assertNotIn("document.txt", str(inspection.as_dict()))
+
+    async def test_pdf_page_conversion_expands_before_worker_target(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            Path(root, "document.pdf").write_bytes(b"%PDF private source")
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+            )
+            explicit_ref = await artifact_store.put(
+                b"explicit image",
+                media_type="image/png",
+            )
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = ReadingTarget()
+            client = _client(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                file_converters={"pdf_image": PdfPageConverter()},
+                execution_roots=(root,),
+                clock=clock,
+            )
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                file_converters={"pdf_image": PdfPageConverter()},
+                clock=clock,
+            )
+            definition = _definition(
+                input_contract=TaskInputContract.file(
+                    conversions=("pdf_image",),
+                    mime_types=("application/pdf",),
+                )
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value=TaskFileDescriptor.local_path(
+                    "document.pdf",
+                    mime_type="application/pdf",
+                    conversions=(TaskFileConversionRequest(name="pdf_image"),),
+                    metadata={"filename": "document.pdf"},
+                ),
+                files=(
+                    TaskInputFile(
+                        logical_path=f"artifact:{explicit_ref.artifact_id}",
+                        artifact_ref=explicit_ref,
+                        media_type="image/png",
+                        size_bytes=explicit_ref.size_bytes,
+                    ),
+                ),
+            )
+            processed = await worker.process_once()
+            artifacts = await store.list_artifacts(submission.run.run_id)
+            inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(
+            target.file_bodies,
+            [b"explicit image", b"first page image", b"second page image"],
+        )
+        self.assertEqual(
+            [artifact.purpose for artifact in artifacts],
+            [
+                TaskArtifactPurpose.INPUT,
+                TaskArtifactPurpose.INPUT,
+                TaskArtifactPurpose.CONVERTED,
+                TaskArtifactPurpose.CONVERTED,
+            ],
+        )
+        converted = artifacts[2:]
+        self.assertEqual(
+            [artifact.metadata["page_index"] for artifact in converted],
+            [1, 2],
+        )
+        self.assertEqual(
+            [artifact.ref.media_type for artifact in converted],
+            ["image/png", "image/png"],
+        )
+        rendered = str(inspection.as_dict())
+        self.assertNotIn("private source", rendered)
+        self.assertNotIn("document.pdf", rendered)
+        self.assertNotIn("private-page.png", rendered)
+        for artifact in converted:
+            assert artifact.ref.sha256 is not None
+            self.assertNotIn(artifact.ref.sha256, rendered)
 
     async def test_structured_file_input_materializes_for_worker(
         self,

@@ -189,7 +189,12 @@ class TaskArtifactRef:
             freeze_snapshot_metadata(self.metadata),
         )
 
-    def summary(self, *, include_metadata: bool = True) -> TaskSnapshotValue:
+    def summary(
+        self,
+        *,
+        include_metadata: bool = True,
+        include_sha256: bool = False,
+    ) -> TaskSnapshotValue:
         value: dict[str, object] = {
             "artifact_id": self.artifact_id,
             "store": self.store,
@@ -198,7 +203,7 @@ class TaskArtifactRef:
             value["media_type"] = self.media_type
         if self.size_bytes is not None:
             value["size_bytes"] = self.size_bytes
-        if self.sha256 is not None:
+        if include_sha256 and self.sha256 is not None:
             value["sha256"] = self.sha256
         if include_metadata and self.metadata:
             value["metadata"] = self.metadata
@@ -263,7 +268,10 @@ class TaskArtifactRecord:
             "artifact_id": self.artifact_id,
             "purpose": self.purpose.value,
             "state": self.state.value,
-            "ref": self.ref.summary(include_metadata=False),
+            "ref": self.ref.summary(
+                include_metadata=False,
+                include_sha256=False,
+            ),
         }
         if self.attempt_id is not None:
             value["attempt_id"] = self.attempt_id

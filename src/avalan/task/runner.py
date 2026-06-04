@@ -14,6 +14,7 @@ from .converters import (
     FileConverter,
     TaskFileConversionError,
     convert_task_artifact,
+    convert_task_artifact_pages,
 )
 from .converters.registry import default_file_converters
 from .definition import (
@@ -214,25 +215,44 @@ async def task_input_files_from_materialized(
     attempt: TaskAttempt | None = None,
 ) -> tuple[TaskInputFile, ...]:
     assert isinstance(definition, TaskDefinition)
-    input_files: list[TaskInputFile] = []
+    groups = await task_input_file_groups_from_materialized(
+        definition,
+        materialized_files,
+        artifact_store=artifact_store,
+        file_converters=file_converters,
+        task_store=task_store,
+        run=run,
+        attempt=attempt,
+    )
+    return tuple(file for group in groups for file in group)
+
+
+async def task_input_file_groups_from_materialized(
+    definition: TaskDefinition,
+    materialized_files: tuple[TaskMaterializedFile, ...],
+    *,
+    artifact_store: ArtifactStore | None,
+    file_converters: Mapping[str, FileConverter] | None = None,
+    task_store: TaskStore | None = None,
+    run: TaskRun | None = None,
+    attempt: TaskAttempt | None = None,
+) -> tuple[tuple[TaskInputFile, ...], ...]:
+    assert isinstance(definition, TaskDefinition)
+    input_file_groups: list[tuple[TaskInputFile, ...]] = []
     converters = _file_converters(file_converters)
     for index, file in enumerate(materialized_files):
-        input_files.append(
-            (
-                await converted_task_input_file(
-                    definition,
-                    file,
-                    index=index,
-                    artifact_store=artifact_store,
-                    file_converters=converters,
-                    task_store=task_store,
-                    run=run,
-                    attempt=attempt,
-                )
-            )
-            or file.as_input_file()
+        converted_files = await converted_task_input_files(
+            definition,
+            file,
+            index=index,
+            artifact_store=artifact_store,
+            file_converters=converters,
+            task_store=task_store,
+            run=run,
+            attempt=attempt,
         )
-    return tuple(input_files)
+        input_file_groups.append(converted_files or (file.as_input_file(),))
+    return tuple(input_file_groups)
 
 
 async def converted_task_input_file(
@@ -246,13 +266,56 @@ async def converted_task_input_file(
     run: TaskRun | None = None,
     attempt: TaskAttempt | None = None,
 ) -> TaskInputFile | None:
-    source_ref = file.ref
+    files = await converted_task_input_files(
+        definition,
+        file,
+        index=index,
+        artifact_store=artifact_store,
+        file_converters=file_converters,
+        task_store=task_store,
+        run=run,
+        attempt=attempt,
+    )
+    if not files:
+        return None
+    if len(files) != 1:
+        raise TaskValidationError(
+            (
+                _conversion_issue(
+                    index=index,
+                    conversion_index=0,
+                    is_array=definition.input.type == TaskInputType.FILE_ARRAY,
+                ),
+            )
+        )
+    return files[0]
+
+
+async def converted_task_input_files(
+    definition: TaskDefinition,
+    file: TaskMaterializedFile,
+    *,
+    index: int,
+    artifact_store: ArtifactStore | None,
+    file_converters: Mapping[str, FileConverter],
+    task_store: TaskStore | None = None,
+    run: TaskRun | None = None,
+    attempt: TaskAttempt | None = None,
+) -> tuple[TaskInputFile, ...]:
+    source_refs: tuple[TaskArtifactRef, ...] = (file.ref,)
     converted = False
     for conversion_index, request in enumerate(file.descriptor.conversions):
         if request.name in {"native", "none"}:
             continue
         converter = file_converters.get(request.name)
-        if converter is None or artifact_store is None:
+        if (
+            converter is None
+            or artifact_store is None
+            or (
+                callable(getattr(converter, "convert_pages", None))
+                and (task_store is None or run is None)
+            )
+        ):
             raise TaskValidationError(
                 (
                     _conversion_issue(
@@ -264,14 +327,14 @@ async def converted_task_input_file(
                 )
             )
         try:
-            converted_artifact = await convert_task_artifact(
-                source_ref,
+            source_refs = await _converted_source_refs(
+                source_refs,
                 request,
                 converter=converter,
                 artifact_store=artifact_store,
                 task_store=task_store,
-                run_id=run.run_id if run is not None else None,
-                attempt_id=attempt.attempt_id if attempt is not None else None,
+                run=run,
+                attempt=attempt,
                 retention=TaskArtifactRetention(
                     delete_after_days=definition.artifact.retention_days,
                 ),
@@ -287,17 +350,64 @@ async def converted_task_input_file(
                     ),
                 )
             ) from error
-        source_ref = converted_artifact.ref
         converted = True
     if not converted:
-        return None
-    return TaskInputFile(
-        logical_path=f"artifact:{source_ref.artifact_id}",
-        artifact_ref=source_ref,
-        media_type=source_ref.media_type,
-        size_bytes=source_ref.size_bytes,
-        metadata=file.identity,
+        return ()
+    return tuple(
+        TaskInputFile(
+            logical_path=f"artifact:{ref.artifact_id}",
+            artifact_ref=ref,
+            media_type=ref.media_type,
+            size_bytes=ref.size_bytes,
+            metadata=file.identity,
+        )
+        for ref in source_refs
     )
+
+
+async def _converted_source_refs(
+    source_refs: tuple[TaskArtifactRef, ...],
+    request: TaskFileConversionRequest,
+    *,
+    converter: FileConverter,
+    artifact_store: ArtifactStore,
+    task_store: TaskStore | None,
+    run: TaskRun | None,
+    attempt: TaskAttempt | None,
+    retention: TaskArtifactRetention,
+) -> tuple[TaskArtifactRef, ...]:
+    page_converter = callable(getattr(converter, "convert_pages", None))
+    converted_refs: list[TaskArtifactRef] = []
+    for source_ref in source_refs:
+        if page_converter:
+            assert task_store is not None
+            assert run is not None
+            collection = await convert_task_artifact_pages(
+                source_ref,
+                request,
+                converter=converter,
+                artifact_store=artifact_store,
+                task_store=task_store,
+                run_id=run.run_id,
+                attempt_id=(
+                    attempt.attempt_id if attempt is not None else None
+                ),
+                retention=retention,
+            )
+            converted_refs.extend(page.ref for page in collection.pages)
+            continue
+        converted_artifact = await convert_task_artifact(
+            source_ref,
+            request,
+            converter=converter,
+            artifact_store=artifact_store,
+            task_store=task_store,
+            run_id=run.run_id if run is not None else None,
+            attempt_id=attempt.attempt_id if attempt is not None else None,
+            retention=retention,
+        )
+        converted_refs.append(converted_artifact.ref)
+    return tuple(converted_refs)
 
 
 def task_execution_file_entries_value(
