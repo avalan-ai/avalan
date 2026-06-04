@@ -33,6 +33,7 @@ from avalan.task import (
     TaskExecutionResult,
     TaskExecutionTarget,
     TaskFileDescriptor,
+    TaskIdempotencyError,
     TaskIdempotencyIdentity,
     TaskInputContract,
     TaskInputFile,
@@ -1500,6 +1501,56 @@ ref = "agents/reviewer.toml"
                     ),
                 )
 
+        self.assertEqual(len(artifact_store.puts), 1)
+        self.assertEqual(len(artifact_store.deleted), 1)
+        self.assertEqual(
+            artifact_store.deleted[0].artifact_id,
+            "artifact-1",
+        )
+        self.assertNotIn("private.txt", str(error.exception))
+
+    async def test_enqueue_deletes_materialized_file_when_idempotency_fails(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Path(root, "private.txt").write_text(
+                "private file body",
+                encoding="utf-8",
+            )
+            store = InMemoryTaskStore()
+            queue = RecordingQueue(store)
+            artifact_store = RecordingArtifactStore()
+            client = TaskClient(
+                store,
+                target=_noop_target,
+                queue=cast(TaskQueue, queue),
+                hmac_provider=StaticHmacProvider(),
+                encryption_provider=StaticEncryptionProvider(),
+                raw_storage_allowed=True,
+                artifact_store=artifact_store,
+                definition_hash=lambda task: "client-idempotency-failure-hash",
+                execution_roots=(root,),
+            )
+
+            with self.assertRaises(TaskIdempotencyError) as error:
+                await client.enqueue(
+                    _definition(
+                        input_contract=TaskInputContract.file(),
+                        run=TaskRunPolicy(
+                            mode=RunMode.QUEUE,
+                            queue="documents",
+                            idempotency=IdempotencyMode.CUSTOM,
+                            idempotency_key_path="input.request_id",
+                        ),
+                    ),
+                    input_value=TaskFileDescriptor.local_path(
+                        "private.txt",
+                        mime_type="text/plain",
+                    ),
+                )
+
+        self.assertEqual(len(queue.requests), 0)
         self.assertEqual(len(artifact_store.puts), 1)
         self.assertEqual(len(artifact_store.deleted), 1)
         self.assertEqual(

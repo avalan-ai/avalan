@@ -70,6 +70,7 @@ from signal import SIGINT, default_int_handler
 from signal import signal as set_signal_handler
 from subprocess import run
 from threading import current_thread, main_thread
+from tomllib import TOMLDecodeError
 from tomllib import load as toml_load
 from types import FrameType
 from typing import (
@@ -3071,7 +3072,15 @@ class CLI:
         """Return ``True`` if the command needs hub authentication."""
         command = args.command
         if command == "task":
-            return False
+            engine = CLI._task_agent_engine_uri(args)
+            if not engine:
+                return False
+            engine_uri = ModelManager.parse_uri(engine)
+            if engine_uri.is_local and is_ds4_backend_selected(
+                args, engine_uri
+            ):
+                return False
+            return bool(engine_uri.is_local)
         if command == "model" and (args.model_command or "display") == "run":
             assert isinstance(args.model, str)
             engine_uri = ModelManager.parse_uri(args.model)
@@ -3108,10 +3117,40 @@ class CLI:
         return True
 
     @staticmethod
+    def _task_agent_engine_uri(args: Namespace) -> str | None:
+        task_command = args.task_command or "validate"
+        if task_command not in {"enqueue", "run"}:
+            return None
+        definition = getattr(args, "definition", None)
+        if not isinstance(definition, str):
+            return None
+        try:
+            with open(definition, "rb") as file:
+                task_config = toml_load(file)
+            execution = task_config.get("execution")
+            if not isinstance(execution, dict):
+                return None
+            if execution.get("type") != "agent":
+                return None
+            ref = execution.get("ref")
+            if not isinstance(ref, str):
+                return None
+            agent_path = Path(definition).parent / ref
+            with agent_path.open("rb") as file:
+                agent_config = toml_load(file)
+            engine = agent_config.get("engine")
+            if not isinstance(engine, dict):
+                return None
+            uri = engine.get("uri")
+            return uri if isinstance(uri, str) else None
+        except (OSError, TOMLDecodeError):
+            return None
+
+    @staticmethod
     def _can_use_anonymous_hub(args: Namespace) -> bool:
         command = args.command
         if command == "task":
-            return True
+            return (args.task_command or "validate") != "worker"
         if command != "model" or (args.model_command or "display") != "run":
             return False
         assert isinstance(args.model, str)
@@ -3196,6 +3235,7 @@ class CLI:
         hub: HubClient
         if (
             requires_token
+            or bool(args.hf_token)
             or args.login
             or not self._can_use_anonymous_hub(args)
         ):
@@ -3453,7 +3493,8 @@ class CLI:
                     case "retention-sweep":
                         task_retention_sweep(args, console, theme)
                     case "validate":
-                        task_validate(args, console, theme)
+                        if not task_validate(args, console, theme):
+                            raise SystemExit(1)
                     case "pgsql":
                         pgsql_subcommand = args.task_pgsql_command or "status"
                         match pgsql_subcommand:

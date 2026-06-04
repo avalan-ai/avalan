@@ -551,16 +551,16 @@ class TaskClient:
         selected_queue_name = queue_name or definition.run.queue
         assert selected_queue_name is not None
         input_summary_value = _input_summary_value(definition, input_value)
-        idempotency = task_idempotency_identity(
-            definition,
-            definition_hash=definition_id,
-            input_value=input_summary_value,
-            files=queued_files,
-            owner_scope=owner_scope,
-            hmac_provider=cast(HmacProvider, self._hmac_provider),
-            window=idempotency_key or idempotency_window,
-        )
         try:
+            idempotency = task_idempotency_identity(
+                definition,
+                definition_hash=definition_id,
+                input_value=input_summary_value,
+                files=queued_files,
+                owner_scope=owner_scope,
+                hmac_provider=cast(HmacProvider, self._hmac_provider),
+                window=idempotency_key or idempotency_window,
+            )
             return await self._queue.enqueue_run(
                 TaskExecutionRequest(
                     definition_id=definition_id,

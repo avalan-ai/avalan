@@ -4,6 +4,7 @@ import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from contextlib import ExitStack
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Event as ThreadEvent
 from time import perf_counter
 from types import SimpleNamespace
@@ -1153,6 +1154,36 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 self.assertTrue(fn.called)
                 fn.reset_mock()
 
+    async def test_task_validate_failure_exits_nonzero(self):
+        args = Namespace(
+            command="task",
+            task_command="validate",
+            verbose=None,
+            quiet=True,
+            login=False,
+            hf_token=None,
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        console = MagicMock()
+        hub = MagicMock(domain="hf")
+        with (
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("avalan.cli.__main__.Confirm.ask", return_value=False),
+            patch("avalan.cli.__main__.find_spec", return_value=None),
+            patch("avalan.cli.__main__.logger_replace"),
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch(
+                "avalan.cli.__main__.task_validate",
+                return_value=False,
+            ) as task_validate_mock,
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                await self.cli._main(args, theme, console, hub)
+
+        self.assertEqual(exit_context.exception.code, 1)
+        task_validate_mock.assert_called_once_with(args, console, theme)
+
 
 class CliMainLoginTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
@@ -1514,6 +1545,64 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertIsNotNone(captured_hub)
         self.assertEqual(captured_hub.cache_dir, "~/.cache/huggingface/hub")
         hub_class.assert_not_called()
+
+    async def test_call_preserves_explicit_hf_token_for_task_command(self):
+        captured_hub = None
+
+        async def capture_main(args, theme, console, hub):
+            nonlocal captured_hub
+            del args, theme, console
+            captured_hub = hub
+
+        with TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task.toml"
+            task.write_text("", encoding="utf-8")
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "prog",
+                        "task",
+                        "validate",
+                        str(task),
+                        "--hf-token",
+                        "task-token",
+                    ],
+                ),
+                patch(
+                    "avalan.cli.__main__.translation",
+                    return_value=SimpleNamespace(
+                        gettext=lambda s: s, ngettext=lambda s, p, n: s
+                    ),
+                ),
+                patch(
+                    "avalan.cli.__main__.FancyTheme",
+                    return_value=MagicMock(get_styles=lambda: {}),
+                ),
+                patch(
+                    "avalan.cli.__main__.Console",
+                    return_value=MagicMock(),
+                ),
+                patch.object(CLI, "_needs_hf_token", return_value=False),
+                patch(
+                    "avalan.cli.__main__._huggingface_hub_class"
+                ) as hub_class,
+                patch.object(
+                    CLI,
+                    "_main",
+                    AsyncMock(side_effect=capture_main),
+                ),
+            ):
+                await self.cli()
+
+        self.assertIsNotNone(captured_hub)
+        hub_class.return_value.assert_called_once_with(
+            "task-token",
+            "~/.cache/huggingface/hub",
+            self.logger,
+        )
+        self.assertEqual(captured_hub, hub_class.return_value.return_value)
 
 
 class CliMainFunctionTestCase(TestCase):
