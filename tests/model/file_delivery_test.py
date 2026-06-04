@@ -102,6 +102,8 @@ def test_local_profiles_distinguish_text_and_multimodal_delivery() -> None:
     )
     assert multimodal_profile.accepts_mime_type("image/png")
     assert multimodal_profile.accepts_mime_type("audio/wav")
+    assert not multimodal_profile.accepts_mime_type("text/plain")
+    assert not multimodal_profile.accepts_mime_type("application/pdf")
 
 
 @pytest.mark.parametrize(
@@ -281,12 +283,25 @@ def test_plan_delivery_selects_inline_bytes_and_text() -> None:
             has_artifact=True,
         )
     )
+    multimodal_text_decision = multimodal.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="text/plain",
+            size_bytes=12,
+            has_artifact=True,
+        )
+    )
 
     assert bytes_decision.mode == FileDeliveryMode.INLINE_BYTES
     assert bytes_decision.needs_artifact_read
     assert text_decision.mode == FileDeliveryMode.INLINE_TEXT
     assert text_decision.needs_artifact_read
     assert image_decision.mode == FileDeliveryMode.INLINE_BYTES
+    assert multimodal_text_decision.mode == FileDeliveryMode.REJECT
+    assert multimodal_text_decision.diagnostic is not None
+    assert (
+        multimodal_text_decision.diagnostic.code
+        == "model.file_delivery.unsupported_mime_type"
+    )
 
 
 def test_fake_profiles_cover_delivery_shapes() -> None:

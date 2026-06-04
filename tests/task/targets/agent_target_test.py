@@ -505,6 +505,14 @@ file_delivery_profile = "multimodal"
                     )
                 ),
             )
+            text_issues = self._run_validate(
+                runner,
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("text/plain",),
+                    )
+                ),
+            )
             pdf_issues = self._run_validate(
                 runner,
                 self._definition(
@@ -515,6 +523,10 @@ file_delivery_profile = "multimodal"
             )
 
         self.assertEqual(image_issues, ())
+        self.assertEqual(
+            [issue.code for issue in text_issues], ["input.invalid_file"]
+        )
+        self.assertEqual(text_issues[0].path, "input.file_conversions")
         self.assertEqual(
             [issue.code for issue in pdf_issues], ["input.invalid_file"]
         )
@@ -1543,8 +1555,12 @@ uri = "ai://local/model"
 
     async def test_run_maps_strategy_text_artifact_to_text_block(self) -> None:
         loader = FakeLoader(response="accepted")
+        tokenized_texts: list[str] = []
         runner = AgentTaskTargetRunner(
             loader,
+            token_counter=lambda text: (
+                tokenized_texts.append(text) or len(text.split())
+            ),
             uri="ai://local/model",
         )
         artifact_ref = TaskArtifactRef(
@@ -1576,6 +1592,55 @@ uri = "ai://local/model"
 
         content = cast(list[Any], cast(Message, loader.inputs[0]).content)
         self.assertEqual([block.text for block in content], ["converted text"])
+        self.assertEqual(tokenized_texts, ["converted text"])
+
+    async def test_run_rejects_local_multimodal_text_only_file_block(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://local/model"
+file_delivery_profile = "multimodal"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader()
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+            artifact_ref = TaskArtifactRef(
+                artifact_id="artifact-1",
+                store="local",
+                storage_key="ar/artifact-1",
+            )
+
+            with self.assertRaises(TaskValidationError) as error:
+                await runner.run(
+                    self._context(
+                        self._definition(),
+                        "describe",
+                        files=(
+                            TaskInputFile(
+                                logical_path="artifact:artifact-1",
+                                artifact_ref=artifact_ref,
+                                media_type="text/plain",
+                                size_bytes=12,
+                            ),
+                        ),
+                        artifact_store=FakeArtifactStore(b"private text"),
+                    )
+                )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertNotIn("private text", str(error.exception))
+        self.assertEqual(loader.inputs, [])
 
     async def test_run_rejects_profile_file_count_limit(self) -> None:
         profile = FileDeliveryProfile(

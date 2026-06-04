@@ -491,11 +491,7 @@ def _local_multimodal_profile() -> FileDeliveryProfile:
         accepted_mime_types=(
             "audio/*",
             "image/*",
-            "text/*",
             "video/*",
-            "application/json",
-            "application/markdown",
-            "application/xml",
         ),
         object_store_uri_schemes=(),
         limits=_common_limits("local_multimodal"),

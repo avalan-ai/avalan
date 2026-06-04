@@ -43,6 +43,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from json import dumps, loads
 from pathlib import Path
+from sys import maxsize
 from tomllib import TOMLDecodeError, load
 from typing import Protocol, cast
 from uuid import UUID
@@ -496,11 +497,7 @@ def _plan_local_text_delivery(
     profile: FileDeliveryProfile,
     token_counter: TokenCounter,
 ) -> tuple[Input, TextStrategyPlan | None]:
-    if (
-        not context.files
-        or not profile.requires_conversion_for_file_blocks
-        or context.definition.limits.total_tokens is None
-    ):
+    if not context.files or not profile.requires_conversion_for_file_blocks:
         return agent_input, None
     prompt_texts, document_texts = _local_text_prompt_and_documents(
         agent_input,
@@ -509,7 +506,7 @@ def _plan_local_text_delivery(
     plan = plan_text_strategy(
         prompt_texts=prompt_texts,
         document_texts=document_texts,
-        token_limit=context.definition.limits.total_tokens,
+        token_limit=context.definition.limits.total_tokens or maxsize,
         token_counter=token_counter,
     )
     if plan.kind == TextStrategyKind.INLINE:
