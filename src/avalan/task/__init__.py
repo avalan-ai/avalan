@@ -58,12 +58,24 @@ from .context import safe_target_metadata as safe_target_metadata
 from .context import safe_target_value as safe_target_value
 from .converters import FileConverter as FileConverter
 from .converters import TaskConvertedArtifact as TaskConvertedArtifact
+from .converters import (
+    TaskConvertedArtifactCollection as TaskConvertedArtifactCollection,
+)
 from .converters import TaskFileConversionError as TaskFileConversionError
+from .converters import (
+    TaskFileConversionPageCollection as TaskFileConversionPageCollection,
+)
+from .converters import (
+    TaskFileConversionPageResult as TaskFileConversionPageResult,
+)
 from .converters import TaskFileConversionResult as TaskFileConversionResult
 from .converters import (
     TaskFileConverterCapability as TaskFileConverterCapability,
 )
 from .converters import convert_task_artifact as convert_task_artifact
+from .converters import (
+    convert_task_artifact_pages as convert_task_artifact_pages,
+)
 from .converters import (
     markdown_converter_capability as markdown_converter_capability,
 )
