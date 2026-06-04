@@ -17,6 +17,7 @@ from avalan.task import (
     TaskKeyMaterial,
     TaskKeyPurpose,
     TaskPrivacyPolicy,
+    decrypt_encrypted_privacy_value,
     privacy_policy_fields,
     privacy_policy_hash_fields,
     privacy_policy_raw_fields,
@@ -57,6 +58,23 @@ class DeterministicEncryptionProvider:
             algorithm="test-aead",
             metadata=context,
         )
+
+    def decrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        algorithm: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> bytes:
+        self.decrypt_purpose = purpose
+        self.decrypt_key_id = key_id
+        self.decrypt_algorithm = algorithm
+        self.decrypt_context = context
+        prefix = b"encrypted:"
+        assert value.startswith(prefix)
+        return value[len(prefix) :]
 
 
 class SecretObject:
@@ -226,6 +244,119 @@ class PrivacyTest(TestCase):
         self.assertEqual(sanitized["key_id"], "enc-v1")
         self.assertNotIn("raw", str(sanitized))
 
+    def test_decrypts_encrypted_privacy_value(self) -> None:
+        provider = DeterministicEncryptionProvider()
+        policy = TaskPrivacyPolicy(
+            input=PrivacyAction.ENCRYPT,
+            raw_retention_days=3,
+        )
+        sanitizer = PrivacySanitizer(
+            policy,
+            encryption_provider=provider,
+            raw_storage_allowed=True,
+        )
+
+        encrypted = sanitizer.sanitize(
+            PrivacyField.INPUT,
+            {"prompt": "private", "limit": 2},
+            key_id="enc-old",
+        )
+        encrypted["metadata"] = {"tenant": "safe"}
+        decrypted = decrypt_encrypted_privacy_value(
+            encrypted,
+            decryption_provider=provider,
+        )
+
+        self.assertEqual(
+            decrypted,
+            {"limit": 2, "prompt": "private"},
+        )
+        self.assertEqual(provider.decrypt_purpose, TaskKeyPurpose.RAW_VALUE)
+        self.assertEqual(provider.decrypt_key_id, "enc-old")
+        self.assertEqual(provider.decrypt_algorithm, "test-aead")
+        self.assertEqual(provider.decrypt_context, {"tenant": "safe"})
+
+    def test_decrypt_rejects_malformed_envelopes_safely(self) -> None:
+        provider = DeterministicEncryptionProvider()
+
+        bad_values: tuple[object, ...] = (
+            "private",
+            {"privacy": "<redacted>"},
+            {
+                "privacy": ENCRYPTED_MARKER,
+                "key_id": "enc",
+                "algorithm": "test-aead",
+            },
+            {
+                "privacy": ENCRYPTED_MARKER,
+                "ciphertext": "%%% private %%%",
+                "key_id": "enc",
+                "algorithm": "test-aead",
+            },
+            {
+                "privacy": ENCRYPTED_MARKER,
+                "ciphertext": "ZW5jcnlwdGVkOnByaXZhdGU=",
+                "key_id": "",
+                "algorithm": "test-aead",
+            },
+            {
+                "privacy": ENCRYPTED_MARKER,
+                "ciphertext": "ZW5jcnlwdGVkOnByaXZhdGU=",
+                "key_id": "enc",
+                "algorithm": "",
+            },
+            {
+                "privacy": ENCRYPTED_MARKER,
+                "ciphertext": "ZW5jcnlwdGVkOnByaXZhdGU=",
+                "key_id": "enc",
+                "algorithm": "test-aead",
+                "metadata": "private",
+            },
+            {
+                "privacy": ENCRYPTED_MARKER,
+                "ciphertext": "ZW5jcnlwdGVkOnByaXZhdGU=",
+                "key_id": "enc",
+                "algorithm": "test-aead",
+                "metadata": {"safe": object()},
+            },
+            {
+                "privacy": ENCRYPTED_MARKER,
+                "ciphertext": "ZW5jcnlwdGVkOm5vdC1qc29u",
+                "key_id": "enc",
+                "algorithm": "test-aead",
+            },
+            {
+                "privacy": ENCRYPTED_MARKER,
+                "ciphertext": "ZW5jcnlwdGVkOv8=",
+                "key_id": "enc",
+                "algorithm": "test-aead",
+            },
+        )
+
+        for value in bad_values:
+            with self.subTest(value=value):
+                with self.assertRaises(PrivacySanitizationError) as error:
+                    decrypt_encrypted_privacy_value(
+                        value,
+                        decryption_provider=provider,
+                    )
+                self.assertNotIn("private", str(error.exception))
+
+        with self.assertRaises(PrivacySanitizationError) as missing:
+            decrypt_encrypted_privacy_value(
+                {
+                    "privacy": ENCRYPTED_MARKER,
+                    "ciphertext": "ZW5jcnlwdGVkOnByaXZhdGU=",
+                    "key_id": "enc",
+                    "algorithm": "test-aead",
+                },
+                decryption_provider=object(),
+            )
+        self.assertEqual(
+            str(missing.exception),
+            "privacy decryption key is unavailable",
+        )
+
     def test_encrypt_and_store_require_explicit_raw_retention(self) -> None:
         encrypted = PrivacySanitizer(
             TaskPrivacyPolicy(output=PrivacyAction.ENCRYPT),
@@ -345,6 +476,10 @@ class PrivacyTest(TestCase):
         sanitizer = PrivacySanitizer(
             event_allowlists={"tool": ("count", "status")}
         )
+        engine_event = sanitizer.sanitize_event(
+            "start",
+            {"status": "ok", "prompt": "private prompt"},
+        )
         event = sanitizer.sanitize_event(
             "tool",
             {
@@ -364,6 +499,10 @@ class PrivacyTest(TestCase):
             },
         )
 
+        self.assertEqual(
+            engine_event,
+            {"event_type": "start", "status": "ok"},
+        )
         self.assertEqual(
             event,
             {

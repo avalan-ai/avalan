@@ -13,6 +13,7 @@ from avalan.task import (
     TaskArtifactState,
     TaskAttemptState,
     TaskDefinition,
+    TaskExecutionPayload,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
@@ -28,6 +29,7 @@ from avalan.task import (
     validate_attempt_transition_request,
     validate_run_transition_request,
 )
+from avalan.task.store import ensure_run_is_mutable
 from avalan.task.stores import InMemoryTaskStore
 
 
@@ -193,6 +195,37 @@ class StoreContractAssertions:
                 to_state=TaskRunState.FAILED,
                 reason="late_failure",
             )
+
+    async def test_execution_payload_is_durable_and_immutable(self) -> None:
+        await self.store.register_definition(
+            self.definition,
+            definition_hash="hash-a",
+        )
+        run = await self.store.create_run(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_summary={"privacy": "<hmac-sha256>"},
+                input_payload=TaskExecutionPayload(
+                    input_value={
+                        "privacy": "<encrypted>",
+                        "ciphertext": "Ynl0ZXM=",
+                    }
+                ),
+            )
+        )
+        loaded = await self.store.get_run(run.run_id)
+
+        self.assertIsNotNone(loaded.request.input_payload)
+        assert loaded.request.input_payload is not None
+        payload = cast(
+            Mapping[str, object],
+            loaded.request.input_payload.input_value,
+        )
+        self.assertEqual(payload["privacy"], "<encrypted>")
+        with self.assertRaises(TypeError):
+            cast(dict[str, object], payload)["raw"] = "leak"
+        with self.assertRaises(AssertionError):
+            TaskExecutionPayload(input_value={"raw": object()})
 
     async def test_attempts_are_ordered_and_one_active_attempt_is_allowed(
         self,
@@ -587,6 +620,20 @@ class StoreHelperTest(TestCase):
                 from_states={TaskAttemptState.SUCCEEDED},
                 to_state=TaskAttemptState.RUNNING,
             )
+        with self.assertRaises(TaskStoreConflictError):
+            validate_attempt_transition_request(
+                current_state=TaskAttemptState.CREATED,
+                from_states={TaskAttemptState.RUNNING},
+                to_state=TaskAttemptState.SUCCEEDED,
+            )
+        with self.assertRaises(TaskStoreConflictError):
+            validate_run_transition_request(
+                current_state=TaskRunState.SUCCEEDED,
+                from_states={TaskRunState.SUCCEEDED},
+                to_state=TaskRunState.SUCCEEDED,
+            )
+        with self.assertRaises(TaskStoreConflictError):
+            ensure_run_is_mutable(TaskRunState.SUCCEEDED)
 
     def test_snapshot_values_are_recursive_immutable_safe_values(self) -> None:
         value = freeze_snapshot_value(

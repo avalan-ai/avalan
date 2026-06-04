@@ -9,7 +9,10 @@ from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.event import Event, EventType
 from avalan.task import (
+    EncryptedPrivacyValue,
     IdempotencyMode,
+    PrivacySanitizer,
+    RunMode,
     TaskArtifactPurpose,
     TaskArtifactRef,
     TaskArtifactRetention,
@@ -157,6 +160,38 @@ class StaticHmacProvider:
             algorithm="hmac-sha256",
             secret=b"test-secret",
         )
+
+
+class StaticEncryptionProvider:
+    def encrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> EncryptedPrivacyValue:
+        _ = purpose
+        return EncryptedPrivacyValue(
+            ciphertext=b"encrypted:" + value,
+            key_id=key_id or "raw-value",
+            algorithm="test-aead",
+            metadata=context,
+        )
+
+    def decrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        algorithm: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> bytes:
+        _ = purpose, key_id, algorithm, context
+        prefix = b"encrypted:"
+        assert value.startswith(prefix)
+        return value[len(prefix) :]
 
 
 class RejectingTarget(TaskTargetRunner):
@@ -798,6 +833,8 @@ ref = "agents/reviewer.toml"
             target=_noop_target,
             queue=cast(TaskQueue, queue),
             hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
         )
 
         submission = await client.enqueue(
@@ -812,6 +849,90 @@ ref = "agents/reviewer.toml"
 
         self.assertEqual(len(submission.run.definition_id), 64)
         self.assertIsNone(queue.requests[0].idempotency_key)
+        self.assertIsNotNone(queue.requests[0].input_payload)
+        self.assertNotIn("private prompt", str(queue.requests[0]))
+
+    async def test_enqueue_rejects_scalar_input_without_payload_storage(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-queue-missing-payload-hash",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await client.enqueue(
+                _definition(
+                    run=TaskRunPolicy.queued(
+                        "documents",
+                        idempotency=IdempotencyMode.NONE,
+                    ),
+                    privacy=TaskPrivacyPolicy(),
+                ),
+                input_value="private prompt",
+            )
+
+        self.assertEqual(queue.requests, [])
+        self.assertEqual(
+            [issue.code for issue in error.exception.issues],
+            [
+                "queue.input_payload_unavailable",
+                "queue.input_payload_unavailable",
+                "privacy.encryption_key_missing",
+            ],
+        )
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues],
+            ["privacy.raw_retention_days", "privacy", "privacy.input"],
+        )
+        self.assertNotIn("private prompt", str(error.exception))
+
+    async def test_enqueue_rejects_non_json_payload_input_safely(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+            definition_hash=lambda task: "client-queue-bad-payload-hash",
+        )
+
+        definition = _definition(
+            input_contract=TaskInputContract.number(),
+            run=TaskRunPolicy.queued(
+                "documents",
+                idempotency=IdempotencyMode.NONE,
+            ),
+        )
+        sanitizer = PrivacySanitizer(
+            definition.privacy,
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            client._queue_input_payload(
+                definition,
+                float("nan"),
+                sanitizer,
+            )
+
+        self.assertEqual(queue.requests, [])
+        self.assertEqual(len(error.exception.issues), 1)
+        issue = error.exception.issues[0]
+        self.assertEqual(issue.code, "queue.input_payload_unavailable")
+        self.assertEqual(issue.path, "input")
+        self.assertNotIn("nan", str(error.exception).lower())
 
     async def test_enqueue_uses_explicit_queue_name(self) -> None:
         store = InMemoryTaskStore()
@@ -821,6 +942,8 @@ ref = "agents/reviewer.toml"
             target=_noop_target,
             queue=cast(TaskQueue, queue),
             hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
             definition_hash=lambda task: "client-queue-override-hash",
         )
         definition = _definition(
@@ -860,6 +983,8 @@ ref = "agents/reviewer.toml"
             target=_noop_target,
             queue=cast(TaskQueue, queue),
             hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
             definition_hash=lambda task: "client-explicit-file-hash",
         )
         ref = TaskArtifactRef(
@@ -920,6 +1045,8 @@ ref = "agents/reviewer.toml"
             target=_noop_target,
             queue=cast(TaskQueue, queue),
             hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
             definition_hash=lambda task: "client-nondurable-file-hash",
         )
 
@@ -946,6 +1073,8 @@ ref = "agents/reviewer.toml"
             target=_noop_target,
             queue=cast(TaskQueue, queue),
             hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
             definition_hash=lambda task: "client-provider-file-hash",
         )
         provider_reference = TaskFileDescriptor.provider_reference_descriptor(
@@ -983,6 +1112,8 @@ ref = "agents/reviewer.toml"
             target=_noop_target,
             queue=cast(TaskQueue, queue),
             hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
             definition_hash=lambda task: "client-expiring-provider-file-hash",
         )
         provider_reference = TaskFileDescriptor.provider_reference_descriptor(
@@ -1027,6 +1158,8 @@ ref = "agents/reviewer.toml"
                 target=_noop_target,
                 queue=cast(TaskQueue, queue),
                 hmac_provider=StaticHmacProvider(),
+                encryption_provider=StaticEncryptionProvider(),
+                raw_storage_allowed=True,
                 artifact_store=artifact_store,
                 definition_hash=lambda task: "client-queue-hash",
                 execution_roots=(root,),
@@ -1115,6 +1248,8 @@ ref = "agents/reviewer.toml"
                 target=_noop_target,
                 queue=cast(TaskQueue, queue),
                 hmac_provider=StaticHmacProvider(),
+                encryption_provider=StaticEncryptionProvider(),
+                raw_storage_allowed=True,
                 artifact_store=artifact_store,
                 definition_hash=lambda task: "client-queue-failure-hash",
                 execution_roots=(root,),
@@ -1148,6 +1283,8 @@ ref = "agents/reviewer.toml"
             target=_noop_target,
             queue=cast(TaskQueue, queue),
             hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
             definition_hash=lambda task: "client-cancel-hash",
         )
         submission = await client.enqueue(
@@ -1548,13 +1685,19 @@ def _definition(
     privacy: TaskPrivacyPolicy | None = None,
     run: TaskRunPolicy | None = None,
 ) -> TaskDefinition:
+    selected_run = run or TaskRunPolicy.direct()
     return TaskDefinition(
         task=TaskMetadata(name="agent", version="1"),
         input=input_contract or TaskInputContract.string(),
         output=TaskOutputContract.text(),
         execution=TaskExecutionTarget.agent("agents/valid.toml"),
-        privacy=privacy or TaskPrivacyPolicy(),
-        run=run or TaskRunPolicy.direct(),
+        privacy=privacy
+        or (
+            TaskPrivacyPolicy(raw_retention_days=1)
+            if selected_run.mode == RunMode.QUEUE
+            else TaskPrivacyPolicy()
+        ),
+        run=selected_run,
     )
 
 

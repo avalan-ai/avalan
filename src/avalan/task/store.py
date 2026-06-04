@@ -97,9 +97,22 @@ class TaskDefinitionRecord:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TaskExecutionPayload:
+    input_value: TaskSnapshotValue
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "input_value",
+            freeze_snapshot_value(self.input_value),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TaskExecutionRequest:
     definition_id: str
     input_summary: TaskSnapshotValue = None
+    input_payload: TaskExecutionPayload | None = None
     file_summaries: tuple[TaskSnapshotValue, ...] = ()
     idempotency_key: str | None = None
     queue: str | None = None
@@ -114,6 +127,8 @@ class TaskExecutionRequest:
             "input_summary",
             freeze_snapshot_value(self.input_summary),
         )
+        if self.input_payload is not None:
+            assert isinstance(self.input_payload, TaskExecutionPayload)
         assert isinstance(
             self.file_summaries, tuple
         ), "file_summaries must be a tuple"

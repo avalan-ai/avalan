@@ -13,7 +13,7 @@ from .artifact import (
 from .canonical import spec_hash
 from .context import TaskInputFile
 from .converters import FileConverter
-from .definition import RunMode, TaskDefinition
+from .definition import PrivacyAction, RunMode, TaskDefinition, TaskInputType
 from .event import SanitizedTaskEvent
 from .idempotency import task_idempotency_identity
 from .input import (
@@ -31,6 +31,7 @@ from .privacy import (
     EncryptionProvider,
     HmacProvider,
     PrivacyField,
+    PrivacySanitizationError,
     PrivacySanitizer,
 )
 from .queue import TaskQueue, TaskQueueArtifact, TaskQueueSubmission
@@ -45,6 +46,7 @@ from .runner import (
 from .state import TASK_RUN_TERMINAL_STATES, TaskRunState
 from .store import (
     TaskAttempt,
+    TaskExecutionPayload,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskRun,
@@ -485,6 +487,11 @@ class TaskClient:
             definition,
             definition_hash=definition_id,
         )
+        input_payload = self._queue_input_payload(
+            definition,
+            input_value,
+            sanitizer,
+        )
         provider_reference_files = (
             task_provider_reference_input_files_from_input(
                 definition,
@@ -531,6 +538,7 @@ class TaskClient:
                             input_summary_value,
                         )
                     ),
+                    input_payload=input_payload,
                     file_summaries=self._file_summaries(
                         sanitizer,
                         queued_files,
@@ -721,6 +729,46 @@ class TaskClient:
             for file in files
         )
 
+    def _queue_input_payload(
+        self,
+        definition: TaskDefinition,
+        input_value: object,
+        sanitizer: PrivacySanitizer,
+    ) -> TaskExecutionPayload | None:
+        if not _queue_input_payload_required(definition, input_value):
+            return None
+        issues = _queue_input_payload_issues(
+            definition,
+            raw_storage_allowed=self._raw_storage_allowed,
+            encryption_provider=self._encryption_provider,
+        )
+        if issues:
+            raise TaskValidationError(issues)
+        try:
+            encrypted_input = sanitizer.sanitize_with_action(
+                PrivacyAction.ENCRYPT,
+                input_value,
+            )
+        except PrivacySanitizationError as error:
+            raise TaskValidationError(
+                (
+                    _queue_input_payload_issue(
+                        path="input",
+                        message=(
+                            "Queued task input cannot be safely stored for "
+                            "worker execution."
+                        ),
+                        hint=(
+                            "Use JSON-compatible input or a durable file or "
+                            "provider reference."
+                        ),
+                    ),
+                )
+            ) from error
+        return TaskExecutionPayload(
+            input_value=_snapshot_value(encrypted_input),
+        )
+
     def _queue_artifacts(
         self,
         definition: TaskDefinition,
@@ -814,6 +862,81 @@ class TaskClient:
         if issues:
             raise TaskValidationError(tuple(issues))
         return tuple(artifacts)
+
+
+def _queue_input_payload_required(
+    definition: TaskDefinition,
+    input_value: object,
+) -> bool:
+    return input_value is not None and definition.input.type not in {
+        TaskInputType.FILE,
+        TaskInputType.FILE_ARRAY,
+    }
+
+
+def _queue_input_payload_issues(
+    definition: TaskDefinition,
+    *,
+    raw_storage_allowed: bool,
+    encryption_provider: EncryptionProvider | None,
+) -> tuple[TaskValidationIssue, ...]:
+    issues: list[TaskValidationIssue] = []
+    if definition.privacy.raw_retention_days <= 0:
+        issues.append(
+            _queue_input_payload_issue(
+                path="privacy.raw_retention_days",
+                message=(
+                    "Queued task input requires encrypted raw retention for "
+                    "worker execution."
+                ),
+                hint=(
+                    "Set a positive raw retention period for queued scalar "
+                    "or structured inputs."
+                ),
+            )
+        )
+    if not raw_storage_allowed:
+        issues.append(
+            _queue_input_payload_issue(
+                path="privacy",
+                message="Queued task input raw storage is not enabled.",
+                hint=(
+                    "Enable raw storage in runtime configuration for queued "
+                    "scalar or structured inputs."
+                ),
+            )
+        )
+    if encryption_provider is None:
+        issues.append(
+            _queue_input_payload_issue(
+                path="privacy.input",
+                code="privacy.encryption_key_missing",
+                message=(
+                    "Queued task input requires an encryption key provider."
+                ),
+                hint=(
+                    "Configure a task encryption provider before queueing "
+                    "scalar or structured inputs."
+                ),
+            )
+        )
+    return tuple(issues)
+
+
+def _queue_input_payload_issue(
+    *,
+    path: str,
+    message: str,
+    hint: str,
+    code: str = "queue.input_payload_unavailable",
+) -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code=code,
+        path=path,
+        message=message,
+        hint=hint,
+        category=TaskValidationCategory.PRIVACY,
+    )
 
 
 def _unsupported_queue_operation(

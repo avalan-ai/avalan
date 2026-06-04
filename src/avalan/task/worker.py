@@ -17,6 +17,7 @@ from .privacy import (
     PrivacySafeValue,
     PrivacySanitizationError,
     PrivacySanitizer,
+    decrypt_encrypted_privacy_value,
 )
 from .queue import (
     TaskQueue,
@@ -275,7 +276,7 @@ class TaskWorker:
         context = TaskTargetContext(
             definition=definition,
             execution=attempt.context,
-            input_value=run.request.input_summary,
+            input_value=self._executable_input_value(run),
             files=await self._input_files(run.run_id),
             metadata=run.request.metadata,
             cancellation_checker=lambda: self._check_cancelled(run.run_id),
@@ -318,6 +319,15 @@ class TaskWorker:
         )
         await self._check_cancelled(run.run_id)
         return output
+
+    def _executable_input_value(self, run: TaskRun) -> object:
+        payload = run.request.input_payload
+        if payload is None:
+            return run.request.input_summary
+        return decrypt_encrypted_privacy_value(
+            payload.input_value,
+            decryption_provider=self._encryption_provider,
+        )
 
     async def _run_target(
         self,

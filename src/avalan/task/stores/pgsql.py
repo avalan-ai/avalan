@@ -59,6 +59,7 @@ from ..store import (
     TaskClaim,
     TaskDefinitionRecord,
     TaskExecutionContext,
+    TaskExecutionPayload,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskRun,
@@ -2195,7 +2196,7 @@ def _definition_from_payload(payload: Mapping[str, object]) -> TaskDefinition:
 
 
 def _request_to_payload(request: TaskExecutionRequest) -> dict[str, object]:
-    return {
+    payload = {
         "definition_id": request.definition_id,
         "file_summaries": _plain(request.file_summaries),
         "idempotency_key": request.idempotency_key,
@@ -2203,6 +2204,11 @@ def _request_to_payload(request: TaskExecutionRequest) -> dict[str, object]:
         "metadata": _plain(request.metadata),
         "queue": request.queue,
     }
+    if request.input_payload is not None:
+        payload["input_payload"] = _execution_payload_to_payload(
+            request.input_payload
+        )
+    return payload
 
 
 def _request_from_payload(
@@ -2221,12 +2227,31 @@ def _request_from_payload(
     return TaskExecutionRequest(
         definition_id=cast(str, payload["definition_id"]),
         input_summary=freeze_snapshot_value(payload.get("input_summary")),
+        input_payload=(
+            _execution_payload_from_payload(_mapping(payload["input_payload"]))
+            if payload.get("input_payload") is not None
+            else None
+        ),
         file_summaries=file_summaries,
         idempotency_key=cast(str | None, payload.get("idempotency_key")),
         queue=cast(str | None, payload.get("queue")),
         metadata=freeze_snapshot_metadata(
             _mapping(payload.get("metadata", {}))
         ),
+    )
+
+
+def _execution_payload_to_payload(
+    payload: TaskExecutionPayload,
+) -> dict[str, object]:
+    return {"input_value": _plain(payload.input_value)}
+
+
+def _execution_payload_from_payload(
+    payload: Mapping[str, object],
+) -> TaskExecutionPayload:
+    return TaskExecutionPayload(
+        input_value=freeze_snapshot_value(payload.get("input_value")),
     )
 
 

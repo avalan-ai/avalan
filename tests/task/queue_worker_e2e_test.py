@@ -20,6 +20,7 @@ from avalan.task import (
     HASHED_MARKER,
     REDACTED_MARKER,
     STORED_MARKER,
+    EncryptedPrivacyValue,
     TaskArtifactPolicy,
     TaskArtifactPurpose,
     TaskArtifactRef,
@@ -39,6 +40,7 @@ from avalan.task import (
     TaskMetadata,
     TaskObservabilityPolicy,
     TaskOutputContract,
+    TaskPrivacyPolicy,
     TaskQueue,
     TaskQueueAbandonment,
     TaskQueueArtifact,
@@ -81,6 +83,38 @@ class StaticHmacProvider:
             algorithm="hmac-sha256",
             secret=b"queue-worker-e2e-secret",
         )
+
+
+class StaticEncryptionProvider:
+    def encrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> EncryptedPrivacyValue:
+        _ = purpose
+        return EncryptedPrivacyValue(
+            ciphertext=b"encrypted:" + value,
+            key_id=key_id or "raw-value",
+            algorithm="test-aead",
+            metadata=context,
+        )
+
+    def decrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        algorithm: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> bytes:
+        _ = purpose, key_id, algorithm, context
+        prefix = b"encrypted:"
+        assert value.startswith(prefix)
+        return value[len(prefix) :]
 
 
 class ReadingTarget(TaskTargetRunner):
@@ -1041,7 +1075,9 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(artifacts[0].purpose, TaskArtifactPurpose.INPUT)
         self.assertEqual(len(inspection.artifacts), 1)
         assert isinstance(target.inputs[0], Mapping)
-        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(target.inputs[0]["prompt"], "Review the document.")
+        document = cast(Mapping[str, object], target.inputs[0]["document"])
+        self.assertEqual(document["reference"], "document.txt")
         self.assertNotIn("private structured body", str(inspection.as_dict()))
         self.assertNotIn("document.txt", str(inspection.as_dict()))
         self.assertNotIn("Review the document.", str(inspection.as_dict()))
@@ -1090,9 +1126,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertTrue(output.ready)
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
         self.assertEqual(after_work.active, 0)
-        self.assertEqual(len(target.inputs), 1)
-        assert isinstance(target.inputs[0], Mapping)
-        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(target.inputs, ["same prompt"])
         self.assertEqual(len(inspection.attempts), 1)
         self.assertNotIn("same-window", str(inspection.as_dict()))
         self.assertNotIn("same-owner", str(inspection.as_dict()))
@@ -1159,9 +1193,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
         self.assertEqual(final_default_depth.active, 0)
         self.assertEqual(final_priority_depth.active, 0)
-        self.assertEqual(len(target.inputs), 1)
-        assert isinstance(target.inputs[0], Mapping)
-        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(target.inputs, ["private priority prompt"])
         self.assertEqual(len(inspection.attempts), 1)
         self.assertEqual(
             inspection.attempts[0].state,
@@ -1316,9 +1348,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertTrue(output.ready)
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
         self.assertEqual(target.file_bodies, [b"private explicit attachment"])
-        self.assertEqual(len(target.inputs), 1)
-        assert isinstance(target.inputs[0], Mapping)
-        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(target.inputs, ["private prompt with attachment"])
         self.assertEqual(len(artifacts), 1)
         self.assertEqual(artifacts[0].artifact_id, "explicit-input-e2e")
         self.assertEqual(artifacts[0].purpose, TaskArtifactPurpose.INPUT)
@@ -1477,9 +1507,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(inspection.attempts[0].state, TaskAttemptState.FAILED)
         self.assertEqual(depth.active, 0)
         self.assertEqual(depth.dead, 1)
-        self.assertEqual(len(target.inputs), 1)
-        assert isinstance(target.inputs[0], Mapping)
-        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(target.inputs, ["private running prompt"])
         self.assertIn("cancellation", str(output.error))
         self.assertNotIn("private running prompt", str(inspection.as_dict()))
 
@@ -1794,9 +1822,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertTrue(processed.processed)
         self.assertTrue(output.ready)
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
-        self.assertEqual(len(target.inputs), 1)
-        assert isinstance(target.inputs[0], Mapping)
-        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(target.inputs, ["scheduled prompt"])
         self.assertIsNone(ready_health.oldest_available_at)
 
     async def test_terminal_worker_failure_is_safe_to_inspect(self) -> None:
@@ -1980,10 +2006,13 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(inspection.usage_totals.total_tokens, 8)
         self.assertEqual(depth.active, 0)
         self.assertEqual(depth.dead, 0)
-        self.assertEqual(len(target.inputs), 2)
-        for input_value in target.inputs:
-            assert isinstance(input_value, Mapping)
-            self.assertEqual(input_value["privacy"], HASHED_MARKER)
+        self.assertEqual(
+            target.inputs,
+            [
+                {"prompt": "private structured prompt", "limit": 2},
+                {"prompt": "private structured prompt", "limit": 2},
+            ],
+        )
         inspection_value = str(inspection.as_dict())
         self.assertNotIn("private backend path", inspection_value)
         self.assertNotIn("customer-secret", inspection_value)
@@ -2041,9 +2070,10 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(inspection.usage_totals.total_tokens, 3)
         self.assertEqual(depth.active, 0)
         self.assertEqual(depth.dead, 1)
-        self.assertEqual(len(target.inputs), 1)
-        assert isinstance(target.inputs[0], Mapping)
-        self.assertEqual(target.inputs[0]["privacy"], HASHED_MARKER)
+        self.assertEqual(
+            target.inputs,
+            [{"prompt": "private invalid prompt", "limit": 1}],
+        )
         inspection_value = str(inspection.as_dict())
         self.assertNotIn("private invalid prompt", inspection_value)
         self.assertNotIn("private invalid count", inspection_value)
@@ -2516,7 +2546,13 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         flow.add_node(Node("A", func=lambda _: "unused private output"))
         target = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
         client = _client(store, queue, target=target, clock=clock)
-        worker = _worker(store, queue, target=target, clock=clock)
+        worker = TaskWorker(
+            store,
+            cast(TaskQueue, queue),
+            target=target,
+            worker_id="worker-1",
+            clock=lambda: clock.now,
+        )
         definition = _definition(
             execution=TaskExecutionTarget.flow("flows/report.toml"),
             observability=TaskObservabilityPolicy.noop(),
@@ -2534,7 +2570,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertTrue(processed.processed)
         self.assertIsNone(processed.retry)
         self.assertEqual(output.state, TaskRunState.FAILED)
-        self.assertIn("input_contract", str(output.error))
+        self.assertIn("privacy", str(output.error))
         inspection_value = str(inspection.as_dict())
         self.assertNotIn("private prompt", inspection_value)
         self.assertNotIn("unused private output", inspection_value)
@@ -2575,6 +2611,8 @@ def _client(
         target=target,
         queue=cast(TaskQueue, queue),
         hmac_provider=StaticHmacProvider(),
+        encryption_provider=StaticEncryptionProvider(),
+        raw_storage_allowed=True,
         artifact_store=artifact_store,
         definition_hash=lambda definition: "queue-worker-e2e",
         execution_roots=execution_roots,
@@ -2600,6 +2638,8 @@ def _worker(
         target=target,
         worker_id="worker-1",
         queue_name=queue_name,
+        encryption_provider=StaticEncryptionProvider(),
+        raw_storage_allowed=True,
         artifact_store=artifact_store,
         shutdown=shutdown,
         heartbeat_seconds=heartbeat_seconds,
@@ -2673,6 +2713,7 @@ def _definition(
         output=output_contract or TaskOutputContract.text(),
         execution=execution or TaskExecutionTarget.agent("agent.toml"),
         run=TaskRunPolicy.queued("default"),
+        privacy=TaskPrivacyPolicy(raw_retention_days=1),
         artifact=artifact or TaskArtifactPolicy.references_only(),
         observability=observability or TaskObservabilityPolicy(),
         retry=retry or TaskRetryPolicy(max_attempts=2),

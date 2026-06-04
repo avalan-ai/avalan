@@ -1,13 +1,13 @@
 from ..types import MutableJsonValue
 from .definition import PrivacyAction, TaskPrivacyPolicy
 
-from base64 import b64encode
+from base64 import b64decode, b64encode
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
 from hmac import new as hmac_new
-from json import dumps
+from json import dumps, loads
 from math import isfinite
 from typing import Protocol, TypeAlias, cast
 
@@ -199,6 +199,18 @@ class EncryptionProvider(Protocol):
         key_id: str | None = None,
         context: Mapping[str, str] | None = None,
     ) -> EncryptedPrivacyValue: ...
+
+
+class DecryptionProvider(Protocol):
+    def decrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        algorithm: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> bytes: ...
 
 
 class PrivacySanitizationError(ValueError):
@@ -443,6 +455,49 @@ class PrivacySanitizer:
         return encrypted.as_dict()
 
 
+def decrypt_encrypted_privacy_value(
+    value: object,
+    *,
+    decryption_provider: object | None,
+) -> PrivacySafeValue:
+    if not isinstance(value, Mapping):
+        raise PrivacySanitizationError("encrypted privacy value is invalid")
+    if value.get("privacy") != ENCRYPTED_MARKER:
+        raise PrivacySanitizationError("encrypted privacy value is invalid")
+    provider = _decryption_provider(decryption_provider)
+    ciphertext = value.get("ciphertext")
+    key_id = value.get("key_id")
+    algorithm = value.get("algorithm")
+    metadata = value.get("metadata")
+    if not isinstance(ciphertext, str):
+        raise PrivacySanitizationError("encrypted privacy value is invalid")
+    if not isinstance(key_id, str) or not key_id.strip():
+        raise PrivacySanitizationError("encrypted privacy value is invalid")
+    if not isinstance(algorithm, str) or not algorithm.strip():
+        raise PrivacySanitizationError("encrypted privacy value is invalid")
+    context = _encrypted_metadata(metadata)
+    try:
+        ciphertext_bytes = b64decode(ciphertext.encode("ascii"), validate=True)
+    except ValueError as error:
+        raise PrivacySanitizationError(
+            "encrypted privacy value is invalid"
+        ) from error
+    plaintext = provider.decrypt(
+        ciphertext_bytes,
+        purpose=TaskKeyPurpose.RAW_VALUE,
+        key_id=key_id,
+        algorithm=algorithm,
+        context=context,
+    )
+    try:
+        private_value = loads(plaintext.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise PrivacySanitizationError(
+            "encrypted privacy value is invalid"
+        ) from error
+    return _private_json_value(private_value)
+
+
 def _privacy_action(value: PrivacyAction | str | int) -> PrivacyAction:
     if isinstance(value, PrivacyAction):
         return value
@@ -466,6 +521,28 @@ def _freeze_allowlists(
         assert isinstance(fields, tuple)
         frozen[event_type] = frozenset(fields)
     return frozen
+
+
+def _decryption_provider(value: object | None) -> DecryptionProvider:
+    decrypt = getattr(value, "decrypt", None)
+    if value is None or not callable(decrypt):
+        raise PrivacySanitizationError("privacy decryption key is unavailable")
+    return cast(DecryptionProvider, value)
+
+
+def _encrypted_metadata(value: object) -> Mapping[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise PrivacySanitizationError("encrypted privacy value is invalid")
+    metadata: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise PrivacySanitizationError(
+                "encrypted privacy value is invalid"
+            )
+        metadata[key] = item
+    return metadata
 
 
 def _default_event_allowed_fields(event_type: str) -> frozenset[str]:

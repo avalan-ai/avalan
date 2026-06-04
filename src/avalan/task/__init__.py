@@ -194,6 +194,9 @@ from .privacy import PrivacySanitizer as PrivacySanitizer
 from .privacy import TaskKeyMaterial as TaskKeyMaterial
 from .privacy import TaskKeyPurpose as TaskKeyPurpose
 from .privacy import (
+    decrypt_encrypted_privacy_value as decrypt_encrypted_privacy_value,
+)
+from .privacy import (
     privacy_policy_fields as privacy_policy_fields,
 )
 from .privacy import (
@@ -261,6 +264,7 @@ from .store import TaskAttemptTransition as TaskAttemptTransition
 from .store import TaskClaim as TaskClaim
 from .store import TaskDefinitionRecord as TaskDefinitionRecord
 from .store import TaskExecutionContext as TaskExecutionContext
+from .store import TaskExecutionPayload as TaskExecutionPayload
 from .store import TaskExecutionRequest as TaskExecutionRequest
 from .store import TaskExecutionResult as TaskExecutionResult
 from .store import TaskRun as TaskRun
