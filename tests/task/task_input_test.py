@@ -571,6 +571,37 @@ class TaskInputTest(TestCase):
         self.assertNotIn("127.0.0.1", rendered)
         self.assertNotIn("user:pass", rendered)
 
+    def test_remote_url_policy_validates_redirect_limits(self) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.file(),
+        )
+
+        missing_limit_issues = validate_task_input(
+            definition,
+            TaskFileDescriptor.remote_url("https://example.test/input.txt"),
+            remote_url_policy=TaskRemoteUrlPolicy(
+                enabled=True,
+                allow_redirects=True,
+                max_bytes=1024,
+            ),
+        )
+        bounded_issues = validate_task_input(
+            definition,
+            TaskFileDescriptor.remote_url("https://example.test/input.txt"),
+            remote_url_policy=TaskRemoteUrlPolicy(
+                enabled=True,
+                allow_redirects=True,
+                max_redirects=2,
+                max_bytes=1024,
+            ),
+        )
+
+        self.assertEqual(
+            [issue.path for issue in missing_limit_issues],
+            ["input.redirects"],
+        )
+        self.assertEqual(bounded_issues, ())
+
     def test_enabled_remote_url_policy_rejects_local_hostnames(self) -> None:
         definition = self._definition(
             input_contract=TaskInputContract.file(),
@@ -580,6 +611,13 @@ class TaskInputTest(TestCase):
             "https://localhost/private.txt",
             "https://worker.localhost/private.txt",
             "https://printer.local/private.txt",
+            "https://10.0.0.1/private.txt",
+            "https://172.16.0.1/private.txt",
+            "https://192.168.1.2/private.txt",
+            "https://169.254.1.1/private.txt",
+            "https://[::1]/private.txt",
+            "https://[fc00::1]/private.txt",
+            "https://[fe80::1]/private.txt",
         ):
             with self.subTest(url=url):
                 issues = validate_task_input(
@@ -602,6 +640,8 @@ class TaskInputTest(TestCase):
                 )
                 self.assertNotIn("localhost", rendered)
                 self.assertNotIn("printer.local", rendered)
+                self.assertNotIn("10.0.0.1", rendered)
+                self.assertNotIn("fc00", rendered)
 
     def test_enabled_remote_url_policy_accepts_bounded_public_url(
         self,
@@ -623,6 +663,16 @@ class TaskInputTest(TestCase):
         )
 
         self.assertEqual(issues, ())
+
+    def test_remote_url_policy_rejects_invalid_timeouts(self) -> None:
+        for timeout in (0, -1, float("inf"), True):
+            with self.subTest(timeout=timeout):
+                with self.assertRaises(AssertionError):
+                    TaskRemoteUrlPolicy(
+                        enabled=True,
+                        max_bytes=1024,
+                        timeout_seconds=timeout,
+                    )
 
     def test_descriptor_construction_rejects_unsafe_metadata(self) -> None:
         with self.assertRaises(AssertionError):

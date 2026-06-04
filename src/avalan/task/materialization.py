@@ -44,13 +44,112 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
+from ipaddress import ip_address
 from os import O_NOFOLLOW, O_RDONLY, close, fdopen, fstat
 from os import open as open_file_descriptor
 from pathlib import Path, PurePath, PureWindowsPath
+from socket import SOCK_STREAM, gaierror, getaddrinfo
 from stat import S_ISREG
-from typing import BinaryIO, cast
+from typing import BinaryIO, Protocol, cast
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 _REMOTE_URL_DISABLED_CODE = "feature.remote_url_file_inputs_disabled"
+_REMOTE_URL_DELIVERY = "avalan_fetched_url"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskRemoteUrlResponse:
+    status_code: int
+    headers: Mapping[str, str]
+    stream: BinaryIO
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.status_code, int)
+        assert not isinstance(self.status_code, bool)
+        assert 100 <= self.status_code <= 599
+        assert isinstance(self.headers, Mapping)
+        assert hasattr(self.stream, "read"), "stream must be readable"
+
+
+class TaskRemoteUrlResolver(Protocol):
+    def resolve(self, hostname: str) -> tuple[str, ...]: ...
+
+
+class TaskRemoteUrlHttpClient(Protocol):
+    def open(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float,
+    ) -> TaskRemoteUrlResponse: ...
+
+
+class DefaultTaskRemoteUrlResolver:
+    def resolve(self, hostname: str) -> tuple[str, ...]:
+        assert isinstance(hostname, str) and hostname.strip()
+        try:
+            infos = getaddrinfo(hostname, None, type=SOCK_STREAM)
+        except gaierror as error:
+            raise OSError("remote host resolution failed") from error
+        addresses = tuple(
+            sorted(
+                {str(info[4][0]).split("%", 1)[0] for info in infos if info[4]}
+            )
+        )
+        if not addresses:
+            raise OSError("remote host resolution failed")
+        return addresses
+
+
+class UrllibTaskRemoteUrlHttpClient:
+    def __init__(self) -> None:
+        self._opener = build_opener(_NoRedirectHandler)
+
+    def open(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float,
+    ) -> TaskRemoteUrlResponse:
+        assert isinstance(url, str) and url.strip()
+        assert isinstance(timeout_seconds, int | float)
+        request = Request(url, method="GET")
+        try:
+            response = self._opener.open(
+                request,
+                timeout=float(timeout_seconds),
+            )
+        except HTTPError as error:
+            if 300 <= error.code <= 399:
+                return TaskRemoteUrlResponse(
+                    status_code=error.code,
+                    headers=dict(error.headers.items()),
+                    stream=cast(BinaryIO, error),
+                )
+            raise OSError("remote URL request failed") from error
+        except URLError as error:
+            raise OSError("remote URL request failed") from error
+        return TaskRemoteUrlResponse(
+            status_code=response.status,
+            headers=dict(response.headers.items()),
+            stream=cast(BinaryIO, response),
+        )
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: Request,
+        fp: object,
+        code: int,
+        msg: str,
+        headers: object,
+        newurl: str,
+    ) -> None:
+        _ = req, fp, code, msg, headers, newurl
+        return None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -82,6 +181,8 @@ async def materialize_task_input_files(
     artifact_store: ArtifactStore | None,
     hmac_provider: HmacProvider | None = None,
     remote_url_policy: TaskRemoteUrlPolicy | None = None,
+    remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
+    remote_url_resolver: TaskRemoteUrlResolver | None = None,
     task_store: TaskStore | None = None,
     run_id: str | None = None,
     attempt_id: str | None = None,
@@ -105,15 +206,32 @@ async def materialize_task_input_files(
         return ()
     descriptors = tuple(entry.descriptor for entry in descriptor_entries)
     issues.extend(_validate_count_limits(definition, descriptors))
-    materializable_entries = tuple(
+    local_entries = tuple(
+        entry
+        for entry in descriptor_entries
+        if entry.descriptor.source_kind == TaskFileSourceKind.LOCAL_PATH
+    )
+    remote_entries = tuple(
+        entry
+        for entry in descriptor_entries
+        if entry.descriptor.source_kind == TaskFileSourceKind.REMOTE_URL
+    )
+    unsupported_entries = tuple(
         entry
         for entry in descriptor_entries
         if entry.descriptor.source_kind
-        != TaskFileSourceKind.PROVIDER_REFERENCE
+        not in {
+            TaskFileSourceKind.LOCAL_PATH,
+            TaskFileSourceKind.PROVIDER_REFERENCE,
+            TaskFileSourceKind.REMOTE_URL,
+        }
     )
     if _has_issue_code(issues, _REMOTE_URL_DISABLED_CODE):
         raise TaskFileMaterializationError(tuple(issues))
-    if not materializable_entries:
+    for entry in unsupported_entries:
+        issues.append(_unsupported_source_issue(path=entry.path))
+    materializable_count = len(local_entries) + len(remote_entries)
+    if not materializable_count:
         if issues:
             raise TaskFileMaterializationError(tuple(issues))
         return ()
@@ -135,8 +253,7 @@ async def materialize_task_input_files(
     if task_store is not None:
         assert isinstance(run_id, str) and run_id.strip()
     resolved = tuple(
-        _resolve_descriptor_path(entry, root_paths)
-        for entry in materializable_entries
+        _resolve_descriptor_path(entry, root_paths) for entry in local_entries
     )
     validated: list[_ValidatedInputFile] = []
     for result in resolved:
@@ -159,6 +276,21 @@ async def materialize_task_input_files(
                 validated_file,
                 artifact_store=artifact_store,
                 hmac_provider=hmac_provider,
+                task_store=task_store,
+                run_id=run_id,
+                attempt_id=attempt_id,
+            )
+        )
+    for remote_entry in remote_entries:
+        materialized.append(
+            await _materialize_remote_url_file(
+                definition,
+                remote_entry,
+                artifact_store=artifact_store,
+                hmac_provider=hmac_provider,
+                remote_url_policy=remote_url_policy,
+                remote_url_http_client=remote_url_http_client,
+                remote_url_resolver=remote_url_resolver,
                 task_store=task_store,
                 run_id=run_id,
                 attempt_id=attempt_id,
@@ -479,17 +611,7 @@ def _resolve_descriptor_path(
 ) -> _ResolvedInputFile | TaskValidationIssue:
     descriptor = entry.descriptor
     path = entry.path
-    if descriptor.source_kind != TaskFileSourceKind.LOCAL_PATH:
-        return _issue(
-            code="input.invalid_file",
-            path=f"{path}.source_kind",
-            message="Task file source kind cannot be materialized locally.",
-            hint=(
-                "Use a local path descriptor or a source with a supported"
-                " materializer."
-            ),
-            category=TaskValidationCategory.UNSUPPORTED,
-        )
+    assert descriptor.source_kind == TaskFileSourceKind.LOCAL_PATH
     if not roots:
         return _issue(
             code="input.invalid_file",
@@ -705,6 +827,415 @@ async def _materialize_validated_file(
     )
 
 
+async def _materialize_remote_url_file(
+    definition: TaskDefinition,
+    entry: _InputFileDescriptor,
+    *,
+    artifact_store: ArtifactStore,
+    hmac_provider: HmacProvider | None,
+    remote_url_policy: TaskRemoteUrlPolicy | None,
+    remote_url_http_client: TaskRemoteUrlHttpClient | None,
+    remote_url_resolver: TaskRemoteUrlResolver | None,
+    task_store: TaskStore | None,
+    run_id: str | None,
+    attempt_id: str | None,
+) -> TaskMaterializedFile:
+    policy = remote_url_policy
+    assert policy is not None and policy.enabled
+    client = remote_url_http_client or UrllibTaskRemoteUrlHttpClient()
+    resolver = remote_url_resolver or DefaultTaskRemoteUrlResolver()
+    response = _open_remote_url_response(
+        entry.descriptor.reference,
+        descriptor_path=entry.path,
+        policy=policy,
+        client=client,
+        resolver=resolver,
+    )
+    if isinstance(response, TaskValidationIssue):
+        raise TaskFileMaterializationError((response,))
+    try:
+        validation = _validate_remote_url_response(
+            definition,
+            entry,
+            response=response,
+            policy=policy,
+        )
+        if isinstance(validation, tuple):
+            raise TaskFileMaterializationError(validation)
+        return await _store_remote_url_response(
+            definition,
+            entry,
+            response=response,
+            validation=validation,
+            artifact_store=artifact_store,
+            hmac_provider=hmac_provider,
+            task_store=task_store,
+            run_id=run_id,
+            attempt_id=attempt_id,
+        )
+    finally:
+        _close_stream(response.stream)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ValidatedRemoteUrlResponse:
+    media_type: str | None
+    size_bytes: int
+    max_bytes: int
+
+
+async def _store_remote_url_response(
+    definition: TaskDefinition,
+    entry: _InputFileDescriptor,
+    *,
+    response: TaskRemoteUrlResponse,
+    validation: _ValidatedRemoteUrlResponse,
+    artifact_store: ArtifactStore,
+    hmac_provider: HmacProvider | None,
+    task_store: TaskStore | None,
+    run_id: str | None,
+    attempt_id: str | None,
+) -> TaskMaterializedFile:
+    descriptor = entry.descriptor
+    stream = _HashingInputStream(response.stream)
+    try:
+        ref = await artifact_store.put_stream(
+            cast(BinaryIO, stream),
+            media_type=descriptor.mime_type or validation.media_type,
+            metadata={
+                "remote_delivery": _REMOTE_URL_DELIVERY,
+                "source_kind": descriptor.source_kind.value,
+            },
+            max_bytes=validation.max_bytes,
+            expected_size_bytes=validation.size_bytes,
+            expected_sha256=descriptor.sha256,
+        )
+    except ArtifactStorePolicyError as error:
+        issue = _validated_remote_stream_issue(
+            entry,
+            stream,
+            expected_size_bytes=validation.size_bytes,
+            default_to_limit=True,
+        )
+        assert issue is not None
+        raise TaskFileMaterializationError((issue,)) from error
+    except (ArtifactStoreError, OSError, TimeoutError) as error:
+        issue = _validated_remote_stream_issue(
+            entry,
+            stream,
+            expected_size_bytes=validation.size_bytes,
+            default_to_limit=False,
+        )
+        if issue is None:
+            raise
+        raise TaskFileMaterializationError((issue,)) from error
+    digest = ref.sha256 or stream.sha256
+    identity = _safe_file_identity(
+        descriptor,
+        digest,
+        hmac_provider=hmac_provider,
+    )
+    ref = TaskArtifactRef(
+        artifact_id=ref.artifact_id,
+        store=ref.store,
+        storage_key=ref.storage_key,
+        media_type=ref.media_type,
+        size_bytes=(
+            ref.size_bytes if ref.size_bytes is not None else stream.size_bytes
+        ),
+        sha256=digest,
+        metadata=freeze_snapshot_metadata(
+            {
+                **dict(ref.metadata),
+                "identity": identity,
+                "remote_delivery": _REMOTE_URL_DELIVERY,
+                "source_kind": descriptor.source_kind.value,
+            }
+        ),
+    )
+    if task_store is not None:
+        try:
+            await task_store.append_artifact(
+                run_id or "",
+                ref=ref,
+                purpose=TaskArtifactPurpose.INPUT,
+                attempt_id=attempt_id,
+                provenance=TaskArtifactProvenance(
+                    operation="remote_materialization",
+                    metadata={
+                        "identity": identity,
+                        "remote_delivery": _REMOTE_URL_DELIVERY,
+                        "source_kind": descriptor.source_kind.value,
+                    },
+                ),
+                retention=TaskArtifactRetention(
+                    delete_after_days=definition.artifact.retention_days,
+                ),
+                metadata={"identity": identity},
+            )
+        except BaseException:
+            await artifact_store.delete(ref)
+            raise
+    return TaskMaterializedFile(
+        descriptor=descriptor,
+        descriptor_path=entry.path,
+        ref=ref,
+        identity=identity,
+    )
+
+
+def _open_remote_url_response(
+    url: str,
+    *,
+    descriptor_path: str,
+    policy: TaskRemoteUrlPolicy,
+    client: TaskRemoteUrlHttpClient,
+    resolver: TaskRemoteUrlResolver,
+) -> TaskRemoteUrlResponse | TaskValidationIssue:
+    current_url = url
+    seen = {current_url}
+    redirects = 0
+    while True:
+        access_issue = _validate_remote_url_access(
+            current_url,
+            descriptor_path=descriptor_path,
+            policy=policy,
+            resolver=resolver,
+        )
+        if access_issue is not None:
+            return access_issue
+        try:
+            response = client.open(
+                current_url,
+                timeout_seconds=float(policy.timeout_seconds),
+            )
+        except TimeoutError:
+            return _remote_issue(
+                path=f"{descriptor_path}.reference",
+                message="Remote URL file request timed out.",
+                hint="Use a faster source or increase the remote URL timeout.",
+                category=TaskValidationCategory.VALUE,
+            )
+        except Exception:
+            return _remote_issue(
+                path=f"{descriptor_path}.reference",
+                message="Remote URL file could not be fetched.",
+                hint="Use an available remote file source.",
+                category=TaskValidationCategory.VALUE,
+            )
+        if not _is_redirect_response(response.status_code):
+            if 200 <= response.status_code <= 299:
+                return response
+            _close_stream(response.stream)
+            return _remote_issue(
+                path=f"{descriptor_path}.reference",
+                message="Remote URL file returned an unsupported status.",
+                hint="Use a URL that returns a successful response.",
+                category=TaskValidationCategory.VALUE,
+            )
+        redirect_issue_or_url = _redirect_target_url(
+            current_url,
+            response,
+            descriptor_path=descriptor_path,
+            policy=policy,
+            seen=seen,
+            redirects=redirects,
+        )
+        _close_stream(response.stream)
+        if isinstance(redirect_issue_or_url, TaskValidationIssue):
+            return redirect_issue_or_url
+        current_url = redirect_issue_or_url
+        seen.add(current_url)
+        redirects += 1
+
+
+def _validate_remote_url_access(
+    url: str,
+    *,
+    descriptor_path: str,
+    policy: TaskRemoteUrlPolicy,
+    resolver: TaskRemoteUrlResolver,
+) -> TaskValidationIssue | None:
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        _port = parsed.port
+    except ValueError:
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file reference is invalid.",
+            hint="Use a valid absolute URL.",
+            category=TaskValidationCategory.VALUE,
+        )
+    scheme = parsed.scheme.lower()
+    if scheme not in policy.allowed_schemes:
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file scheme is not allowed.",
+            hint="Use an allowed remote URL scheme.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if not hostname:
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file host is invalid.",
+            hint="Use an absolute URL with a host.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if parsed.username is not None or parsed.password is not None:
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file credentials are not allowed.",
+            hint="Pass credentials through a configured secret provider.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if not policy.allow_private_networks and _is_private_network_host(
+        hostname
+    ):
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file host is not allowed.",
+            hint="Use a public remote host or disable remote URL inputs.",
+            category=TaskValidationCategory.VALUE,
+        )
+    try:
+        addresses = resolver.resolve(hostname)
+    except OSError:
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file host could not be resolved.",
+            hint="Use a resolvable public remote host.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if not addresses:
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file host could not be resolved.",
+            hint="Use a resolvable public remote host.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if not policy.allow_private_networks and any(
+        _is_private_network_address(address) for address in addresses
+    ):
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file host is not allowed.",
+            hint="Use a public remote host or disable remote URL inputs.",
+            category=TaskValidationCategory.VALUE,
+        )
+    return None
+
+
+def _redirect_target_url(
+    current_url: str,
+    response: TaskRemoteUrlResponse,
+    *,
+    descriptor_path: str,
+    policy: TaskRemoteUrlPolicy,
+    seen: set[str],
+    redirects: int,
+) -> str | TaskValidationIssue:
+    if not policy.allow_redirects:
+        return _remote_issue(
+            path=f"{descriptor_path}.redirects",
+            message="Remote URL redirects are disabled.",
+            hint="Use a URL that does not redirect or enable redirects.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if redirects >= policy.max_redirects:
+        return _remote_issue(
+            path=f"{descriptor_path}.redirects",
+            message="Remote URL redirect limit was exceeded.",
+            hint="Use a direct URL or increase the redirect limit.",
+            category=TaskValidationCategory.VALUE,
+        )
+    location = _header_value(response.headers, "location")
+    if location is None or not location.strip():
+        return _remote_issue(
+            path=f"{descriptor_path}.redirects",
+            message="Remote URL redirect target is invalid.",
+            hint="Use a redirect with a valid Location header.",
+            category=TaskValidationCategory.VALUE,
+        )
+    next_url = urljoin(current_url, location)
+    if next_url in seen:
+        return _remote_issue(
+            path=f"{descriptor_path}.redirects",
+            message="Remote URL redirect loop was detected.",
+            hint="Use a URL with a finite redirect chain.",
+            category=TaskValidationCategory.VALUE,
+        )
+    return next_url
+
+
+def _validate_remote_url_response(
+    definition: TaskDefinition,
+    entry: _InputFileDescriptor,
+    *,
+    response: TaskRemoteUrlResponse,
+    policy: TaskRemoteUrlPolicy,
+) -> _ValidatedRemoteUrlResponse | tuple[TaskValidationIssue, ...]:
+    descriptor = entry.descriptor
+    media_type = _response_media_type(response)
+    size = _response_size(response)
+    issues: list[TaskValidationIssue] = []
+    if size is None:
+        issues.append(
+            _remote_issue(
+                path=f"{entry.path}.size_bytes",
+                message="Remote URL file size is unknown.",
+                hint="Use a source that sends a valid Content-Length header.",
+                category=TaskValidationCategory.VALUE,
+            )
+        )
+    elif size < 0:
+        issues.append(
+            _remote_issue(
+                path=f"{entry.path}.size_bytes",
+                message="Remote URL file size is invalid.",
+                hint="Use a source that sends a valid Content-Length header.",
+                category=TaskValidationCategory.VALUE,
+            )
+        )
+    elif descriptor.size_bytes is not None and size != descriptor.size_bytes:
+        issues.append(
+            _remote_issue(
+                path=f"{entry.path}.size_bytes",
+                message="Remote URL file size does not match the descriptor.",
+                hint="Pass a descriptor whose size matches the remote file.",
+                category=TaskValidationCategory.VALUE,
+            )
+        )
+    max_bytes = _remote_url_size_limit(definition, policy)
+    if size is not None and size > max_bytes:
+        issues.append(
+            _remote_issue(
+                path=f"{entry.path}.size_bytes",
+                message="Remote URL file exceeds the byte limit.",
+                hint="Use a smaller remote file.",
+                category=TaskValidationCategory.VALUE,
+            )
+        )
+    if descriptor.mime_type is not None and media_type != descriptor.mime_type:
+        issues.append(
+            _remote_issue(
+                path=f"{entry.path}.mime_type",
+                message="Remote URL file MIME type does not match.",
+                hint="Pass a descriptor whose MIME type matches the response.",
+                category=TaskValidationCategory.VALUE,
+            )
+        )
+    if issues:
+        return tuple(issues)
+    assert size is not None
+    assert max_bytes is not None
+    return _ValidatedRemoteUrlResponse(
+        media_type=media_type,
+        size_bytes=size,
+        max_bytes=max_bytes,
+    )
+
+
 def _open_verified_file_stream(
     path: Path,
     *,
@@ -797,12 +1328,143 @@ def _validated_stream_issue(
     return None
 
 
+def _validated_remote_stream_issue(
+    entry: _InputFileDescriptor,
+    stream: "_HashingInputStream",
+    *,
+    expected_size_bytes: int,
+    default_to_limit: bool,
+) -> TaskValidationIssue | None:
+    descriptor_path = entry.path
+    descriptor = entry.descriptor
+    if stream.timed_out:
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file read timed out.",
+            hint="Use a faster source or increase the remote URL timeout.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if stream.read_failed:
+        return _remote_issue(
+            path=f"{descriptor_path}.reference",
+            message="Remote URL file cannot be read.",
+            hint="Use an available remote file source.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if stream.read_complete and stream.size_bytes != expected_size_bytes:
+        return _remote_issue(
+            path=f"{descriptor_path}.size_bytes",
+            message="Remote URL file size does not match the descriptor.",
+            hint="Use a source with a stable Content-Length value.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if (
+        stream.read_complete
+        and descriptor.sha256 is not None
+        and stream.sha256 != descriptor.sha256
+    ):
+        return _remote_issue(
+            path=f"{descriptor_path}.sha256",
+            message="Remote URL file digest does not match the descriptor.",
+            hint="Pass a descriptor whose digest matches the remote file.",
+            category=TaskValidationCategory.VALUE,
+        )
+    if default_to_limit:
+        return _remote_issue(
+            path=f"{descriptor_path}.size_bytes",
+            message="Remote URL file exceeds the byte limit.",
+            hint="Use a smaller remote file.",
+            category=TaskValidationCategory.VALUE,
+        )
+    return None
+
+
+def _remote_url_size_limit(
+    definition: TaskDefinition,
+    policy: TaskRemoteUrlPolicy,
+) -> int:
+    limits = tuple(
+        limit
+        for limit in (
+            policy.max_bytes,
+            definition.limits.file_bytes,
+            definition.artifact.max_bytes,
+        )
+        if limit is not None
+    )
+    assert limits, "remote URL materialization requires a byte limit"
+    return min(limits)
+
+
+def _response_media_type(response: TaskRemoteUrlResponse) -> str | None:
+    value = _header_value(response.headers, "content-type")
+    if value is None:
+        return None
+    media_type = value.split(";", 1)[0].strip().lower()
+    return media_type or None
+
+
+def _response_size(response: TaskRemoteUrlResponse) -> int | None:
+    value = _header_value(response.headers, "content-length")
+    if value is None:
+        return None
+    try:
+        size = int(value)
+    except ValueError:
+        return -1
+    if size < 0:
+        return -1
+    return size
+
+
+def _header_value(
+    headers: Mapping[str, str],
+    name: str,
+) -> str | None:
+    normalized = name.lower()
+    for key, value in headers.items():
+        if key.lower() == normalized:
+            return value
+    return None
+
+
+def _is_redirect_response(status_code: int) -> bool:
+    return status_code in {301, 302, 303, 307, 308}
+
+
+def _is_private_network_host(hostname: str) -> bool:
+    normalized = hostname.rstrip(".").lower()
+    if (
+        normalized == "localhost"
+        or normalized.endswith(".localhost")
+        or normalized.endswith(".local")
+    ):
+        return True
+    return _is_private_network_address(normalized)
+
+
+def _is_private_network_address(value: str) -> bool:
+    try:
+        address = ip_address(value.split("%", 1)[0])
+    except ValueError:
+        return False
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
 class _HashingInputStream:
     def __init__(self, stream: BinaryIO) -> None:
         self._stream = stream
         self._digest = sha256()
         self.size_bytes = 0
         self.read_failed = False
+        self.timed_out = False
         self.read_complete = False
 
     @property
@@ -812,6 +1474,9 @@ class _HashingInputStream:
     def read(self, size: int = -1) -> bytes:
         try:
             chunk = self._stream.read(size)
+        except TimeoutError:
+            self.timed_out = True
+            raise
         except OSError:
             self.read_failed = True
             raise
@@ -851,6 +1516,32 @@ def _safe_file_identity(
         except PrivacySanitizationError:
             identity = {"privacy": "<redacted>"}
     return freeze_snapshot_metadata(identity)
+
+
+def _unsupported_source_issue(*, path: str) -> TaskValidationIssue:
+    return _issue(
+        code="input.invalid_file",
+        path=f"{path}.source_kind",
+        message="Task file source kind cannot be materialized.",
+        hint="Use a local path, remote URL, or provider reference descriptor.",
+        category=TaskValidationCategory.UNSUPPORTED,
+    )
+
+
+def _remote_issue(
+    *,
+    path: str,
+    message: str,
+    hint: str,
+    category: TaskValidationCategory,
+) -> TaskValidationIssue:
+    return _issue(
+        code="input.invalid_file",
+        path=path,
+        message=message,
+        hint=hint,
+        category=category,
+    )
 
 
 def _issue(
@@ -897,6 +1588,12 @@ def _is_relative_to(path: Path, root: Path) -> bool:
 
 def _has_issue_code(issues: Iterable[TaskValidationIssue], code: str) -> bool:
     return any(issue.code == code for issue in issues)
+
+
+def _close_stream(stream: BinaryIO) -> None:
+    close_stream = getattr(stream, "close", None)
+    if callable(close_stream):
+        close_stream()
 
 
 def _optional_string(value: object) -> str | None:

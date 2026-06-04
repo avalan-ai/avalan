@@ -1,5 +1,6 @@
 from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
+from email.message import Message
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -7,6 +8,7 @@ from tempfile import TemporaryDirectory
 from typing import BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 from avalan.task import (
     ArtifactStoreError,
@@ -200,6 +202,100 @@ class FailingReadStream:
         traceback: object | None,
     ) -> None:
         _ = exc_type, exc, traceback
+
+
+class TimeoutReadStream:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def read(self, size: int = -1) -> bytes:
+        _ = size
+        raise TimeoutError("private timeout detail")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeRemoteResolver:
+    def __init__(
+        self,
+        addresses: Mapping[str, tuple[str, ...] | OSError] | None = None,
+    ) -> None:
+        self.addresses = dict(addresses or {})
+        self.calls: list[str] = []
+
+    def resolve(self, hostname: str) -> tuple[str, ...]:
+        self.calls.append(hostname)
+        value = self.addresses.get(hostname, ("8.8.8.8",))
+        if isinstance(value, OSError):
+            raise value
+        return value
+
+
+class FakeRemoteClient:
+    def __init__(
+        self,
+        responses: Mapping[
+            str,
+            task_materialization.TaskRemoteUrlResponse | Exception,
+        ],
+    ) -> None:
+        self.responses = dict(responses)
+        self.calls: list[tuple[str, float]] = []
+
+    def open(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float,
+    ) -> task_materialization.TaskRemoteUrlResponse:
+        self.calls.append((url, timeout_seconds))
+        response = self.responses[url]
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class FakeHttpResponse(BytesIO):
+    def __init__(
+        self,
+        content: bytes,
+        *,
+        status: int,
+        headers: Mapping[str, str],
+    ) -> None:
+        super().__init__(content)
+        self.status = status
+        self.headers = dict(headers)
+
+
+class FakeOpener:
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.calls: list[tuple[object, float]] = []
+
+    def open(self, request: object, *, timeout: float) -> object:
+        self.calls.append((request, timeout))
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
+
+def _remote_response(
+    content: bytes,
+    *,
+    status_code: int = 200,
+    headers: Mapping[str, str] | None = None,
+) -> task_materialization.TaskRemoteUrlResponse:
+    return task_materialization.TaskRemoteUrlResponse(
+        status_code=status_code,
+        headers=headers
+        or {
+            "Content-Length": str(len(content)),
+            "Content-Type": "text/plain",
+        },
+        stream=BytesIO(content),
+    )
 
 
 class StreamingOnlyArtifactStore:
@@ -1027,32 +1123,922 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             self.assertNotIn("example.test", str(error.exception))
             self.assertNotIn("private.txt", str(error.exception))
 
-    async def test_enabled_remote_source_is_deferred_without_fetcher(
+    async def test_enabled_remote_source_rejects_unresolved_host_before_fetch(
         self,
     ) -> None:
-        with TemporaryDirectory() as artifacts:
-            store = LocalArtifactStore(artifacts, raw_storage_allowed=True)
+        store = StreamingOnlyArtifactStore()
+        client = FakeRemoteClient(
+            {"https://example.test/private.txt": _remote_response(b"private")}
+        )
 
-            with self.assertRaises(TaskFileMaterializationError) as error:
-                await materialize_task_input_files(
-                    _definition(),
-                    TaskFileDescriptor.remote_url(
-                        "https://example.test/private.txt",
-                        mime_type="text/plain",
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/private.txt",
+                    mime_type="text/plain",
+                ),
+                roots=(),
+                artifact_store=store,
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    max_bytes=100,
+                ),
+                remote_url_http_client=client,
+                remote_url_resolver=FakeRemoteResolver(
+                    {"example.test": OSError("private dns failure")}
+                ),
+            )
+
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues],
+            ["input.reference"],
+        )
+        self.assertEqual(client.calls, [])
+        self.assertNotIn("example.test", str(error.exception))
+
+    async def test_remote_source_materializes_with_sanitized_metadata(
+        self,
+    ) -> None:
+        content = b"remote text"
+        store = StreamingOnlyArtifactStore()
+        client = FakeRemoteClient(
+            {
+                "https://example.test/private.txt": _remote_response(
+                    content,
+                    headers={
+                        "Content-Length": str(len(content)),
+                        "Content-Type": "text/plain; charset=utf-8",
+                    },
+                )
+            }
+        )
+
+        files = await materialize_task_input_files(
+            _definition(),
+            TaskFileDescriptor.remote_url(
+                "https://example.test/private.txt",
+                mime_type="text/plain",
+            ),
+            roots=(),
+            artifact_store=store,
+            hmac_provider=cast(HmacProvider, StaticHmacProvider()),
+            remote_url_policy=TaskRemoteUrlPolicy(
+                enabled=True,
+                max_bytes=100,
+                timeout_seconds=3.5,
+            ),
+            remote_url_http_client=client,
+            remote_url_resolver=FakeRemoteResolver(),
+        )
+
+        self.assertEqual(len(files), 1)
+        self.assertEqual(
+            client.calls, [("https://example.test/private.txt", 3.5)]
+        )
+        self.assertEqual(store.streams, [(100, len(content), None)])
+        self.assertEqual(files[0].ref.media_type, "text/plain")
+        self.assertEqual(
+            files[0].ref.metadata["remote_delivery"],
+            "avalan_fetched_url",
+        )
+        self.assertEqual(files[0].ref.metadata["source_kind"], "remote_url")
+        self.assertNotIn("example.test", str(files[0].ref.metadata))
+        self.assertNotIn("private.txt", str(files[0].ref.metadata))
+
+    async def test_remote_source_materializes_without_response_mime_hint(
+        self,
+    ) -> None:
+        store = StreamingOnlyArtifactStore()
+
+        files = await materialize_task_input_files(
+            _definition(input_contract=TaskInputContract.file(mime_types=())),
+            TaskFileDescriptor.remote_url(
+                "https://example.test/input.bin",
+            ),
+            roots=(),
+            artifact_store=store,
+            remote_url_policy=TaskRemoteUrlPolicy(
+                enabled=True,
+                max_bytes=100,
+            ),
+            remote_url_http_client=FakeRemoteClient(
+                {
+                    "https://example.test/input.bin": _remote_response(
+                        b"bin",
+                        headers={"Content-Length": "3"},
+                    )
+                }
+            ),
+            remote_url_resolver=FakeRemoteResolver(),
+        )
+
+        self.assertEqual(len(files), 1)
+        self.assertIsNone(files[0].ref.media_type)
+
+    async def test_remote_source_appends_artifact_metadata(self) -> None:
+        store = StreamingOnlyArtifactStore()
+        task_store = InMemoryTaskStore(id_factory=_id_factory())
+        definition = _definition()
+        await task_store.register_definition(
+            definition,
+            definition_hash="definition-1",
+        )
+        run = await task_store.create_run(
+            TaskExecutionRequest(definition_id="definition-1")
+        )
+
+        await materialize_task_input_files(
+            definition,
+            TaskFileDescriptor.remote_url(
+                "https://example.test/private.txt",
+                mime_type="text/plain",
+            ),
+            roots=(),
+            artifact_store=store,
+            hmac_provider=cast(HmacProvider, StaticHmacProvider()),
+            remote_url_policy=TaskRemoteUrlPolicy(
+                enabled=True,
+                max_bytes=100,
+            ),
+            remote_url_http_client=FakeRemoteClient(
+                {"https://example.test/private.txt": _remote_response(b"text")}
+            ),
+            remote_url_resolver=FakeRemoteResolver(),
+            task_store=task_store,
+            run_id=run.run_id,
+        )
+
+        records = await task_store.list_artifacts(
+            run.run_id,
+            purpose=TaskArtifactPurpose.INPUT,
+        )
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(
+            records[0].provenance.metadata["remote_delivery"],
+            "avalan_fetched_url",
+        )
+        self.assertNotIn("example.test", str(records[0].summary()))
+
+    async def test_remote_source_validation_rejects_before_fetch(self) -> None:
+        store = StreamingOnlyArtifactStore()
+        client = FakeRemoteClient({})
+
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "ftp://example.test/private.txt",
+                    mime_type="text/plain",
+                ),
+                roots=(),
+                artifact_store=store,
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    max_bytes=100,
+                ),
+                remote_url_http_client=client,
+                remote_url_resolver=FakeRemoteResolver(),
+            )
+
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues],
+            ["input.reference"],
+        )
+        self.assertEqual(client.calls, [])
+        self.assertNotIn("private.txt", str(error.exception))
+
+    async def test_remote_source_rejects_private_dns_before_fetch(
+        self,
+    ) -> None:
+        store = StreamingOnlyArtifactStore()
+        client = FakeRemoteClient(
+            {"https://example.test/private.txt": _remote_response(b"private")}
+        )
+
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/private.txt",
+                    mime_type="text/plain",
+                ),
+                roots=(),
+                artifact_store=store,
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    max_bytes=100,
+                ),
+                remote_url_http_client=client,
+                remote_url_resolver=FakeRemoteResolver(
+                    {"example.test": ("10.0.0.1",)}
+                ),
+            )
+
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues],
+            ["input.reference"],
+        )
+        self.assertEqual(client.calls, [])
+        self.assertNotIn("10.0.0.1", str(error.exception))
+
+    async def test_remote_source_rejects_empty_dns_answers_before_fetch(
+        self,
+    ) -> None:
+        client = FakeRemoteClient(
+            {"https://example.test/private.txt": _remote_response(b"private")}
+        )
+
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/private.txt",
+                    mime_type="text/plain",
+                ),
+                roots=(),
+                artifact_store=StreamingOnlyArtifactStore(),
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    max_bytes=100,
+                ),
+                remote_url_http_client=client,
+                remote_url_resolver=FakeRemoteResolver({"example.test": ()}),
+            )
+
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues],
+            ["input.reference"],
+        )
+        self.assertEqual(client.calls, [])
+
+    async def test_remote_source_reports_client_failures_safely(self) -> None:
+        cases = (
+            (
+                "timeout",
+                TimeoutError("private timeout"),
+                "input.reference",
+            ),
+            (
+                "fetch_error",
+                OSError("private network detail"),
+                "input.reference",
+            ),
+            (
+                "http_status",
+                _remote_response(
+                    b"",
+                    status_code=404,
+                    headers={"Content-Length": "0"},
+                ),
+                "input.reference",
+            ),
+        )
+
+        for name, response, expected_path in cases:
+            with self.subTest(name=name):
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(),
+                        TaskFileDescriptor.remote_url(
+                            "https://example.test/input.txt",
+                            mime_type="text/plain",
+                        ),
+                        roots=(),
+                        artifact_store=StreamingOnlyArtifactStore(),
+                        remote_url_policy=TaskRemoteUrlPolicy(
+                            enabled=True,
+                            max_bytes=100,
+                        ),
+                        remote_url_http_client=FakeRemoteClient(
+                            {"https://example.test/input.txt": response}
+                        ),
+                        remote_url_resolver=FakeRemoteResolver(),
+                    )
+
+                self.assertEqual(
+                    [issue.path for issue in error.exception.issues],
+                    [expected_path],
+                )
+                self.assertNotIn("private", str(error.exception))
+
+    async def test_remote_source_handles_redirect_failures(self) -> None:
+        cases = (
+            (
+                "disabled",
+                TaskRemoteUrlPolicy(enabled=True, max_bytes=100),
+                {
+                    "https://example.test/input.txt": _remote_response(
+                        b"",
+                        status_code=302,
+                        headers={"Location": "https://cdn.example.test/a.txt"},
+                    )
+                },
+                ["https://example.test/input.txt"],
+            ),
+            (
+                "missing_location",
+                TaskRemoteUrlPolicy(
+                    enabled=True,
+                    allow_redirects=True,
+                    max_redirects=2,
+                    max_bytes=100,
+                ),
+                {
+                    "https://example.test/input.txt": _remote_response(
+                        b"",
+                        status_code=302,
+                        headers={},
+                    )
+                },
+                ["https://example.test/input.txt"],
+            ),
+            (
+                "loop",
+                TaskRemoteUrlPolicy(
+                    enabled=True,
+                    allow_redirects=True,
+                    max_redirects=2,
+                    max_bytes=100,
+                ),
+                {
+                    "https://example.test/input.txt": _remote_response(
+                        b"",
+                        status_code=302,
+                        headers={"Location": "https://example.test/input.txt"},
+                    )
+                },
+                ["https://example.test/input.txt"],
+            ),
+            (
+                "limit",
+                TaskRemoteUrlPolicy(
+                    enabled=True,
+                    allow_redirects=True,
+                    max_redirects=1,
+                    max_bytes=100,
+                ),
+                {
+                    "https://example.test/input.txt": _remote_response(
+                        b"",
+                        status_code=302,
+                        headers={"Location": "https://cdn.example.test/a.txt"},
                     ),
-                    roots=(),
-                    artifact_store=store,
-                    remote_url_policy=TaskRemoteUrlPolicy(
-                        enabled=True,
-                        max_bytes=100,
+                    "https://cdn.example.test/a.txt": _remote_response(
+                        b"",
+                        status_code=302,
+                        headers={"Location": "https://cdn.example.test/b.txt"},
                     ),
+                },
+                [
+                    "https://example.test/input.txt",
+                    "https://cdn.example.test/a.txt",
+                ],
+            ),
+        )
+
+        for name, policy, responses, expected_urls in cases:
+            with self.subTest(name=name):
+                client = FakeRemoteClient(responses)
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(),
+                        TaskFileDescriptor.remote_url(
+                            "https://example.test/input.txt",
+                            mime_type="text/plain",
+                        ),
+                        roots=(),
+                        artifact_store=StreamingOnlyArtifactStore(),
+                        remote_url_policy=policy,
+                        remote_url_http_client=client,
+                        remote_url_resolver=FakeRemoteResolver(
+                            {
+                                "example.test": ("8.8.8.8",),
+                                "cdn.example.test": ("1.1.1.1",),
+                            }
+                        ),
+                    )
+
+                self.assertEqual(
+                    [url for url, _timeout in client.calls],
+                    expected_urls,
+                )
+                self.assertEqual(
+                    [issue.path for issue in error.exception.issues],
+                    ["input.redirects"],
                 )
 
-            self.assertEqual(
-                [issue.code for issue in error.exception.issues],
-                ["input.invalid_file"],
+    async def test_remote_source_rejects_redirect_to_private_host(
+        self,
+    ) -> None:
+        client = FakeRemoteClient(
+            {
+                "https://example.test/input.txt": _remote_response(
+                    b"",
+                    status_code=302,
+                    headers={"Location": "https://127.0.0.1/private.txt"},
+                )
+            }
+        )
+
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                roots=(),
+                artifact_store=StreamingOnlyArtifactStore(),
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    allow_redirects=True,
+                    max_redirects=2,
+                    max_bytes=100,
+                ),
+                remote_url_http_client=client,
+                remote_url_resolver=FakeRemoteResolver(
+                    {"example.test": ("8.8.8.8",)}
+                ),
             )
-            self.assertNotIn("example.test", str(error.exception))
+
+        self.assertEqual(
+            [url for url, _timeout in client.calls],
+            ["https://example.test/input.txt"],
+        )
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues],
+            ["input.reference"],
+        )
+        self.assertNotIn("127.0.0.1", str(error.exception))
+
+    async def test_remote_source_revalidates_redirect_targets(self) -> None:
+        cases = (
+            ("invalid_port", "https://example.test:bad/private.txt"),
+            ("unsupported_scheme", "ftp://cdn.example.test/private.txt"),
+            ("credentials", "https://user:pass@cdn.example.test/private.txt"),
+            ("missing_host", "https://:443/private.txt"),
+            ("local_hostname", "https://worker.localhost/private.txt"),
+        )
+
+        for name, location in cases:
+            with self.subTest(name=name):
+                client = FakeRemoteClient(
+                    {
+                        "https://example.test/input.txt": _remote_response(
+                            b"",
+                            status_code=302,
+                            headers={"Location": location},
+                        )
+                    }
+                )
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(),
+                        TaskFileDescriptor.remote_url(
+                            "https://example.test/input.txt",
+                            mime_type="text/plain",
+                        ),
+                        roots=(),
+                        artifact_store=StreamingOnlyArtifactStore(),
+                        remote_url_policy=TaskRemoteUrlPolicy(
+                            enabled=True,
+                            allow_redirects=True,
+                            max_redirects=2,
+                            max_bytes=100,
+                        ),
+                        remote_url_http_client=client,
+                        remote_url_resolver=FakeRemoteResolver(
+                            {"example.test": ("8.8.8.8",)}
+                        ),
+                    )
+
+                self.assertEqual(
+                    [issue.path for issue in error.exception.issues],
+                    ["input.reference"],
+                )
+                self.assertEqual(
+                    [url for url, _timeout in client.calls],
+                    ["https://example.test/input.txt"],
+                )
+                self.assertNotIn("private.txt", str(error.exception))
+
+    async def test_remote_source_rejects_response_metadata_failures(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "unknown_size",
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                _remote_response(
+                    b"text",
+                    headers={"Content-Type": "text/plain"},
+                ),
+                "input.size_bytes",
+            ),
+            (
+                "invalid_size",
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                _remote_response(
+                    b"text",
+                    headers={
+                        "Content-Length": "bad",
+                        "Content-Type": "text/plain",
+                    },
+                ),
+                "input.size_bytes",
+            ),
+            (
+                "negative_size",
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                _remote_response(
+                    b"text",
+                    headers={
+                        "Content-Length": "-1",
+                        "Content-Type": "text/plain",
+                    },
+                ),
+                "input.size_bytes",
+            ),
+            (
+                "over_limit",
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                _remote_response(
+                    b"private text",
+                    headers={
+                        "Content-Length": "12",
+                        "Content-Type": "text/plain",
+                    },
+                ),
+                "input.size_bytes",
+            ),
+            (
+                "descriptor_size_mismatch",
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                    size_bytes=5,
+                ),
+                _remote_response(b"text"),
+                "input.size_bytes",
+            ),
+            (
+                "descriptor_mime_mismatch",
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                _remote_response(
+                    b"text",
+                    headers={
+                        "Content-Length": "4",
+                        "Content-Type": "application/pdf",
+                    },
+                ),
+                "input.mime_type",
+            ),
+        )
+
+        for name, definition, descriptor, response, expected_path in cases:
+            with self.subTest(name=name):
+                store = StreamingOnlyArtifactStore()
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        definition,
+                        descriptor,
+                        roots=(),
+                        artifact_store=store,
+                        remote_url_policy=TaskRemoteUrlPolicy(
+                            enabled=True,
+                            max_bytes=10,
+                        ),
+                        remote_url_http_client=FakeRemoteClient(
+                            {"https://example.test/input.txt": response}
+                        ),
+                        remote_url_resolver=FakeRemoteResolver(),
+                    )
+
+                self.assertEqual(
+                    [issue.path for issue in error.exception.issues],
+                    [expected_path],
+                )
+                self.assertEqual(store.streams, [])
+                self.assertTrue(response.stream.closed)
+                self.assertNotIn("example.test", str(error.exception))
+
+    async def test_remote_source_reports_stream_failures_safely(self) -> None:
+        timeout_stream = TimeoutReadStream()
+        cases = (
+            (
+                "timeout",
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                task_materialization.TaskRemoteUrlResponse(
+                    status_code=200,
+                    headers={
+                        "Content-Length": "4",
+                        "Content-Type": "text/plain",
+                    },
+                    stream=cast(BinaryIO, timeout_stream),
+                ),
+                StreamingOnlyArtifactStore(),
+                "input.reference",
+            ),
+            (
+                "read_error",
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                task_materialization.TaskRemoteUrlResponse(
+                    status_code=200,
+                    headers={
+                        "Content-Length": "4",
+                        "Content-Type": "text/plain",
+                    },
+                    stream=cast(BinaryIO, FailingReadStream()),
+                ),
+                StreamingOnlyArtifactStore(),
+                "input.reference",
+            ),
+            (
+                "size_mismatch",
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                _remote_response(
+                    b"abc",
+                    headers={
+                        "Content-Length": "4",
+                        "Content-Type": "text/plain",
+                    },
+                ),
+                StreamingOnlyArtifactStore(),
+                "input.size_bytes",
+            ),
+            (
+                "digest_mismatch",
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                    sha256="0" * 64,
+                ),
+                _remote_response(b"abc"),
+                StreamingOnlyArtifactStore(),
+                "input.sha256",
+            ),
+            (
+                "store_policy",
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                _remote_response(b"abc"),
+                PolicyFailingArtifactStore(),
+                "input.size_bytes",
+            ),
+        )
+
+        for name, descriptor, response, store, expected_path in cases:
+            with self.subTest(name=name):
+                with self.assertRaises(TaskFileMaterializationError) as error:
+                    await materialize_task_input_files(
+                        _definition(),
+                        descriptor,
+                        roots=(),
+                        artifact_store=store,
+                        remote_url_policy=TaskRemoteUrlPolicy(
+                            enabled=True,
+                            max_bytes=10,
+                        ),
+                        remote_url_http_client=FakeRemoteClient(
+                            {"https://example.test/input.txt": response}
+                        ),
+                        remote_url_resolver=FakeRemoteResolver(),
+                    )
+
+                self.assertEqual(
+                    [issue.path for issue in error.exception.issues],
+                    [expected_path],
+                )
+                self.assertNotIn("example.test", str(error.exception))
+
+        self.assertTrue(timeout_stream.closed)
+
+    async def test_remote_backend_error_without_stream_issue_is_preserved(
+        self,
+    ) -> None:
+        with self.assertRaises(ArtifactStoreError) as error:
+            await materialize_task_input_files(
+                _definition(),
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/input.txt",
+                    mime_type="text/plain",
+                ),
+                roots=(),
+                artifact_store=BackendFailingArtifactStore(),
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    max_bytes=10,
+                ),
+                remote_url_http_client=FakeRemoteClient(
+                    {
+                        "https://example.test/input.txt": _remote_response(
+                            b"abc"
+                        )
+                    }
+                ),
+                remote_url_resolver=FakeRemoteResolver(),
+            )
+
+        self.assertNotIn("example.test", str(error.exception))
+
+    async def test_remote_source_metadata_append_failure_deletes_artifact(
+        self,
+    ) -> None:
+        artifact_store = StreamingOnlyArtifactStore()
+        task_store = FailingArtifactAppendStore(id_factory=_id_factory())
+        definition = _definition()
+        await task_store.register_definition(
+            definition,
+            definition_hash="definition-1",
+        )
+        run = await task_store.create_run(
+            TaskExecutionRequest(definition_id="definition-1")
+        )
+
+        with self.assertRaises(RuntimeError) as error:
+            await materialize_task_input_files(
+                definition,
+                TaskFileDescriptor.remote_url(
+                    "https://example.test/private.txt",
+                    mime_type="text/plain",
+                ),
+                roots=(),
+                artifact_store=artifact_store,
+                hmac_provider=cast(HmacProvider, StaticHmacProvider()),
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    max_bytes=100,
+                ),
+                remote_url_http_client=FakeRemoteClient(
+                    {
+                        "https://example.test/private.txt": _remote_response(
+                            b"text"
+                        )
+                    }
+                ),
+                remote_url_resolver=FakeRemoteResolver(),
+                task_store=task_store,
+                run_id=run.run_id,
+            )
+
+        self.assertEqual(len(artifact_store.deleted), 1)
+        self.assertEqual(artifact_store.deleted[0].artifact_id, "artifact-1")
+        self.assertNotIn("example.test", str(error.exception))
+
+    def test_default_remote_resolver_uses_unique_socket_addresses(
+        self,
+    ) -> None:
+        resolver = task_materialization.DefaultTaskRemoteUrlResolver()
+
+        with patch.object(
+            task_materialization,
+            "getaddrinfo",
+            return_value=[
+                (0, 0, 0, "", ("203.0.113.10", 443)),
+                (0, 0, 0, "", ("203.0.113.10", 443)),
+                (0, 0, 0, "", ("2001:db8::1%en0", 443)),
+            ],
+        ):
+            addresses = resolver.resolve("example.test")
+
+        self.assertEqual(addresses, ("2001:db8::1", "203.0.113.10"))
+
+    def test_default_remote_resolver_reports_dns_failures(self) -> None:
+        resolver = task_materialization.DefaultTaskRemoteUrlResolver()
+
+        with patch.object(
+            task_materialization,
+            "getaddrinfo",
+            side_effect=task_materialization.gaierror(),
+        ):
+            with self.assertRaises(OSError):
+                resolver.resolve("example.test")
+        with patch.object(
+            task_materialization, "getaddrinfo", return_value=[]
+        ):
+            with self.assertRaises(OSError):
+                resolver.resolve("example.test")
+
+    def test_urllib_remote_client_maps_responses_and_errors(self) -> None:
+        client = task_materialization.UrllibTaskRemoteUrlHttpClient()
+        success_opener = FakeOpener(
+            FakeHttpResponse(
+                b"text",
+                status=200,
+                headers={"Content-Length": "4"},
+            )
+        )
+        setattr(client, "_opener", success_opener)
+
+        response = client.open(
+            "https://example.test/input.txt",
+            timeout_seconds=1.5,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Content-Length"], "4")
+        self.assertEqual(success_opener.calls[0][1], 1.5)
+
+        redirect_headers = Message()
+        redirect_headers["Location"] = "https://cdn.example.test/input.txt"
+        redirect_client = task_materialization.UrllibTaskRemoteUrlHttpClient()
+        setattr(
+            redirect_client,
+            "_opener",
+            FakeOpener(
+                HTTPError(
+                    "https://example.test/input.txt",
+                    302,
+                    "found",
+                    redirect_headers,
+                    BytesIO(),
+                )
+            ),
+        )
+
+        redirect = redirect_client.open(
+            "https://example.test/input.txt",
+            timeout_seconds=2.0,
+        )
+
+        self.assertEqual(redirect.status_code, 302)
+        self.assertEqual(
+            redirect.headers["Location"],
+            "https://cdn.example.test/input.txt",
+        )
+
+        for error in (
+            HTTPError(
+                "https://example.test/input.txt",
+                404,
+                "not found",
+                Message(),
+                BytesIO(),
+            ),
+            URLError("private failure"),
+        ):
+            failing_client = (
+                task_materialization.UrllibTaskRemoteUrlHttpClient()
+            )
+            setattr(failing_client, "_opener", FakeOpener(error))
+            with self.subTest(error=type(error).__name__):
+                with self.assertRaises(OSError):
+                    failing_client.open(
+                        "https://example.test/input.txt",
+                        timeout_seconds=2.0,
+                    )
+
+    def test_remote_redirect_handler_disables_builtin_redirects(self) -> None:
+        handler = task_materialization._NoRedirectHandler()
+
+        request = task_materialization.Request(
+            "https://example.test/input.txt"
+        )
+
+        self.assertIsNone(
+            handler.redirect_request(
+                request,
+                object(),
+                302,
+                "found",
+                object(),
+                "https://cdn.example.test/input.txt",
+            )
+        )
 
     async def test_unsupported_source_and_missing_roots_fail_closed(
         self,
@@ -1063,6 +2049,10 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             for descriptor in (
                 TaskFileDescriptor.local_path(
                     "input.txt",
+                    mime_type="text/plain",
+                ),
+                TaskFileDescriptor.inline_bytes(
+                    "inline-1",
                     mime_type="text/plain",
                 ),
             ):

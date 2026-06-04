@@ -1078,12 +1078,12 @@ def _validate_remote_url_descriptor(
                 "Pass credentials through a configured secret provider.",
             )
         )
-    if policy.allow_redirects:
+    if policy.allow_redirects and policy.max_redirects <= 0:
         issues.append(
             _invalid_file_issue(
                 f"{path}.redirects",
-                "Remote URL redirects are not supported.",
-                "Disable redirects until redirect validation is configured.",
+                "Remote URL redirects require a redirect limit.",
+                "Set a positive remote URL redirect limit.",
             )
         )
     if (

@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from math import isfinite
 from types import MappingProxyType
 
 
@@ -113,6 +114,7 @@ class TaskRemoteUrlPolicy:
     allow_redirects: bool = False
     max_redirects: int = 0
     max_bytes: int | None = None
+    timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
         assert isinstance(self.enabled, bool), "enabled must be a bool"
@@ -145,6 +147,14 @@ class TaskRemoteUrlPolicy:
                 self.max_bytes, bool
             ), "max_bytes must be an integer"
             assert self.max_bytes > 0, "max_bytes must be positive"
+        assert isinstance(
+            self.timeout_seconds, int | float
+        ), "timeout_seconds must be a number"
+        assert not isinstance(
+            self.timeout_seconds, bool
+        ), "timeout_seconds must be a number"
+        assert isfinite(self.timeout_seconds), "timeout_seconds must be finite"
+        assert self.timeout_seconds > 0, "timeout_seconds must be positive"
 
     @classmethod
     def disabled(cls) -> "TaskRemoteUrlPolicy":
