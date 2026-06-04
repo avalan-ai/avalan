@@ -56,6 +56,14 @@ from typing import cast
 FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
 FLOW_TASK_INPUT_KEY = "__task_input__"
 FLOW_TASK_FILES_KEY = "__task_files__"
+_FLOW_RESERVED_BINDINGS = frozenset(
+    {
+        FLOW_TASK_FILES_KEY,
+        FLOW_TASK_INPUT_KEY,
+        "file",
+        "files",
+    }
+)
 _FILE_CONVERT_CONFIG_KEYS = frozenset(
     {
         "converter",
@@ -68,6 +76,8 @@ _FILE_CONVERT_CONFIG_KEYS = frozenset(
         "quality",
     }
 )
+_AGENT_CONFIG_KEYS = frozenset({"file_policy", "files_input"})
+_AGENT_FILE_POLICIES = frozenset({"append", "replace"})
 _UNAVAILABLE_PRIVACY_MARKERS = frozenset(
     {
         DROPPED_MARKER,
@@ -252,6 +262,12 @@ class _FlowConversionLimits:
     max_pages: int | None = None
     max_pixels_per_page: int | None = None
     max_total_pixels: int | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _AgentFilePlan:
+    files_input: str | None
+    file_policy: str | None
 
 
 class _FlowFileConverter:
@@ -781,9 +797,16 @@ def _agent_node_factory(
     def build(definition: FlowNodeDefinition) -> Node:
         assert isinstance(definition, FlowNodeDefinition)
         assert definition.ref is not None
+        file_plan = _agent_file_plan(definition)
 
         async def run(inputs: dict[str, object]) -> object:
             await context.check_cancelled()
+            files = _agent_node_files(
+                definition,
+                inputs,
+                context=context,
+                file_plan=file_plan,
+            )
             agent_definition = _agent_node_task_definition(
                 context.definition,
                 definition,
@@ -799,7 +822,7 @@ def _agent_node_factory(
                     definition=agent_definition,
                     execution=context.execution,
                     input_value=_flow_node_input_value(definition, inputs),
-                    files=context.files,
+                    files=files,
                     metadata=context.metadata,
                     cancellation_checker=context.cancellation_checker,
                     event_listener=context.event_listener,
@@ -813,6 +836,156 @@ def _agent_node_factory(
         return Node(definition.name, func=run)
 
     return build
+
+
+def _agent_file_plan(definition: FlowNodeDefinition) -> _AgentFilePlan:
+    config = definition.config
+    for key in config:
+        if key not in _AGENT_CONFIG_KEYS:
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_node",
+                path=f"nodes.{definition.name}.config.{key}",
+                message="Flow agent node option is unsupported.",
+                hint="Use supported agent node configuration keys.",
+            )
+    files_input = config.get("files_input")
+    file_policy = config.get("file_policy")
+    if files_input is None and file_policy is None:
+        return _AgentFilePlan(files_input=None, file_policy=None)
+    if not isinstance(files_input, str) or not files_input.strip():
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_node",
+            path=f"nodes.{definition.name}.config.files_input",
+            message="Flow agent file input selector is invalid.",
+            hint="Use a dotted upstream node output selector.",
+        )
+    if not isinstance(file_policy, str) or file_policy not in (
+        _AGENT_FILE_POLICIES
+    ):
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_node",
+            path=f"nodes.{definition.name}.config.file_policy",
+            message="Flow agent file policy is invalid.",
+            hint="Use replace or append.",
+        )
+    _validate_agent_files_input_selector(definition.name, files_input)
+    return _AgentFilePlan(files_input=files_input, file_policy=file_policy)
+
+
+def _validate_agent_files_input_selector(
+    node_name: str,
+    selector: str,
+) -> None:
+    parts = selector.split(".")
+    if len(parts) != 2 or any(not part.strip() for part in parts):
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_node",
+            path=f"nodes.{node_name}.config.files_input",
+            message="Flow agent file input selector is invalid.",
+            hint="Use a dotted upstream node output selector.",
+        )
+    if parts[0] in _FLOW_RESERVED_BINDINGS:
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_node",
+            path=f"nodes.{node_name}.config.files_input",
+            message="Flow agent file input selector is reserved.",
+            hint="Reference a named upstream node output instead.",
+        )
+
+
+def _agent_node_files(
+    definition: FlowNodeDefinition,
+    inputs: Mapping[str, object],
+    *,
+    context: TaskTargetContext,
+    file_plan: _AgentFilePlan,
+) -> tuple[TaskInputFile, ...]:
+    if file_plan.files_input is None:
+        return context.files
+    selected = _flow_file_selector_value(
+        definition,
+        inputs,
+        file_plan.files_input,
+    )
+    files = _flow_file_array_from_value(definition, selected)
+    if file_plan.file_policy == "replace":
+        return files
+    if file_plan.file_policy == "append":
+        return context.files + files
+    raise AssertionError("validated agent file policy is unsupported")
+
+
+def _flow_file_selector_value(
+    definition: FlowNodeDefinition,
+    inputs: Mapping[str, object],
+    selector: str,
+) -> object:
+    node_name, output_key = selector.split(".", 1)
+    if node_name not in inputs:
+        raise TaskValidationError(
+            (
+                _unsupported_flow_issue(
+                    path=f"nodes.{definition.name}.config.files_input",
+                    message="Flow agent file input selector is unavailable.",
+                    hint=(
+                        "Connect the selected upstream node to the agent node."
+                    ),
+                ),
+            )
+        )
+    value = inputs[node_name]
+    if not isinstance(value, Mapping) or output_key not in value:
+        raise TaskValidationError(
+            (
+                _unsupported_flow_issue(
+                    path=f"nodes.{definition.name}.config.files_input",
+                    message="Flow agent file input selector has no output.",
+                    hint="Select an upstream file array output key.",
+                ),
+            )
+        )
+    return value[output_key]
+
+
+def _flow_file_array_from_value(
+    definition: FlowNodeDefinition,
+    value: object,
+) -> tuple[TaskInputFile, ...]:
+    if not isinstance(value, list | tuple):
+        raise TaskValidationError(
+            (
+                _unsupported_flow_issue(
+                    path=f"nodes.{definition.name}.config.files_input",
+                    message="Flow agent file input is not a file array.",
+                    hint="Select an upstream node output containing files.",
+                ),
+            )
+        )
+    if not value:
+        raise TaskValidationError(
+            (
+                _unsupported_flow_issue(
+                    path=f"nodes.{definition.name}.config.files_input",
+                    message="Flow agent file input is empty.",
+                    hint="Pass at least one generated file to the agent node.",
+                ),
+            )
+        )
+    files: list[TaskInputFile] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, TaskInputFile):
+            raise TaskValidationError(
+                (
+                    _invalid_flow_file_issue(
+                        definition.name,
+                        index,
+                        "Flow agent file input item is invalid.",
+                        "Pass task input file values to the agent node.",
+                    ),
+                )
+            )
+        files.append(item)
+    return tuple(files)
 
 
 def _agent_node_task_definition(

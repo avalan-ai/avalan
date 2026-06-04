@@ -83,6 +83,14 @@ _UNTRUSTED_NODE_TYPES = frozenset(
         "python_callable",
     }
 )
+_RESERVED_FILE_SELECTOR_SOURCES = frozenset(
+    {
+        "__task_files__",
+        "__task_input__",
+        "file",
+        "files",
+    }
+)
 
 
 class FlowLoadIssueCategory(StrEnum):
@@ -715,6 +723,7 @@ def _validate_graph_contract(
                 category=FlowLoadIssueCategory.VALUE,
             )
         )
+    issues.extend(_validate_agent_file_selectors(definition))
     cycle = _cycle_nodes(definition)
     if cycle:
         issues.append(
@@ -726,6 +735,64 @@ def _validate_graph_contract(
                 category=FlowLoadIssueCategory.VALUE,
             )
         )
+    return tuple(issues)
+
+
+def _validate_agent_file_selectors(
+    definition: FlowDefinition,
+) -> tuple[FlowLoadIssue, ...]:
+    issues: list[FlowLoadIssue] = []
+    node_names = {node.name for node in definition.nodes}
+    incoming_sources: dict[str, set[str]] = {
+        name: set() for name in node_names
+    }
+    for edge in definition.edges:
+        incoming_sources[edge.target].add(edge.source)
+    for node in definition.nodes:
+        selector = node.config.get("files_input")
+        if selector is None or node.type != "agent":
+            continue
+        path = f"nodes.{node.name}.config.files_input"
+        if not isinstance(selector, str) or not selector.strip():
+            issues.append(_invalid_type(path, "Use a dotted node output."))
+            continue
+        parts = selector.split(".")
+        if len(parts) != 2 or any(not part.strip() for part in parts):
+            issues.append(
+                _issue(
+                    code="flow.invalid_node",
+                    path=path,
+                    message="Flow agent file input selector is invalid.",
+                    hint="Use a dotted upstream node output selector.",
+                    category=FlowLoadIssueCategory.VALUE,
+                )
+            )
+            continue
+        source, _ = parts
+        if source in _RESERVED_FILE_SELECTOR_SOURCES:
+            issues.append(
+                _issue(
+                    code="flow.invalid_node",
+                    path=path,
+                    message="Flow agent file input selector is reserved.",
+                    hint="Reference a named upstream node output instead.",
+                    category=FlowLoadIssueCategory.VALUE,
+                )
+            )
+            continue
+        if source not in node_names:
+            issues.append(_bad_reference_issue(path))
+            continue
+        if source not in incoming_sources[node.name]:
+            issues.append(
+                _issue(
+                    code="flow.bad_reference",
+                    path=path,
+                    message="Flow agent file input selector is disconnected.",
+                    hint="Add an edge from the selected node to this agent.",
+                    category=FlowLoadIssueCategory.VALUE,
+                )
+            )
     return tuple(issues)
 
 

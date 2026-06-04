@@ -18,6 +18,7 @@ from avalan.flow import FlowNodeDefinition
 from avalan.flow.flow import Flow
 from avalan.flow.loader import FlowDefinitionLoader
 from avalan.flow.node import Node
+from avalan.flow.registry import FlowNodeConfigurationError
 from avalan.task import (
     DROPPED_MARKER,
     ENCRYPTED_MARKER,
@@ -444,6 +445,37 @@ def _single_incoming_agent_flow(
         )
     )
     flow.add_connection("start", "review")
+    return flow
+
+
+def _file_selecting_agent_flow(
+    context: TaskTargetContext,
+    *,
+    agent_runner: CapturingTaskTargetRunner,
+    generated_files: tuple[TaskInputFile, ...],
+    file_policy: str,
+) -> Flow:
+    registry = task_flow_node_registry(context, agent_runner=agent_runner)
+    flow = Flow()
+    flow.add_node(Node("start", func=lambda _: "ready"))
+    flow.add_node(
+        Node("render", func=lambda _: {"files": list(generated_files)})
+    )
+    flow.add_node(
+        registry.build(
+            FlowNodeDefinition(
+                name="review",
+                type="agent",
+                ref="agents/review.toml",
+                config={
+                    "files_input": "render.files",
+                    "file_policy": file_policy,
+                },
+            )
+        )
+    )
+    flow.add_connection("start", "render")
+    flow.add_connection("render", "review")
     return flow
 
 
@@ -913,6 +945,281 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                     agent_runner.contexts[0].input_value,
                     expected_input,
                 )
+
+    async def test_run_agent_node_replaces_files_from_selector(self) -> None:
+        parent_file = TaskInputFile(
+            logical_path="artifact:source-private",
+            media_type="application/pdf",
+        )
+        generated_files = (
+            TaskInputFile(
+                logical_path="artifact:page-1",
+                media_type="image/png",
+                size_bytes=11,
+            ),
+            TaskInputFile(
+                logical_path="artifact:page-2",
+                media_type="image/png",
+                size_bytes=12,
+            ),
+        )
+        agent_runner = CapturingTaskTargetRunner()
+        runner = FlowTaskTargetRunner(
+            flow_resolver=lambda context: _file_selecting_agent_flow(
+                context,
+                agent_runner=agent_runner,
+                generated_files=generated_files,
+                file_policy="replace",
+            )
+        )
+
+        result = await runner.run(
+            self._context(input_value="ready", files=(parent_file,))
+        )
+
+        self.assertEqual(result, "agent output")
+        self.assertEqual(agent_runner.contexts[0].files, generated_files)
+        self.assertNotIn("source-private", str(agent_runner.contexts[0].files))
+
+    async def test_run_agent_node_appends_files_from_selector(self) -> None:
+        parent_file = TaskInputFile(
+            logical_path="artifact:source",
+            media_type="application/pdf",
+        )
+        generated_file = TaskInputFile(
+            logical_path="artifact:page-1",
+            media_type="image/png",
+        )
+        agent_runner = CapturingTaskTargetRunner()
+        runner = FlowTaskTargetRunner(
+            flow_resolver=lambda context: _file_selecting_agent_flow(
+                context,
+                agent_runner=agent_runner,
+                generated_files=(generated_file,),
+                file_policy="append",
+            )
+        )
+
+        result = await runner.run(
+            self._context(input_value="ready", files=(parent_file,))
+        )
+
+        self.assertEqual(result, "agent output")
+        self.assertEqual(
+            agent_runner.contexts[0].files,
+            (parent_file, generated_file),
+        )
+
+    async def test_run_agent_node_rejects_bad_file_selector_outputs(
+        self,
+    ) -> None:
+        cases: tuple[tuple[str, object, str], ...] = (
+            ("missing_key", {"other": []}, "has no output"),
+            ("scalar", {"files": "private.pdf"}, "not a file array"),
+            ("empty", {"files": []}, "empty"),
+            ("bad_item", {"files": ["private.pdf"]}, "item is invalid"),
+        )
+
+        for name, render_output, expected in cases:
+            with self.subTest(name=name):
+                agent_runner = CapturingTaskTargetRunner()
+
+                def resolve(context: TaskTargetContext) -> Flow:
+                    registry = task_flow_node_registry(
+                        context,
+                        agent_runner=agent_runner,
+                    )
+                    flow = Flow()
+                    flow.add_node(Node("start", func=lambda _: "ready"))
+                    flow.add_node(Node("render", func=lambda _: render_output))
+                    flow.add_node(
+                        registry.build(
+                            FlowNodeDefinition(
+                                name="review",
+                                type="agent",
+                                ref="agents/review.toml",
+                                config={
+                                    "files_input": "render.files",
+                                    "file_policy": "replace",
+                                },
+                            )
+                        )
+                    )
+                    flow.add_connection("start", "render")
+                    flow.add_connection("render", "review")
+                    return flow
+
+                runner = FlowTaskTargetRunner(flow_resolver=resolve)
+
+                with self.assertRaises(TaskValidationError) as error:
+                    await runner.run(self._context(input_value="ready"))
+
+                self.assertIn(expected, error.exception.issues[0].message)
+                self.assertEqual(agent_runner.contexts, [])
+                self.assertNotIn("private.pdf", str(error.exception))
+
+    def test_task_scoped_registry_rejects_bad_agent_file_config(
+        self,
+    ) -> None:
+        context = self._context()
+        cases = (
+            (
+                "unsupported",
+                "raw = 'private.pdf'",
+                "flow.invalid_node",
+                "nodes.review.config.raw",
+            ),
+            (
+                "missing_policy",
+                'files_input = "render.files"',
+                "flow.invalid_node",
+                "nodes.review.config.file_policy",
+            ),
+            (
+                "policy_without_selector",
+                'file_policy = "replace"',
+                "flow.invalid_node",
+                "nodes.review.config.files_input",
+            ),
+            (
+                "bad_policy",
+                'files_input = "render.files"\nfile_policy = "merge"',
+                "flow.invalid_node",
+                "nodes.review.config.file_policy",
+            ),
+            (
+                "non_string_selector",
+                'files_input = 42\nfile_policy = "replace"',
+                "flow.invalid_type",
+                "nodes.review.config.files_input",
+            ),
+            (
+                "blank_selector",
+                'files_input = ""\nfile_policy = "replace"',
+                "flow.invalid_type",
+                "nodes.review.config.files_input",
+            ),
+            (
+                "malformed_selector",
+                'files_input = "render"\nfile_policy = "replace"',
+                "flow.invalid_node",
+                "nodes.review.config.files_input",
+            ),
+            (
+                "unknown_source",
+                'files_input = "missing.files"\nfile_policy = "replace"',
+                "flow.bad_reference",
+                "nodes.review.config.files_input",
+            ),
+            (
+                "reserved_selector",
+                (
+                    'files_input = "__task_files__.files"\n'
+                    'file_policy = "replace"'
+                ),
+                "flow.invalid_node",
+                "nodes.review.config.files_input",
+            ),
+            (
+                "missing_edge",
+                'files_input = "render.files"\nfile_policy = "replace"',
+                "flow.bad_reference",
+                "nodes.review.config.files_input",
+            ),
+        )
+
+        for name, config, expected_code, expected_path in cases:
+            with self.subTest(name=name):
+                edge = (
+                    ""
+                    if name == "missing_edge"
+                    else '[[edges]]\nsource = "render"\ntarget = "review"'
+                )
+                result = FlowDefinitionLoader(
+                    registry=task_flow_node_registry(
+                        context,
+                        agent_runner=CapturingTaskTargetRunner(),
+                    )
+                ).loads_result(
+                    f"""
+                    [flow]
+                    name = "select"
+                    entrypoint = "render"
+                    output_node = "review"
+
+                    [nodes.render]
+                    type = "constant"
+                    value = {{files = []}}
+
+                    [nodes.review]
+                    type = "agent"
+                    ref = "agents/review.toml"
+
+                    [nodes.review.config]
+                    {config}
+
+                    {edge}
+                    """
+                )
+
+                self.assertFalse(result.ok)
+                diagnostics = [
+                    (issue.code, issue.path) for issue in result.issues
+                ]
+                self.assertIn(
+                    (expected_code, expected_path),
+                    diagnostics,
+                )
+                self.assertNotIn("private.pdf", str(result.issues))
+
+    async def test_agent_file_private_helpers_reject_impossible_shapes(
+        self,
+    ) -> None:
+        with self.assertRaises(FlowNodeConfigurationError):
+            flow_target_module._validate_agent_files_input_selector(  # type: ignore[attr-defined]
+                "review",
+                "render",
+            )
+        with self.assertRaises(FlowNodeConfigurationError):
+            flow_target_module._validate_agent_files_input_selector(  # type: ignore[attr-defined]
+                "review",
+                "files.items",
+            )
+        definition = FlowNodeDefinition(
+            name="review",
+            type="agent",
+            ref="agents/review.toml",
+        )
+        with self.assertRaises(TaskValidationError) as missing:
+            flow_target_module._agent_node_files(  # type: ignore[attr-defined]
+                definition,
+                {},
+                context=self._context(),
+                file_plan=flow_target_module._AgentFilePlan(  # type: ignore[attr-defined]
+                    files_input="render.files",
+                    file_policy="replace",
+                ),
+            )
+        self.assertIn("unavailable", missing.exception.issues[0].message)
+        with self.assertRaises(AssertionError):
+            flow_target_module._agent_node_files(  # type: ignore[attr-defined]
+                definition,
+                {
+                    "render": {
+                        "files": [
+                            TaskInputFile(
+                                logical_path="artifact:page-1",
+                                media_type="image/png",
+                            )
+                        ]
+                    }
+                },
+                context=self._context(),
+                file_plan=flow_target_module._AgentFilePlan(  # type: ignore[attr-defined]
+                    files_input="render.files",
+                    file_policy="private",
+                ),
+            )
 
     async def test_run_awaits_async_resolver(self) -> None:
         flow = Flow()
@@ -2606,6 +2913,127 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
                 "format": "png",
                 "pages": {"start": 1, "end": 2},
             },
+        )
+        self.assertNotIn("private.pdf", str(result.run.result))
+        self.assertNotIn("%PDF-private", str(result.run.result))
+
+    async def test_direct_runner_replaces_pdf_with_images_for_agent_node(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter(
+            (
+                _page_result(1, b"page one"),
+                _page_result(2, b"page two"),
+            )
+        )
+        agent_runner = CapturingTaskTargetRunner(
+            output={"status": "ready", "count": 2}
+        )
+
+        def resolve(context: TaskTargetContext) -> Flow:
+            registry = task_flow_node_registry(
+                context,
+                agent_runner=agent_runner,
+            )
+            flow = Flow()
+            flow.add_node(
+                registry.build(
+                    FlowNodeDefinition(
+                        name="render",
+                        type="file_convert",
+                        input="pdf",
+                        output="files",
+                        config={
+                            "converter": "pdf_image",
+                            "format": "png",
+                            "max_pages": 2,
+                        },
+                    )
+                )
+            )
+            flow.add_node(
+                registry.build(
+                    FlowNodeDefinition(
+                        name="extract",
+                        type="agent",
+                        ref="agents/extract.toml",
+                        config={
+                            "files_input": "render.files",
+                            "file_policy": "replace",
+                        },
+                    )
+                )
+            )
+            flow.add_connection("render", "extract")
+            return flow
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "private.pdf").write_bytes(b"%PDF-private source")
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=_id_factory(("source-1", "page-1", "page-2")),
+            )
+            runner = DirectTaskRunner(
+                self.store,
+                target=FlowTaskTargetRunner(flow_resolver=resolve),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                file_converters={"pdf_image": converter},
+                execution_roots=(root,),
+                definition_hash=lambda _: "flow-direct-agent-images",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",)
+                    ),
+                    output_contract=TaskOutputContract.object(
+                        {
+                            "type": "object",
+                            "required": ["status", "count"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "status": {"type": "string"},
+                                "count": {"type": "integer"},
+                            },
+                        }
+                    ),
+                    artifact=TaskArtifactPolicy.references_only(
+                        retention_days=4,
+                    ),
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "private.pdf",
+                    mime_type="application/pdf",
+                ),
+            )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, {"status": "ready", "count": 2})
+        self.assertEqual(len(agent_runner.contexts), 1)
+        child_files = agent_runner.contexts[0].files
+        self.assertEqual(
+            [file.logical_path for file in child_files],
+            ["artifact:page-1", "artifact:page-2"],
+        )
+        self.assertEqual(
+            [file.media_type for file in child_files],
+            ["image/png", "image/png"],
+        )
+        self.assertEqual(
+            [
+                file.artifact_ref.artifact_id
+                for file in child_files
+                if file.artifact_ref is not None
+            ],
+            ["page-1", "page-2"],
+        )
+        self.assertNotIn(
+            "artifact:source-1",
+            " ".join(file.logical_path for file in child_files),
         )
         self.assertNotIn("private.pdf", str(result.run.result))
         self.assertNotIn("%PDF-private", str(result.run.result))
