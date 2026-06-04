@@ -102,7 +102,7 @@ class TaskTargetContext:
         if self.usage_observer is not None:
             assert callable(self.usage_observer)
         if self.artifact_store is not None:
-            assert callable(getattr(self.artifact_store, "open", None))
+            assert callable(getattr(self.artifact_store, "open_stream", None))
 
     async def check_cancelled(self) -> None:
         if self.cancellation_checker is not None:

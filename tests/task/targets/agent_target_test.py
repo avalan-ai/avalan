@@ -25,6 +25,7 @@ from avalan.model import (
     LocalFileDeliveryProfile,
 )
 from avalan.task import (
+    ArtifactStorePolicyError,
     DirectTaskRunner,
     TaskArtifactPolicy,
     TaskArtifactPurpose,
@@ -215,8 +216,20 @@ class FakeLoader:
 class FakeArtifactStore:
     def __init__(self, data: bytes = b"private bytes") -> None:
         self.data = data
+        self.max_bytes_values: list[int | None] = []
 
     async def open(self, ref: TaskArtifactRef) -> BytesIO:
+        return BytesIO(self.data)
+
+    async def open_stream(
+        self,
+        ref: TaskArtifactRef,
+        *,
+        max_bytes: int | None = None,
+    ) -> BytesIO:
+        self.max_bytes_values.append(max_bytes)
+        if max_bytes is not None and len(self.data) > max_bytes:
+            raise ArtifactStorePolicyError("private artifact bytes exceeded")
         return BytesIO(self.data)
 
     async def stat(self, ref: TaskArtifactRef) -> TaskArtifactStat:
@@ -225,6 +238,22 @@ class FakeArtifactStore:
             size_bytes=len(self.data),
             sha256=("0" * 64 if ref.sha256 is None else ref.sha256),
         )
+
+
+class FailingReadArtifactStore(FakeArtifactStore):
+    async def open_stream(
+        self,
+        ref: TaskArtifactRef,
+        *,
+        max_bytes: int | None = None,
+    ) -> BytesIO:
+        self.max_bytes_values.append(max_bytes)
+        return FailingReader(self.data)
+
+
+class FailingReader(BytesIO):
+    def read(self, size: int = -1) -> bytes:
+        raise ArtifactStorePolicyError("private read failure")
 
 
 class StaticHmacProvider:
@@ -1108,6 +1137,142 @@ file_delivery_profile = "multimodal"
         self.assertEqual(content[1].file["file_data"], "iVBORw==")
         self.assertEqual(content[1].file["mime_type"], "image/png")
 
+    async def test_run_reads_inline_bytes_with_bounded_raw_limit(
+        self,
+    ) -> None:
+        loader = FakeLoader(response="accepted")
+        profile = FileDeliveryProfile(
+            name="inline-bytes",
+            delivery_modes=frozenset({FileDeliveryMode.INLINE_BYTES}),
+            inline_byte_limit=FileDeliveryLimit(
+                name="inline_file_bytes",
+                source="test",
+                max_bytes=8,
+            ),
+        )
+        runner = AgentTaskTargetRunner(
+            loader,
+            file_delivery_resolver=lambda uri: profile,
+            uri="ai://env:KEY@fake/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+        artifact_store = FakeArtifactStore(b"abcdef")
+
+        await runner.run(
+            self._context(
+                self._definition(),
+                "describe",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="application/octet-stream",
+                        size_bytes=6,
+                    ),
+                ),
+                artifact_store=artifact_store,
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(content[1].file["file_data"], "YWJjZGVm")
+        self.assertEqual(artifact_store.max_bytes_values, [6])
+
+    async def test_run_rejects_inline_bytes_when_bounded_read_exceeds_limit(
+        self,
+    ) -> None:
+        loader = FakeLoader()
+        profile = FileDeliveryProfile(
+            name="inline-bytes",
+            delivery_modes=frozenset({FileDeliveryMode.INLINE_BYTES}),
+            inline_byte_limit=FileDeliveryLimit(
+                name="inline_file_bytes",
+                source="test",
+                max_bytes=8,
+            ),
+        )
+        runner = AgentTaskTargetRunner(
+            loader,
+            file_delivery_resolver=lambda uri: profile,
+            uri="ai://env:KEY@fake/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+        artifact_store = FakeArtifactStore(b"abcdefg")
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "describe",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="application/octet-stream",
+                            size_bytes=6,
+                        ),
+                    ),
+                    artifact_store=artifact_store,
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertEqual(artifact_store.max_bytes_values, [6])
+        self.assertEqual(loader.inputs, [])
+        self.assertNotIn("private artifact bytes", str(error.exception))
+
+    async def test_run_reads_inline_text_with_task_limit_cap(self) -> None:
+        loader = FakeLoader(response="accepted")
+        profile = FileDeliveryProfile(
+            name="inline-text",
+            delivery_modes=frozenset({FileDeliveryMode.INLINE_TEXT}),
+            inline_text_limit=FileDeliveryLimit(
+                name="inline_text_bytes",
+                source="test",
+                max_bytes=12,
+            ),
+        )
+        runner = AgentTaskTargetRunner(
+            loader,
+            file_delivery_resolver=lambda uri: profile,
+            uri="ai://env:KEY@fake/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+        artifact_store = FakeArtifactStore(b"hello")
+
+        await runner.run(
+            self._context(
+                self._definition(limits=TaskLimitsPolicy(file_bytes=5)),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="text/plain",
+                        size_bytes=5,
+                    ),
+                ),
+                artifact_store=artifact_store,
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(content[1].text, "hello")
+        self.assertEqual(artifact_store.max_bytes_values, [5])
+
     async def test_run_rejects_local_native_media_without_profile(
         self,
     ) -> None:
@@ -1736,6 +1901,47 @@ file_delivery_profile = "multimodal"
 
         self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
         self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+
+    async def test_artifact_bytes_rejects_read_failure_safely(self) -> None:
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await agent_module._artifact_bytes(
+                TaskInputFile(
+                    logical_path="artifact:artifact-1",
+                    artifact_ref=artifact_ref,
+                ),
+                context=self._context(
+                    self._definition(),
+                    "summarize",
+                    artifact_store=FailingReadArtifactStore(),
+                ),
+                path="input.files[0]",
+                max_bytes=5,
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertNotIn("private read failure", str(error.exception))
+
+    def test_artifact_read_max_bytes_returns_none_without_limits(self) -> None:
+        value = agent_module._artifact_read_max_bytes(
+            self._definition(),
+            decision=FileDeliveryDecision(
+                mode=FileDeliveryMode.PROVIDER_FILE_ID,
+                reference="file-test",
+            ),
+            profile=FileDeliveryProfile(
+                name="id-only",
+                delivery_modes=frozenset({FileDeliveryMode.PROVIDER_FILE_ID}),
+            ),
+        )
+
+        self.assertIsNone(value)
 
     def test_decision_reference_rejects_missing_reference(self) -> None:
         with self.assertRaises(TaskValidationError) as error:

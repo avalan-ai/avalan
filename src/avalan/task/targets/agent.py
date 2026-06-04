@@ -18,6 +18,7 @@ from ...model.file_delivery import (
     LocalFileDeliveryProfile,
     resolve_file_delivery_profile,
 )
+from ..artifact import ArtifactStoreError
 from ..context import TaskInputFile, TaskTargetContext
 from ..definition import (
     TaskDefinition,
@@ -356,7 +357,16 @@ async def _agent_file_content(
                 ),
             )
         case FileDeliveryMode.INLINE_BYTES:
-            data = await _artifact_bytes(file, context=context, path=path)
+            data = await _artifact_bytes(
+                file,
+                context=context,
+                path=path,
+                max_bytes=_artifact_read_max_bytes(
+                    context.definition,
+                    decision=decision,
+                    profile=profile,
+                ),
+            )
             return MessageContentFile(
                 type="file",
                 file=_message_file(
@@ -365,7 +375,16 @@ async def _agent_file_content(
                 ),
             )
         case FileDeliveryMode.INLINE_TEXT:
-            data = await _artifact_bytes(file, context=context, path=path)
+            data = await _artifact_bytes(
+                file,
+                context=context,
+                path=path,
+                max_bytes=_artifact_read_max_bytes(
+                    context.definition,
+                    decision=decision,
+                    profile=profile,
+                ),
+            )
             try:
                 text = data.decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -391,14 +410,63 @@ async def _artifact_bytes(
     *,
     context: TaskTargetContext,
     path: str,
+    max_bytes: int | None = None,
 ) -> bytes:
     if file.artifact_ref is None or context.artifact_store is None:
         raise _agent_file_error(path=path)
-    reader = await context.artifact_store.open(file.artifact_ref)
+    try:
+        reader = await context.artifact_store.open_stream(
+            file.artifact_ref,
+            max_bytes=max_bytes,
+        )
+    except ArtifactStoreError as exc:
+        raise _agent_file_error(path=path) from exc
     try:
         return reader.read()
+    except ArtifactStoreError as exc:
+        raise _agent_file_error(path=path) from exc
     finally:
         reader.close()
+
+
+def _artifact_read_max_bytes(
+    definition: TaskDefinition,
+    *,
+    decision: FileDeliveryDecision,
+    profile: FileDeliveryProfile,
+) -> int | None:
+    limits = [
+        definition.limits.file_bytes,
+        definition.artifact.max_bytes,
+    ]
+    match decision.mode:
+        case FileDeliveryMode.INLINE_BYTES:
+            if (
+                profile.inline_byte_limit is not None
+                and profile.inline_byte_limit.max_bytes is not None
+            ):
+                limits.append(
+                    _max_raw_bytes_for_base64(
+                        profile.inline_byte_limit.max_bytes
+                    )
+                )
+        case FileDeliveryMode.INLINE_TEXT:
+            if (
+                profile.inline_text_limit is not None
+                and profile.inline_text_limit.max_bytes is not None
+            ):
+                limits.append(profile.inline_text_limit.max_bytes)
+        case _:
+            pass
+    bounded = tuple(limit for limit in limits if limit is not None)
+    return min(bounded) if bounded else None
+
+
+def _max_raw_bytes_for_base64(encoded_max_bytes: int) -> int:
+    assert isinstance(encoded_max_bytes, int)
+    assert not isinstance(encoded_max_bytes, bool)
+    assert encoded_max_bytes > 0
+    return (encoded_max_bytes // 4) * 3
 
 
 def _decision_reference(decision: FileDeliveryDecision) -> str:
