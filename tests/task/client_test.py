@@ -9,6 +9,7 @@ from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.event import Event, EventType
 from avalan.task import (
+    REDACTED_MARKER,
     EncryptedPrivacyValue,
     IdempotencyMode,
     PrivacySanitizer,
@@ -974,6 +975,95 @@ ref = "agents/reviewer.toml"
                 input_value="private prompt",
                 queue_name=" ",
             )
+
+    async def test_enqueue_sanitizes_sensitive_queue_metadata(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+            definition_hash=lambda task: "client-queue-safe-metadata-hash",
+        )
+
+        queue_metadata = cast(
+            Mapping[str, object],
+            {
+                1: "private invalid key",
+                "tenant": "safe",
+                "copied": "prefix private prompt suffix",
+                "path": "private.txt",
+                "provider_file_id": "file-openai-private",
+                "idempotency_key": "private-window",
+                "owner_scope": "private-owner",
+                "blob": b"private bytes",
+                "enabled": True,
+                "limit": 2,
+                "ratio": 0.5,
+                "invalid_ratio": float("nan"),
+                "items": ["safe list", "private prompt", 3],
+                "nested": {"label": "safe nested"},
+                "optional": None,
+            },
+        )
+
+        submission = await client.enqueue(
+            _definition(
+                input_contract=TaskInputContract.object(
+                    schema={
+                        "type": "object",
+                        "required": ["prompt"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "prompt": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                    }
+                ),
+                run=TaskRunPolicy.queued(
+                    "documents",
+                    idempotency=IdempotencyMode.INPUT_HASH,
+                ),
+            ),
+            input_value={"prompt": ["private prompt"]},
+            idempotency_key="private-window",
+            owner_scope="private-owner",
+            queue_metadata=queue_metadata,
+        )
+
+        redacted = {"privacy": REDACTED_MARKER}
+        metadata = cast(Mapping[str, object], queue.queue_metadata)
+        self.assertEqual(metadata["metadata"], redacted)
+        self.assertEqual(metadata["tenant"], "safe")
+        self.assertEqual(metadata["copied"], redacted)
+        self.assertEqual(metadata["path"], redacted)
+        self.assertEqual(metadata["provider_file_id"], redacted)
+        self.assertEqual(metadata["idempotency_key"], redacted)
+        self.assertEqual(metadata["owner_scope"], redacted)
+        self.assertEqual(metadata["blob"], redacted)
+        self.assertIs(metadata["enabled"], True)
+        self.assertEqual(metadata["limit"], 2)
+        self.assertEqual(metadata["ratio"], 0.5)
+        self.assertEqual(metadata["invalid_ratio"], redacted)
+        self.assertEqual(metadata["items"], ("safe list", redacted, 3))
+        self.assertEqual(
+            metadata["nested"],
+            {"label": "safe nested"},
+        )
+        self.assertIsNone(metadata["optional"])
+        self.assertIsNotNone(submission.queue_item)
+        assert submission.queue_item is not None
+        rendered_item = str(submission.queue_item)
+        self.assertNotIn("private prompt", rendered_item)
+        self.assertNotIn("private.txt", rendered_item)
+        self.assertNotIn("file-openai-private", rendered_item)
+        self.assertNotIn("private-window", rendered_item)
+        self.assertNotIn("private-owner", rendered_item)
 
     async def test_enqueue_persists_explicit_durable_files(self) -> None:
         store = InMemoryTaskStore()

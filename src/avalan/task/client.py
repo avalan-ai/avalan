@@ -29,6 +29,7 @@ from .materialization import (
 from .observability import ObservabilitySink, TaskSanitizedEventObserver
 from .privacy import (
     ENCRYPTED_MARKER,
+    REDACTED_MARKER,
     EncryptionProvider,
     HmacProvider,
     PrivacyField,
@@ -51,6 +52,7 @@ from .store import (
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskRun,
+    TaskSnapshotMetadata,
     TaskSnapshotValue,
     TaskStore,
     freeze_snapshot_metadata,
@@ -74,6 +76,7 @@ from asyncio import sleep as asyncio_sleep
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from math import isfinite
 from pathlib import Path
 from typing import cast
 
@@ -517,6 +520,12 @@ class TaskClient:
             sanitizer,
             (*files, *provider_reference_files),
         )
+        safe_queue_metadata = _queue_metadata_snapshot(
+            queue_metadata,
+            input_value=input_value,
+            idempotency_key=idempotency_key,
+            owner_scope=owner_scope,
+        )
         selected_queue_name = queue_name or definition.run.queue
         assert selected_queue_name is not None
         input_summary_value = _input_summary_value(definition, input_value)
@@ -560,7 +569,7 @@ class TaskClient:
                     *self._queue_artifacts(definition, materialized_files),
                 ),
                 run_metadata={"runner": "queue"},
-                queue_metadata=queue_metadata,
+                queue_metadata=safe_queue_metadata,
             )
         except BaseException:
             await self._delete_materialized_files(materialized_files)
@@ -938,6 +947,143 @@ def _queue_input_payload_issue(
         hint=hint,
         category=TaskValidationCategory.PRIVACY,
     )
+
+
+_SENSITIVE_QUEUE_METADATA_TOKENS = frozenset(
+    {
+        "api",
+        "authorization",
+        "bytes",
+        "content",
+        "file",
+        "files",
+        "filename",
+        "handle",
+        "idempotency",
+        "input",
+        "key",
+        "owner",
+        "path",
+        "prompt",
+        "provider",
+        "reference",
+        "scope",
+        "secret",
+        "token",
+        "uri",
+        "url",
+    }
+)
+
+
+def _queue_metadata_snapshot(
+    metadata: Mapping[str, object] | None,
+    *,
+    input_value: object,
+    idempotency_key: str | None,
+    owner_scope: object,
+) -> TaskSnapshotMetadata:
+    if metadata is None:
+        return freeze_snapshot_metadata(None)
+    sensitive_values = _sensitive_queue_metadata_values(
+        input_value,
+        idempotency_key,
+        owner_scope,
+    )
+    safe_metadata = _safe_queue_metadata_value(metadata, sensitive_values)
+    assert isinstance(safe_metadata, Mapping)
+    return freeze_snapshot_metadata(safe_metadata)
+
+
+def _safe_queue_metadata_value(
+    value: object,
+    sensitive_values: frozenset[str],
+) -> object:
+    if value is None or isinstance(value, bool | int):
+        return value
+    if isinstance(value, float):
+        return value if isfinite(value) else _redacted_metadata_value()
+    if isinstance(value, str):
+        return (
+            _redacted_metadata_value()
+            if _contains_sensitive_metadata_value(value, sensitive_values)
+            else value
+        )
+    if isinstance(value, Mapping):
+        safe: dict[str, object] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or not key.strip():
+                safe["metadata"] = _redacted_metadata_value()
+                continue
+            safe[key] = (
+                _redacted_metadata_value()
+                if _queue_metadata_key_is_sensitive(key)
+                else _safe_queue_metadata_value(item, sensitive_values)
+            )
+        return safe
+    if isinstance(value, list | tuple):
+        return tuple(
+            _safe_queue_metadata_value(item, sensitive_values)
+            for item in value
+        )
+    return _redacted_metadata_value()
+
+
+def _queue_metadata_key_is_sensitive(key: str) -> bool:
+    return bool(_metadata_key_tokens(key) & _SENSITIVE_QUEUE_METADATA_TOKENS)
+
+
+def _metadata_key_tokens(key: str) -> frozenset[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for character in key.lower():
+        if character.isalnum():
+            current.append(character)
+            continue
+        if current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
+    return frozenset(tokens)
+
+
+def _sensitive_queue_metadata_values(
+    *values: object,
+) -> frozenset[str]:
+    sensitive: set[str] = set()
+    for value in values:
+        _collect_sensitive_queue_metadata_values(value, sensitive)
+    return frozenset(sensitive)
+
+
+def _collect_sensitive_queue_metadata_values(
+    value: object,
+    sensitive: set[str],
+) -> None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if len(stripped) >= 4:
+            sensitive.add(stripped)
+        return
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _collect_sensitive_queue_metadata_values(item, sensitive)
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            _collect_sensitive_queue_metadata_values(item, sensitive)
+
+
+def _contains_sensitive_metadata_value(
+    value: str,
+    sensitive_values: frozenset[str],
+) -> bool:
+    return any(secret in value for secret in sensitive_values)
+
+
+def _redacted_metadata_value() -> dict[str, str]:
+    return {"privacy": REDACTED_MARKER}
 
 
 def _unsupported_queue_operation(
