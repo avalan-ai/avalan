@@ -3,12 +3,20 @@ from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import patch
 
+from avalan.entities import (
+    Message,
+    MessageContentFile,
+    MessageContentText,
+    MessageRole,
+)
 from avalan.event import Event, EventType
+from avalan.flow import FlowNodeDefinition
 from avalan.flow.flow import Flow
+from avalan.flow.loader import FlowDefinitionLoader
 from avalan.flow.node import Node
 from avalan.task import (
     DROPPED_MARKER,
@@ -26,16 +34,21 @@ from avalan.task import (
     TaskDefinition,
     TaskEventCategory,
     TaskExecutionTarget,
+    TaskFileDescriptor,
     TaskInputContract,
+    TaskInputFile,
     TaskKeyMaterial,
     TaskKeyPurpose,
     TaskMetadata,
     TaskObservabilityPolicy,
     TaskOutputContract,
     TaskPrivacyPolicy,
+    TaskProviderReference,
+    TaskProviderReferenceKind,
     TaskRunPolicy,
     TaskRunState,
     TaskTargetContext,
+    TaskValidationCategory,
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
@@ -44,9 +57,12 @@ from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.store import TaskExecutionContext
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import (
+    FLOW_TASK_FILES_KEY,
     FLOW_TASK_INPUT_KEY,
+    AgentTaskTargetRunner,
     FlowTaskTargetRunner,
     flow_task_input_binding,
+    task_flow_node_registry,
     validate_flow_task_compatibility,
 )
 
@@ -63,6 +79,272 @@ class StaticHmacProvider:
             algorithm="hmac-sha256",
             secret=b"flow-target-secret",
         )
+
+
+class FlowAgentResponse:
+    input_token_count = 5
+    output_token_count = 3
+    total_token_count = 8
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    async def to_str(self) -> str:
+        return self.text
+
+
+class FlowAgentEventManager:
+    def __init__(self) -> None:
+        self.listeners: list[Callable[[Event], Awaitable[None] | None]] = []
+
+    def add_listener(
+        self,
+        listener: Callable[[Event], Awaitable[None] | None],
+    ) -> None:
+        self.listeners.append(listener)
+
+    def remove_listener(
+        self,
+        listener: Callable[[Event], Awaitable[None] | None],
+    ) -> None:
+        self.listeners.remove(listener)
+
+    async def emit(self) -> None:
+        for listener in tuple(self.listeners):
+            result = listener(
+                Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={"token": "private-token", "file_id": "file-123"},
+                )
+            )
+            if result is not None:
+                await result
+
+
+class FlowAgentOrchestrator:
+    def __init__(self, loader: "FlowAgentLoader") -> None:
+        self._loader = loader
+        self.event_manager = loader.event_manager
+
+    async def __aenter__(self) -> "FlowAgentOrchestrator":
+        self._loader.entered += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        self._loader.exited += 1
+        return None
+
+    async def __call__(self, input: object) -> FlowAgentResponse:
+        self._loader.inputs.append(input)
+        await self.event_manager.emit()
+        if self._loader.error is not None:
+            raise self._loader.error
+        return FlowAgentResponse(self._loader.text)
+
+
+class FlowAgentLoader:
+    def __init__(
+        self,
+        *,
+        text: str = "flow agent summary",
+        error: BaseException | None = None,
+    ) -> None:
+        self.text = text
+        self.error = error
+        self.event_manager = FlowAgentEventManager()
+        self.paths: list[str] = []
+        self.inputs: list[object] = []
+        self.entered = 0
+        self.exited = 0
+
+    async def from_file(
+        self,
+        path: str,
+        *,
+        agent_id: object | None,
+        disable_memory: bool = False,
+        uri: str | None = None,
+        tool_settings: object | None = None,
+    ) -> FlowAgentOrchestrator:
+        _ = agent_id, disable_memory, uri, tool_settings
+        self.paths.append(path)
+        return FlowAgentOrchestrator(self)
+
+
+class CapturingTaskTargetRunner:
+    def __init__(
+        self,
+        *,
+        issues: tuple[TaskValidationIssue, ...] = (),
+        output: object = "agent output",
+    ) -> None:
+        self.issues = issues
+        self.output = output
+        self.contexts: list[TaskTargetContext] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return self.issues
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        return self.output
+
+
+class FailingArtifactStore:
+    async def stat(self, ref: TaskArtifactRef) -> object:
+        _ = ref
+        raise AssertionError("private artifact metadata was read")
+
+    async def open_stream(
+        self,
+        ref: TaskArtifactRef,
+        *,
+        max_bytes: int | None = None,
+    ) -> object:
+        _ = ref, max_bytes
+        raise AssertionError("private bytes were read")
+
+
+def _write_agent_flow_workspace(
+    root: Path,
+    *,
+    uri: str = "ai://env:KEY@openai/gpt-4o-mini",
+) -> Path:
+    agents = root / "agents"
+    agents.mkdir()
+    (agents / "review.toml").write_text(
+        f"""
+[agent]
+name = "Flow reviewer"
+task = "Review the supplied file."
+user = "Review."
+
+[engine]
+uri = "{uri}"
+""",
+        encoding="utf-8",
+    )
+    flow_path = root / "flow.toml"
+    flow_path.write_text(
+        """
+[flow]
+name = "file_review"
+entrypoint = "review"
+output_node = "review"
+
+[flow.input]
+name = "input"
+type = "file"
+mime_types = ["application/pdf"]
+
+[flow.output]
+name = "summary"
+type = "text"
+
+[nodes.review]
+type = "agent"
+ref = "agents/review.toml"
+input = "__task_input__"
+""",
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _flow_loader_resolver(
+    path: Path,
+    *,
+    agent_runner: AgentTaskTargetRunner,
+    root: Path,
+) -> Callable[[TaskTargetContext], Flow]:
+    def resolve(context: TaskTargetContext) -> Flow:
+        result = FlowDefinitionLoader(
+            registry=task_flow_node_registry(
+                context,
+                agent_runner=agent_runner,
+                execution_roots=(root,),
+            )
+        ).load_result(path)
+        assert result.flow is not None, result.issues
+        return result.flow
+
+    return resolve
+
+
+def _agent_node_flow(
+    context: TaskTargetContext,
+    *,
+    agent_runner: CapturingTaskTargetRunner,
+) -> Flow:
+    registry = task_flow_node_registry(context, agent_runner=agent_runner)
+    flow = Flow()
+    flow.add_node(
+        registry.build(
+            FlowNodeDefinition(
+                name="review",
+                type="agent",
+                ref="agents/review.toml",
+            )
+        )
+    )
+    return flow
+
+
+def _single_incoming_agent_flow(
+    context: TaskTargetContext,
+    *,
+    agent_runner: CapturingTaskTargetRunner,
+) -> Flow:
+    registry = task_flow_node_registry(context, agent_runner=agent_runner)
+    flow = Flow()
+    flow.add_node(Node("start", func=lambda _: "ready"))
+    flow.add_node(
+        registry.build(
+            FlowNodeDefinition(
+                name="review",
+                type="agent",
+                ref="agents/review.toml",
+            )
+        )
+    )
+    flow.add_connection("start", "review")
+    return flow
+
+
+def _multi_incoming_agent_flow(
+    context: TaskTargetContext,
+    *,
+    agent_runner: CapturingTaskTargetRunner,
+) -> Flow:
+    registry = task_flow_node_registry(context, agent_runner=agent_runner)
+    flow = Flow()
+    flow.add_node(Node("start", func=lambda _: "seed"))
+    flow.add_node(Node("left", func=lambda _: "left"))
+    flow.add_node(Node("right", func=lambda _: "right"))
+    flow.add_node(
+        registry.build(
+            FlowNodeDefinition(
+                name="review",
+                type="agent",
+                ref="agents/review.toml",
+            )
+        )
+    )
+    flow.add_connection("start", "left")
+    flow.add_connection("start", "right")
+    flow.add_connection("left", "review")
+    flow.add_connection("right", "review")
+    return flow
 
 
 class FlowTaskTargetRunnerValidationTest(TestCase):
@@ -89,7 +371,7 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
         self.assertNotIn("private.toml", rendered)
         self.assertNotIn("private flow", rendered)
 
-    def test_flow_target_reports_file_input_gap_but_allows_artifact_output(
+    def test_flow_target_accepts_file_input_and_artifact_output(
         self,
     ) -> None:
         runner = FlowTaskTargetRunner()
@@ -103,13 +385,7 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
             TaskValidationContext(),
         )
 
-        self.assertEqual(
-            [issue.path for issue in issues],
-            ["input.type"],
-        )
-        self.assertTrue(
-            all(issue.code == "execution.unsupported_flow" for issue in issues)
-        )
+        self.assertEqual(issues, ())
 
     def test_flow_target_rejects_unsafe_references_without_raw_ref(
         self,
@@ -278,6 +554,66 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         result = await runner.run(self._context(input_value="ready"))
 
         self.assertEqual(result, "ready!")
+
+    async def test_run_rejects_flow_agent_node_validation_issues(
+        self,
+    ) -> None:
+        agent_runner = CapturingTaskTargetRunner(
+            issues=(
+                TaskValidationIssue(
+                    code="execution.unsupported_flow",
+                    path="nodes.review.ref",
+                    message="Flow agent node is invalid.",
+                    hint="Use a valid agent node reference.",
+                    category=TaskValidationCategory.UNSUPPORTED,
+                ),
+            )
+        )
+        runner = FlowTaskTargetRunner(
+            flow_resolver=lambda context: _agent_node_flow(
+                context,
+                agent_runner=agent_runner,
+            )
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(self._context(input_value="private prompt"))
+
+        self.assertEqual(
+            error.exception.issues[0].path,
+            "nodes.review.ref",
+        )
+        self.assertEqual(agent_runner.contexts, [])
+        self.assertNotIn("private prompt", str(error.exception))
+
+    async def test_run_agent_node_uses_flow_input_fallbacks(self) -> None:
+        cases = (
+            ("task_input", _agent_node_flow, "ready"),
+            ("single_incoming", _single_incoming_agent_flow, "ready"),
+            (
+                "multi_incoming",
+                _multi_incoming_agent_flow,
+                {"left": "left", "right": "right"},
+            ),
+        )
+
+        for name, factory, expected_input in cases:
+            with self.subTest(name=name):
+                agent_runner = CapturingTaskTargetRunner()
+                runner = FlowTaskTargetRunner(
+                    flow_resolver=lambda context: factory(
+                        context,
+                        agent_runner=agent_runner,
+                    )
+                )
+
+                result = await runner.run(self._context(input_value="ready"))
+
+                self.assertEqual(result, "agent output")
+                self.assertEqual(
+                    agent_runner.contexts[0].input_value,
+                    expected_input,
+                )
 
     async def test_run_awaits_async_resolver(self) -> None:
         flow = Flow()
@@ -982,7 +1318,10 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             input_value={"prompt": "safe summary", "limit": 2},
         )
 
-        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            result.run.state,
+            TaskRunState.SUCCEEDED,
+        )
         self.assertEqual(result.output, {"status": "ready", "count": 2})
 
     async def test_direct_runner_keeps_flow_input_mutation_local(
@@ -1052,7 +1391,10 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             input_value=input_value,
         )
 
-        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            result.run.state,
+            TaskRunState.SUCCEEDED,
+        )
         self.assertEqual(
             result.output,
             {
@@ -1319,6 +1661,129 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(result.output, ["safe", "done"])
         self.assertIsInstance(result.output, list)
 
+    async def test_direct_runner_sends_file_input_to_flow_agent_node(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flow_path = _write_agent_flow_workspace(root)
+            loader = FlowAgentLoader()
+            agent_runner = AgentTaskTargetRunner(loader, ref_base=root)
+            runner = DirectTaskRunner(
+                self.store,
+                target=FlowTaskTargetRunner(
+                    ref_base=root,
+                    flow_resolver=_flow_loader_resolver(
+                        flow_path,
+                        agent_runner=agent_runner,
+                        root=root,
+                    ),
+                ),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=cast(Any, FailingArtifactStore()),
+                execution_roots=(root,),
+                definition_hash=lambda _: "flow-agent-file-success",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",)
+                    ),
+                    output_contract=TaskOutputContract.text(),
+                    execution=TaskExecutionTarget.flow("flow.toml"),
+                    observability=TaskObservabilityPolicy(),
+                ),
+                input_value=TaskFileDescriptor.provider_reference_descriptor(
+                    "file-123",
+                    kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    provider="openai",
+                    mime_type="application/pdf",
+                    owner_scope="private-tenant",
+                ),
+            )
+
+            expected_path = str(root / "agents" / "review.toml")
+
+        self.assertEqual(
+            result.run.state,
+            TaskRunState.SUCCEEDED,
+        )
+        self.assertEqual(result.output, "flow agent summary")
+        self.assertEqual(loader.paths, [expected_path])
+        self.assertEqual(loader.entered, 1)
+        self.assertEqual(loader.exited, 1)
+        self.assertEqual(len(loader.inputs), 1)
+        message = loader.inputs[0]
+        assert isinstance(message, Message)
+        self.assertEqual(message.role, MessageRole.USER)
+        content = cast(list[object], message.content)
+        text_blocks = [
+            block for block in content if isinstance(block, MessageContentText)
+        ]
+        file_blocks = [
+            block for block in content if isinstance(block, MessageContentFile)
+        ]
+        self.assertEqual([block.text for block in text_blocks], ["Review."])
+        self.assertEqual(len(file_blocks), 1)
+        self.assertEqual(file_blocks[0].file["file_id"], "file-123")
+        self.assertEqual(
+            file_blocks[0].file["mime_type"],
+            "application/pdf",
+        )
+        self.assertNotIn("private-tenant", str(result.run.result))
+
+    async def test_direct_runner_rejects_flow_agent_provider_mismatch(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flow_path = _write_agent_flow_workspace(
+                root,
+                uri="ai://env:KEY@anthropic/claude-3-5-sonnet",
+            )
+            loader = FlowAgentLoader()
+            agent_runner = AgentTaskTargetRunner(loader, ref_base=root)
+            runner = DirectTaskRunner(
+                self.store,
+                target=FlowTaskTargetRunner(
+                    ref_base=root,
+                    flow_resolver=_flow_loader_resolver(
+                        flow_path,
+                        agent_runner=agent_runner,
+                        root=root,
+                    ),
+                ),
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda _: "flow-agent-provider-mismatch",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file_array(
+                        mime_types=("application/pdf",)
+                    ),
+                    output_contract=TaskOutputContract.text(),
+                    execution=TaskExecutionTarget.flow("flow.toml"),
+                ),
+                input_value=[
+                    TaskFileDescriptor.provider_reference_descriptor(
+                        "file-private",
+                        kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                        provider="openai",
+                        mime_type="application/pdf",
+                        owner_scope="private-tenant",
+                    )
+                ],
+            )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(loader.inputs, [])
+        self.assertEqual(loader.paths, [])
+        self.assertNotIn("file-private", str(result.run.result))
+        self.assertNotIn("private-tenant", str(result.run.result))
+
     async def test_direct_runner_rejects_invalid_flow_array_output(
         self,
     ) -> None:
@@ -1393,6 +1858,26 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             },
         )
 
+    def test_input_binding_exposes_task_file_descriptors(self) -> None:
+        file = TaskInputFile(
+            logical_path="provider:file-123",
+            media_type="application/pdf",
+            provider_reference=TaskProviderReference(
+                kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                provider="openai",
+                reference="file-123",
+            ),
+        )
+
+        binding = flow_task_input_binding(
+            {"source_kind": "provider_reference"},
+            files=(file,),
+        )
+
+        self.assertIs(binding["file"], file)
+        self.assertEqual(binding["files"], [file])
+        self.assertEqual(binding[FLOW_TASK_FILES_KEY], [file])
+
     def test_input_binding_isolates_nested_object_mutation(self) -> None:
         value = {"nested": {"items": ["original"]}}
         binding = flow_task_input_binding(value)
@@ -1455,6 +1940,7 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         input_contract: TaskInputContract,
         output_contract: TaskOutputContract,
         artifact: TaskArtifactPolicy | None = None,
+        execution: TaskExecutionTarget | None = None,
         observability: TaskObservabilityPolicy | None = None,
         privacy: TaskPrivacyPolicy | None = None,
     ) -> TaskDefinition:
@@ -1462,7 +1948,8 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             task=TaskMetadata(name="flow-task", version="1"),
             input=input_contract,
             output=output_contract,
-            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            execution=execution
+            or TaskExecutionTarget.flow("flows/report.toml"),
             artifact=artifact or TaskArtifactPolicy.references_only(),
             observability=observability or TaskObservabilityPolicy.noop(),
             privacy=privacy or TaskPrivacyPolicy(),

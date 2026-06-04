@@ -71,7 +71,7 @@ from ...task.targets.agent import (
     AgentOrchestratorLoader,
     AgentTaskTargetRunner,
 )
-from ...task.targets.flow import FlowTaskTargetRunner
+from ...task.targets.flow import FlowTaskTargetRunner, task_flow_node_registry
 
 from argparse import Namespace
 from asyncio import run as asyncio_run
@@ -923,18 +923,21 @@ def _task_cli_client_context(
     input_value: object = None,
 ) -> _TaskCliClientContext:
     stack = AsyncExitStack()
-    target: TaskTargetRunner = _agent_task_target(
+    agent_target = _agent_task_target(
         definition_path.parent,
         hub=hub,
         logger=logger,
         stack=stack,
     )
-    target = TaskTargetRunnerRegistry(
-        target,
+    target: TaskTargetRunner = TaskTargetRunnerRegistry(
+        agent_target,
         {
             TaskTargetType.FLOW: FlowTaskTargetRunner(
                 ref_base=definition_path.parent,
-                flow_resolver=_task_flow_resolver(definition_path.parent),
+                flow_resolver=_task_flow_resolver(
+                    definition_path.parent,
+                    agent_runner=agent_target,
+                ),
             )
         },
     )
@@ -1031,13 +1034,21 @@ def _agent_task_target(
 
 def _task_flow_resolver(
     ref_base: Path,
+    *,
+    agent_runner: TaskTargetRunner | None = None,
 ) -> Callable[[TaskTargetContext], Flow]:
     def resolve(context: TaskTargetContext) -> Flow:
         flow_ref = context.definition.execution.ref
         path = Path(flow_ref)
         if not path.is_absolute():
             path = ref_base / path
-        result = FlowDefinitionLoader().load_result(path)
+        result = FlowDefinitionLoader(
+            registry=task_flow_node_registry(
+                context,
+                agent_runner=agent_runner,
+                execution_roots=(ref_base,),
+            )
+        ).load_result(path)
         if result.flow is None:
             raise TaskValidationError(
                 tuple(

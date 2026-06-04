@@ -134,6 +134,64 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         assert result.flow is not None
         self.assertEqual(await result.flow.execute_async(), "ok")
 
+    async def test_load_accepts_shorthand_node_config_and_schema_metadata(
+        self,
+    ) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "select"
+            entrypoint = "start"
+            output_node = "pick"
+
+            [flow.input]
+            name = "payload"
+            type = "object"
+
+            [flow.input.schema]
+            type = "object"
+            required = ["nested"]
+
+            [flow.input.schema.properties.nested]
+            type = "object"
+
+            [flow.output]
+            name = "result"
+            type = "json"
+
+            [flow.output.schema]
+            anyOf = [{type = "string"}, {type = "integer"}]
+
+            [nodes.start]
+            type = "constant"
+            value = {nested = {items = ["first", "second"]}}
+
+            [nodes.pick]
+            type = "select"
+            path = "nested.items.1"
+
+            [[edges]]
+            source = "start"
+            target = "pick"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        assert result.flow is not None
+        assert result.definition.input is not None
+        assert result.definition.output is not None
+        self.assertEqual(
+            result.definition.input.schema["properties"],
+            {"nested": {"type": "object"}},
+        )
+        self.assertEqual(
+            result.definition.output.schema["anyOf"],
+            ({"type": "string"}, {"type": "integer"}),
+        )
+        self.assertEqual(
+            await result.flow.execute_async(initial_node="start"),
+            "second",
+        )
+
     def test_load_and_wrapper_helpers_read_files(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "flow.toml"

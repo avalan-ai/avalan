@@ -1,5 +1,12 @@
 from ...event import Event, EventType
+from ...flow.definition import FlowNodeDefinition
 from ...flow.flow import Flow
+from ...flow.node import Node
+from ...flow.registry import (
+    FlowNodeFactory,
+    FlowNodeRegistry,
+    default_flow_node_registry,
+)
 from ..context import TaskTargetContext
 from ..definition import (
     RunMode,
@@ -25,14 +32,16 @@ from ..validation import (
     validate_task_output,
 )
 
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from dataclasses import dataclass, replace
 from inspect import isawaitable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from time import perf_counter
+from typing import cast
 
 FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
 FLOW_TASK_INPUT_KEY = "__task_input__"
+FLOW_TASK_FILES_KEY = "__task_files__"
 _UNAVAILABLE_PRIVACY_MARKERS = frozenset(
     {
         DROPPED_MARKER,
@@ -131,7 +140,10 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         try:
             result = await resolved.execute_async(
                 initial_node=start_node,
-                initial_inputs=flow_task_input_binding(task_input),
+                initial_inputs=flow_task_input_binding(
+                    task_input,
+                    files=context.files,
+                ),
                 cancellation_checker=context.check_cancelled,
             )
             output_issues = validate_task_output(context.definition, result)
@@ -181,6 +193,26 @@ def validate_flow_task_compatibility(
     return FlowCompatibility(issues=tuple(issues))
 
 
+def task_flow_node_registry(
+    context: TaskTargetContext,
+    *,
+    agent_runner: TaskTargetRunner | None = None,
+    execution_roots: Iterable[str | Path] = (),
+) -> FlowNodeRegistry:
+    assert isinstance(context, TaskTargetContext)
+    registry = default_flow_node_registry()
+    if agent_runner is not None:
+        registry.register(
+            "agent",
+            _agent_node_factory(
+                context,
+                agent_runner=agent_runner,
+                execution_roots=execution_roots,
+            ),
+        )
+    return registry
+
+
 def _validate_flow_reference(
     ref: object,
     *,
@@ -209,17 +241,6 @@ def _validate_flow_contracts(
     definition: TaskDefinition,
 ) -> tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
-    if definition.input.type in {
-        TaskInputType.FILE,
-        TaskInputType.FILE_ARRAY,
-    }:
-        issues.append(
-            _unsupported_flow_issue(
-                path="input.type",
-                message="Flow task targets do not support file inputs.",
-                hint="Use an agent target for file-backed tasks.",
-            )
-        )
     if (
         definition.output.type in {TaskOutputType.OBJECT, TaskOutputType.ARRAY}
         and definition.output.schema is None
@@ -237,20 +258,98 @@ def _validate_flow_contracts(
     return tuple(issues)
 
 
-def flow_task_input_binding(value: object) -> dict[str, object]:
+def flow_task_input_binding(
+    value: object,
+    *,
+    files: tuple[object, ...] = (),
+) -> dict[str, object]:
+    assert isinstance(files, tuple)
     if isinstance(value, Mapping):
         binding = _copy_mapping(value)
         binding[FLOW_TASK_INPUT_KEY] = _copy_mapping(value)
-        return binding
-    if isinstance(value, list | tuple):
-        return {
+    elif isinstance(value, list | tuple):
+        binding = {
             FLOW_TASK_INPUT_KEY: _copy_sequence(value),
             "items": _copy_sequence(value),
         }
-    return {
-        FLOW_TASK_INPUT_KEY: _copy_task_input_value(value),
-        "value": _copy_task_input_value(value),
-    }
+    else:
+        binding = {
+            FLOW_TASK_INPUT_KEY: _copy_task_input_value(value),
+            "value": _copy_task_input_value(value),
+        }
+    if files:
+        binding[FLOW_TASK_FILES_KEY] = list(files)
+        binding["files"] = list(files)
+        if len(files) == 1:
+            binding["file"] = files[0]
+    return binding
+
+
+def _agent_node_factory(
+    context: TaskTargetContext,
+    *,
+    agent_runner: TaskTargetRunner,
+    execution_roots: Iterable[str | Path],
+) -> FlowNodeFactory:
+    roots = tuple(Path(root) for root in execution_roots)
+
+    def build(definition: FlowNodeDefinition) -> Node:
+        assert isinstance(definition, FlowNodeDefinition)
+        assert definition.ref is not None
+
+        async def run(inputs: dict[str, object]) -> object:
+            await context.check_cancelled()
+            agent_definition = _agent_node_task_definition(
+                context.definition,
+                definition,
+            )
+            issues = await agent_runner.validate_definition(
+                agent_definition,
+                TaskValidationContext(execution_roots=roots),
+            )
+            if issues:
+                raise TaskValidationError(issues)
+            return await agent_runner.run(
+                TaskTargetContext(
+                    definition=agent_definition,
+                    execution=context.execution,
+                    input_value=_flow_node_input_value(definition, inputs),
+                    files=context.files,
+                    metadata=context.metadata,
+                    cancellation_checker=context.cancellation_checker,
+                    event_listener=context.event_listener,
+                    usage_observer=context.usage_observer,
+                    artifact_store=context.artifact_store,
+                )
+            )
+
+        return Node(definition.name, func=run)
+
+    return build
+
+
+def _agent_node_task_definition(
+    parent: TaskDefinition,
+    node: FlowNodeDefinition,
+) -> TaskDefinition:
+    assert node.ref is not None
+    return replace(
+        parent,
+        execution=parent.execution.agent(node.ref),
+    )
+
+
+def _flow_node_input_value(
+    definition: FlowNodeDefinition,
+    inputs: Mapping[str, object],
+) -> object:
+    if definition.input is not None and definition.input in inputs:
+        return _copy_task_input_value(inputs[definition.input])
+    if FLOW_TASK_INPUT_KEY in inputs:
+        return _copy_task_input_value(inputs[FLOW_TASK_INPUT_KEY])
+    if len(inputs) == 1:
+        return _copy_task_input_value(next(iter(inputs.values())))
+    return _copy_task_input_value(cast(dict[str, object], dict(inputs)))
 
 
 def _copy_mapping(value: Mapping[object, object]) -> dict[str, object]:
