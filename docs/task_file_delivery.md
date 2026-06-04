@@ -50,17 +50,68 @@ allow-list of conversion names a run may request; it is not an automatic
 conversion request. Provider-native references cannot request conversions,
 because the provider already owns the referenced file.
 
+For queued file runs, local files must be materialized into durable artifacts or
+represented by durable provider references before workers execute them. Provider
+file ids and object-store URIs can survive queue retries when their provider,
+owner scope, expiry, MIME type, size bucket, and identity HMAC are recorded.
+Expiring provider handles are direct-run-only unless the caller can refresh
+them through a separate durable workflow.
+
+Remote URL descriptors are different from provider-fetchable hosted URLs.
+`remote_url` asks Avalan to fetch the URL and is disabled unless a remote URL
+policy is configured with SSRF protections. `hosted_url` asks the target
+provider to fetch a provider-compatible URL and is planned through the model
+file-delivery profile.
+
+## SDK Descriptor Examples
+
+```python
+from avalan.task import (
+    TaskClient,
+    TaskFileDescriptor,
+    TaskProviderReferenceKind,
+)
+
+local_descriptor = TaskClient.local_file(
+    "uploads/report.pdf",
+    mime_type="application/pdf",
+    size_bytes=2048,
+    conversions=(TaskClient.file_conversion("text"),),
+)
+
+provider_descriptor = TaskFileDescriptor.provider_reference_descriptor(
+    "file_abc123",
+    kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+    provider="openai",
+    owner_scope="tenant-a",
+    role="source",
+    mime_type="application/pdf",
+    size_bucket="small",
+    identity_hmac="hmac:file",
+)
+```
+
+See `docs/examples/tasks/file_inputs_sdk.py` for complete SDK helpers covering
+local documents, provider file ids, hosted URLs, and object-store URIs.
+
 ## Capability Matrix
 
-| Profile | Source kinds | Native modes | Text modes | Object-store schemes | MIME families |
-| --- | --- | --- | --- | --- | --- |
-| OpenAI | local path, remote URL, artifact, inline bytes | provider file id, hosted URL, inline bytes | inline text, converted artifact, retrieval context, map-reduce context | none by default | all |
-| Anthropic | local path, remote URL, artifact, inline bytes | provider file id, hosted URL, inline bytes | inline text, converted artifact, retrieval context, map-reduce context | none by default | all |
-| Google/Gemini | local path, remote URL, artifact, inline bytes | provider file id, hosted URL, object-store URI, inline bytes | inline text, converted artifact, retrieval context, map-reduce context | `gs` | all |
-| Bedrock | local path, remote URL, artifact, inline bytes | object-store URI, inline text-compatible bytes | inline text, converted artifact, retrieval context, map-reduce context | `s3` | text, JSON, Markdown, XML |
-| Local text | local path, artifact, inline bytes | none | inline text, converted artifact, retrieval context, map-reduce context | none | text, JSON, Markdown, XML |
-| Local multimodal | local path, artifact, inline bytes | inline bytes | inline text, converted artifact, retrieval context, map-reduce context | none | audio, image, text, video, JSON, Markdown, XML |
-| Unknown | none | none | none | none | none |
+| Profile | Source kinds | Native modes | Text modes | Object-store schemes | MIME families | Requirements and limits |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenAI | local path, remote URL, artifact, inline bytes | provider file id, hosted URL, inline bytes | inline text, converted artifact, retrieval context, map-reduce context | none by default | all | Requires OpenAI credentials such as `OPENAI_API_KEY`; provider file and context limits come from capability data. |
+| Anthropic | local path, remote URL, artifact, inline bytes | provider file id, hosted URL, inline bytes | inline text, converted artifact, retrieval context, map-reduce context | none by default | all | Requires Anthropic credentials such as `ANTHROPIC_API_KEY`; provider file and context limits come from capability data. |
+| Google/Gemini | local path, remote URL, artifact, inline bytes | provider file id, hosted URL, object-store URI, inline bytes | inline text, converted artifact, retrieval context, map-reduce context | `gs` | all | Requires Google/Gemini credentials such as `GOOGLE_API_KEY`; `gs://` references must be readable by the provider or runtime identity. |
+| Bedrock | local path, remote URL, artifact, inline bytes | object-store URI, inline text-compatible bytes | inline text, converted artifact, retrieval context, map-reduce context | `s3` | text, JSON, Markdown, XML | Requires AWS credentials, region, Bedrock model access, and `s3://` objects readable by the provider/runtime identity. |
+| Local text | local path, artifact, inline bytes | none | inline text, converted artifact, retrieval context, map-reduce context | none | text, JSON, Markdown, XML | Requires the local backend extra and model files. Native file blocks are rejected; convert or chunk to text. |
+| Local multimodal | local path, artifact, inline bytes | inline bytes | inline text, converted artifact, retrieval context, map-reduce context | none | audio, image, video | Requires local multimodal backend support, hardware appropriate for the model, and local model downloads. PDF, DOCX, and binary files need conversion or are rejected. |
+| Unknown | none | none | none | none | none | Fails closed until a provider or backend profile is configured. |
+
+Optional extras are scoped by capability: `task` for structured validation,
+`agent` for agent-backed task execution, `task-pgsql` for durable stores and
+workers, `task-documents` for document conversion, `task-prometheus` for
+metrics, and `task-otel` for traces. Local models may also require backend
+extras such as transformers, MLX-LM, vLLM, or DS4 plus the hardware and model
+downloads those backends need.
 
 ## Limit Composition
 

@@ -1,0 +1,36 @@
+[task]
+name = "large_direct_file"
+version = "1"
+description = "Read a direct document input with bounded file delivery."
+labels = ["example", "file"]
+
+[input]
+type = "file"
+description = "Document descriptor."
+file_conversions = ["text", "markdown"]
+mime_types = ["text/plain", "text/markdown", "application/pdf"]
+
+[output]
+type = "text"
+description = "Document answer."
+
+[execution]
+type = "agent"
+ref = "agents/document_reader.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 180
+idempotency = "input_and_files_hash"
+
+[artifact]
+retention_days = 14
+storage = "local"
+max_count = 4
+max_bytes = 1048576
+
+[limits]
+file_count = 1
+file_bytes = 1048576
+output_bytes = 8192
+total_tokens = 3000

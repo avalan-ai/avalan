@@ -209,6 +209,46 @@ unexpectedly, or the oldest available timestamp ages beyond the workload SLO.
 
 ## Failure Runbooks
 
+### Missing Store
+
+Symptoms:
+
+- `avalan task run` without `--ephemeral`, `enqueue`, `worker`, `inspect`,
+  `output`, `events`, `artifacts`, or `retention-sweep` reports
+  `store.missing`.
+- The command output asks for `AVALAN_TASK_STORE_DSN` or `--store-dsn`.
+
+Remediation:
+
+1. For local direct experimentation only, rerun direct tasks with
+   `--ephemeral`. Do not use ephemeral mode for queues or inspection.
+2. For durable mode, set `AVALAN_TASK_STORE_DSN` or pass `--store-dsn` and set
+   `AVALAN_TASK_STORE_SCHEMA` or `--store-schema` when using a non-default
+   schema.
+3. Run `avalan task pgsql diagnose` and `avalan task pgsql check` from the same
+   environment.
+4. If migrations are pending, run `avalan task pgsql migrate head`, then retry
+   the task command.
+
+### Missing Artifact Root
+
+Symptoms:
+
+- File tasks or retention sweeps report `artifact_store.missing`.
+- Local workers can claim runs but fail before materializing file inputs or
+  output artifacts.
+
+Remediation:
+
+1. Set `AVALAN_TASK_ARTIFACT_ROOT` to a durable, writable directory shared by
+   producers and workers that need local artifact bytes.
+2. Verify filesystem ownership, permissions, free space, and mount health for
+   the worker user.
+3. Restart workers after changing the environment. Do not point workers at a
+   temporary directory unless all queued file tasks are intentionally disposable.
+4. For production large files, prefer an object-store artifact backend and keep
+   PostgreSQL byte storage limited to small payloads.
+
 ### Store Outage
 
 Symptoms:
@@ -231,6 +271,149 @@ Remediation:
    `avalan task pgsql migrate head`, and re-run `check`.
 5. Restart workers after `check` passes. Do not replay raw inputs manually;
    inspect existing run ids and rely on idempotency for duplicate submissions.
+
+### Unsafe Paths
+
+Symptoms:
+
+- Validation or materialization reports `path_escape`, `unsafe_path`, or
+  `input.invalid_file`.
+- A descriptor points outside the allowed task root, follows a symlink escape,
+  uses an absolute path unexpectedly, or changes while being read.
+
+Remediation:
+
+1. Keep task definitions, agent refs, and local file descriptors under the
+   configured execution or upload roots.
+2. Replace symlinked uploads with regular files and retry validation before
+   execution.
+3. Do not add broad filesystem roots to bypass the diagnostic. Move inputs into
+   a controlled workspace and preserve only sanitized file identity in
+   inspection.
+4. If the file grew or changed during read, regenerate the descriptor size and
+   digest hints, then resubmit.
+
+### Remote URL Disabled Or Rejected
+
+Symptoms:
+
+- A `remote_url` descriptor reports remote URL disabled or SSRF rejection.
+- Redirects, private-network addresses, credentials in URLs, unsupported
+  schemes, unknown sizes, slow reads, over-limit content, or MIME mismatches
+  are rejected before fetching or dispatch.
+
+Remediation:
+
+1. Use provider-hosted `--hosted-url` only when the target provider is expected
+   to fetch the URL. Use `remote_url` only when Avalan should fetch it.
+2. Keep remote fetching disabled by default. Enable it only with an explicit
+   policy covering allowed schemes, redirect behavior, private network access,
+   timeout, and byte cap.
+3. Remove URL credentials and move authentication to a safe fetcher or
+   provider-owned file reference.
+4. Prefer local upload, object-store URI, or provider file id for durable queue
+   retries.
+
+### Missing Converter
+
+Symptoms:
+
+- Validation reports `task.file_conversion.unsupported`,
+  `task.file_conversion.dependency_missing`, or
+  `task.file_delivery.missing_conversion`.
+- Local text models reject native PDF, DOCX, image, or binary file blocks.
+
+Remediation:
+
+1. Confirm the task definition lists the conversion name in
+   `input.file_conversions`.
+2. Pass `--file-conversion field=name` or an SDK descriptor conversion request;
+   the definition allow-list does not request conversion automatically.
+3. Install the required extra for the converter, such as `task-documents`.
+4. Check converter MIME support, input byte cap, output byte cap, and options
+   schema before rerunning.
+
+### Over-Limit Files
+
+Symptoms:
+
+- Validation, delivery planning, conversion, or artifact writes reject a file
+  with a limit diagnostic.
+- The diagnostic names a limit such as `task_file_bytes`,
+  `artifact_bytes`, `inline_file_bytes`, `inline_text_bytes`,
+  `provider_file_bytes`, `model_context_tokens`, or `conversion_bytes`.
+
+Remediation:
+
+1. Compare the task input limit, artifact policy, provider profile, model
+   context budget, and converter cap. The most restrictive limit wins.
+2. For direct runs, use provider file ids, hosted URLs, object-store URIs,
+   conversion, retrieval, or map-reduce instead of inline delivery.
+3. For queued runs, materialize to durable artifacts or provider references
+   that survive retries.
+4. Increase limits only when privacy, retention, provider, and infrastructure
+   constraints permit it.
+
+### Provider Credentials
+
+Symptoms:
+
+- Hosted-provider direct file runs fail with a dependency or provider
+  credential diagnostic.
+- Provider file ids, hosted URLs, or object-store URIs are rejected for provider
+  mismatch or unsupported delivery.
+
+Remediation:
+
+1. Set the provider credentials required by the referenced agent, such as
+   `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, or AWS credentials
+   and region for Bedrock.
+2. Ensure the descriptor provider matches the target model provider. Do not send
+   an OpenAI file id to an Anthropic or local target.
+3. Verify provider-side file ownership, tenant scope, expiry, MIME type, and
+   object-store permissions.
+4. Keep raw provider handles out of logs and queue metadata; use sanitized
+   inspection to debug.
+
+### Local Dependency Failures
+
+Symptoms:
+
+- Local text or multimodal runs fail before model dispatch with missing backend,
+  model file, tokenizer, hardware, or conversion dependencies.
+- A local text model rejects native file blocks.
+
+Remediation:
+
+1. Install the backend extra required by the referenced agent, such as
+   transformers, MLX-LM, vLLM, or DS4 support.
+2. Confirm model files are present or that downloads are allowed in the target
+   environment.
+3. Match hardware requirements to the backend and model size. For Apple silicon,
+   configure MLX or MPS where appropriate; for CUDA deployments, verify GPU
+   visibility and memory.
+4. Convert or chunk files to text for local text targets. Use local multimodal
+   profiles only for supported image, audio, or video MIME types.
+
+### Queue Payload Privacy Failures
+
+Symptoms:
+
+- `enqueue` fails because durable queued payload storage would require raw input
+  or file bytes without the configured privacy keys or retention policy.
+- Workers cannot reconstruct executable input from sanitized inspection
+  summaries.
+
+Remediation:
+
+1. Provide `AVALAN_TASK_HMAC_KEY_ID` and `AVALAN_TASK_HMAC_KEY_B64` for
+   user-controlled identities.
+2. Configure encrypted payload or artifact storage only when the task privacy
+   policy explicitly permits raw retention.
+3. Prefer durable provider references or artifact refs for file inputs, not raw
+   paths or sanitized summaries.
+4. Re-enqueue only through SDK or CLI paths after validation passes. Do not edit
+   queue payload rows manually.
 
 ### Stuck Claims
 
@@ -349,4 +532,3 @@ Remediation:
    public task definition and SDK/CLI paths.
 5. Rotate HMAC keys only with a planned compatibility window so existing
    reservations remain inspectable until they expire.
-

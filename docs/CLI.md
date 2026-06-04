@@ -20,6 +20,14 @@ The CLI offers the following commands, some of them with multiple subcommands:
   * [avalan flow run](#avalan-flow-run)
 * [avalan task](#avalan-task)
   * [avalan task validate](#avalan-task-validate)
+  * [avalan task run](#avalan-task-run)
+  * [avalan task enqueue](#avalan-task-enqueue)
+  * [avalan task inspect](#avalan-task-inspect)
+  * [avalan task output](#avalan-task-output)
+  * [avalan task events](#avalan-task-events)
+  * [avalan task artifacts](#avalan-task-artifacts)
+  * [avalan task worker](#avalan-task-worker)
+  * [avalan task retention-sweep](#avalan-task-retention-sweep)
   * [avalan task pgsql](#avalan-task-pgsql)
 * [avalan memory](#avalan-memory)
   * [avalan memory embeddings](#avalan-memory-embeddings)
@@ -1611,12 +1619,37 @@ plicate}
 
 ## avalan task
 
-`avalan task` validates task definition TOML files and manages durable task
-storage diagnostics.
+`avalan task` validates task definition TOML files, runs direct tasks, enqueues
+durable tasks, inspects sanitized run state, sweeps expired artifact bytes, and
+manages task PostgreSQL migrations.
 
 ```bash
 avalan task validate tasks/example.task.toml
+avalan task run tasks/example.task.toml --ephemeral --input "Summarize this"
+avalan task enqueue tasks/example.task.toml --queue documents --input-json @payload.json
 ```
+
+Input flags shared by `validate`, `run`, and `enqueue`:
+
+| Flag | Shape |
+| --- | --- |
+| `--input VALUE` | Single scalar or JSON-shaped value for the task input contract. |
+| `--input-json JSON_OR_@FILE` | JSON input value, or `@path` to read JSON from a file. |
+| `--input-FIELD VALUE` | Field-addressed object input such as `--input-question "What changed?"`. |
+| `--file FIELD=PATH` | Local file descriptor for a file field. |
+| `--file-descriptor FIELD=JSON` | Explicit descriptor JSON for local, artifact, inline, remote, or provider reference inputs. |
+| `--provider-file-id FIELD=PROVIDER:ID` | Provider-owned durable file id. |
+| `--hosted-url FIELD=PROVIDER:URL` | Provider-fetchable hosted URL. |
+| `--object-store-uri FIELD=PROVIDER:URI` | Provider/object-store URI such as `google:gs://bucket/key` or `bedrock:s3://bucket/key`. |
+| `--file-mime FIELD=TYPE` | MIME hint, for example `document=application/pdf`. |
+| `--file-role FIELD=ROLE` | Role hint passed as safe descriptor metadata. |
+| `--file-size FIELD=BYTES` | Size hint used for validation and delivery planning. |
+| `--file-sha256 FIELD=HEX` | Digest hint used for validation and materialization. |
+| `--file-conversion FIELD=NAME[:JSON]` | Conversion request allowed by the task input contract. |
+
+Provider file ids, hosted URLs, and object-store URIs are provider-native
+references. `--file-conversion` applies to local, artifact, inline, or remote
+descriptors and is rejected for provider-native references.
 
 ### avalan task validate
 
@@ -1628,6 +1661,130 @@ avalan task validate tasks/example.task.toml
 
 Validation output aggregates load and contract issues and avoids printing raw
 prompts, outputs, file paths, or sensitive execution references.
+
+### avalan task run
+
+Run a direct-mode task. A durable PostgreSQL store is required unless
+`--ephemeral` is passed for local experimentation:
+
+```bash
+avalan task run docs/examples/tasks/minimal_string_agent.task.toml \
+  --ephemeral \
+  --input "What changed?"
+
+avalan task run docs/examples/tasks/large_direct_file.task.toml \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --file document=docs/examples/playground/invoice.pdf \
+  --file-mime document=application/pdf \
+  --file-conversion document=text
+
+avalan task run docs/examples/tasks/provider_reference_direct.task.toml \
+  --ephemeral \
+  --provider-file-id document=openai:file_abc123 \
+  --file-mime document=application/pdf
+```
+
+Use `--store-schema` or `AVALAN_TASK_STORE_SCHEMA` when the task schema is not
+on the default search path. Direct runs that materialize local bytes need
+`AVALAN_TASK_ARTIFACT_ROOT`.
+
+### avalan task enqueue
+
+Submit a queue-mode task to a durable store:
+
+```bash
+avalan task enqueue docs/examples/tasks/queued_file_task.task.toml \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --queue documents \
+  --file documents=docs/examples/playground/invoice.pdf \
+  --file-mime documents=application/pdf \
+  --file-conversion documents=text \
+  --wait \
+  --wait-timeout 120 \
+  --poll-interval 2
+```
+
+`enqueue` supports `--store-dsn`, `--store-schema`, `--queue`, `--wait`,
+`--wait-timeout`, and `--poll-interval`. Ephemeral storage is rejected for
+queued tasks because workers must reconstruct executable input from durable
+payloads, artifact references, or durable provider references.
+
+### avalan task inspect
+
+Inspect sanitized run state:
+
+```bash
+avalan task inspect RUN_ID --store-dsn "$AVALAN_TASK_STORE_DSN" --after-sequence 0
+```
+
+The snapshot includes run state and sanitized events after the optional
+sequence cursor. It does not print raw prompts, file bytes, file paths, provider
+handles, token text, exception messages, or stack traces.
+
+### avalan task output
+
+Print the sanitized output snapshot for a run:
+
+```bash
+avalan task output RUN_ID --store-dsn "$AVALAN_TASK_STORE_DSN"
+```
+
+### avalan task events
+
+Print sanitized task events:
+
+```bash
+avalan task events RUN_ID \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --attempt-id ATTEMPT_ID \
+  --after-sequence 100
+```
+
+### avalan task artifacts
+
+Print sanitized artifact metadata:
+
+```bash
+avalan task artifacts RUN_ID --store-dsn "$AVALAN_TASK_STORE_DSN"
+```
+
+Artifact inspection reports references and retention state, not raw bytes,
+local storage paths, bucket names, object keys, signed URLs, or credentials.
+
+### avalan task worker
+
+Run a bounded queue worker:
+
+```bash
+avalan task worker \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --queue documents \
+  --worker-id "documents-worker-1" \
+  --lease-seconds 300 \
+  --heartbeat-seconds 30 \
+  --limit 100
+```
+
+`--once` processes at most one available run. `--heartbeat-seconds` must be
+shorter than `--lease-seconds`. Workers need the durable store, HMAC key
+environment, provider credentials required by the referenced agents, and
+`AVALAN_TASK_ARTIFACT_ROOT` when local artifact bytes are used.
+
+### avalan task retention-sweep
+
+Delete expired artifact bytes while keeping sanitized audit metadata:
+
+```bash
+avalan task retention-sweep \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --purpose input \
+  --purpose output \
+  --limit 500
+```
+
+`--purpose` may be `input`, `output`, `converted`, or `intermediate` and can be
+passed more than once. The command requires `AVALAN_TASK_ARTIFACT_ROOT` for the
+local artifact backend.
 
 ### avalan task pgsql
 

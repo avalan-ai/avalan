@@ -15,7 +15,7 @@ This directory showcases configuration files and small programs that demonstrate
 - [openai_client_agent_tool.py](openai_client_agent_tool.py) – Similar client hitting a tool‑enabled agent. Modify the prompt, `model`, or server `base_url`.
 
 ## Tasks
-- [tasks](tasks/) – Task definition examples for scalar input, structured JSON, file inputs, file-array comparison, artifact outputs, SDK construction, and intentionally invalid diagnostics.
+- [tasks](tasks/) – Task definition examples for scalar input, structured JSON, large direct files, provider file ids, hosted URLs, object-store URIs, conversion, retrieval and map-reduce fallback, local text conversion, local multimodal media, queued file tasks, artifact outputs, SDK construction, and intentionally invalid diagnostics.
 
 ## Text generation
 - [text_generation.py](text_generation.py) – Streams tokens from a Llama 3 model. Adjust `model` id, `temperature`, or `max_new_tokens`.

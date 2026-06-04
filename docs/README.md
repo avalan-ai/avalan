@@ -21,6 +21,9 @@ tailored specifically to each use case.
   storage and schema migration dependencies.
 - [Task queue operations](TASK_OPERATIONS.md) - Deploy task workers and follow
   failure-mode runbooks for durable queue mode.
+- [Task file delivery](task_file_delivery.md) - Understand direct and queued
+  file descriptors, provider references, conversion, local backends, and the
+  file-delivery capability matrix.
 - [Terminal recording](RECORDING.md) - Capture Avalan CLI sessions as real
   terminal video with colors, live panels, and tool-call updates.
 

@@ -1,0 +1,11 @@
+[engine]
+uri = "ai://local/example-multimodal-model"
+
+[run]
+max_new_tokens = 256
+
+[agent]
+name = "LocalMultimodalReader"
+role = """
+Describe the provided task media and return only the requested result.
+"""

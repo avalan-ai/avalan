@@ -1,0 +1,45 @@
+[task]
+name = "queued_file_task"
+version = "1"
+description = "Queue a document task with durable input file metadata."
+labels = ["example", "queue", "file"]
+
+[input]
+type = "file[]"
+description = "Document descriptors."
+file_conversions = ["text"]
+mime_types = ["text/plain", "application/pdf"]
+
+[output]
+type = "text"
+description = "Queued document report."
+
+[execution]
+type = "agent"
+ref = "agents/document_reader.toml"
+
+[run]
+mode = "queue"
+queue = "documents"
+timeout_seconds = 300
+idempotency = "input_and_files_hash"
+priority = 1
+concurrency = 4
+
+[retry]
+max_attempts = 3
+backoff = "exponential"
+max_delay_seconds = 60
+jitter = true
+
+[artifact]
+retention_days = 14
+storage = "local"
+max_count = 8
+max_bytes = 1048576
+
+[limits]
+file_count = 4
+file_bytes = 1048576
+output_bytes = 16384
+total_tokens = 5000

@@ -6,6 +6,9 @@ from unittest import TestCase, main
 
 from avalan.task import (
     TaskDefinition,
+    TaskFileDescriptor,
+    TaskFileSourceKind,
+    TaskProviderReferenceKind,
     canonical_json,
     load_task_definition,
     validate_task_definition,
@@ -19,6 +22,10 @@ VALID_EXAMPLES = (
     "structured_json.task.toml",
     "file_document.task.toml",
     "file_array_comparison.task.toml",
+    "large_direct_file.task.toml",
+    "provider_reference_direct.task.toml",
+    "local_multimodal_media.task.toml",
+    "queued_file_task.task.toml",
     "output_artifact.task.toml",
 )
 INVALID_EXAMPLES = {
@@ -107,7 +114,9 @@ class TaskExamplesTest(TestCase):
         toml_definition = load_task_definition(
             EXAMPLE_ROOT / "structured_json.task.toml"
         )
-        sdk_definition = _load_sdk_module().build_definition()
+        sdk_definition = _load_sdk_module(
+            "sdk_definition.py"
+        ).build_definition()
 
         self.assertIsInstance(sdk_definition, TaskDefinition)
         self.assertEqual(
@@ -121,14 +130,55 @@ class TaskExamplesTest(TestCase):
             ),
         )
 
+    def test_file_input_sdk_examples_build_safe_descriptors(self) -> None:
+        module = _load_sdk_module("file_inputs_sdk.py")
+
+        definition = module.build_large_direct_definition()
+        local = module.local_document_descriptor("uploads/report.pdf")
+        provider_id = module.provider_file_id_descriptor("file_abc123")
+        hosted_url = module.hosted_url_descriptor(
+            "https://files.example.test/report.pdf"
+        )
+        object_store = module.object_store_descriptor("gs://bucket/report.pdf")
+
+        self.assertIsInstance(definition, TaskDefinition)
+        self.assertIsInstance(local, TaskFileDescriptor)
+        self.assertEqual(local.source_kind, TaskFileSourceKind.LOCAL_PATH)
+        self.assertEqual(local.conversions[0].name, "text")
+        self.assertIsNotNone(provider_id.provider_reference)
+        self.assertIsNotNone(hosted_url.provider_reference)
+        self.assertIsNotNone(object_store.provider_reference)
+        assert provider_id.provider_reference is not None
+        assert hosted_url.provider_reference is not None
+        assert object_store.provider_reference is not None
+        self.assertEqual(
+            provider_id.provider_reference.kind,
+            TaskProviderReferenceKind.PROVIDER_FILE_ID,
+        )
+        self.assertEqual(
+            hosted_url.provider_reference.kind,
+            TaskProviderReferenceKind.HOSTED_URL,
+        )
+        self.assertEqual(
+            object_store.provider_reference.kind,
+            TaskProviderReferenceKind.OBJECT_STORE_URI,
+        )
+        self.assertNotIn(
+            "file_abc123",
+            str(provider_id.provider_reference.summary()),
+        )
+
 
 def _issue_codes(issues: Iterable[object]) -> set[str]:
     return {getattr(issue, "code") for issue in issues}
 
 
-def _load_sdk_module() -> ModuleType:
-    path = EXAMPLE_ROOT / "sdk_definition.py"
-    spec = spec_from_file_location("task_sdk_definition_example", path)
+def _load_sdk_module(filename: str) -> ModuleType:
+    path = EXAMPLE_ROOT / filename
+    spec = spec_from_file_location(
+        "task_" + filename.replace(".", "_"),
+        path,
+    )
     assert spec is not None
     assert spec.loader is not None
     module = module_from_spec(spec)
