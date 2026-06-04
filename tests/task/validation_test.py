@@ -829,6 +829,169 @@ class TaskValidationTest(TestCase):
             ["output.invalid_type"],
         )
 
+    def test_schema_refs_validate_definition_input_and_output(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "schemas").mkdir()
+            (root / "schemas" / "input.json").write_text(
+                """
+                {
+                  "type": "object",
+                  "required": ["question"],
+                  "properties": {"question": {"type": "string"}}
+                }
+                """,
+                encoding="utf-8",
+            )
+            (root / "schemas" / "output.json").write_text(
+                """
+                {
+                  "type": "object",
+                  "required": ["answer"],
+                  "properties": {"answer": {"type": "string"}}
+                }
+                """,
+                encoding="utf-8",
+            )
+            definition = self._definition(
+                input_contract=TaskInputContract.object(
+                    schema_ref="schemas/input.json"
+                ),
+                output_contract=TaskOutputContract.object(
+                    schema_ref="schemas/output.json"
+                ),
+            )
+
+            self.assertEqual(
+                validate_task_definition(
+                    definition,
+                    schema_base_path=root,
+                ),
+                (),
+            )
+            self.assertEqual(
+                validate_task_input(
+                    definition,
+                    {"question": "status"},
+                    schema_base_path=root,
+                ),
+                (),
+            )
+            self.assertEqual(
+                validate_task_output(
+                    definition,
+                    {"answer": "ok"},
+                    schema_base_path=root,
+                ),
+                (),
+            )
+            self.assertEqual(
+                [
+                    issue.code
+                    for issue in validate_task_input(
+                        definition,
+                        {"question": 1},
+                        schema_base_path=root,
+                    )
+                ],
+                ["input.invalid_type"],
+            )
+            self.assertEqual(
+                [
+                    issue.code
+                    for issue in validate_task_output(
+                        definition,
+                        {"answer": 1},
+                        schema_base_path=root,
+                    )
+                ],
+                ["output.invalid_type"],
+            )
+
+    def test_schema_ref_resolution_failures_are_safe(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "invalid.json").write_text("{", encoding="utf-8")
+            (root / "array.json").write_text("[]", encoding="utf-8")
+            (root / "external.json").write_text(
+                '{"$ref": "secret.json"}',
+                encoding="utf-8",
+            )
+            definitions = (
+                self._definition(
+                    output_contract=TaskOutputContract.json(
+                        schema_ref="missing-secret.json"
+                    )
+                ),
+                self._definition(
+                    output_contract=TaskOutputContract.json(
+                        schema_ref="invalid.json"
+                    )
+                ),
+                self._definition(
+                    output_contract=TaskOutputContract.json(
+                        schema_ref="array.json"
+                    )
+                ),
+                self._definition(
+                    output_contract=TaskOutputContract.json(
+                        schema_ref="external.json"
+                    )
+                ),
+                self._definition(
+                    output_contract=TaskOutputContract.json(
+                        schema_ref="../secret.json"
+                    )
+                ),
+                self._definition(
+                    output_contract=TaskOutputContract.json(
+                        schema_ref="/tmp/secret.json"
+                    )
+                ),
+                self._definition(
+                    output_contract=TaskOutputContract.json(
+                        schema_ref="https://example.test/secret.json"
+                    )
+                ),
+            )
+
+            for definition in definitions:
+                issues = validate_task_definition(
+                    definition,
+                    schema_base_path=root,
+                )
+                self.assertEqual(
+                    [(issue.code, issue.path) for issue in issues],
+                    [("output.invalid_schema", "output.schema_ref")],
+                )
+                rendered = " ".join(
+                    value
+                    for issue in issues
+                    for value in issue.as_dict().values()
+                )
+                self.assertNotIn("secret.json", rendered)
+                self.assertNotIn("example.test", rendered)
+
+        unresolved = self._definition(
+            output_contract=TaskOutputContract.json(
+                schema_ref="schemas/output.json"
+            )
+        )
+        self.assertEqual(
+            [
+                (issue.code, issue.path)
+                for issue in validate_task_definition(unresolved)
+            ],
+            [("output.invalid_schema", "output.schema_ref")],
+        )
+        self.assertEqual(
+            [
+                (issue.code, issue.path)
+                for issue in validate_task_output(unresolved, {})
+            ],
+            [("output.invalid_schema", "output.schema_ref")],
+        )
+
     def test_structured_input_validates_nested_file_descriptors(
         self,
     ) -> None:

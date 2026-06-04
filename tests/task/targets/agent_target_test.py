@@ -332,6 +332,185 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 
         self.assertEqual(issues, ())
 
+    def test_agent_response_schema_must_match_task_output_schema(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            schema_path = root / "agents" / "schemas" / "answer.json"
+            agent_path = root / "agents" / "valid.toml"
+            schema_path.parent.mkdir(parents=True)
+            schema_path.write_text(
+                """
+                {
+                  "type": "object",
+                  "required": ["answer"],
+                  "properties": {"answer": {"type": "string"}}
+                }
+                """,
+                encoding="utf-8",
+            )
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+
+[run.response_format]
+type = "json_schema"
+name = "answer"
+schema_ref = "schemas/answer.json"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+            issues = self._run_validate(
+                runner,
+                self._definition(
+                    output_contract=TaskOutputContract.object(
+                        schema={
+                            "type": "object",
+                            "required": ["answer"],
+                            "properties": {
+                                "answer": {"type": "integer"},
+                            },
+                        }
+                    ),
+                ),
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("output.invalid_schema", "output.schema")],
+        )
+        rendered = " ".join(issues[0].as_dict().values())
+        self.assertNotIn("answer.json", rendered)
+
+    def test_agent_response_schema_can_match_task_output_schema(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            schema_path = root / "agents" / "schemas" / "answer.json"
+            agent_path = root / "agents" / "valid.toml"
+            schema_path.parent.mkdir(parents=True)
+            schema_path.write_text(
+                """
+                {
+                  "required": ["answer"],
+                  "properties": {"answer": {"type": "string"}},
+                  "type": "object"
+                }
+                """,
+                encoding="utf-8",
+            )
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+
+[run.response_format]
+type = "json_schema"
+name = "answer"
+schema_ref = "schemas/answer.json"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+            issues = self._run_validate(
+                runner,
+                self._definition(
+                    output_contract=TaskOutputContract.object(
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "answer": {"type": "string"},
+                            },
+                            "required": ["answer"],
+                        }
+                    ),
+                ),
+            )
+
+        self.assertEqual(issues, ())
+
+    def test_agent_schema_helpers_cover_invalid_shapes(self) -> None:
+        definition = self._definition(
+            output_contract=TaskOutputContract.object(
+                schema={"type": "object"}
+            )
+        )
+        object.__setattr__(definition.output, "schema", {"bad": object()})
+        invalid_schema_issues = agent_module._validate_agent_output_schema(
+            definition,
+            {
+                "run": {
+                    "response_format": {
+                        "type": "json_schema",
+                        "schema": {"type": "object"},
+                    }
+                }
+            },
+        )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in invalid_schema_issues],
+            [("output.invalid_schema", "output.schema")],
+        )
+        self.assertIsNone(
+            agent_module._agent_response_format_schema(
+                {"run": {"response_format": "bad"}}
+            )
+        )
+        self.assertIsNone(
+            agent_module._agent_response_format_schema(
+                {"run": {"response_format": {"type": "text"}}}
+            )
+        )
+        self.assertIsNone(
+            agent_module._agent_response_format_schema(
+                {
+                    "run": {
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": "bad",
+                        }
+                    }
+                }
+            )
+        )
+        self.assertIsNone(
+            agent_module._agent_response_format_schema(
+                {
+                    "run": {
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {"name": "answer"},
+                        }
+                    }
+                }
+            )
+        )
+        self.assertEqual(
+            agent_module._agent_response_format_schema(
+                {
+                    "run": {
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "answer",
+                                "schema": {"type": "object"},
+                            },
+                        }
+                    }
+                }
+            ),
+            {"type": "object"},
+        )
+
     def test_simple_prompt_agent_reference_rejects_invalid_user_prompt(
         self,
     ) -> None:
@@ -718,12 +897,13 @@ uri = "ai://env:KEY@unknown/model"
         self,
         *,
         input_contract: TaskInputContract | None = None,
+        output_contract: TaskOutputContract | None = None,
         execution: TaskExecutionTarget | None = None,
     ) -> TaskDefinition:
         return TaskDefinition(
             task=TaskMetadata(name="agent", version="1"),
             input=input_contract or TaskInputContract.string(),
-            output=TaskOutputContract.text(),
+            output=output_contract or TaskOutputContract.text(),
             execution=execution
             or TaskExecutionTarget.agent("agents/valid.toml"),
         )

@@ -20,6 +20,10 @@ from .definition import (
     TaskRunPolicy,
     TaskTargetType,
 )
+from .schema import (
+    TaskSchemaResolutionError,
+    resolve_task_definition_schemas,
+)
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -126,7 +130,7 @@ class TaskDefinitionLoader:
                 ),
             )
 
-        return _build_definition(raw)
+        return _build_definition(raw, source_path=source_path)
 
 
 def load_task_definition(path: str | Path) -> TaskDefinition:
@@ -149,7 +153,11 @@ def loads_task_definition_result(
     return TaskDefinitionLoader().loads_result(source, source_path=source_path)
 
 
-def _build_definition(raw: Mapping[str, object]) -> TaskLoadResult:
+def _build_definition(
+    raw: Mapping[str, object],
+    *,
+    source_path: str | Path | None,
+) -> TaskLoadResult:
     issues: list[TaskLoadIssue] = []
     sections = _sections(raw, issues)
 
@@ -186,20 +194,27 @@ def _build_definition(raw: Mapping[str, object]) -> TaskLoadResult:
     assert artifact is not None
     assert limits is not None
     assert observability is not None
-    return TaskLoadResult(
-        definition=TaskDefinition(
-            task=task,
-            input=input_contract,
-            output=output_contract,
-            execution=execution,
-            run=run,
-            retry=retry,
-            privacy=privacy,
-            artifact=artifact,
-            limits=limits,
-            observability=observability,
-        )
+    definition = TaskDefinition(
+        task=task,
+        input=input_contract,
+        output=output_contract,
+        execution=execution,
+        run=run,
+        retry=retry,
+        privacy=privacy,
+        artifact=artifact,
+        limits=limits,
+        observability=observability,
     )
+    try:
+        definition = resolve_task_definition_schemas(
+            definition,
+            schema_base_path=source_path,
+        )
+    except TaskSchemaResolutionError as error:
+        issues.append(_schema_resolution_issue(error))
+        return TaskLoadResult(definition=None, issues=tuple(issues))
+    return TaskLoadResult(definition=definition)
 
 
 def _sections(
@@ -805,6 +820,29 @@ def _invalid_type(path: str, hint: str) -> TaskLoadIssue:
         hint=hint,
         category=TaskLoadIssueCategory.VALUE,
     )
+
+
+def _schema_resolution_issue(
+    error: TaskSchemaResolutionError,
+) -> TaskLoadIssue:
+    return _issue(
+        code=_schema_resolution_code(error.path),
+        path=error.path,
+        message="Task schema reference could not be resolved.",
+        hint=(
+            "Use a local JSON object schema file relative to the task "
+            "definition."
+        ),
+        category=TaskLoadIssueCategory.VALUE,
+    )
+
+
+def _schema_resolution_code(path: str) -> str:
+    match path.split(".", maxsplit=1)[0]:
+        case "input":
+            return "input.invalid_schema"
+        case _:
+            return "output.invalid_schema"
 
 
 def _invalid_enum_code(path: str) -> str:

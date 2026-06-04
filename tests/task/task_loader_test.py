@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
 from unittest import TestCase, main
 
@@ -110,29 +111,118 @@ class TaskDefinitionLoaderTest(TestCase):
 
         self.assertEqual(definition.execution.ref, "../agents/relative.toml")
 
-    def test_loads_preserves_logical_schema_refs(self) -> None:
-        definition = loads_task_definition("""
+    def test_loads_resolves_schema_refs_relative_to_source(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source_path = root / "schema_ref.task.toml"
+            input_schema = root / "schemas" / "input.json"
+            output_schema = root / "schemas" / "output.json"
+            input_schema.parent.mkdir()
+            input_schema.write_text('{"type": "object"}', encoding="utf-8")
+            output_schema.write_text('{"type": "array"}', encoding="utf-8")
+            definition = loads_task_definition(
+                """
+                [task]
+                name = "schema_ref"
+                version = "1"
+
+                [input]
+                type = "object"
+                schema_ref = "schemas/input.json"
+
+                [output]
+                type = "json"
+                schema_ref = "schemas/output.json"
+
+                [execution]
+                type = "agent"
+                ref = "agents/schema_ref.toml"
+                """,
+                source_path=source_path,
+            )
+
+        self.assertIsNone(definition.input.schema_ref)
+        self.assertIsNone(definition.output.schema_ref)
+        self.assertEqual(definition.input.schema, {"type": "object"})
+        self.assertEqual(definition.output.schema, {"type": "array"})
+
+    def test_schema_refs_require_source_path(self) -> None:
+        result = loads_task_definition_result("""
             [task]
             name = "schema_ref"
             version = "1"
 
             [input]
-            type = "object"
-            schema_ref = "schemas/input.json"
+            type = "string"
 
             [output]
             type = "json"
-            schema_ref = "../schemas/output.json"
+            schema_ref = "schemas/output.json"
 
             [execution]
             type = "agent"
             ref = "agents/schema_ref.toml"
             """)
 
-        self.assertEqual(definition.input.schema_ref, "schemas/input.json")
-        self.assertEqual(
-            definition.output.schema_ref, "../schemas/output.json"
-        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "output.invalid_schema")
+        self.assertEqual(result.issues[0].path, "output.schema_ref")
+
+    def test_input_schema_ref_failures_are_classified_safely(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            result = loads_task_definition_result(
+                """
+                [task]
+                name = "schema_ref"
+                version = "1"
+
+                [input]
+                type = "object"
+                schema_ref = "../private/input.json"
+
+                [output]
+                type = "json"
+
+                [execution]
+                type = "agent"
+                ref = "agents/schema_ref.toml"
+                """,
+                source_path=root / "schema_ref.task.toml",
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "input.invalid_schema")
+        self.assertEqual(result.issues[0].path, "input.schema_ref")
+
+    def test_schema_refs_reject_path_escape_safely(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            result = loads_task_definition_result(
+                """
+                [task]
+                name = "schema_ref"
+                version = "1"
+
+                [input]
+                type = "string"
+
+                [output]
+                type = "json"
+                schema_ref = "../private/output.json"
+
+                [execution]
+                type = "agent"
+                ref = "agents/schema_ref.toml"
+                """,
+                source_path=root / "schema_ref.task.toml",
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "output.invalid_schema")
+        self.assertEqual(result.issues[0].path, "output.schema_ref")
+        rendered = " ".join(result.issues[0].as_dict().values())
+        self.assertNotIn("private/output", rendered)
 
     def test_malformed_toml_returns_safe_structured_issue(self) -> None:
         result = loads_task_definition_result(

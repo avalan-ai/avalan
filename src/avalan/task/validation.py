@@ -43,6 +43,7 @@ from .privacy import (
     privacy_policy_raw_fields,
     privacy_policy_store_fields,
 )
+from .schema import TaskSchemaResolutionError, resolve_schema_ref
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -234,6 +235,7 @@ def validate_task_definition(
     raw_storage_allowed: bool | None = None,
     execution_roots: Iterable[str | Path] = (),
     file_converters: Mapping[str, FileConverter] | None = None,
+    schema_base_path: str | Path | None = None,
 ) -> tuple[TaskValidationIssue, ...]:
     assert isinstance(definition, TaskDefinition)
     issues: list[TaskValidationIssue] = []
@@ -241,9 +243,15 @@ def validate_task_definition(
         _validate_input_contract(
             definition.input,
             file_converters=file_converters,
+            schema_base_path=schema_base_path,
         )
     )
-    issues.extend(_validate_output_contract(definition.output))
+    issues.extend(
+        _validate_output_contract(
+            definition.output,
+            schema_base_path=schema_base_path,
+        )
+    )
     issues.extend(
         _validate_execution_target(
             definition.execution,
@@ -286,18 +294,47 @@ def validate_task_sections(
     return tuple(issues)
 
 
+def _runtime_schema(
+    schema: Mapping[str, object] | None,
+    schema_ref: str | None,
+    *,
+    schema_base_path: str | Path | None,
+    path: str,
+) -> Mapping[str, object] | None:
+    if schema is not None:
+        return schema
+    if schema_ref is None:
+        return None
+    try:
+        return resolve_schema_ref(
+            schema_ref,
+            schema_base_path=schema_base_path,
+            path=path,
+        ).schema
+    except TaskSchemaResolutionError:
+        return None
+
+
 def validate_task_input(
     definition: TaskDefinition,
     value: object,
     *,
     remote_url_policy: TaskRemoteUrlPolicy | None = None,
     file_converters: Mapping[str, FileConverter] | None = None,
+    schema_base_path: str | Path | None = None,
 ) -> tuple[TaskValidationIssue, ...]:
     assert isinstance(definition, TaskDefinition)
+    input_schema = _runtime_schema(
+        definition.input.schema,
+        definition.input.schema_ref,
+        schema_base_path=schema_base_path,
+        path="input.schema_ref",
+    )
     issues = list(
         _validate_input_contract(
             definition.input,
             file_converters=file_converters,
+            schema_base_path=schema_base_path,
         )
     )
     input_type = definition.input.type
@@ -371,7 +408,7 @@ def validate_task_input(
             else:
                 issues.extend(
                     _validate_value_schema(
-                        schema=definition.input.schema,
+                        schema=input_schema,
                         value=_structured_input_schema_value(value),
                         code="input.invalid_type",
                         path="input",
@@ -408,7 +445,7 @@ def validate_task_input(
             else:
                 issues.extend(
                     _validate_value_schema(
-                        schema=definition.input.schema,
+                        schema=input_schema,
                         value=_structured_input_schema_value(value),
                         code="input.invalid_type",
                         path="input",
@@ -472,9 +509,22 @@ def validate_task_input(
 def validate_task_output(
     definition: TaskDefinition,
     value: object,
+    *,
+    schema_base_path: str | Path | None = None,
 ) -> tuple[TaskValidationIssue, ...]:
     assert isinstance(definition, TaskDefinition)
-    issues = list(_validate_output_contract(definition.output))
+    output_schema = _runtime_schema(
+        definition.output.schema,
+        definition.output.schema_ref,
+        schema_base_path=schema_base_path,
+        path="output.schema_ref",
+    )
+    issues = list(
+        _validate_output_contract(
+            definition.output,
+            schema_base_path=schema_base_path,
+        )
+    )
     output_type = definition.output.type
     if not isinstance(output_type, TaskOutputType):
         return tuple(issues)
@@ -509,7 +559,7 @@ def validate_task_output(
             else:
                 issues.extend(
                     _validate_value_schema(
-                        schema=definition.output.schema,
+                        schema=output_schema,
                         value=value,
                         code="output.invalid_type",
                         path="output",
@@ -537,7 +587,7 @@ def validate_task_output(
             else:
                 issues.extend(
                     _validate_value_schema(
-                        schema=definition.output.schema,
+                        schema=output_schema,
                         value=value,
                         code="output.invalid_type",
                         path="output",
@@ -557,7 +607,7 @@ def validate_task_output(
             else:
                 issues.extend(
                     _validate_value_schema(
-                        schema=definition.output.schema,
+                        schema=output_schema,
                         value=value,
                         code="output.invalid_type",
                         path="output",
@@ -697,6 +747,7 @@ def _validate_input_contract(
     contract: TaskInputContract,
     *,
     file_converters: Mapping[str, FileConverter] | None,
+    schema_base_path: str | Path | None,
 ) -> tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
     if not isinstance(contract.type, TaskInputType):
@@ -717,6 +768,7 @@ def _validate_input_contract(
             code="input.invalid_schema",
             path="input",
             expected_schema_type=_schema_type_for_input(contract.type),
+            schema_base_path=schema_base_path,
         )
     )
     if contract.type in {TaskInputType.FILE, TaskInputType.FILE_ARRAY}:
@@ -1578,6 +1630,8 @@ def _is_valid_sha256(value: str) -> bool:
 
 def _validate_output_contract(
     contract: TaskOutputContract,
+    *,
+    schema_base_path: str | Path | None,
 ) -> tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
     if not isinstance(contract.type, TaskOutputType):
@@ -1598,6 +1652,7 @@ def _validate_output_contract(
             code="output.invalid_schema",
             path="output",
             expected_schema_type=_schema_type_for_output(contract.type),
+            schema_base_path=schema_base_path,
         )
     )
     return tuple(issues)
@@ -1611,6 +1666,7 @@ def _validate_schema_contract(
     code: str,
     path: str,
     expected_schema_type: str | None,
+    schema_base_path: str | Path | None,
 ) -> tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
     schema_path = f"{path}.schema"
@@ -1651,6 +1707,7 @@ def _validate_schema_contract(
                 "Use either schema or schema_ref, not both.",
             )
         )
+        return tuple(issues)
 
     if schema is not None:
         if not isinstance(schema, Mapping):
@@ -1699,6 +1756,39 @@ def _validate_schema_contract(
                 "Use a non-empty logical schema reference.",
             )
         )
+    elif schema_ref is not None:
+        try:
+            resolved_schema = resolve_schema_ref(
+                schema_ref,
+                schema_base_path=schema_base_path,
+                path=schema_ref_path,
+            ).schema
+        except TaskSchemaResolutionError:
+            issues.append(
+                _invalid_schema_issue(
+                    code,
+                    schema_ref_path,
+                    "Task contract schema reference cannot be resolved.",
+                    "Use a local JSON object schema file.",
+                )
+            )
+        else:
+            schema_mapping = cast(Mapping[object, object], resolved_schema)
+            declared_type_issues = _validate_schema_declared_type(
+                schema_mapping,
+                expected_schema_type,
+                code,
+                schema_path,
+            )
+            issues.extend(declared_type_issues)
+            if not declared_type_issues:
+                issues.extend(
+                    _validate_schema_syntax(
+                        schema_mapping,
+                        code=code,
+                        path=schema_path,
+                    )
+                )
 
     return tuple(issues)
 

@@ -242,6 +242,14 @@ from .runner import TaskDirectTarget as TaskDirectTarget
 from .runner import TaskRunFinalizer as TaskRunFinalizer
 from .runner import TaskRunnerError as TaskRunnerError
 from .runner import TaskRunResult as TaskRunResult
+from .schema import ResolvedTaskSchema as ResolvedTaskSchema
+from .schema import TaskSchemaResolutionError as TaskSchemaResolutionError
+from .schema import canonical_schema_json as canonical_schema_json
+from .schema import normalize_schema_value as normalize_schema_value
+from .schema import resolve_schema_ref as resolve_schema_ref
+from .schema import (
+    resolve_task_definition_schemas as resolve_task_definition_schemas,
+)
 from .sinks import NoopObservabilitySink as NoopObservabilitySink
 from .sinks import (
     OpenTelemetryObservabilitySink as OpenTelemetryObservabilitySink,

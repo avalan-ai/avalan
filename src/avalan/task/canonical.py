@@ -4,11 +4,16 @@ from .definition import (
     ObservabilitySinkType,
     TaskDefinition,
 )
+from .schema import (
+    TaskSchemaResolutionError,
+    normalize_schema_value,
+    resolve_schema_ref,
+)
 
 from collections.abc import Mapping
 from enum import StrEnum
 from hashlib import sha256
-from json import JSONDecodeError, dumps, loads
+from json import dumps
 from math import isfinite
 from pathlib import Path
 from typing import TypeAlias, cast
@@ -37,7 +42,6 @@ _DSN_SCHEMES = (
     "postgresql://",
     "redis://",
 )
-_ORDER_INSENSITIVE_SCHEMA_ARRAYS = frozenset(("enum", "required"))
 
 
 class TaskCanonicalizationError(ValueError):
@@ -187,69 +191,23 @@ def _load_schema_ref(
     schema_base_path: str | Path | None,
     path: str,
 ) -> object:
-    if "://" in schema_ref:
-        raise TaskCanonicalizationError(
-            f"{path} remote schema references are not supported"
-        )
-    source_path = _schema_source_path(schema_ref, schema_base_path)
     try:
-        source = source_path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise TaskCanonicalizationError(f"{path} could not be read") from error
-    try:
-        raw_schema = loads(source)
-    except JSONDecodeError as error:
-        raise TaskCanonicalizationError(
-            f"{path} must point to a JSON schema file"
-        ) from error
-    if not isinstance(raw_schema, Mapping):
-        raise TaskCanonicalizationError(
-            f"{path} must point to a JSON object schema"
-        )
-    return _normalize_schema_value(raw_schema)
-
-
-def _schema_source_path(
-    schema_ref: str, schema_base_path: str | Path | None
-) -> Path:
-    path = Path(schema_ref)
-    if path.is_absolute():
-        return path
-    if schema_base_path is None:
-        return path
-    base_path = Path(schema_base_path)
-    if base_path.suffix:
-        base_path = base_path.parent
-    return base_path / path
+        return resolve_schema_ref(
+            schema_ref,
+            schema_base_path=schema_base_path,
+            path=path,
+        ).schema
+    except TaskSchemaResolutionError as error:
+        raise TaskCanonicalizationError(str(error)) from error
 
 
 def _normalize_schema_value(
     value: object, *, parent_key: str | None = None
 ) -> CanonicalValue:
-    if isinstance(value, Mapping):
-        normalized: dict[str, object] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise TaskCanonicalizationError("schema keys must be strings")
-            normalized[key] = _normalize_schema_value(item, parent_key=key)
-        return normalized
-    if isinstance(value, list | tuple):
-        normalized_list = [_normalize_schema_value(item) for item in value]
-        if parent_key in _ORDER_INSENSITIVE_SCHEMA_ARRAYS:
-            return cast(
-                list[object],
-                sorted(
-                    normalized_list,
-                    key=lambda item: dumps(
-                        item,
-                        allow_nan=False,
-                        separators=_CANONICAL_JSON_SEPARATORS,
-                        sort_keys=True,
-                    ),
-                ),
-            )
-        return cast(list[object], normalized_list)
-    return _normalize_scalar(value, context="schema")
+    try:
+        return normalize_schema_value(value, parent_key=parent_key)
+    except TaskSchemaResolutionError as error:
+        raise TaskCanonicalizationError(str(error)) from error
 
 
 def _normalize_definition_mapping(

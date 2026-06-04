@@ -27,6 +27,10 @@ from ..definition import (
     TaskTargetType,
 )
 from ..delivery import TaskFileDeliveryPlan, plan_task_file_delivery
+from ..schema import (
+    TaskSchemaResolutionError,
+    canonical_schema_json,
+)
 from ..target import TaskTargetRunner, TaskValidationContext
 from ..text_strategy import (
     TextStrategyKind,
@@ -137,7 +141,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             return (_agent_target_issue(path="execution.type"),)
 
         try:
-            OrchestratorLoader.validate_agent_file(
+            config = OrchestratorLoader.validate_agent_file(
                 str(self._agent_path(definition))
             )
         except (
@@ -150,15 +154,19 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             ValueError,
         ):
             return (_agent_target_issue(path="execution.ref"),)
+        issues: list[TaskValidationIssue] = []
         if definition.input.type in {
             TaskInputType.FILE,
             TaskInputType.FILE_ARRAY,
         }:
-            return _validate_agent_file_input(
-                definition,
-                self._agent_file_profile(definition),
+            issues.extend(
+                _validate_agent_file_input(
+                    definition,
+                    self._agent_file_profile(definition),
+                )
             )
-        return ()
+        issues.extend(_validate_agent_output_schema(definition, config))
+        return tuple(issues)
 
     async def run(self, context: TaskTargetContext) -> object:
         assert isinstance(context, TaskTargetContext)
@@ -372,6 +380,66 @@ async def _agent_input(
         content.append(MessageContentText(type="text", text=text))
     content.extend(file_content)
     return Message(role=MessageRole.USER, content=content)
+
+
+def _validate_agent_output_schema(
+    definition: TaskDefinition,
+    config: Mapping[str, object],
+) -> tuple[TaskValidationIssue, ...]:
+    task_schema = definition.output.schema
+    agent_schema = _agent_response_format_schema(config)
+    if task_schema is None or agent_schema is None:
+        return ()
+    try:
+        task_schema_json = canonical_schema_json(task_schema)
+        agent_schema_json = canonical_schema_json(agent_schema)
+    except TaskSchemaResolutionError:
+        return (
+            TaskValidationIssue(
+                code="output.invalid_schema",
+                path="output.schema",
+                message="Task output schema is invalid.",
+                hint="Use a JSON-compatible task output schema.",
+                category=TaskValidationCategory.VALUE,
+            ),
+        )
+    if task_schema_json == agent_schema_json:
+        return ()
+    return (
+        TaskValidationIssue(
+            code="output.invalid_schema",
+            path="output.schema",
+            message=(
+                "Task output schema does not match the agent response "
+                "format schema."
+            ),
+            hint="Use the same schema for task output and agent response.",
+            category=TaskValidationCategory.VALUE,
+        ),
+    )
+
+
+def _agent_response_format_schema(
+    config: Mapping[str, object],
+) -> Mapping[str, object] | None:
+    run_config = config.get("run")
+    if not isinstance(run_config, Mapping):
+        return None
+    response_format = run_config.get("response_format")
+    if not isinstance(response_format, Mapping):
+        return None
+    if response_format.get("type") != "json_schema":
+        return None
+    schema = response_format.get("schema")
+    if isinstance(schema, Mapping):
+        return cast(Mapping[str, object], schema)
+    json_schema = response_format.get("json_schema")
+    if not isinstance(json_schema, Mapping):
+        return None
+    nested_schema = json_schema.get("schema")
+    if isinstance(nested_schema, Mapping):
+        return cast(Mapping[str, object], nested_schema)
+    return None
 
 
 def _agent_input_value(value: object) -> Input:

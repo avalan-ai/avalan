@@ -1,6 +1,7 @@
 from contextlib import AsyncExitStack
 from logging import DEBUG, INFO, Logger
 from os import chmod, geteuid
+from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any, Callable
 from unittest import IsolatedAsyncioTestCase, main
@@ -1593,7 +1594,7 @@ uri = \"ai://local/model\"
                     participant_id=uuid4(),
                     stack=stack,
                 )
-                result = await loader.from_file(path, agent_id=None)
+                result = await loader.from_file(str(path), agent_id=None)
 
                 self.assertEqual(result, "orch")
                 lfs_patch.assert_awaited_once()
@@ -1708,6 +1709,133 @@ max_new_tokens = 42
                 self.assertEqual(settings.call_options["top_p"], 0.9)
                 self.assertEqual(settings.call_options["top_k"], 5)
                 self.assertEqual(settings.call_options["max_new_tokens"], 42)
+            await stack.aclose()
+
+    async def test_run_response_format_schema_ref_is_resolved(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.response_format]
+type = \"json_schema\"
+name = \"answer\"
+schema_ref = \"schemas/answer.json\"
+strict = true
+"""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schemas"
+            path = root / "agent.toml"
+            schema_dir.mkdir()
+            with open(schema_dir / "answer.json", "w", encoding="utf-8") as fh:
+                fh.write('{"type": "object"}')
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=None)
+
+                self.assertEqual(result, "orch")
+                settings = lfs_patch.call_args.args[0]
+                response_format = settings.call_options["response_format"]
+                self.assertEqual(
+                    response_format["schema"],
+                    {"type": "object"},
+                )
+                self.assertNotIn("schema_ref", response_format)
+            await stack.aclose()
+
+    async def test_chat_style_response_format_schema_ref_is_resolved(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.response_format]
+type = \"json_schema\"
+
+[run.response_format.json_schema]
+name = \"answer\"
+schema_ref = \"schemas/answer.json\"
+"""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schemas"
+            path = root / "agent.toml"
+            schema_dir.mkdir()
+            with open(schema_dir / "answer.json", "w", encoding="utf-8") as fh:
+                fh.write('{"type": "object"}')
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(str(path), agent_id=None)
+
+                settings = lfs_patch.call_args.args[0]
+                json_schema = settings.call_options["response_format"][
+                    "json_schema"
+                ]
+                self.assertEqual(json_schema["schema"], {"type": "object"})
+                self.assertNotIn("schema_ref", json_schema)
+            await stack.aclose()
+
+    async def test_response_format_schema_ref_rejects_escape_safely(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.response_format]
+type = \"json_schema\"
+name = \"answer\"
+schema_ref = \"../private/answer.json\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with self.assertRaises(AssertionError) as error:
+                await loader.from_file(str(path), agent_id=None)
+
+            self.assertIn(
+                "run.response_format.schema_ref",
+                str(error.exception),
+            )
+            self.assertNotIn("private/answer", str(error.exception))
             await stack.aclose()
 
 

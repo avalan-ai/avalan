@@ -126,7 +126,8 @@ class TaskCanonicalizationTest(TestCase):
                 """,
                 encoding="utf-8",
             )
-            referenced = loads_task_definition("""
+            referenced = loads_task_definition(
+                """
                 [task]
                 name = "invoice"
                 version = "1"
@@ -141,7 +142,9 @@ class TaskCanonicalizationTest(TestCase):
                 [execution]
                 type = "agent"
                 ref = "agents/invoice.toml"
-                """)
+                """,
+                source_path=root / "invoice.task.toml",
+            )
             inline = TaskDefinition(
                 task=TaskMetadata(name="invoice", version="1"),
                 input=TaskInputContract.string(),
@@ -150,11 +153,11 @@ class TaskCanonicalizationTest(TestCase):
             )
 
             self.assertEqual(
-                canonical_json(referenced, schema_base_path=root),
+                canonical_json(referenced),
                 canonical_json(inline),
             )
             self.assertEqual(
-                spec_hash(referenced, schema_base_path=root),
+                spec_hash(referenced),
                 spec_hash(inline),
             )
 
@@ -277,7 +280,7 @@ class TaskCanonicalizationTest(TestCase):
             invalid_json = TaskDefinition(
                 task=TaskMetadata(name="invalid_schema", version="1"),
                 input=TaskInputContract.string(),
-                output=TaskOutputContract.json(schema_ref=str(schema_path)),
+                output=TaskOutputContract.json(schema_ref="schema.json"),
                 execution=TaskExecutionTarget.agent("agents/a.toml"),
             )
 
@@ -285,7 +288,7 @@ class TaskCanonicalizationTest(TestCase):
                 TaskCanonicalizationError,
                 "JSON schema file",
             ):
-                canonical_json(invalid_json)
+                canonical_json(invalid_json, schema_base_path=schema_path)
 
     def test_schema_refs_reject_remote_and_non_object_sources(self) -> None:
         remote = TaskDefinition(
@@ -328,7 +331,7 @@ class TaskCanonicalizationTest(TestCase):
                     schema_base_path=schema_path,
                 )
 
-    def test_absolute_schema_refs_are_content_canonicalized(self) -> None:
+    def test_absolute_schema_refs_are_rejected_safely(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             schema_path = Path(temporary_directory) / "schema.json"
             schema_path.write_text(
@@ -342,10 +345,42 @@ class TaskCanonicalizationTest(TestCase):
                 execution=TaskExecutionTarget.agent("agents/a.toml"),
             )
 
-            canonical = canonical_json(definition)
+            with self.assertRaises(TaskCanonicalizationError) as error:
+                canonical_json(definition)
 
-            self.assertNotIn(str(schema_path), canonical)
-            self.assertIn('"id":{"type":"string"}', canonical)
+            self.assertIn("output.schema_ref", str(error.exception))
+            self.assertNotIn(str(schema_path), str(error.exception))
+
+    def test_schema_refs_reject_path_escape_and_external_refs(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "schema.json"
+            schema_path.write_text(
+                '{"$ref": "other.json"}',
+                encoding="utf-8",
+            )
+            external_ref = TaskDefinition(
+                task=TaskMetadata(name="external_ref", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.json(schema_ref="schema.json"),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+            )
+            path_escape = TaskDefinition(
+                task=TaskMetadata(name="path_escape", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.json(schema_ref="../schema.json"),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+            )
+
+            with self.assertRaises(TaskCanonicalizationError) as external:
+                canonical_json(external_ref, schema_base_path=root)
+            with self.assertRaises(TaskCanonicalizationError) as escape:
+                canonical_json(path_escape, schema_base_path=root)
+
+        self.assertIn("external $ref", str(external.exception))
+        self.assertIn("output.schema_ref", str(escape.exception))
+        self.assertNotIn("other.json", str(external.exception))
+        self.assertNotIn("../schema", str(escape.exception))
 
     def test_metadata_values_are_normalized_or_rejected(self) -> None:
         definition = TaskDefinition(
@@ -354,6 +389,8 @@ class TaskCanonicalizationTest(TestCase):
                 version="1",
                 annotations={
                     "connection": "postgresql://root:secret@localhost/db",
+                    "enabled": True,
+                    "missing": None,
                     "nested": {
                         "ratio": 1.5,
                         "values": [1, PrivacyAction.HASH],
@@ -367,6 +404,8 @@ class TaskCanonicalizationTest(TestCase):
         canonical = canonical_json(definition)
 
         self.assertIn('"connection":"<dsn>"', canonical)
+        self.assertIn('"enabled":true', canonical)
+        self.assertIn('"missing":null', canonical)
         self.assertIn('"ratio":1.5', canonical)
         self.assertIn('"values":[1,"hash"]', canonical)
 

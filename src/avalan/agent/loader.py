@@ -15,6 +15,7 @@ from ..memory.manager import MemoryManager
 from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
+from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
 from ..tool.browser import (
     HAS_BROWSER_DEPENDENCIES,
     BrowserToolSet,
@@ -304,6 +305,7 @@ class OrchestratorLoader:
         with open(path, "rb") as file:
             config = load(file)
 
+        config = cls._resolve_agent_config_schema_refs(config, path=path)
         cls.validate_agent_config(config)
         return config
 
@@ -352,6 +354,11 @@ class OrchestratorLoader:
 
         with open(path, "rb") as file:
             config = load(file)
+
+            config = OrchestratorLoader._resolve_agent_config_schema_refs(
+                config,
+                path=path,
+            )
 
             # Validate settings
 
@@ -428,6 +435,10 @@ class OrchestratorLoader:
             )
 
             call_options = config["run"] if "run" in config else None
+            if call_options is not None:
+                assert isinstance(
+                    call_options, dict
+                ), "Run section must be a mapping"
             if call_options and "chat" in call_options:
                 call_options["chat_settings"] = call_options.pop("chat")
             template_vars = (
@@ -892,6 +903,86 @@ class OrchestratorLoader:
         assert value in {
             profile.value for profile in LocalFileDeliveryProfile
         }, "engine.file_delivery_profile is not supported"
+
+    @staticmethod
+    def _resolve_agent_config_schema_refs(
+        config: object,
+        *,
+        path: str,
+    ) -> dict[str, Any]:
+        assert isinstance(
+            config, dict
+        ), "Agent configuration must be a mapping"
+        run_config = config.get("run")
+        if run_config is None:
+            return config
+        assert isinstance(run_config, dict), "Run section must be a mapping"
+        response_format = run_config.get("response_format")
+        if response_format is None:
+            return config
+        assert isinstance(
+            response_format, dict
+        ), "run.response_format must be a mapping"
+        run_config = dict(run_config)
+        run_config["response_format"] = (
+            OrchestratorLoader._resolved_response_format(
+                response_format,
+                schema_base_path=path,
+            )
+        )
+        config = dict(config)
+        config["run"] = run_config
+        return config
+
+    @staticmethod
+    def _resolved_response_format(
+        response_format: dict[str, Any],
+        *,
+        schema_base_path: str,
+    ) -> dict[str, Any]:
+        resolved = dict(response_format)
+        OrchestratorLoader._resolve_schema_ref_field(
+            resolved,
+            schema_base_path=schema_base_path,
+            path="run.response_format.schema_ref",
+        )
+        nested = resolved.get("json_schema")
+        if nested is not None:
+            assert isinstance(
+                nested, dict
+            ), "run.response_format.json_schema must be a mapping"
+            nested = dict(nested)
+            OrchestratorLoader._resolve_schema_ref_field(
+                nested,
+                schema_base_path=schema_base_path,
+                path="run.response_format.json_schema.schema_ref",
+            )
+            resolved["json_schema"] = nested
+        return resolved
+
+    @staticmethod
+    def _resolve_schema_ref_field(
+        mapping: dict[str, Any],
+        *,
+        schema_base_path: str,
+        path: str,
+    ) -> None:
+        schema_ref = mapping.get("schema_ref")
+        if schema_ref is None:
+            return
+        assert (
+            "schema" not in mapping
+        ), f"{path} cannot be used with an inline schema"
+        try:
+            schema = resolve_schema_ref(
+                schema_ref,
+                schema_base_path=schema_base_path,
+                path=path,
+            ).schema
+        except TaskSchemaResolutionError as error:
+            raise AssertionError(str(error)) from error
+        mapping["schema"] = schema
+        mapping.pop("schema_ref", None)
 
     @staticmethod
     def _validate_agent_section(agent_config: dict[str, Any]) -> None:
