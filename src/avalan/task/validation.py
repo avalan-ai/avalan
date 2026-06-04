@@ -820,6 +820,7 @@ def _validate_file_descriptor_value(
                 reference,
                 provider_reference,
                 conversions,
+                mime_type,
                 path=path,
             )
         )
@@ -946,6 +947,7 @@ def _validate_provider_reference_descriptor(
     reference: object,
     value: object,
     conversions: object,
+    descriptor_mime_type: object,
     *,
     path: str,
 ) -> tuple[TaskValidationIssue, ...]:
@@ -965,6 +967,17 @@ def _validate_provider_reference_descriptor(
                     f"{path}.provider_reference.reference",
                     "Task file provider reference does not match.",
                     "Use the same reference on the descriptor and provider.",
+                )
+            )
+        if _provider_reference_mime_mismatch(
+            descriptor_mime_type,
+            value.mime_type,
+        ):
+            issues.append(
+                _invalid_file_issue(
+                    f"{path}.provider_reference.mime_type",
+                    "Task file provider reference MIME type does not match.",
+                    "Use one MIME type for the descriptor and provider.",
                 )
             )
         return tuple(issues)
@@ -1054,6 +1067,14 @@ def _validate_provider_reference_descriptor(
                 "Use MIME type values such as application/pdf.",
             )
         )
+    elif _provider_reference_mime_mismatch(descriptor_mime_type, mime_type):
+        issues.append(
+            _invalid_file_issue(
+                f"{path}.provider_reference.mime_type",
+                "Task file provider reference MIME type does not match.",
+                "Use one MIME type for the descriptor and provider.",
+            )
+        )
     if metadata is not None and (
         not isinstance(metadata, Mapping) or not _is_json_value(metadata)
     ):
@@ -1065,6 +1086,17 @@ def _validate_provider_reference_descriptor(
             )
         )
     return tuple(issues)
+
+
+def _provider_reference_mime_mismatch(
+    descriptor_mime_type: object,
+    provider_mime_type: object,
+) -> bool:
+    return (
+        isinstance(descriptor_mime_type, str)
+        and isinstance(provider_mime_type, str)
+        and descriptor_mime_type != provider_mime_type
+    )
 
 
 def _is_valid_provider_reference_kind(value: object) -> bool:

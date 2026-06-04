@@ -1278,6 +1278,50 @@ ref = "agents/reviewer.toml"
         self.assertIn("<hmac-sha256>", str(submission.run.request))
         self.assertNotIn("file-private", str(submission.run.request))
 
+    async def test_enqueue_rejects_provider_reference_mime_mismatch(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+            definition_hash=lambda task: "client-provider-file-mime-hash",
+        )
+        provider_reference = TaskFileDescriptor.provider_reference_descriptor(
+            "file-private",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            mime_type="application/pdf",
+        ).provider_reference
+        assert provider_reference is not None
+
+        with self.assertRaises(TaskValidationError) as error:
+            await client.enqueue(
+                _definition(run=TaskRunPolicy.queued("documents")),
+                input_value="private prompt",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:openai:provider_file_id",
+                        provider_reference=provider_reference,
+                        media_type="text/plain",
+                    ),
+                ),
+            )
+
+        self.assertEqual(queue.requests, [])
+        issue = error.exception.issues[0]
+        self.assertEqual(issue.code, "input.invalid_file")
+        self.assertEqual(
+            issue.path,
+            "files[0].provider_reference.mime_type",
+        )
+        self.assertNotIn("file-private", str(error.exception))
+
     async def test_enqueue_rejects_expiring_provider_reference(self) -> None:
         store = InMemoryTaskStore()
         queue = RecordingQueue(store)

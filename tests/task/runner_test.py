@@ -1042,6 +1042,77 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertNotIn("file-private", str(error.exception))
         self.assertNotIn("private-invalid-expiry", str(error.exception))
 
+    async def test_explicit_provider_reference_expiry_fails_before_target(
+        self,
+    ) -> None:
+        target = RecordingTarget("unused")
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-explicit-provider-expiry",
+            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-private",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            expires_at=datetime(2025, 12, 31, tzinfo=UTC),
+            durable=False,
+        )
+        assert descriptor.provider_reference is not None
+
+        result = await runner.run(
+            definition(input_contract=TaskInputContract.string()),
+            input_value="prompt",
+            files=(
+                TaskInputFile(
+                    logical_path="provider:openai:provider_file_id",
+                    provider_reference=descriptor.provider_reference,
+                ),
+            ),
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(target.contexts, [])
+        assert result.run.result is not None
+        self.assertNotIn("file-private", str(result.run.result.error))
+
+    async def test_explicit_provider_reference_mime_mismatch_fails(
+        self,
+    ) -> None:
+        target = RecordingTarget("unused")
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-explicit-provider-mime",
+        )
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-private",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            mime_type="application/pdf",
+        )
+        assert descriptor.provider_reference is not None
+
+        result = await runner.run(
+            definition(input_contract=TaskInputContract.string()),
+            input_value="prompt",
+            files=(
+                TaskInputFile(
+                    logical_path="provider:openai:provider_file_id",
+                    provider_reference=descriptor.provider_reference,
+                    media_type="text/plain",
+                ),
+            ),
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(target.contexts, [])
+        assert result.run.result is not None
+        self.assertNotIn("file-private", str(result.run.result.error))
+
     async def test_native_file_conversion_uses_materialized_input(
         self,
     ) -> None:
@@ -1127,6 +1198,39 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.files[0].logical_path, "explicit:file")
         self.assertEqual(result.files[1].logical_path, "artifact:artifact-1")
         self.assertEqual(len(result.materialized_files), 1)
+
+    async def test_shared_input_file_builder_rejects_bad_explicit_file(
+        self,
+    ) -> None:
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-private",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            mime_type="application/pdf",
+        )
+        assert descriptor.provider_reference is not None
+
+        with self.assertRaises(TaskValidationError) as error:
+            await build_task_executable_input_files(
+                definition(input_contract=TaskInputContract.string()),
+                "prompt",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:openai:provider_file_id",
+                        provider_reference=descriptor.provider_reference,
+                        media_type="text/plain",
+                    ),
+                ),
+                roots=(),
+                artifact_store=None,
+                hmac_provider=self.hmac_provider,
+            )
+
+        self.assertEqual(
+            error.exception.issues[0].path,
+            "files[0].provider_reference.mime_type",
+        )
+        self.assertNotIn("file-private", str(error.exception))
 
     async def test_execution_file_payload_round_trips_descriptor_fields(
         self,

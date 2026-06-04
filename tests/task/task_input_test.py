@@ -361,6 +361,52 @@ class TaskInputTest(TestCase):
         )
         self.assertNotIn("different-handle", rendered)
 
+    def test_provider_reference_rejects_mime_mismatch_safely(self) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.file(),
+        )
+        object_reference = TaskProviderReference(
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            reference="private-handle",
+            mime_type="application/pdf",
+        )
+
+        mapping_issues = validate_task_input(
+            definition,
+            {
+                "source_kind": "provider_reference",
+                "reference": "private-handle",
+                "mime_type": "text/plain",
+                "provider_reference": {
+                    "kind": "provider_file_id",
+                    "provider": "openai",
+                    "reference": "private-handle",
+                    "mime_type": "application/pdf",
+                },
+            },
+        )
+        object_issues = validate_task_input(
+            definition,
+            TaskFileDescriptor(
+                source_kind=TaskFileSourceKind.PROVIDER_REFERENCE,
+                reference="private-handle",
+                mime_type="text/plain",
+                provider_reference=object_reference,
+            ),
+        )
+
+        self.assertEqual(
+            [issue.path for issue in mapping_issues],
+            ["input.provider_reference.mime_type"],
+        )
+        self.assertEqual(
+            [issue.path for issue in object_issues],
+            ["input.provider_reference.mime_type"],
+        )
+        rendered = f"{mapping_issues} {object_issues}"
+        self.assertNotIn("private-handle", rendered)
+
     def test_file_array_input_validates_count_and_descriptor_rules(
         self,
     ) -> None:

@@ -156,6 +156,9 @@ async def build_task_executable_input_files(
     if task_store is not None:
         assert isinstance(run, TaskRun)
         assert isinstance(attempt, TaskAttempt)
+    issues = validate_explicit_task_input_files(files, now=now)
+    if issues:
+        raise TaskValidationError(issues)
     provider_reference_files = task_provider_reference_input_files_from_input(
         definition,
         input_value,
@@ -336,6 +339,51 @@ def task_input_file_entries_for_queue(
             for materialized_file in materialized_files
         ),
     )
+
+
+def validate_explicit_task_input_files(
+    files: tuple[TaskInputFile, ...],
+    *,
+    now: datetime | None = None,
+) -> tuple[TaskValidationIssue, ...]:
+    assert isinstance(files, tuple)
+    issues: list[TaskValidationIssue] = []
+    for index, file in enumerate(files):
+        assert isinstance(file, TaskInputFile)
+        provider_reference = file.provider_reference
+        if provider_reference is None:
+            continue
+        if provider_reference.is_expired(now):
+            issues.append(
+                TaskValidationIssue(
+                    code="input.invalid_file",
+                    path=f"files[{index}].provider_reference.expires_at",
+                    message="Task file provider reference has expired.",
+                    hint="Refresh the provider reference before execution.",
+                    category=TaskValidationCategory.VALUE,
+                )
+            )
+        if (
+            file.media_type is not None
+            and provider_reference.mime_type is not None
+            and file.media_type != provider_reference.mime_type
+        ):
+            issues.append(
+                TaskValidationIssue(
+                    code="input.invalid_file",
+                    path=f"files[{index}].provider_reference.mime_type",
+                    message=(
+                        "Task file provider reference MIME type does not "
+                        "match."
+                    ),
+                    hint=(
+                        "Use one MIME type for the explicit file and "
+                        "provider reference."
+                    ),
+                    category=TaskValidationCategory.VALUE,
+                )
+            )
+    return tuple(issues)
 
 
 class TaskRunFinalizer:
@@ -1075,6 +1123,12 @@ class DirectTaskRunner:
         run: TaskRun,
         attempt: TaskAttempt,
     ) -> TaskExecutableInputFiles:
+        issues = validate_explicit_task_input_files(
+            files,
+            now=self._clock(),
+        )
+        if issues:
+            raise TaskValidationError(issues)
         provider_reference_files = (
             task_provider_reference_input_files_from_input(
                 definition,

@@ -48,6 +48,7 @@ from .runner import (
     _snapshot_value,
     task_execution_file_entries_value,
     task_input_file_entries_for_queue,
+    validate_explicit_task_input_files,
 )
 from .state import TASK_RUN_TERMINAL_STATES, TaskRunState
 from .store import (
@@ -502,6 +503,12 @@ class TaskClient:
                 now=self._clock(),
             )
         )
+        file_issues = validate_explicit_task_input_files(
+            files,
+            now=self._clock(),
+        )
+        if file_issues:
+            raise TaskValidationError(file_issues)
         materialized_files = await materialize_task_input_files(
             definition,
             input_value,
