@@ -1078,6 +1078,194 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertIn("output_contract.failed", diagnostics)
         self.assertNotIn("partial", diagnostics)
 
+    def test_run_json_failure_codes_are_sanitized(self) -> None:
+        cases = (
+            ("provider.structured_output_failed", "provider"),
+            ("output.parse_failed", "output_contract"),
+            ("output_contract.failed", "output_contract"),
+        )
+
+        for code, category in cases:
+            with self.subTest(code=code):
+                stream = StringIO()
+                console = Console(file=stream, width=160)
+                diagnostic_console = Console(record=True, width=160)
+                client = _FakeTaskClient(
+                    run_result=SimpleNamespace(
+                        run=SimpleNamespace(
+                            run_id="run-1",
+                            state=TaskRunState.FAILED,
+                            result=SimpleNamespace(
+                                output_summary=None,
+                                error={
+                                    "category": category,
+                                    "code": code,
+                                    "message": "safe failure summary",
+                                },
+                            ),
+                        ),
+                        output={"private": "partial provider body"},
+                    )
+                )
+
+                with (
+                    TemporaryDirectory() as tmpdir,
+                    patch.object(
+                        task_cmds,
+                        "_task_cli_client_context",
+                        return_value=_FakeTaskClientContext(client),
+                    ),
+                    patch.object(
+                        task_cmds,
+                        "_task_diagnostic_console",
+                        return_value=diagnostic_console,
+                    ),
+                ):
+                    definition = _write_direct_object_definition(Path(tmpdir))
+                    result = task_cmds.task_run(
+                        Namespace(
+                            definition=str(definition),
+                            task_input="Ada Lovelace",
+                            task_input_json=None,
+                            task_input_fields=(),
+                            task_files=(),
+                            store_dsn=None,
+                            store_schema=None,
+                            ephemeral=True,
+                            task_run_json=True,
+                            task_output_path=None,
+                            task_pdf=None,
+                            quiet=False,
+                        ),
+                        console,
+                        self.theme,
+                    )
+
+                diagnostics = diagnostic_console.export_text()
+                self.assertFalse(result)
+                self.assertEqual(stream.getvalue(), "")
+                self.assertIn(code, diagnostics)
+                self.assertNotIn("partial provider body", diagnostics)
+                self.assertNotIn("Ada Lovelace", diagnostics)
+
+    def test_run_quiet_failure_suppresses_summary(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient(
+            run_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-1",
+                    state=TaskRunState.FAILED,
+                    result=SimpleNamespace(
+                        output_summary=None,
+                        error={
+                            "category": "output_contract",
+                            "code": "output.parse_failed",
+                            "message": "safe failure summary",
+                        },
+                    ),
+                ),
+                output={"private": "partial provider body"},
+            )
+        )
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                return_value=_FakeTaskClientContext(client),
+            ),
+        ):
+            definition = _write_direct_object_definition(Path(tmpdir))
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=False,
+                    task_output_path=None,
+                    task_pdf=None,
+                    quiet=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("output.parse_failed", output)
+        self.assertNotIn("Task run completed", output)
+        self.assertNotIn("partial provider body", output)
+        self.assertNotIn("Ada Lovelace", output)
+
+    def test_run_pdf_missing_file_reports_safe_diagnostic(self) -> None:
+        console = Console(record=True, width=160)
+
+        async def target(context: TaskTargetContext) -> object:
+            _ = context
+            raise AssertionError("target should not run")
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds,
+                "_agent_task_target",
+                return_value=CallableTaskTargetRunner(target),
+            ),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            root = Path(tmpdir)
+            definition = root / "missing_pdf.task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "missing_pdf"
+                version = "1"
+
+                [input]
+                type = "file"
+                mime_types = ["application/pdf"]
+
+                [output]
+                type = "text"
+
+                [execution]
+                type = "agent"
+                ref = "agent.toml"
+                """,
+                encoding="utf-8",
+            )
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=False,
+                    task_output_path=None,
+                    task_pdf="/tmp/private/customer-secret.pdf",
+                    quiet=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task run did not succeed.", output)
+        self.assertIn("input_contract.failed", output)
+        self.assertNotIn("customer-secret.pdf", output)
+        self.assertNotIn("/tmp/private", output)
+
     def test_run_json_rejects_text_output_contract(self) -> None:
         stream = StringIO()
         console = Console(file=stream, width=160)

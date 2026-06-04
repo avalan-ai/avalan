@@ -67,6 +67,16 @@ policy is configured with SSRF protections. `hosted_url` asks the target
 provider to fetch a provider-compatible URL and is planned through the model
 file-delivery profile.
 
+Task file inputs are scoped to a single task run. The runner validates the
+descriptor, materializes local bytes only when the selected delivery plan needs
+an artifact, and passes the resulting file block or provider reference to the
+target. This path does not populate recent message memory, permanent message
+memory, document memory, embeddings, or retrieval stores by default. Document
+loading through `avalan memory document ...` is a separate ingestion workflow:
+it chunks and indexes document text for later retrieval. A task file enters a
+text path only when the task declares an allowed conversion or when the target
+profile selects retrieval or map-reduce context for that run.
+
 ## SDK Descriptor Examples
 
 ```python

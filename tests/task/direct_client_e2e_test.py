@@ -18,6 +18,7 @@ from avalan.entities import Message, MessageContentFile, MessageContentText
 from avalan.event import Event, EventType
 from avalan.task import (
     HASHED_MARKER,
+    PrivacyAction,
     RetryBackoff,
     TaskArtifactPolicy,
     TaskArtifactPurpose,
@@ -740,6 +741,35 @@ class ExtractionFakeResponse:
         return await self.to_json()
 
 
+class ExtractionRawJsonResponse:
+    input_token_count = 19
+    output_token_count = 23
+    total_token_count = 42
+
+    def __init__(self, raw_json: str) -> None:
+        self.raw_json = raw_json
+
+    async def to_json(self) -> str:
+        return self.raw_json
+
+    async def to_str(self) -> str:
+        return self.raw_json
+
+
+class ExtractionProviderFailureResponse:
+    input_token_count = 19
+    output_token_count = 23
+    total_token_count = 42
+
+    async def to_json(self) -> str:
+        raise RuntimeError(
+            "private provider body api-key=sk-test-secret file_data=abc123"
+        )
+
+    async def to_str(self) -> str:
+        return "private provider fallback body"
+
+
 class ExtractionFakeOrchestrator:
     def __init__(self, output: Mapping[str, object]) -> None:
         self.output = output
@@ -767,6 +797,36 @@ class ExtractionFakeOrchestrator:
         self.inputs.append(input)
         await self.event_manager.emit_token()
         return ExtractionFakeResponse(self.output)
+
+
+class ExtractionFailureOrchestrator(ExtractionFakeOrchestrator):
+    def __init__(self, response: object) -> None:
+        super().__init__({})
+        self.response = response
+
+    async def __call__(self, input: object) -> object:
+        self.inputs.append(input)
+        await self.event_manager.emit_token()
+        return self.response
+
+
+class ExtractionFailureLoader:
+    def __init__(self, orchestrator: ExtractionFailureOrchestrator) -> None:
+        self.orchestrator = orchestrator
+        self.paths: list[str] = []
+
+    async def from_file(
+        self,
+        path: str,
+        *,
+        agent_id: object | None,
+        disable_memory: bool = False,
+        uri: str | None = None,
+        tool_settings: object | None = None,
+    ) -> ExtractionFailureOrchestrator:
+        _ = agent_id, disable_memory, uri, tool_settings
+        self.paths.append(path)
+        return self.orchestrator
 
 
 class DirectClientE2ETest(IsolatedAsyncioTestCase):
@@ -915,6 +975,116 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("sample.pdf", inspection_value)
         self.assertNotIn("private-provider-token", inspection_value)
         self.assertNotIn("file_data", inspection_value)
+
+    async def test_poc_extraction_failures_are_classified_and_sanitized(
+        self,
+    ) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        pdf_bytes = (fixture / "sample.pdf").read_bytes()
+        definition = TaskDefinitionLoader().load(fixture / "task.toml")
+        definition = replace(
+            definition,
+            privacy=replace(
+                definition.privacy,
+                errors=PrivacyAction.REDACT,
+            ),
+        )
+        cases = (
+            (
+                "provider",
+                ExtractionProviderFailureResponse(),
+                "provider",
+                "provider.structured_output_failed",
+                (),
+            ),
+            (
+                "parse",
+                ExtractionRawJsonResponse(
+                    '{"line_items":["private provider body sk-test-secret"'
+                ),
+                "output_contract",
+                "output.parse_failed",
+                (),
+            ),
+            (
+                "schema",
+                ExtractionRawJsonResponse('{"line_items":[] }'),
+                "output_contract",
+                "output_contract.failed",
+                ("output.invalid_type",),
+            ),
+        )
+
+        for name, response, category, code, issue_codes in cases:
+            with self.subTest(name=name):
+                with TemporaryDirectory() as artifact_root:
+                    orchestrator = ExtractionFailureOrchestrator(response)
+                    loader = ExtractionFailureLoader(orchestrator)
+                    client = TaskClient(
+                        InMemoryTaskStore(
+                            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                        ),
+                        target=AgentTaskTargetRunner(loader, ref_base=fixture),
+                        artifact_store=LocalArtifactStore(
+                            Path(artifact_root),
+                            raw_storage_allowed=True,
+                        ),
+                        hmac_provider=StaticHmacProvider(),
+                        execution_roots=(fixture,),
+                        definition_hash=lambda task: (
+                            f"extraction-failure-{name}"
+                        ),
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                    )
+                    descriptor = TaskClient.local_file(
+                        "./sample.pdf",
+                        mime_type="application/pdf",
+                        size_bytes=len(pdf_bytes),
+                    )
+
+                    result = await client.run(
+                        definition,
+                        input_value=descriptor,
+                    )
+                    output = await client.output(result.run.run_id)
+                    inspection = await client.inspect(result.run.run_id)
+
+                self.assertEqual(result.run.state, TaskRunState.FAILED)
+                self.assertIsNone(result.output)
+                self.assertFalse(output.ready)
+                error_summary = cast(Mapping[str, object], output.error)
+                self.assertEqual(error_summary["category"], category)
+                self.assertEqual(error_summary["code"], code)
+                if issue_codes:
+                    details = cast(
+                        Mapping[str, object],
+                        error_summary["details"],
+                    )
+                    issues = cast(
+                        tuple[Mapping[str, object], ...],
+                        details["issues"],
+                    )
+                    self.assertEqual(
+                        tuple(issue["code"] for issue in issues),
+                        issue_codes,
+                    )
+                self.assertEqual(orchestrator.entered, 1)
+                self.assertEqual(orchestrator.exited, 1)
+                self.assertEqual(len(inspection.events), 1)
+                inspection_value = str(inspection.as_dict())
+                self.assertNotIn("Analyze the attached", inspection_value)
+                self.assertNotIn("sample.pdf", inspection_value)
+                self.assertNotIn("file_data", inspection_value)
+                self.assertNotIn("sk-test-secret", inspection_value)
+                self.assertNotIn("private provider", inspection_value)
+                self.assertNotIn("private-provider-token", inspection_value)
+                self.assertNotIn("token_id", inspection_value)
 
     async def test_loaded_provider_references_run_directly_and_inspect_safely(
         self,

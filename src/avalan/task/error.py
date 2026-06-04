@@ -17,6 +17,7 @@ class TaskErrorCategory(StrEnum):
     RUNNABLE = "runnable"
     INPUT_CONTRACT = "input_contract"
     OUTPUT_CONTRACT = "output_contract"
+    PROVIDER = "provider"
     TIMEOUT = "timeout"
     CANCELLATION = "cancellation"
     BUDGET = "budget"
@@ -28,11 +29,23 @@ class TaskErrorCode(StrEnum):
     RUNNABLE_FAILED = "runnable.failed"
     INPUT_CONTRACT_FAILED = "input_contract.failed"
     OUTPUT_CONTRACT_FAILED = "output_contract.failed"
+    OUTPUT_PARSE_FAILED = "output.parse_failed"
+    PROVIDER_STRUCTURED_OUTPUT_FAILED = "provider.structured_output_failed"
     TIMEOUT_EXCEEDED = "timeout.exceeded"
     CANCELLATION_REQUESTED = "cancellation.requested"
     BUDGET_EXCEEDED = "budget.exceeded"
     INFRA_FAILURE = "infra.failure"
     PRIVACY_FAILURE = "privacy.failure"
+
+
+class TaskOutputParseError(ValueError):
+    def __init__(self) -> None:
+        super().__init__("task output parse failed")
+
+
+class TaskProviderStructuredOutputError(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("task provider structured output failed")
 
 
 def _empty_details() -> Mapping[str, TaskErrorValue]:
@@ -102,6 +115,22 @@ class TaskError:
         )
 
     @classmethod
+    def output_parse(cls) -> "TaskError":
+        return cls(
+            category=TaskErrorCategory.OUTPUT_CONTRACT,
+            code=TaskErrorCode.OUTPUT_PARSE_FAILED,
+            message="Task output could not be parsed as JSON.",
+        )
+
+    @classmethod
+    def provider_structured_output(cls) -> "TaskError":
+        return cls(
+            category=TaskErrorCategory.PROVIDER,
+            code=TaskErrorCode.PROVIDER_STRUCTURED_OUTPUT_FAILED,
+            message="Task provider rejected structured output.",
+        )
+
+    @classmethod
     def runnable(cls, *, retryable: bool = True) -> "TaskError":
         assert isinstance(retryable, bool)
         return cls(
@@ -160,6 +189,10 @@ def classify_task_error(error: BaseException) -> TaskError:
         return TaskError.cancellation()
     if isinstance(error, AsyncTimeoutError):
         return TaskError.timeout()
+    if isinstance(error, TaskProviderStructuredOutputError):
+        return TaskError.provider_structured_output()
+    if isinstance(error, TaskOutputParseError):
+        return TaskError.output_parse()
     if isinstance(error, TaskValidationError):
         if _is_privacy_error(error.issues):
             return TaskError.privacy()

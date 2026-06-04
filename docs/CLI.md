@@ -1708,6 +1708,59 @@ same structured value atomically as compact JSON with a trailing newline.
 that materialize local bytes use a temporary artifact root when
 `AVALAN_TASK_ARTIFACT_ROOT` is not configured.
 
+Minimal direct PDF extraction files:
+
+```toml
+# task.toml
+[task]
+name = "pdf_extraction"
+version = "1"
+
+[input]
+type = "file"
+mime_types = ["application/pdf"]
+
+[output]
+type = "object"
+schema_ref = "extraction.schema.json"
+
+[execution]
+type = "agent"
+ref = "agent.toml"
+```
+
+```toml
+# agent.toml
+[agent]
+name = "PDF Extraction"
+system = "Extract one JSON object that matches the configured schema."
+user = "Analyze the attached PDF and return the requested fields."
+
+[engine]
+uri = "ai://env:AZURE_OPENAI_API_KEY@openai/extraction-deployment"
+base_url = "https://tenant.openai.azure.com/openai/v1/"
+
+[run]
+use_async_generator = false
+
+[run.response_format]
+type = "json_schema"
+name = "extraction"
+strict = true
+schema_ref = "extraction.schema.json"
+```
+
+Run it with:
+
+```bash
+poetry run avalan task run task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+```
+
+Task file inputs are run-scoped delivery inputs. They are validated,
+materialized only when needed, and sent through the task file-delivery planner;
+they are not indexed into message memory or document memory unless an explicit
+conversion, retrieval, or map-reduce text strategy is declared.
+
 ### avalan task enqueue
 
 Submit a queue-mode task to a durable store:

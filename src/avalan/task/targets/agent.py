@@ -27,6 +27,10 @@ from ..definition import (
     TaskTargetType,
 )
 from ..delivery import TaskFileDeliveryPlan, plan_task_file_delivery
+from ..error import (
+    TaskOutputParseError,
+    TaskProviderStructuredOutputError,
+)
 from ..schema import (
     TaskSchemaResolutionError,
     canonical_schema_json,
@@ -47,7 +51,7 @@ from base64 import b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from json import dumps, loads
+from json import JSONDecodeError, dumps, loads
 from pathlib import Path
 from sys import maxsize
 from tomllib import TOMLDecodeError, load
@@ -1133,12 +1137,33 @@ async def _agent_output(
         TaskOutputType.ARRAY,
     }:
         if isinstance(response, OrchestratorResponse):
-            return loads(await response.to_json())
+            return _parse_agent_json_payload(
+                await _response_json_payload(response)
+            )
         to_json = getattr(response, "to_json", None)
         if to_json is not None:
-            return loads(await to_json())
-        return loads(await _response_text(response))
+            return _parse_agent_json_payload(
+                await _response_json_payload(response)
+            )
+        return _parse_agent_json_payload(await _response_text(response))
     return await _response_text(response)
+
+
+async def _response_json_payload(response: object) -> object:
+    to_json = getattr(response, "to_json")
+    try:
+        return await to_json()
+    except Exception as exc:
+        raise TaskProviderStructuredOutputError() from exc
+
+
+def _parse_agent_json_payload(payload: object) -> object:
+    if not isinstance(payload, str | bytes | bytearray):
+        raise TaskOutputParseError()
+    try:
+        return loads(payload)
+    except (JSONDecodeError, TypeError) as exc:
+        raise TaskOutputParseError() from exc
 
 
 async def _response_text(response: object) -> str:

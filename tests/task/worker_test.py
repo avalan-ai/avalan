@@ -38,8 +38,10 @@ from avalan.task import (
     TaskMetadata,
     TaskObservabilityPolicy,
     TaskOutputContract,
+    TaskOutputParseError,
     TaskPrivacyPolicy,
     TaskProviderReferenceKind,
+    TaskProviderStructuredOutputError,
     TaskQueueAbandonment,
     TaskQueueArtifact,
     TaskQueueClaim,
@@ -1118,6 +1120,60 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
             self.queue.completed.run.result.error["code"],
             "output_contract.failed",
         )
+
+    async def test_process_once_classifies_structured_output_failures(
+        self,
+    ) -> None:
+        cases = (
+            (
+                TaskProviderStructuredOutputError(),
+                "provider",
+                "provider.structured_output_failed",
+            ),
+            (
+                TaskOutputParseError(),
+                "output_contract",
+                "output.parse_failed",
+            ),
+        )
+
+        for error, category, code in cases:
+            with self.subTest(code=code):
+                await self._use_definition(
+                    _definition(retry=TaskRetryPolicy(max_attempts=1))
+                )
+                target = FakeTarget()
+
+                async def fail(context: TaskTargetContext) -> object:
+                    _ = context
+                    raise error
+
+                target.run = fail
+                worker = TaskWorker(
+                    self.store,
+                    cast(object, self.queue),
+                    target=target,
+                    worker_id="worker-1",
+                    clock=lambda: self.now,
+                )
+
+                result = await worker.process_once()
+
+                self.assertTrue(result.processed)
+                self.assertIsNotNone(self.queue.completed)
+                assert self.queue.completed is not None
+                self.assertEqual(
+                    self.queue.completed.run.state,
+                    TaskRunState.FAILED,
+                )
+                assert self.queue.completed.run.result is not None
+                summary = cast(
+                    Mapping[str, object],
+                    self.queue.completed.run.result.error,
+                )
+                self.assertEqual(summary["category"], category)
+                self.assertEqual(summary["code"], code)
+                self.assertNotIn("private", str(summary))
 
     async def test_process_once_finalizes_invalid_target(self) -> None:
         worker = TaskWorker(

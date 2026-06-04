@@ -10,6 +10,8 @@ from avalan.task import (
     TaskError,
     TaskErrorCategory,
     TaskErrorCode,
+    TaskOutputParseError,
+    TaskProviderStructuredOutputError,
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
@@ -103,6 +105,11 @@ class TaskErrorTest(TestCase):
                 PrivacySanitizationError("secret"),
                 TaskErrorCategory.PRIVACY,
             ),
+            (TaskOutputParseError(), TaskErrorCategory.OUTPUT_CONTRACT),
+            (
+                TaskProviderStructuredOutputError(),
+                TaskErrorCategory.PROVIDER,
+            ),
         )
 
         for exception, category in cases:
@@ -111,6 +118,24 @@ class TaskErrorTest(TestCase):
 
                 self.assertEqual(error.category, category)
                 self.assertNotIn("secret", str(error.as_dict()))
+
+    def test_classifier_distinguishes_structured_output_failures(self) -> None:
+        parse_error = classify_task_error(TaskOutputParseError())
+        provider_error = classify_task_error(
+            TaskProviderStructuredOutputError()
+        )
+
+        self.assertEqual(
+            parse_error.category, TaskErrorCategory.OUTPUT_CONTRACT
+        )
+        self.assertEqual(parse_error.code, TaskErrorCode.OUTPUT_PARSE_FAILED)
+        self.assertFalse(parse_error.retryable)
+        self.assertEqual(provider_error.category, TaskErrorCategory.PROVIDER)
+        self.assertEqual(
+            provider_error.code,
+            TaskErrorCode.PROVIDER_STRUCTURED_OUTPUT_FAILED,
+        )
+        self.assertFalse(provider_error.retryable)
 
     def test_classifier_maps_target_validation_to_runnable(self) -> None:
         cases = (

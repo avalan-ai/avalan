@@ -44,8 +44,10 @@ from avalan.task import (
     TaskLimitsPolicy,
     TaskMetadata,
     TaskOutputContract,
+    TaskOutputParseError,
     TaskProviderReference,
     TaskProviderReferenceKind,
+    TaskProviderStructuredOutputError,
     TaskRetryPolicy,
     TaskRunState,
     TaskTargetContext,
@@ -103,6 +105,16 @@ class TextOnlyResponse:
 
     async def to_str(self) -> str:
         return self.text
+
+
+class FailingJsonResponse(TextOnlyResponse):
+    async def to_json(self) -> str:
+        raise RuntimeError("private provider body with api key sk-test-secret")
+
+
+class NonStringJsonResponse(TextOnlyResponse):
+    async def to_json(self) -> object:
+        return {"private": "raw object"}
 
 
 class BareResponse:
@@ -978,6 +990,56 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(output, {"answer": "ok"})
         self.assertEqual(loader.inputs, ['{"question":"status"}'])
+
+    async def test_structured_output_rejects_provider_failure_safely(
+        self,
+    ) -> None:
+        loader = FakeLoader(response=FailingJsonResponse("{}"))
+        runner = AgentTaskTargetRunner(loader)
+
+        with self.assertRaises(TaskProviderStructuredOutputError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(
+                        output=TaskOutputContract.object(
+                            schema={"type": "object"}
+                        )
+                    ),
+                    "private prompt",
+                )
+            )
+
+        self.assertNotIn("sk-test-secret", str(error.exception))
+        self.assertEqual(loader.entered, 1)
+        self.assertEqual(loader.exited, 1)
+
+    async def test_structured_output_rejects_invalid_json_safely(
+        self,
+    ) -> None:
+        cases = (
+            TextOnlyResponse("{private: output"),
+            NonStringJsonResponse("{}"),
+        )
+        for response in cases:
+            with self.subTest(response=type(response).__name__):
+                loader = FakeLoader(response=response)
+                runner = AgentTaskTargetRunner(loader)
+
+                with self.assertRaises(TaskOutputParseError) as error:
+                    await runner.run(
+                        self._context(
+                            self._definition(
+                                output=TaskOutputContract.object(
+                                    schema={"type": "object"}
+                                )
+                            ),
+                            "private prompt",
+                        )
+                    )
+
+                self.assertNotIn("private", str(error.exception))
+                self.assertEqual(loader.entered, 1)
+                self.assertEqual(loader.exited, 1)
 
     async def test_run_attaches_cancellation_checker_to_response(
         self,

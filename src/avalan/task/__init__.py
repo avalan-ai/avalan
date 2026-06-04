@@ -99,6 +99,10 @@ from .error import TaskError as TaskError
 from .error import TaskErrorCategory as TaskErrorCategory
 from .error import TaskErrorCode as TaskErrorCode
 from .error import TaskErrorValue as TaskErrorValue
+from .error import TaskOutputParseError as TaskOutputParseError
+from .error import (
+    TaskProviderStructuredOutputError as TaskProviderStructuredOutputError,
+)
 from .error import classify_task_error as classify_task_error
 from .event import RawTaskEventListener as RawTaskEventListener
 from .event import SanitizedTaskEvent as SanitizedTaskEvent
