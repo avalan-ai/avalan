@@ -2,6 +2,8 @@ from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactPurpose, TaskArtifactState
 from .attempt import TaskAttemptPolicy
 from .context import TaskInputFile, TaskTargetContext
+from .converters import FileConverter
+from .converters.registry import default_file_converters
 from .definition import ObservabilitySinkType, TaskDefinition, TaskInputType
 from .error import TaskError, classify_task_error
 from .observability import (
@@ -35,6 +37,8 @@ from .runner import (
     _sanitize_output_artifact,
     _snapshot_value,
     _task_error_with_attempt_counts,
+    task_execution_file_entries_from_value,
+    task_input_files_from_materialized,
 )
 from .state import TaskAttemptState, TaskRunState
 from .store import (
@@ -70,7 +74,7 @@ from asyncio import (
 from asyncio import (
     Task as AsyncTask,
 )
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -145,6 +149,7 @@ class TaskWorker:
         encryption_provider: EncryptionProvider | None = None,
         raw_storage_allowed: bool = False,
         artifact_store: ArtifactStore | None = None,
+        file_converters: Mapping[str, FileConverter] | None = None,
         execution_roots: Iterable[str | Path] = (),
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
@@ -170,6 +175,7 @@ class TaskWorker:
         self._encryption_provider = encryption_provider
         self._raw_storage_allowed = raw_storage_allowed
         self._artifact_store = artifact_store
+        self._file_converters = _file_converters(file_converters)
         self._execution_roots = tuple(execution_roots)
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
@@ -282,7 +288,7 @@ class TaskWorker:
             definition=definition,
             execution=attempt.context,
             input_value=self._executable_input_value(definition, run),
-            files=await self._input_files(run.run_id),
+            files=await self._input_files(definition, run, attempt),
             metadata=run.request.metadata,
             cancellation_checker=lambda: self._check_cancelled(run.run_id),
             event_listener=self._event_pipeline(
@@ -332,6 +338,12 @@ class TaskWorker:
     ) -> object:
         payload = run.request.input_payload
         if payload is None:
+            if _queued_input_payload_required(definition, run):
+                raise TaskValidationError(
+                    (_queue_input_payload_unavailable_issue(),)
+                )
+            return run.request.input_summary
+        if payload.input_value is None:
             if _queued_input_payload_required(definition, run):
                 raise TaskValidationError(
                     (_queue_input_payload_unavailable_issue(),)
@@ -556,9 +568,49 @@ class TaskWorker:
             metadata={"worker_id": self._worker_id, "reason": "shutdown"},
         )
 
-    async def _input_files(self, run_id: str) -> tuple[TaskInputFile, ...]:
+    async def _input_files(
+        self,
+        definition: TaskDefinition,
+        run: TaskRun,
+        attempt: TaskAttempt,
+    ) -> tuple[TaskInputFile, ...]:
+        payload = run.request.input_payload
+        if payload is not None and payload.file_values:
+            entries = tuple(
+                entry
+                for value in payload.file_values
+                for entry in task_execution_file_entries_from_value(
+                    self._decrypt_file_payload_value(value)
+                )
+            )
+            materialized = tuple(
+                entry.materialized_file
+                for entry in entries
+                if entry.materialized_file is not None
+            )
+            if not materialized:
+                return tuple(entry.file for entry in entries)
+            converted = iter(
+                await task_input_files_from_materialized(
+                    definition,
+                    materialized,
+                    artifact_store=self._artifact_store,
+                    file_converters=self._file_converters,
+                    task_store=self._store,
+                    run=run,
+                    attempt=attempt,
+                )
+            )
+            files: list[TaskInputFile] = []
+            for entry in entries:
+                files.append(
+                    next(converted)
+                    if entry.materialized_file is not None
+                    else entry.file
+                )
+            return tuple(files)
         records = await self._store.list_artifacts(
-            run_id,
+            run.run_id,
             purpose=TaskArtifactPurpose.INPUT,
             state=TaskArtifactState.READY,
         )
@@ -572,6 +624,31 @@ class TaskWorker:
             )
             for record in records
         )
+
+    def _decrypt_file_payload_value(self, value: object) -> object:
+        try:
+            return decrypt_encrypted_privacy_value(
+                value,
+                decryption_provider=self._encryption_provider,
+            )
+        except PrivacySanitizationError as error:
+            raise TaskValidationError(
+                (
+                    TaskValidationIssue(
+                        code="queue.file_payload_unavailable",
+                        path="request.input_payload.file_values",
+                        message=(
+                            "Queued task file inputs are unavailable for "
+                            "worker execution."
+                        ),
+                        hint=(
+                            "Queue file tasks with encrypted file payload "
+                            "storage enabled."
+                        ),
+                        category=TaskValidationCategory.PRIVACY,
+                    ),
+                )
+            ) from error
 
     async def _record_output_artifacts(
         self,
@@ -751,6 +828,14 @@ def _utc_now() -> datetime:
 
 def _worker_id() -> str:
     return f"worker-{uuid4().hex}"
+
+
+def _file_converters(
+    converters: Mapping[str, FileConverter] | None,
+) -> Mapping[str, FileConverter]:
+    values: dict[str, FileConverter] = dict(default_file_converters())
+    values.update(converters or {})
+    return values
 
 
 def _queued_input_payload_required(

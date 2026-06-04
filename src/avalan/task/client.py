@@ -33,6 +33,7 @@ from .privacy import (
     EncryptionProvider,
     HmacProvider,
     PrivacyField,
+    PrivacySafeValue,
     PrivacySanitizationError,
     PrivacySanitizer,
 )
@@ -40,10 +41,13 @@ from .queue import TaskQueue, TaskQueueArtifact, TaskQueueSubmission
 from .runner import (
     DirectTaskRunner,
     TaskDirectTarget,
+    TaskExecutableInputFileEntry,
     TaskRunResult,
     _input_summary_value,
     _sanitize_artifact_ref,
     _snapshot_value,
+    task_execution_file_entries_value,
+    task_input_file_entries_for_queue,
 )
 from .state import TASK_RUN_TERMINAL_STATES, TaskRunState
 from .store import (
@@ -491,11 +495,6 @@ class TaskClient:
             definition,
             definition_hash=definition_id,
         )
-        input_payload = self._queue_input_payload(
-            definition,
-            input_value,
-            sanitizer,
-        )
         provider_reference_files = (
             task_provider_reference_input_files_from_input(
                 definition,
@@ -514,7 +513,23 @@ class TaskClient:
             materialized_file.as_input_file()
             for materialized_file in materialized_files
         )
-        queued_files = (*files, *provider_reference_files, *input_files)
+        file_entries = task_input_file_entries_for_queue(
+            files=files,
+            provider_reference_files=provider_reference_files,
+            materialized_files=materialized_files,
+        )
+        queued_files = tuple(entry.file for entry in file_entries)
+        assert queued_files == (
+            *files,
+            *provider_reference_files,
+            *input_files,
+        )
+        input_payload = self._queue_input_payload(
+            definition,
+            input_value,
+            file_entries=file_entries,
+            sanitizer=sanitizer,
+        )
         explicit_artifacts = self._explicit_queue_artifacts(
             definition,
             sanitizer,
@@ -743,9 +758,15 @@ class TaskClient:
         self,
         definition: TaskDefinition,
         input_value: object,
+        *,
+        file_entries: tuple[TaskExecutableInputFileEntry, ...],
         sanitizer: PrivacySanitizer,
     ) -> TaskExecutionPayload | None:
-        if not _queue_input_payload_required(definition, input_value):
+        input_required = _queue_input_payload_required(
+            definition,
+            input_value,
+        )
+        if not input_required and not file_entries:
             return None
         issues = _queue_input_payload_issues(
             definition,
@@ -754,28 +775,57 @@ class TaskClient:
         )
         if issues:
             raise TaskValidationError(issues)
+        encrypted_input: PrivacySafeValue = None
+        if input_required:
+            try:
+                encrypted_input = sanitizer.sanitize_with_action(
+                    PrivacyAction.ENCRYPT,
+                    input_value,
+                )
+            except PrivacySanitizationError as error:
+                raise TaskValidationError(
+                    (
+                        _queue_input_payload_issue(
+                            path="input",
+                            message=(
+                                "Queued task input cannot be safely stored "
+                                "for worker execution."
+                            ),
+                            hint=(
+                                "Use JSON-compatible input or a durable file "
+                                "or provider reference."
+                            ),
+                        ),
+                    )
+                ) from error
         try:
-            encrypted_input = sanitizer.sanitize_with_action(
-                PrivacyAction.ENCRYPT,
-                input_value,
+            encrypted_files = tuple(
+                _snapshot_value(
+                    sanitizer.sanitize_with_action(
+                        PrivacyAction.ENCRYPT,
+                        entry,
+                    )
+                )
+                for entry in task_execution_file_entries_value(file_entries)
             )
         except PrivacySanitizationError as error:
             raise TaskValidationError(
                 (
                     _queue_input_payload_issue(
-                        path="input",
+                        path="files",
                         message=(
-                            "Queued task input cannot be safely stored for "
+                            "Queued task files cannot be safely stored for "
                             "worker execution."
                         ),
                         hint=(
-                            "Use JSON-compatible input or a durable file or "
-                            "provider reference."
+                            "Use durable artifacts or provider references "
+                            "with encrypted payload storage enabled."
                         ),
                     ),
                 )
             ) from error
         return TaskExecutionPayload(
+            file_values=encrypted_files,
             input_value=_snapshot_value(encrypted_input),
         )
 
@@ -791,6 +841,10 @@ class TaskClient:
                 provenance=TaskArtifactProvenance(
                     operation="materialization",
                     metadata={
+                        "descriptor": _materialized_file_descriptor_metadata(
+                            file,
+                            index=index,
+                        ),
                         "identity": file.identity,
                         "source_kind": file.descriptor.source_kind.value,
                     },
@@ -798,9 +852,15 @@ class TaskClient:
                 retention=TaskArtifactRetention(
                     delete_after_days=definition.artifact.retention_days,
                 ),
-                metadata={"identity": file.identity},
+                metadata={
+                    "descriptor": _materialized_file_descriptor_metadata(
+                        file,
+                        index=index,
+                    ),
+                    "identity": file.identity,
+                },
             )
-            for file in files
+            for index, file in enumerate(files)
         )
 
     async def _delete_materialized_files(
@@ -1131,6 +1191,29 @@ def _file_conversion_request(
         name=cast(str, name),
         options=options,
     )
+
+
+def _materialized_file_descriptor_metadata(
+    file: TaskMaterializedFile,
+    *,
+    index: int,
+) -> TaskSnapshotMetadata:
+    descriptor = file.descriptor
+    value: dict[str, object] = {
+        "conversions": tuple(
+            {"name": conversion.name} for conversion in descriptor.conversions
+        ),
+        "descriptor_path": file.descriptor_path,
+        "file_order": index,
+        "source_kind": descriptor.source_kind.value,
+    }
+    if descriptor.role is not None:
+        value["role"] = descriptor.role
+    if descriptor.mime_type is not None:
+        value["mime_type"] = descriptor.mime_type
+    if descriptor.size_bytes is not None:
+        value["size_bytes"] = descriptor.size_bytes
+    return freeze_snapshot_metadata(value)
 
 
 def _provider_reference_descriptor(

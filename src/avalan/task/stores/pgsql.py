@@ -2244,13 +2244,21 @@ def _request_from_payload(
 def _execution_payload_to_payload(
     payload: TaskExecutionPayload,
 ) -> dict[str, object]:
-    return {"input_value": _plain(payload.input_value)}
+    return {
+        "file_values": _plain(payload.file_values),
+        "input_value": _plain(payload.input_value),
+    }
 
 
 def _execution_payload_from_payload(
     payload: Mapping[str, object],
 ) -> TaskExecutionPayload:
+    file_values = payload.get("file_values", ())
+    assert isinstance(file_values, list | tuple)
     return TaskExecutionPayload(
+        file_values=tuple(
+            freeze_snapshot_value(value) for value in file_values
+        ),
         input_value=freeze_snapshot_value(payload.get("input_value")),
     )
 

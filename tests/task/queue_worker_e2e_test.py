@@ -21,6 +21,7 @@ from avalan.task import (
     REDACTED_MARKER,
     STORED_MARKER,
     EncryptedPrivacyValue,
+    FileConverter,
     PrivacyAction,
     PrivacySanitizer,
     TaskArtifactPolicy,
@@ -35,6 +36,9 @@ from avalan.task import (
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
+    TaskFileConversionRequest,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
     TaskFileDescriptor,
     TaskInputContract,
     TaskInputFile,
@@ -183,6 +187,32 @@ class TextTarget(TaskTargetRunner):
         self.inputs.append(context.input_value)
         await context.check_cancelled()
         return "public answer"
+
+
+class PrefixTextConverter:
+    name = "prefix"
+    version = "1"
+    capability = TaskFileConverterCapability(
+        source_mime_types=("text/plain",),
+        output_mime_types=("text/plain",),
+        supports_streaming=False,
+        max_input_bytes=1024,
+        max_output_bytes=1024,
+    )
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = source_media_type, options
+        return TaskFileConversionResult(
+            content=b"converted:" + content,
+            media_type="text/plain",
+            metadata={"status": "ready"},
+        )
 
 
 class HeartbeatWaitingTarget(TaskTargetRunner):
@@ -1008,6 +1038,66 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(len(inspection.artifacts), 2)
         self.assertNotIn("first private body", str(inspection.as_dict()))
         self.assertNotIn("second private body", str(inspection.as_dict()))
+
+    async def test_file_conversion_runs_before_worker_target(
+        self,
+    ) -> None:
+        clock = Clock()
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            Path(root, "document.txt").write_bytes(b"private source")
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+            )
+            store = InMemoryTaskStore(clock=lambda: clock.now)
+            queue = InMemoryTaskQueue(store, clock=clock)
+            target = ReadingTarget()
+            client = _client(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                execution_roots=(root,),
+                clock=clock,
+            )
+            worker = _worker(
+                store,
+                queue,
+                target=target,
+                artifact_store=artifact_store,
+                file_converters={"prefix": PrefixTextConverter()},
+                clock=clock,
+            )
+            definition = _definition(
+                input_contract=TaskInputContract.file(
+                    conversions=("prefix",),
+                    mime_types=("text/plain",),
+                )
+            )
+
+            submission = await client.enqueue(
+                definition,
+                input_value=TaskFileDescriptor.local_path(
+                    "document.txt",
+                    mime_type="text/plain",
+                    conversions=(TaskFileConversionRequest(name="prefix"),),
+                    metadata={"filename": "document.txt"},
+                ),
+            )
+            processed = await worker.process_once()
+            artifacts = await store.list_artifacts(submission.run.run_id)
+            inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(target.file_bodies, [b"converted:private source"])
+        self.assertEqual(
+            [artifact.purpose for artifact in artifacts],
+            [TaskArtifactPurpose.INPUT, TaskArtifactPurpose.CONVERTED],
+        )
+        self.assertNotIn("private source", str(inspection.as_dict()))
+        self.assertNotIn("document.txt", str(inspection.as_dict()))
 
     async def test_structured_file_input_materializes_for_worker(
         self,
@@ -2645,6 +2735,7 @@ def _worker(
     target: TaskTargetRunner,
     queue_name: str = "default",
     artifact_store: LocalArtifactStore | None = None,
+    file_converters: Mapping[str, FileConverter] | None = None,
     shutdown: TaskWorkerShutdown | None = None,
     heartbeat_seconds: float | None = None,
     clock: Clock,
@@ -2658,6 +2749,7 @@ def _worker(
         encryption_provider=StaticEncryptionProvider(),
         raw_storage_allowed=True,
         artifact_store=artifact_store,
+        file_converters=file_converters,
         shutdown=shutdown,
         heartbeat_seconds=heartbeat_seconds,
         clock=lambda: clock.now,

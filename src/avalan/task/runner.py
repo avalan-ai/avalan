@@ -24,7 +24,13 @@ from .definition import (
     TaskOutputType,
 )
 from .error import TaskError, TaskErrorValue, classify_task_error
-from .input import TaskFileDescriptor
+from .input import (
+    TaskFileConversionRequest,
+    TaskFileDescriptor,
+    TaskFileSourceKind,
+    TaskProviderReference,
+    TaskProviderReferenceKind,
+)
 from .materialization import (
     TaskMaterializedFile,
     materialize_task_input_files,
@@ -102,6 +108,234 @@ class TaskRunResult:
     run: TaskRun
     attempt: TaskAttempt
     output: object = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskExecutableInputFiles:
+    files: tuple[TaskInputFile, ...]
+    materialized_files: tuple[TaskMaterializedFile, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.files, tuple)
+        for file in self.files:
+            assert isinstance(file, TaskInputFile)
+        assert isinstance(self.materialized_files, tuple)
+        for materialized_file in self.materialized_files:
+            assert isinstance(materialized_file, TaskMaterializedFile)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskExecutableInputFileEntry:
+    file: TaskInputFile
+    materialized_file: TaskMaterializedFile | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.file, TaskInputFile)
+        if self.materialized_file is not None:
+            assert isinstance(self.materialized_file, TaskMaterializedFile)
+
+
+async def build_task_executable_input_files(
+    definition: TaskDefinition,
+    input_value: object,
+    *,
+    files: tuple[TaskInputFile, ...] = (),
+    roots: Iterable[str | Path],
+    artifact_store: ArtifactStore | None,
+    hmac_provider: HmacProvider | None = None,
+    task_store: TaskStore | None = None,
+    run: TaskRun | None = None,
+    attempt: TaskAttempt | None = None,
+    file_converters: Mapping[str, FileConverter] | None = None,
+    now: datetime | None = None,
+) -> TaskExecutableInputFiles:
+    assert isinstance(definition, TaskDefinition)
+    assert isinstance(files, tuple)
+    for file in files:
+        assert isinstance(file, TaskInputFile)
+    if task_store is not None:
+        assert isinstance(run, TaskRun)
+        assert isinstance(attempt, TaskAttempt)
+    provider_reference_files = task_provider_reference_input_files_from_input(
+        definition,
+        input_value,
+        now=now,
+    )
+    materialized_files = await materialize_task_input_files(
+        definition,
+        input_value,
+        roots=roots,
+        artifact_store=artifact_store,
+        hmac_provider=hmac_provider,
+        task_store=task_store,
+        run_id=run.run_id if run is not None else None,
+        attempt_id=attempt.attempt_id if attempt is not None else None,
+    )
+    input_files = await task_input_files_from_materialized(
+        definition,
+        materialized_files,
+        artifact_store=artifact_store,
+        file_converters=file_converters,
+        task_store=task_store,
+        run=run,
+        attempt=attempt,
+    )
+    return TaskExecutableInputFiles(
+        files=(*files, *provider_reference_files, *input_files),
+        materialized_files=materialized_files,
+    )
+
+
+async def task_input_files_from_materialized(
+    definition: TaskDefinition,
+    materialized_files: tuple[TaskMaterializedFile, ...],
+    *,
+    artifact_store: ArtifactStore | None,
+    file_converters: Mapping[str, FileConverter] | None = None,
+    task_store: TaskStore | None = None,
+    run: TaskRun | None = None,
+    attempt: TaskAttempt | None = None,
+) -> tuple[TaskInputFile, ...]:
+    assert isinstance(definition, TaskDefinition)
+    input_files: list[TaskInputFile] = []
+    converters = _file_converters(file_converters)
+    for index, file in enumerate(materialized_files):
+        input_files.append(
+            (
+                await converted_task_input_file(
+                    definition,
+                    file,
+                    index=index,
+                    artifact_store=artifact_store,
+                    file_converters=converters,
+                    task_store=task_store,
+                    run=run,
+                    attempt=attempt,
+                )
+            )
+            or file.as_input_file()
+        )
+    return tuple(input_files)
+
+
+async def converted_task_input_file(
+    definition: TaskDefinition,
+    file: TaskMaterializedFile,
+    *,
+    index: int,
+    artifact_store: ArtifactStore | None,
+    file_converters: Mapping[str, FileConverter],
+    task_store: TaskStore | None = None,
+    run: TaskRun | None = None,
+    attempt: TaskAttempt | None = None,
+) -> TaskInputFile | None:
+    source_ref = file.ref
+    converted = False
+    for conversion_index, request in enumerate(file.descriptor.conversions):
+        if request.name in {"native", "none"}:
+            continue
+        converter = file_converters.get(request.name)
+        if converter is None or artifact_store is None:
+            raise TaskValidationError(
+                (
+                    _conversion_issue(
+                        index=index,
+                        conversion_index=conversion_index,
+                        is_array=definition.input.type
+                        == TaskInputType.FILE_ARRAY,
+                    ),
+                )
+            )
+        try:
+            converted_artifact = await convert_task_artifact(
+                source_ref,
+                request,
+                converter=converter,
+                artifact_store=artifact_store,
+                task_store=task_store,
+                run_id=run.run_id if run is not None else None,
+                attempt_id=attempt.attempt_id if attempt is not None else None,
+                retention=TaskArtifactRetention(
+                    delete_after_days=definition.artifact.retention_days,
+                ),
+            )
+        except TaskFileConversionError as error:
+            raise TaskValidationError(
+                (
+                    _conversion_issue(
+                        index=index,
+                        conversion_index=conversion_index,
+                        is_array=definition.input.type
+                        == TaskInputType.FILE_ARRAY,
+                    ),
+                )
+            ) from error
+        source_ref = converted_artifact.ref
+        converted = True
+    if not converted:
+        return None
+    return TaskInputFile(
+        logical_path=f"artifact:{source_ref.artifact_id}",
+        artifact_ref=source_ref,
+        media_type=source_ref.media_type,
+        size_bytes=source_ref.size_bytes,
+        metadata=file.identity,
+    )
+
+
+def task_execution_file_entries_value(
+    entries: tuple[TaskExecutableInputFileEntry, ...],
+) -> tuple[TaskSnapshotValue, ...]:
+    return tuple(
+        _execution_file_entry_value(entry, index)
+        for index, entry in enumerate(entries)
+    )
+
+
+def task_execution_file_entries_from_value(
+    value: object,
+) -> tuple[TaskExecutableInputFileEntry, ...]:
+    if isinstance(value, Mapping):
+        try:
+            return (_execution_file_entry_from_value(value),)
+        except (AssertionError, KeyError, TypeError, ValueError) as error:
+            raise TaskValidationError(
+                (_queue_file_payload_issue(),)
+            ) from error
+    if not isinstance(value, list | tuple):
+        raise TaskValidationError((_queue_file_payload_issue(),))
+    entries: list[TaskExecutableInputFileEntry] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise TaskValidationError((_queue_file_payload_issue(),))
+        try:
+            entries.append(_execution_file_entry_from_value(item))
+        except (AssertionError, KeyError, TypeError, ValueError) as error:
+            raise TaskValidationError(
+                (_queue_file_payload_issue(),)
+            ) from error
+    return tuple(entries)
+
+
+def task_input_file_entries_for_queue(
+    *,
+    files: tuple[TaskInputFile, ...],
+    provider_reference_files: tuple[TaskInputFile, ...],
+    materialized_files: tuple[TaskMaterializedFile, ...],
+) -> tuple[TaskExecutableInputFileEntry, ...]:
+    return (
+        *(
+            TaskExecutableInputFileEntry(file=file)
+            for file in (*files, *provider_reference_files)
+        ),
+        *(
+            TaskExecutableInputFileEntry(
+                file=materialized_file.as_input_file(),
+                materialized_file=materialized_file,
+            )
+            for materialized_file in materialized_files
+        ),
+    )
 
 
 class TaskRunFinalizer:
@@ -337,26 +571,10 @@ class DirectTaskRunner:
         )
         try:
             await self._check_cancellation_or_expiry(run, expires_at)
-            provider_reference_files = (
-                task_provider_reference_input_files_from_input(
-                    definition,
-                    input_value,
-                    now=self._clock(),
-                )
-            )
-            materialized_files = await materialize_task_input_files(
+            executable_files = await self._build_executable_input_files(
                 definition,
                 input_value,
-                roots=self._execution_roots,
-                artifact_store=self._artifact_store,
-                hmac_provider=self._hmac_provider,
-                task_store=self._store,
-                run_id=run.run_id,
-                attempt_id=attempt.attempt_id,
-            )
-            input_files = await self._input_files_from_materialized(
-                definition,
-                materialized_files,
+                files=files,
                 run=run,
                 attempt=attempt,
             )
@@ -397,11 +615,7 @@ class DirectTaskRunner:
                     error,
                 ),
             )
-        files = (
-            *files,
-            *provider_reference_files,
-            *input_files,
-        )
+        files = executable_files.files
         attempt_policy = TaskAttemptPolicy.from_retry_policy(
             definition.retry,
         )
@@ -842,21 +1056,52 @@ class DirectTaskRunner:
         run: TaskRun,
         attempt: TaskAttempt,
     ) -> tuple[TaskInputFile, ...]:
-        input_files: list[TaskInputFile] = []
-        for index, file in enumerate(materialized_files):
-            input_files.append(
-                (
-                    await self._converted_input_file(
-                        definition,
-                        file,
-                        index=index,
-                        run=run,
-                        attempt=attempt,
-                    )
-                )
-                or file.as_input_file()
+        return await task_input_files_from_materialized(
+            definition,
+            materialized_files,
+            artifact_store=self._artifact_store,
+            file_converters=self._file_converters,
+            task_store=self._store,
+            run=run,
+            attempt=attempt,
+        )
+
+    async def _build_executable_input_files(
+        self,
+        definition: TaskDefinition,
+        input_value: object,
+        *,
+        files: tuple[TaskInputFile, ...],
+        run: TaskRun,
+        attempt: TaskAttempt,
+    ) -> TaskExecutableInputFiles:
+        provider_reference_files = (
+            task_provider_reference_input_files_from_input(
+                definition,
+                input_value,
+                now=self._clock(),
             )
-        return tuple(input_files)
+        )
+        materialized_files = await materialize_task_input_files(
+            definition,
+            input_value,
+            roots=self._execution_roots,
+            artifact_store=self._artifact_store,
+            hmac_provider=self._hmac_provider,
+            task_store=self._store,
+            run_id=run.run_id,
+            attempt_id=attempt.attempt_id,
+        )
+        input_files = await self._input_files_from_materialized(
+            definition,
+            materialized_files,
+            run=run,
+            attempt=attempt,
+        )
+        return TaskExecutableInputFiles(
+            files=(*files, *provider_reference_files, *input_files),
+            materialized_files=materialized_files,
+        )
 
     async def _converted_input_file(
         self,
@@ -867,68 +1112,278 @@ class DirectTaskRunner:
         run: TaskRun,
         attempt: TaskAttempt,
     ) -> TaskInputFile | None:
-        source_ref = file.ref
-        converted = False
-        for conversion_index, request in enumerate(
-            file.descriptor.conversions
-        ):
-            if request.name in {"native", "none"}:
-                continue
-            converter = self._file_converters.get(request.name)
-            if converter is None:
-                raise TaskValidationError(
-                    (
-                        _conversion_issue(
-                            index=index,
-                            conversion_index=conversion_index,
-                            is_array=(
-                                definition.input.type
-                                == TaskInputType.FILE_ARRAY
-                            ),
-                        ),
-                    )
-                )
-            try:
-                converted_artifact = await convert_task_artifact(
-                    source_ref,
-                    request,
-                    converter=converter,
-                    artifact_store=cast(ArtifactStore, self._artifact_store),
-                    task_store=self._store,
-                    run_id=run.run_id,
-                    attempt_id=attempt.attempt_id,
-                    retention=TaskArtifactRetention(
-                        delete_after_days=definition.artifact.retention_days,
-                    ),
-                )
-            except TaskFileConversionError as error:
-                raise TaskValidationError(
-                    (
-                        _conversion_issue(
-                            index=index,
-                            conversion_index=conversion_index,
-                            is_array=(
-                                definition.input.type
-                                == TaskInputType.FILE_ARRAY
-                            ),
-                        ),
-                    )
-                ) from error
-            source_ref = converted_artifact.ref
-            converted = True
-        if not converted:
-            return None
-        return TaskInputFile(
-            logical_path=f"artifact:{source_ref.artifact_id}",
-            artifact_ref=source_ref,
-            media_type=source_ref.media_type,
-            size_bytes=source_ref.size_bytes,
-            metadata=file.identity,
+        return await converted_task_input_file(
+            definition,
+            file,
+            index=index,
+            artifact_store=self._artifact_store,
+            file_converters=self._file_converters,
+            task_store=self._store,
+            run=run,
+            attempt=attempt,
         )
 
 
 def _snapshot_value(value: PrivacySafeValue) -> TaskSnapshotValue:
     return freeze_snapshot_value(value)
+
+
+def _execution_file_entry_value(
+    entry: TaskExecutableInputFileEntry,
+    index: int,
+) -> TaskSnapshotValue:
+    value: dict[str, object] = {
+        "file": _input_file_value(entry.file),
+        "order": index,
+    }
+    if entry.materialized_file is not None:
+        value["materialized"] = _materialized_file_value(
+            entry.materialized_file
+        )
+    return freeze_snapshot_value(value)
+
+
+def _execution_file_entry_from_value(
+    value: Mapping[str, object],
+) -> TaskExecutableInputFileEntry:
+    file_value = value["file"]
+    assert isinstance(file_value, Mapping)
+    materialized_value = value.get("materialized")
+    file = _input_file_from_value(file_value)
+    return TaskExecutableInputFileEntry(
+        file=file,
+        materialized_file=(
+            _materialized_file_from_value(materialized_value, file=file)
+            if materialized_value is not None
+            else None
+        ),
+    )
+
+
+def _input_file_value(file: TaskInputFile) -> TaskSnapshotValue:
+    value: dict[str, object] = {
+        "logical_path": file.logical_path,
+        "metadata": file.metadata,
+    }
+    if file.artifact_ref is not None:
+        value["artifact_ref"] = _artifact_ref_value(file.artifact_ref)
+    if file.provider_reference is not None:
+        value["provider_reference"] = _provider_reference_value(
+            file.provider_reference
+        )
+    if file.media_type is not None:
+        value["media_type"] = file.media_type
+    if file.size_bytes is not None:
+        value["size_bytes"] = file.size_bytes
+    return freeze_snapshot_value(value)
+
+
+def _input_file_from_value(value: Mapping[str, object]) -> TaskInputFile:
+    logical_path = value["logical_path"]
+    assert isinstance(logical_path, str)
+    artifact_ref_value = value.get("artifact_ref")
+    provider_reference_value = value.get("provider_reference")
+    metadata = value.get("metadata", {})
+    assert isinstance(metadata, Mapping)
+    media_type = value.get("media_type")
+    size_bytes = value.get("size_bytes")
+    return TaskInputFile(
+        logical_path=logical_path,
+        artifact_ref=(
+            _artifact_ref_from_value(artifact_ref_value)
+            if artifact_ref_value is not None
+            else None
+        ),
+        provider_reference=(
+            _provider_reference_from_value(provider_reference_value)
+            if provider_reference_value is not None
+            else None
+        ),
+        media_type=cast(str | None, media_type),
+        size_bytes=cast(int | None, size_bytes),
+        metadata=metadata,
+    )
+
+
+def _materialized_file_value(
+    file: TaskMaterializedFile,
+) -> TaskSnapshotValue:
+    return freeze_snapshot_value(
+        {
+            "descriptor": _file_descriptor_value(file.descriptor),
+            "descriptor_path": file.descriptor_path,
+            "identity": file.identity,
+            "ref": _artifact_ref_value(file.ref),
+        }
+    )
+
+
+def _materialized_file_from_value(
+    value: object,
+    *,
+    file: TaskInputFile,
+) -> TaskMaterializedFile:
+    assert isinstance(value, Mapping)
+    descriptor_value = value["descriptor"]
+    assert isinstance(descriptor_value, Mapping)
+    descriptor_path = value["descriptor_path"]
+    assert isinstance(descriptor_path, str)
+    identity = value.get("identity", {})
+    assert isinstance(identity, Mapping)
+    ref_value = value.get("ref")
+    ref = (
+        _artifact_ref_from_value(ref_value)
+        if ref_value is not None
+        else file.artifact_ref
+    )
+    assert ref is not None
+    return TaskMaterializedFile(
+        descriptor=_file_descriptor_from_value(descriptor_value),
+        descriptor_path=descriptor_path,
+        ref=ref,
+        identity=identity,
+    )
+
+
+def _artifact_ref_value(ref: TaskArtifactRef) -> TaskSnapshotValue:
+    return freeze_snapshot_value(
+        {
+            "artifact_id": ref.artifact_id,
+            "media_type": ref.media_type,
+            "metadata": ref.metadata,
+            "sha256": ref.sha256,
+            "size_bytes": ref.size_bytes,
+            "storage_key": ref.storage_key,
+            "store": ref.store,
+        }
+    )
+
+
+def _artifact_ref_from_value(value: object) -> TaskArtifactRef:
+    assert isinstance(value, Mapping)
+    return TaskArtifactRef(
+        artifact_id=cast(str, value["artifact_id"]),
+        store=cast(str, value["store"]),
+        storage_key=cast(str, value["storage_key"]),
+        media_type=cast(str | None, value.get("media_type")),
+        size_bytes=cast(int | None, value.get("size_bytes")),
+        sha256=cast(str | None, value.get("sha256")),
+        metadata=cast(TaskSnapshotMetadata, value.get("metadata", {})),
+    )
+
+
+def _file_descriptor_value(
+    descriptor: TaskFileDescriptor,
+) -> TaskSnapshotValue:
+    value: dict[str, object] = {
+        "conversions": tuple(
+            _conversion_request_value(request)
+            for request in descriptor.conversions
+        ),
+        "metadata": descriptor.metadata,
+        "reference": descriptor.reference,
+        "source_kind": descriptor.source_kind.value,
+    }
+    if descriptor.role is not None:
+        value["role"] = descriptor.role
+    if descriptor.mime_type is not None:
+        value["mime_type"] = descriptor.mime_type
+    if descriptor.size_bytes is not None:
+        value["size_bytes"] = descriptor.size_bytes
+    if descriptor.sha256 is not None:
+        value["sha256"] = descriptor.sha256
+    if descriptor.provider_reference is not None:
+        value["provider_reference"] = _provider_reference_value(
+            descriptor.provider_reference
+        )
+    return freeze_snapshot_value(value)
+
+
+def _file_descriptor_from_value(
+    value: Mapping[str, object],
+) -> TaskFileDescriptor:
+    conversions = value.get("conversions", ())
+    assert isinstance(conversions, list | tuple)
+    provider_reference_value = value.get("provider_reference")
+    return TaskFileDescriptor(
+        source_kind=TaskFileSourceKind(cast(str, value["source_kind"])),
+        reference=cast(str, value["reference"]),
+        role=cast(str | None, value.get("role")),
+        mime_type=cast(str | None, value.get("mime_type")),
+        size_bytes=cast(int | None, value.get("size_bytes")),
+        sha256=cast(str | None, value.get("sha256")),
+        conversions=tuple(
+            _conversion_request_from_value(conversion)
+            for conversion in conversions
+        ),
+        provider_reference=(
+            _provider_reference_from_value(provider_reference_value)
+            if provider_reference_value is not None
+            else None
+        ),
+        metadata=cast(Mapping[str, object], value.get("metadata", {})),
+    )
+
+
+def _conversion_request_value(
+    request: TaskFileConversionRequest,
+) -> TaskSnapshotValue:
+    return freeze_snapshot_value(
+        {
+            "name": request.name,
+            "options": request.options,
+        }
+    )
+
+
+def _conversion_request_from_value(
+    value: object,
+) -> TaskFileConversionRequest:
+    assert isinstance(value, Mapping)
+    return TaskFileConversionRequest(
+        name=cast(str, value["name"]),
+        options=cast(Mapping[str, object], value.get("options", {})),
+    )
+
+
+def _provider_reference_value(
+    reference: TaskProviderReference,
+) -> TaskSnapshotValue:
+    return freeze_snapshot_value(reference.execution_metadata())
+
+
+def _provider_reference_from_value(value: object) -> TaskProviderReference:
+    assert isinstance(value, Mapping)
+    expires_at = value.get("expires_at")
+    assert expires_at is None or isinstance(expires_at, str)
+    return TaskProviderReference(
+        kind=TaskProviderReferenceKind(cast(str, value["kind"])),
+        provider=cast(str, value["provider"]),
+        reference=cast(str, value["reference"]),
+        owner_scope=cast(str | None, value.get("owner_scope")),
+        expires_at=(
+            datetime.fromisoformat(expires_at)
+            if isinstance(expires_at, str)
+            else None
+        ),
+        mime_type=cast(str | None, value.get("mime_type")),
+        size_bucket=cast(str | None, value.get("size_bucket")),
+        identity_hmac=cast(str | None, value.get("identity_hmac")),
+        durable=cast(bool, value.get("durable", True)),
+        metadata=cast(Mapping[str, object], value.get("metadata", {})),
+    )
+
+
+def _queue_file_payload_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="queue.file_payload_unavailable",
+        path="request.input_payload.file_values",
+        message=(
+            "Queued task file inputs are unavailable for worker execution."
+        ),
+        hint="Queue file tasks with encrypted file payload storage enabled.",
+        category=TaskValidationCategory.PRIVACY,
+    )
 
 
 async def _fail_attempt_if_running(

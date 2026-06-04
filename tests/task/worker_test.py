@@ -31,12 +31,15 @@ from avalan.task import (
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
+    TaskFileDescriptor,
     TaskInputContract,
+    TaskInputFile,
     TaskKeyPurpose,
     TaskMetadata,
     TaskObservabilityPolicy,
     TaskOutputContract,
     TaskPrivacyPolicy,
+    TaskProviderReferenceKind,
     TaskQueueAbandonment,
     TaskQueueArtifact,
     TaskQueueClaim,
@@ -62,6 +65,10 @@ from avalan.task import (
 )
 from avalan.task.error import classify_task_error
 from avalan.task.idempotency import TaskIdempotencyIdentity
+from avalan.task.runner import (
+    TaskExecutableInputFileEntry,
+    task_execution_file_entries_value,
+)
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.worker import (
     _target_runner,
@@ -755,6 +762,121 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(target.contexts[0].input_value, "private prompt")
         self.assertNotIn("private prompt", str(result.completion))
 
+    async def test_process_once_uses_encrypted_file_payload(self) -> None:
+        await self._use_definition(
+            _definition(input_contract=TaskInputContract.file())
+        )
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-private",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            mime_type="application/pdf",
+            owner_scope="tenant-a",
+            identity_hmac="hmac-value",
+        )
+        assert descriptor.provider_reference is not None
+        entry = TaskExecutableInputFileEntry(
+            file=TaskInputFile(
+                logical_path="provider:openai:provider_file_id",
+                provider_reference=descriptor.provider_reference,
+                media_type="application/pdf",
+            )
+        )
+        sanitizer = PrivacySanitizer(
+            TaskPrivacyPolicy(raw_retention_days=1),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+        )
+        await self._use_request(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_payload=TaskExecutionPayload(
+                    file_values=(
+                        sanitizer.sanitize_with_action(
+                            PrivacyAction.ENCRYPT,
+                            task_execution_file_entries_value((entry,))[0],
+                        ),
+                    ),
+                    input_value=None,
+                ),
+                queue="default",
+            )
+        )
+        target = FakeTarget("safe output")
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            encryption_provider=StaticEncryptionProvider(),
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(result.completion)
+        self.assertEqual(len(target.contexts[0].files), 1)
+        file = target.contexts[0].files[0]
+        self.assertIsNotNone(file.provider_reference)
+        assert file.provider_reference is not None
+        self.assertEqual(file.provider_reference.reference, "file-private")
+        self.assertNotIn("file-private", str(result.completion))
+
+    async def test_process_once_fails_without_file_payload_decryption(
+        self,
+    ) -> None:
+        await self._use_definition(
+            _definition(input_contract=TaskInputContract.file())
+        )
+        entry = TaskExecutableInputFileEntry(
+            file=TaskInputFile(
+                logical_path="artifact:input-1",
+                artifact_ref=TaskArtifactRef(
+                    artifact_id="input-1",
+                    store="local",
+                    storage_key="private/input-1",
+                ),
+            )
+        )
+        sanitizer = PrivacySanitizer(
+            TaskPrivacyPolicy(raw_retention_days=1),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+        )
+        await self._use_request(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_payload=TaskExecutionPayload(
+                    file_values=(
+                        sanitizer.sanitize_with_action(
+                            PrivacyAction.ENCRYPT,
+                            task_execution_file_entries_value((entry,))[0],
+                        ),
+                    ),
+                    input_value=None,
+                ),
+                queue="default",
+            )
+        )
+        target = FakeTarget("safe output")
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertEqual(target.contexts, [])
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        self.assertNotIn("private/input-1", str(self.queue.completed))
+
     async def test_process_once_fails_without_execution_payload(self) -> None:
         await self._use_request(
             TaskExecutionRequest(
@@ -783,6 +905,39 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         rendered_result = str(self.queue.completed.run.result)
         self.assertIn("privacy.failure", rendered_result)
         self.assertNotIn("<redacted>", rendered_result)
+
+    async def test_process_once_fails_when_payload_has_no_scalar_input(
+        self,
+    ) -> None:
+        await self._use_request(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_summary={"privacy": "<redacted>"},
+                input_payload=TaskExecutionPayload(
+                    file_values=(),
+                    input_value=None,
+                ),
+                queue="default",
+            )
+        )
+        target = FakeTarget("safe output")
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            encryption_provider=StaticEncryptionProvider(),
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertEqual(target.contexts, [])
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        self.assertNotIn("<redacted>", str(self.queue.completed.run.result))
 
     async def test_process_once_fails_without_decryption_provider(
         self,
@@ -1662,13 +1817,14 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
 def _definition(
     *,
     artifact: TaskArtifactPolicy | None = None,
+    input_contract: TaskInputContract | None = None,
     observability: TaskObservabilityPolicy | None = None,
     output_contract: TaskOutputContract | None = None,
     retry: TaskRetryPolicy | None = None,
 ) -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name="worker_task", version="1"),
-        input=TaskInputContract.string(),
+        input=input_contract or TaskInputContract.string(),
         output=output_contract or TaskOutputContract.text(),
         execution=TaskExecutionTarget.agent("agent.toml"),
         artifact=artifact or TaskArtifactPolicy.references_only(),

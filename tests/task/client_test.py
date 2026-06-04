@@ -9,9 +9,12 @@ from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.event import Event, EventType
 from avalan.task import (
+    ENCRYPTED_MARKER,
     REDACTED_MARKER,
     EncryptedPrivacyValue,
     IdempotencyMode,
+    PrivacyAction,
+    PrivacySanitizationError,
     PrivacySanitizer,
     RunMode,
     TaskArtifactPurpose,
@@ -58,6 +61,7 @@ from avalan.task import (
     read_artifact_stream_bytes,
     spec_hash,
 )
+from avalan.task.runner import TaskExecutableInputFileEntry
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
 
@@ -193,6 +197,18 @@ class StaticEncryptionProvider:
         prefix = b"encrypted:"
         assert value.startswith(prefix)
         return value[len(prefix) :]
+
+
+class FailingPrivacySanitizer:
+    def sanitize_with_action(
+        self,
+        action: PrivacyAction,
+        value: object,
+        *,
+        key_id: str | None = None,
+    ) -> object:
+        _ = action, value, key_id
+        raise PrivacySanitizationError("private file payload")
 
 
 class RejectingTarget(TaskTargetRunner):
@@ -925,7 +941,8 @@ ref = "agents/reviewer.toml"
             client._queue_input_payload(
                 definition,
                 float("nan"),
-                sanitizer,
+                file_entries=(),
+                sanitizer=sanitizer,
             )
 
         self.assertEqual(queue.requests, [])
@@ -934,6 +951,73 @@ ref = "agents/reviewer.toml"
         self.assertEqual(issue.code, "queue.input_payload_unavailable")
         self.assertEqual(issue.path, "input")
         self.assertNotIn("nan", str(error.exception).lower())
+
+    async def test_queue_input_payload_omits_empty_file_payload(self) -> None:
+        store = InMemoryTaskStore()
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+        )
+        definition = _definition(
+            input_contract=TaskInputContract.file(),
+            run=TaskRunPolicy.queued(
+                "documents",
+                idempotency=IdempotencyMode.NONE,
+            ),
+        )
+
+        payload = client._queue_input_payload(
+            definition,
+            None,
+            file_entries=(),
+            sanitizer=PrivacySanitizer(
+                definition.privacy,
+                encryption_provider=StaticEncryptionProvider(),
+                raw_storage_allowed=True,
+            ),
+        )
+
+        self.assertIsNone(payload)
+
+    async def test_queue_input_payload_rejects_file_encryption_failure(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+        )
+        definition = _definition(
+            input_contract=TaskInputContract.file(),
+            run=TaskRunPolicy.queued(
+                "documents",
+                idempotency=IdempotencyMode.NONE,
+            ),
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            client._queue_input_payload(
+                definition,
+                None,
+                file_entries=(
+                    TaskExecutableInputFileEntry(
+                        file=TaskInputFile(logical_path="artifact:input-1")
+                    ),
+                ),
+                sanitizer=cast(
+                    PrivacySanitizer,
+                    FailingPrivacySanitizer(),
+                ),
+            )
+
+        self.assertEqual(error.exception.issues[0].path, "files")
+        self.assertNotIn("private file payload", str(error.exception))
 
     async def test_enqueue_uses_explicit_queue_name(self) -> None:
         store = InMemoryTaskStore()
@@ -1268,6 +1352,8 @@ ref = "agents/reviewer.toml"
                 input_value=TaskFileDescriptor.local_path(
                     "private.txt",
                     mime_type="text/plain",
+                    role="evidence",
+                    size_bytes=input_path.stat().st_size,
                     metadata={"filename": "private.txt"},
                 ),
                 available_at=available_at,
@@ -1303,6 +1389,10 @@ ref = "agents/reviewer.toml"
         request = queue.requests[0]
         rendered_request = str(request)
         self.assertEqual(request.queue, "documents")
+        self.assertIsNotNone(request.input_payload)
+        assert request.input_payload is not None
+        self.assertEqual(len(request.input_payload.file_values), 1)
+        self.assertIn(ENCRYPTED_MARKER, str(request.input_payload.file_values))
         self.assertNotIn("private file body", rendered_request)
         self.assertNotIn("private.txt", rendered_request)
         self.assertNotIn("customer-123", str(queue.idempotency))
@@ -1311,6 +1401,15 @@ ref = "agents/reviewer.toml"
         self.assertEqual(artifact_store.puts[0][0], b"private file body")
         self.assertEqual(len(queue.artifacts), 1)
         self.assertEqual(queue.artifacts[0].purpose, TaskArtifactPurpose.INPUT)
+        descriptor = queue.artifacts[0].metadata["descriptor"]
+        assert isinstance(descriptor, Mapping)
+        self.assertEqual(descriptor["descriptor_path"], "input")
+        self.assertEqual(descriptor["file_order"], 0)
+        self.assertEqual(descriptor["source_kind"], "local_path")
+        self.assertEqual(descriptor["mime_type"], "text/plain")
+        self.assertEqual(descriptor["role"], "evidence")
+        self.assertEqual(descriptor["size_bytes"], len(b"private file body"))
+        self.assertNotIn("private.txt", str(descriptor))
         self.assertEqual(
             queue.artifacts[0].retention,
             TaskArtifactRetention(

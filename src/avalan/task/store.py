@@ -99,12 +99,22 @@ class TaskDefinitionRecord:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TaskExecutionPayload:
     input_value: TaskSnapshotValue
+    file_values: tuple[TaskSnapshotValue, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "input_value",
             freeze_snapshot_value(self.input_value),
+        )
+        assert isinstance(
+            self.file_values,
+            tuple,
+        ), "file_values must be a tuple"
+        object.__setattr__(
+            self,
+            "file_values",
+            tuple(freeze_snapshot_value(value) for value in self.file_values),
         )
 
 

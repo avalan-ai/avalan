@@ -65,9 +65,13 @@ from avalan.task import (
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.runner import (
+    TaskExecutableInputFileEntry,
     TaskRunExpiredError,
     _error_summary_with_attempt_policy,
     _input_summary_value,
+    build_task_executable_input_files,
+    task_execution_file_entries_from_value,
+    task_execution_file_entries_value,
 )
 from avalan.task.stores import InMemoryTaskStore
 
@@ -1048,6 +1052,117 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
                 [artifact.purpose for artifact in artifacts],
                 [TaskArtifactPurpose.INPUT],
             )
+
+    async def test_shared_input_file_builder_materializes_inputs(self) -> None:
+        with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
+            Path(root, "input.txt").write_bytes(b"private text")
+            store = InMemoryTaskStore()
+            definition_value = definition(
+                input_contract=TaskInputContract.file()
+            )
+            await store.register_definition(
+                definition_value,
+                definition_hash="shared-builder",
+            )
+            run = await store.create_run(
+                TaskExecutionRequest(definition_id="shared-builder")
+            )
+            attempt = await store.create_attempt(run.run_id)
+
+            result = await build_task_executable_input_files(
+                definition_value,
+                TaskFileDescriptor.local_path(
+                    "input.txt",
+                    mime_type="text/plain",
+                ),
+                files=(TaskInputFile(logical_path="explicit:file"),),
+                roots=(root,),
+                artifact_store=LocalArtifactStore(
+                    artifacts,
+                    raw_storage_allowed=True,
+                    id_factory=lambda: "artifact-1",
+                ),
+                hmac_provider=self.hmac_provider,
+                task_store=store,
+                run=run,
+                attempt=attempt,
+            )
+
+        self.assertEqual(len(result.files), 2)
+        self.assertEqual(result.files[0].logical_path, "explicit:file")
+        self.assertEqual(result.files[1].logical_path, "artifact:artifact-1")
+        self.assertEqual(len(result.materialized_files), 1)
+
+    async def test_execution_file_payload_round_trips_descriptor_fields(
+        self,
+    ) -> None:
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-private",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            role="evidence",
+            mime_type="application/pdf",
+            size_bytes=42,
+            sha256="a" * 64,
+            owner_scope="tenant-a",
+            identity_hmac="hmac-value",
+        )
+        ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="artifact-1",
+            media_type="application/pdf",
+            size_bytes=42,
+            sha256="b" * 64,
+        )
+        entry = TaskExecutableInputFileEntry(
+            file=TaskInputFile(
+                logical_path="provider:openai:provider_file_id",
+                artifact_ref=ref,
+                provider_reference=descriptor.provider_reference,
+                media_type="application/pdf",
+                size_bytes=42,
+                metadata={"identity": "safe"},
+            ),
+            materialized_file=TaskMaterializedFile(
+                descriptor=descriptor,
+                descriptor_path="input.files[0]",
+                ref=ref,
+                identity={"identity": "safe"},
+            ),
+        )
+
+        values = task_execution_file_entries_value((entry,))
+        decoded = task_execution_file_entries_from_value(values)
+
+        self.assertEqual(len(decoded), 1)
+        self.assertEqual(decoded[0].file.logical_path, entry.file.logical_path)
+        self.assertIsNotNone(decoded[0].file.provider_reference)
+        self.assertIsNotNone(decoded[0].materialized_file)
+        assert decoded[0].materialized_file is not None
+        decoded_descriptor = decoded[0].materialized_file.descriptor
+        self.assertEqual(decoded_descriptor.role, "evidence")
+        self.assertEqual(decoded_descriptor.size_bytes, 42)
+        self.assertEqual(decoded_descriptor.sha256, "a" * 64)
+        self.assertIsNotNone(decoded_descriptor.provider_reference)
+
+    async def test_execution_file_payload_rejects_malformed_values(
+        self,
+    ) -> None:
+        for value in (
+            object(),
+            (object(),),
+            ({"file": {"logical_path": ""}},),
+            {"file": {"logical_path": ""}},
+        ):
+            with self.subTest(value=repr(value)):
+                with self.assertRaises(TaskValidationError) as error:
+                    task_execution_file_entries_from_value(value)
+
+                self.assertEqual(
+                    error.exception.issues[0].code,
+                    "queue.file_payload_unavailable",
+                )
 
     async def test_file_conversion_failure_finalizes_run_safely(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:

@@ -206,10 +206,16 @@ class StoreContractAssertions:
                 definition_id="hash-a",
                 input_summary={"privacy": "<hmac-sha256>"},
                 input_payload=TaskExecutionPayload(
+                    file_values=(
+                        {
+                            "privacy": "<encrypted>",
+                            "ciphertext": "ZmlsZQ==",
+                        },
+                    ),
                     input_value={
                         "privacy": "<encrypted>",
                         "ciphertext": "Ynl0ZXM=",
-                    }
+                    },
                 ),
             )
         )
@@ -222,10 +228,23 @@ class StoreContractAssertions:
             loaded.request.input_payload.input_value,
         )
         self.assertEqual(payload["privacy"], "<encrypted>")
+        self.assertEqual(len(loaded.request.input_payload.file_values), 1)
+        file_payload = cast(
+            Mapping[str, object],
+            loaded.request.input_payload.file_values[0],
+        )
+        self.assertEqual(file_payload["privacy"], "<encrypted>")
         with self.assertRaises(TypeError):
             cast(dict[str, object], payload)["raw"] = "leak"
+        with self.assertRaises(TypeError):
+            cast(dict[str, object], file_payload)["raw"] = "leak"
         with self.assertRaises(AssertionError):
             TaskExecutionPayload(input_value={"raw": object()})
+        with self.assertRaises(AssertionError):
+            TaskExecutionPayload(
+                input_value=None,
+                file_values=({"raw": object()},),
+            )
 
     async def test_attempts_are_ordered_and_one_active_attempt_is_allowed(
         self,
