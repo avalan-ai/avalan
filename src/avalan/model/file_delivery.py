@@ -352,6 +352,7 @@ def plan_file_delivery(
         limit_diagnostic = _limit_diagnostic(
             request,
             profile.inline_byte_limit,
+            expands_base64=True,
         )
         if limit_diagnostic is not None:
             return limit_diagnostic
@@ -613,19 +614,31 @@ def _can_inline_text(
 def _limit_diagnostic(
     request: FileDeliveryRequest,
     limit: FileDeliveryLimit | None,
+    *,
+    expands_base64: bool = False,
 ) -> FileDeliveryDecision | None:
-    if (
-        limit is None
-        or limit.max_bytes is None
-        or request.size_bytes is None
-        or request.size_bytes <= limit.max_bytes
-    ):
+    assert isinstance(expands_base64, bool)
+    if limit is None or limit.max_bytes is None or request.size_bytes is None:
+        return None
+    delivery_size = (
+        _base64_size(request.size_bytes)
+        if expands_base64
+        else request.size_bytes
+    )
+    if delivery_size <= limit.max_bytes:
         return None
     return _reject(
         code="model.file_delivery.inline_limit_exceeded",
         message="Model file delivery inline limit would be exceeded.",
         hint=f"Use a delivery mode within the {limit.name} limit.",
     )
+
+
+def _base64_size(size_bytes: int) -> int:
+    assert isinstance(size_bytes, int)
+    assert not isinstance(size_bytes, bool)
+    assert size_bytes >= 0
+    return ((size_bytes + 2) // 3) * 4
 
 
 def _reject(

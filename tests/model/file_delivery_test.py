@@ -600,6 +600,47 @@ def test_plan_delivery_rejects_inline_limit_excess() -> None:
     assert "tiny_bytes" in bytes_decision.diagnostic.hint
 
 
+def test_plan_delivery_accounts_for_base64_inline_byte_size() -> None:
+    profile = FileDeliveryProfile(
+        name="tiny_bytes",
+        delivery_modes=frozenset(
+            {
+                FileDeliveryMode.INLINE_BYTES,
+                FileDeliveryMode.INLINE_TEXT,
+            }
+        ),
+        accepted_mime_types=("image/*",),
+        inline_byte_limit=FileDeliveryLimit(
+            name="tiny_bytes",
+            source="test",
+            max_bytes=5,
+        ),
+    )
+
+    accepted = profile.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="image/png",
+            size_bytes=3,
+            has_artifact=True,
+        )
+    )
+    rejected = profile.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="image/png",
+            size_bytes=4,
+            has_artifact=True,
+        )
+    )
+
+    assert accepted.mode == FileDeliveryMode.INLINE_BYTES
+    assert rejected.mode == FileDeliveryMode.REJECT
+    assert rejected.diagnostic is not None
+    assert (
+        rejected.diagnostic.code == "model.file_delivery.inline_limit_exceeded"
+    )
+    assert "tiny_bytes" in rejected.diagnostic.hint
+
+
 def test_profile_file_count_limits() -> None:
     unlimited = FileDeliveryProfile(
         name="unlimited",
