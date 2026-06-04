@@ -12,6 +12,7 @@ from avalan.model import (
 DOC_ROOT = Path(__file__).parents[2] / "docs"
 CLI_DOC = DOC_ROOT / "CLI.md"
 FILE_DELIVERY_DOC = DOC_ROOT / "task_file_delivery.md"
+FLOW_COMPATIBILITY_DOC = DOC_ROOT / "FLOW_COMPATIBILITY.md"
 OPERATIONS_DOC = DOC_ROOT / "TASK_OPERATIONS.md"
 
 TASK_INPUT_FLAGS = (
@@ -138,6 +139,52 @@ class TaskDocsTest(TestCase):
         self.assertNotIn("file_abc123", docs)
         self.assertNotIn("postgresql://user:password@", docs)
 
+    def test_flow_compatibility_docs_scope_native_flow_support(self) -> None:
+        docs = FLOW_COMPATIBILITY_DOC.read_text(encoding="utf-8")
+        index = (DOC_ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("[Native flow compatibility]", index)
+        self.assertIn("The required hosted extraction path remains", docs)
+        self.assertIn("`avalan task run`", docs)
+        self.assertIn("no command dispatch branch", docs)
+        self.assertIn("currently executes a flow definition", docs)
+        self.assertIn("File and file-array task inputs are rejected.", docs)
+        self.assertIn("Dynamic Python callable imports.", docs)
+        self.assertNotIn("native TOML flow execution is available", docs)
+
+    def test_flow_compatibility_matrix_covers_poc_fields(self) -> None:
+        docs = FLOW_COMPATIBILITY_DOC.read_text(encoding="utf-8")
+        rows = _flow_matrix_rows(docs)
+        expected_fields = {
+            "`flow.entrypoint`",
+            "`flow.output_node`",
+            "`flow.input.type`",
+            "`flow.input.delivery`",
+            "`flow.input.memory`",
+            "`flow.output.schema_ref`",
+            "`nodes.<name>.type`",
+            "`nodes.<name>.ref`",
+            "`nodes.<name>.input`",
+            "`nodes.<name>.output`",
+            "`nodes.<name>.user_prompt_ref`",
+            "`nodes.<name>.response_format_ref`",
+            "`cli.runner`",
+            "`cli.example_pdf`",
+        }
+
+        self.assertTrue(expected_fields.issubset(rows))
+        rejected_fields = {
+            "`flow.input.delivery`",
+            "`flow.input.memory`",
+            "`nodes.<name>.user_prompt_ref`",
+            "`nodes.<name>.response_format_ref`",
+            "`cli.runner`",
+            "`cli.example_pdf`",
+        }
+        for field in rejected_fields:
+            with self.subTest(field=field):
+                self.assertIn("Rejected", rows[field])
+
 
 def _find_parser(parser: ArgumentParser, prog_suffix: str) -> ArgumentParser:
     stack = [parser]
@@ -165,6 +212,18 @@ def _matrix_rows(docs: str) -> dict[str, str]:
             continue
         cells = [cell.strip() for cell in line.strip("|").split("|")]
         if len(cells) != 7 or cells[0] in {"Profile", "---"}:
+            continue
+        rows[cells[0]] = line
+    return rows
+
+
+def _flow_matrix_rows(docs: str) -> dict[str, str]:
+    rows: dict[str, str] = {}
+    for line in docs.splitlines():
+        if not line.startswith("| "):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) != 4 or cells[0] in {"TOML field", "---", "Gap"}:
             continue
         rows[cells[0]] = line
     return rows

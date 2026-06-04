@@ -24,6 +24,9 @@ tailored specifically to each use case.
 - [Task file delivery](task_file_delivery.md) - Understand direct and queued
   file descriptors, provider references, conversion, local backends, and the
   file-delivery capability matrix.
+- [Native flow compatibility](FLOW_COMPATIBILITY.md) - Inventory current flow
+  runtime and CLI support, the minimal TOML subset, and unsupported flow
+  behaviors.
 - [Terminal recording](RECORDING.md) - Capture Avalan CLI sessions as real
   terminal video with colors, live panels, and tool-call updates.
 
