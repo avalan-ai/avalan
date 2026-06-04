@@ -138,6 +138,28 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_non_streaming_response_accepts_string_input(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        resp = client.post(
+            "/responses",
+            json={"input": "Find the claim", "stream": False},
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        assert orchestrator.last_messages is not None
+        self.assertEqual(len(orchestrator.last_messages), 1)
+        message = orchestrator.last_messages[0]
+        self.assertEqual(message.role.value, "user")
+        self.assertEqual(
+            message.content,
+            MessageContentText(type="text", text="Find the claim"),
+        )
+
     async def test_non_streaming_response_accepts_input_text_blocks(self):
         app = self.FastAPI()
         orchestrator = SimpleOrchestrator()

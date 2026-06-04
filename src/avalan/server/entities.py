@@ -252,6 +252,9 @@ class ChatCompletionRequest(BaseModel):
     ) = None
 
 
+ResponsesInput = str | list[ChatMessage]
+
+
 class ResponsesRequest(BaseModel):
     model: str | None = Field(
         None,
@@ -260,7 +263,7 @@ class ResponsesRequest(BaseModel):
             " omitted, use the server's configured model."
         ),
     )
-    input: list[ChatMessage] = Field(...)
+    input: ResponsesInput = Field(...)
     temperature: float | None = 1.0
     top_p: float | None = 1.0
     n: int | None = 1
@@ -273,6 +276,8 @@ class ResponsesRequest(BaseModel):
 
     @property
     def messages(self) -> list[ChatMessage]:
+        if isinstance(self.input, str):
+            return [ChatMessage(role=MessageRole.USER, content=self.input)]
         return self.input
 
     @model_validator(mode="after")
