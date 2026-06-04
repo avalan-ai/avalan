@@ -4,7 +4,8 @@ This guide records the current native flow surface and the minimal TOML
 contract needed for an optional hosted extraction flow.
 
 The required hosted extraction path remains `avalan task run`. Native flow
-support is an optional path and does not block task-run acceptance.
+support is available for compatible definitions, but the direct task command
+remains the primary hosted extraction path.
 
 ## Current Runtime Inventory
 
@@ -38,24 +39,26 @@ field-addressed `--input-name` style flags, `--file`, `--file-mime`, `--pdf`,
 ## Current Task-Target Inventory
 
 `FlowTaskTargetRunner` can execute a resolver-supplied `Flow` instance for
-compatible task definitions. It already validates safe relative references,
-requires exactly one start node at run time, binds JSON-compatible task input
-into the flow, validates task output, emits sanitized flow events, and preserves
-cancellation through `Flow.execute_async`.
+compatible task definitions. It validates safe relative references, requires
+exactly one start node at run time, binds JSON-compatible and file-backed task
+input into the flow, validates task output, emits sanitized flow events, and
+preserves cancellation through `Flow.execute_async`.
 
 Current flow-backed task support is intentionally narrow:
 
-- File and file-array task inputs are rejected.
+- File and file-array task inputs are passed through task materialization and
+  provider delivery descriptors.
 - Object and array task outputs require a declared schema.
 - The CLI supplies a TOML resolver for direct task runs; SDK callers can still
   supply their own resolver.
 - Python callables are accepted only in already-constructed `Flow` objects.
+- Agent nodes reuse the task agent runner; prompts, reasoning settings,
+  response format, and provider configuration remain in the agent file.
 
 ## Minimal Native TOML Subset
 
-A native TOML flow for hosted extraction should be limited to one entry node,
-one terminal output, one PDF input, and one agent node after agent node support
-lands. The minimal target shape is:
+A native TOML flow for hosted extraction is limited to one entry node, one
+terminal output, one PDF input, and one agent node. The minimal target shape is:
 
 ```toml
 [flow]
@@ -96,15 +99,15 @@ second response-format contract.
 | `flow.entrypoint` | Accepted | Accepted | Maps to the single start node. Missing or unknown values fail before execution. |
 | `flow.output_node` | Accepted | Accepted | Maps to the single terminal output. Multiple terminal outputs are rejected. |
 | `flow.input.name` | Accepted | Accepted | Names the input exposed to the entry node. |
-| `flow.input.type` | Accepted | Accepted | File-backed agent parity still depends on agent node support. |
+| `flow.input.type` | Accepted | Accepted | File-backed agent nodes use task file materialization. |
 | `flow.input.mime_types` | Accepted | Accepted for `application/pdf` | MIME mismatch fails before execution. |
 | `flow.input.delivery` | Rejected | Rejected | Delivery is selected by the task and agent provider profile. |
 | `flow.input.memory` | Rejected | Rejected | File inputs must not be routed into memory ingestion by native flow TOML. |
 | `flow.output.name` | Accepted | Accepted | Names the value returned by `flow.output_node`. |
 | `flow.output.type` | Accepted | Accepted | Artifact output mapping remains unsupported. |
 | `flow.output.schema_ref` | Accepted | Accepted | Schema refs are recorded for the flow contract. |
-| `nodes.<name>.type` | Accepted for built-ins | Accepted for agent later | Unknown node types fail with stable diagnostics. |
-| `nodes.<name>.ref` | Rejected for built-ins | Accepted for agent later | Built-in nodes cannot load external refs; path escapes and remote refs are rejected. |
+| `nodes.<name>.type` | Accepted for built-ins and agent nodes | Accepted | Unknown node types fail with stable diagnostics. |
+| `nodes.<name>.ref` | Rejected for built-ins, accepted for agent nodes | Accepted | Built-in nodes cannot load external refs; path escapes and remote refs are rejected. |
 | `nodes.<name>.input` | Accepted | Accepted | Must name the declared flow input or a previous supported node output. |
 | `nodes.<name>.output` | Accepted | Accepted | Names the node output for compatibility with single-output flow contracts. |
 | `nodes.<name>.user_prompt_ref` | Rejected | Rejected | User prompts come from the agent spec. |
@@ -128,14 +131,11 @@ privacy, and trust contracts:
 - Memory ingestion toggles for file inputs.
 - Subgraphs loaded from TOML.
 
-## Gap Map
+## Verification Map
 
-| Gap | Required work |
+| Behavior | Verification |
 | --- | --- |
-| File-backed agent nodes incomplete | Reuse task file materialization and provider delivery descriptors for compatible flow nodes. |
-| No agent node type | Add an agent node that reuses agent task prompt composition, file delivery, schema refs, cancellation, and event handling. |
-| No output-node contract | Map node outputs to task output contracts and schema refs before reporting success. |
-| No parity fixture | Add fake-provider parity coverage comparing direct task and native flow payloads. |
-
-The remaining gaps should be implemented in order: file-backed agent nodes
-first, then output mapping, parity documentation, and parity tests.
+| File-backed agent nodes | Tests assert PDF descriptors become provider file blocks without memory ingestion. |
+| Agent node reuse | Tests assert flow-backed tasks call the same agent runner as direct tasks. |
+| Output contract mapping | Tests assert flow task output is validated against the declared task schema before success. |
+| Direct and flow parity | Tests compare fake-provider prompt blocks, file blocks, response schema, reasoning effort, output objects, and sanitized telemetry. |

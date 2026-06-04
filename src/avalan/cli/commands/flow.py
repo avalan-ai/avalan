@@ -5,7 +5,10 @@ from ...flow import (
     FlowInputType,
     FlowLoadIssue,
     FlowLoadIssueCategory,
+    FlowNodeDefinition,
     FlowOutputType,
+    Node,
+    default_flow_node_registry,
     flow_input_binding,
 )
 from ...task import (
@@ -14,9 +17,13 @@ from ...task import (
     TaskInputContract,
     TaskMetadata,
     TaskOutputContract,
+    TaskRunState,
+    TaskSchemaResolutionError,
     TaskTargetType,
     TaskValidationCategory,
+    TaskValidationError,
     TaskValidationIssue,
+    resolve_schema_ref,
     validate_task_input,
     validate_task_output,
 )
@@ -26,8 +33,13 @@ from .task import (
     _print_issues,
     _print_task_cli_input_error,
     _print_task_command_error,
+    _print_task_execution_error,
+    _print_task_run_failure,
     _run_awaitable,
+    _task_cli_client_context,
+    _task_command_metadata,
     _task_diagnostic_console,
+    _task_output_is_structured,
     _task_run_json_output,
     _task_run_quiet,
     _task_run_structured_output_requested,
@@ -53,11 +65,17 @@ def flow_run(
     logger: Logger | None = None,
 ) -> bool:
     """Run a native flow definition."""
-    _ = theme, hub, logger
-    return _run_awaitable(_flow_run(args, console))
+    _ = theme
+    return _run_awaitable(_flow_run(args, console, hub=hub, logger=logger))
 
 
-async def _flow_run(args: Namespace, console: Console) -> bool:
+async def _flow_run(
+    args: Namespace,
+    console: Console,
+    *,
+    hub: object | None,
+    logger: Logger | None,
+) -> bool:
     diagnostic_console = _task_diagnostic_console(args, console)
     flow_path = Path(args.flow)
     try:
@@ -71,6 +89,14 @@ async def _flow_run(args: Namespace, console: Console) -> bool:
         diagnostic_console.print(f"error file.read {message}", markup=False)
         return False
     if load_result.definition is None or load_result.flow is None:
+        if _flow_needs_task_context(load_result.issues):
+            return await _flow_run_with_task_context(
+                args,
+                console,
+                flow_path=flow_path,
+                hub=hub,
+                logger=logger,
+            )
         _print_issues(
             diagnostic_console,
             "Flow definition could not be loaded.",
@@ -78,7 +104,13 @@ async def _flow_run(args: Namespace, console: Console) -> bool:
         )
         return False
     definition = load_result.definition
-    task_definition = _flow_task_definition(definition, flow_path)
+    task_definition = _flow_task_definition_or_report(
+        definition,
+        flow_path,
+        diagnostic_console,
+    )
+    if task_definition is None:
+        return False
     try:
         flow_input = task_cli_input(args, task_definition)
     except TaskCliInputError as exc:
@@ -133,6 +165,97 @@ async def _flow_run(args: Namespace, console: Console) -> bool:
     return True
 
 
+async def _flow_run_with_task_context(
+    args: Namespace,
+    console: Console,
+    *,
+    flow_path: Path,
+    hub: object | None,
+    logger: Logger | None,
+) -> bool:
+    diagnostic_console = _task_diagnostic_console(args, console)
+    load_result = _flow_metadata_loader().load_result(flow_path)
+    if load_result.definition is None:
+        _print_issues(
+            diagnostic_console,
+            "Flow definition could not be loaded.",
+            _flow_load_task_issues(load_result.issues),
+        )
+        return False
+    definition = load_result.definition
+    task_definition = _flow_task_definition_or_report(
+        definition,
+        flow_path,
+        diagnostic_console,
+    )
+    if task_definition is None:
+        return False
+    try:
+        flow_input = task_cli_input(args, task_definition)
+    except TaskCliInputError as exc:
+        _print_task_cli_input_error(diagnostic_console, exc)
+        return False
+    input_issues = validate_task_input(task_definition, flow_input.value)
+    if input_issues:
+        _print_issues(
+            diagnostic_console, "Flow input is invalid.", input_issues
+        )
+        return False
+    if not _validate_flow_local_files(flow_input.value, diagnostic_console):
+        return False
+    if _task_run_structured_output_requested(
+        args
+    ) and not _task_output_is_structured(task_definition):
+        _print_task_command_error(
+            diagnostic_console,
+            "Flow run output is not structured.",
+            "output.unsupported",
+            "Use --json or --output with json, object, or array outputs.",
+        )
+        return False
+    if not _validate_task_run_output_path(args, diagnostic_console):
+        return False
+    client_context = _task_cli_client_context(
+        flow_path,
+        dsn=None,
+        schema=None,
+        queue=False,
+        ephemeral=True,
+        hub=hub,
+        logger=logger,
+        input_value=flow_input.value,
+    )
+    try:
+        async with client_context as client:
+            result = await client.run(
+                task_definition,
+                input_value=flow_input.value,
+                metadata=_task_command_metadata(ephemeral=True),
+            )
+    except (AssertionError, ImportError, OSError, TaskValidationError) as exc:
+        _print_task_execution_error(diagnostic_console, exc)
+        return False
+    if result.run.state != TaskRunState.SUCCEEDED:
+        _print_task_run_failure(diagnostic_console, result)
+        return False
+    if _task_run_structured_output_requested(args):
+        output_written = _write_task_run_structured_output(
+            args,
+            console,
+            diagnostic_console,
+            result.output,
+        )
+        if not output_written:
+            return False
+    if not _task_run_json_output(args) and not _task_run_quiet(args):
+        console.print("Flow run completed.", markup=False)
+        console.print(
+            f"output {_format_task_cli_value(result.output)}",
+            markup=False,
+        )
+    return True
+
+
 def _flow_task_definition(
     definition: FlowDefinition,
     flow_path: Path,
@@ -145,10 +268,26 @@ def _flow_task_definition(
         output=_flow_task_output(definition),
         execution=TaskExecutionTarget(
             type=TaskTargetType.FLOW,
-            ref=str(flow_path),
+            ref=flow_path.name,
         ),
         definition_base=flow_path,
     )
+
+
+def _flow_task_definition_or_report(
+    definition: FlowDefinition,
+    flow_path: Path,
+    console: Console,
+) -> TaskDefinition | None:
+    try:
+        return _flow_task_definition(definition, flow_path)
+    except TaskSchemaResolutionError:
+        _print_issues(
+            console,
+            "Flow definition could not be loaded.",
+            (_flow_schema_issue(),),
+        )
+        return None
 
 
 def _flow_task_input(definition: FlowDefinition) -> TaskInputContract:
@@ -187,7 +326,7 @@ def _flow_task_output(definition: FlowDefinition) -> TaskOutputContract:
     output_definition = definition.output
     if output_definition is None:
         return TaskOutputContract.json({})
-    schema = _plain_mapping(output_definition.schema)
+    schema = _flow_output_schema(definition)
     match output_definition.type:
         case FlowOutputType.TEXT:
             return TaskOutputContract.text()
@@ -202,6 +341,23 @@ def _flow_task_output(definition: FlowDefinition) -> TaskOutputContract:
         case FlowOutputType.FILE_ARRAY:
             return TaskOutputContract.file_array()
     raise AssertionError("unsupported flow output type")  # pragma: no cover
+
+
+def _flow_output_schema(
+    definition: FlowDefinition,
+) -> Mapping[str, object] | None:
+    output_definition = definition.output
+    if output_definition is None:
+        return None
+    schema = _plain_mapping(output_definition.schema)
+    if schema is not None or output_definition.schema_ref is None:
+        return schema
+    resolved = resolve_schema_ref(
+        output_definition.schema_ref,
+        schema_base_path=definition.definition_base,
+        path="flow.output.schema_ref",
+    )
+    return _plain_mapping(resolved.schema)
 
 
 def _flow_load_task_issues(
@@ -232,6 +388,35 @@ def _flow_task_validation_category(
         case FlowLoadIssueCategory.PRIVACY:
             return TaskValidationCategory.PRIVACY
     raise AssertionError("unsupported flow issue category")  # pragma: no cover
+
+
+def _flow_needs_task_context(
+    issues: tuple[FlowLoadIssue, ...],
+) -> bool:
+    return any(issue.code == "flow.unsupported_node_type" for issue in issues)
+
+
+def _flow_schema_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="output.invalid_schema",
+        path="flow.output.schema_ref",
+        message="Flow output schema reference is invalid.",
+        hint="Use a local JSON object schema inside the flow directory.",
+        category=TaskValidationCategory.VALUE,
+    )
+
+
+def _flow_metadata_loader() -> FlowDefinitionLoader:
+    registry = default_flow_node_registry()
+    registry.register("agent", _flow_agent_metadata_node)
+    return FlowDefinitionLoader(registry)
+
+
+def _flow_agent_metadata_node(definition: FlowNodeDefinition) -> Node:
+    async def run(_: dict[str, object]) -> object:
+        raise RuntimeError("Flow agent nodes require task execution context.")
+
+    return Node(definition.name, func=run)
 
 
 def _plain_mapping(

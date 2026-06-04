@@ -28,6 +28,7 @@ VALID_EXAMPLES = (
     "large_direct_file.task.toml",
     "provider_reference_direct.task.toml",
     "poc_extraction/task.toml",
+    "poc_extraction/flow_task.toml",
     "local_multimodal_media.task.toml",
     "queued_file_task.task.toml",
     "output_artifact.task.toml",
@@ -176,6 +177,7 @@ class TaskExamplesTest(TestCase):
         root = EXAMPLE_ROOT / "poc_extraction"
         task_path = root / "task.toml"
         definition = load_task_definition(task_path)
+        flow_definition = load_task_definition(root / "flow_task.toml")
         with (root / "invoice.schema.json").open(encoding="utf-8") as file:
             schema = load(file)
 
@@ -191,6 +193,11 @@ class TaskExamplesTest(TestCase):
             canonical_schema_json(definition.output.schema),
             canonical_schema_json(schema),
         )
+        self.assertEqual(
+            canonical_schema_json(flow_definition.output.schema),
+            canonical_schema_json(schema),
+        )
+        self.assertEqual(flow_definition.execution.ref, "flow.toml")
         self.assertEqual(
             validate_task_input(
                 definition,
@@ -214,6 +221,8 @@ class TaskExamplesTest(TestCase):
             if path.is_file() and path.suffix != ".pdf"
         )
         self.assertIn('schema_ref = "invoice.schema.json"', combined)
+        self.assertIn('type = "agent"', combined)
+        self.assertIn('ref = "agent.toml"', combined)
         self.assertNotIn("run_flow.py", combined)
         self.assertNotIn("Pulumi", combined)
         self.assertNotIn("vdocintel", combined)

@@ -1703,6 +1703,10 @@ avalan task run docs/examples/tasks/structured_json.task.toml \
 
 poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
 
+poetry run avalan task run docs/examples/tasks/poc_extraction/flow_task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+
+poetry run avalan flow run docs/examples/tasks/poc_extraction/flow.toml --pdf ./sample.pdf --json --output extraction.json
+
 poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml \
   --ephemeral \
   --file input=./sample.pdf \
@@ -1766,6 +1770,38 @@ Run it with:
 
 ```bash
 poetry run avalan task run task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+```
+
+The optional flow-backed form keeps provider configuration and prompts in the
+agent file while `flow.toml` declares the agent node:
+
+```toml
+[flow]
+name = "pdf_extraction_flow"
+entrypoint = "extract"
+output_node = "extract"
+
+[flow.input]
+name = "input"
+type = "file"
+mime_types = ["application/pdf"]
+
+[flow.output]
+name = "extraction"
+type = "object"
+schema_ref = "extraction.schema.json"
+
+[nodes.extract]
+type = "agent"
+ref = "agent.toml"
+input = "__task_input__"
+```
+
+Run the flow-backed task or the native flow command with the same PDF input:
+
+```bash
+poetry run avalan task run flow_task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+poetry run avalan flow run flow.toml --pdf ./sample.pdf --json --output extraction.json
 ```
 
 Task file inputs are run-scoped delivery inputs. They are validated,

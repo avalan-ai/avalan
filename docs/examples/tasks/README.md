@@ -23,6 +23,8 @@ runtime configuration.
   by CLI or SDK descriptors.
 - [poc_extraction/task.toml](poc_extraction/task.toml) accepts one PDF and
   returns a structured invoice extraction object.
+- [poc_extraction/flow_task.toml](poc_extraction/flow_task.toml) runs the same
+  extraction through a native flow with an agent node.
 - [local_multimodal_media.task.toml](local_multimodal_media.task.toml) shows a
   local multimodal media contract without downloading a model in CI.
 - [queued_file_task.task.toml](queued_file_task.task.toml) shows a queued file
@@ -72,6 +74,10 @@ poetry run avalan task run docs/examples/tasks/structured_json.task.toml \
   --output result.json
 
 poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+
+poetry run avalan task run docs/examples/tasks/poc_extraction/flow_task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+
+poetry run avalan flow run docs/examples/tasks/poc_extraction/flow.toml --pdf ./sample.pdf --json --output extraction.json
 ```
 
 Queue examples require PostgreSQL task storage, a migrated schema, HMAC keys,

@@ -16,6 +16,7 @@ from uuid import uuid4
 from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import Message, MessageContentFile, MessageContentText
 from avalan.event import Event, EventType
+from avalan.flow import Flow, FlowDefinitionLoader
 from avalan.task import (
     HASHED_MARKER,
     PrivacyAction,
@@ -56,7 +57,11 @@ from avalan.task import (
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.stores import InMemoryTaskStore
-from avalan.task.targets import AgentTaskTargetRunner
+from avalan.task.targets import (
+    AgentTaskTargetRunner,
+    FlowTaskTargetRunner,
+    task_flow_node_registry,
+)
 
 
 def _write_text_task_workspace(root: Path) -> Path:
@@ -726,6 +731,33 @@ def _only_file_block(input_value: object) -> MessageContentFile:
     return blocks[0]
 
 
+def _extraction_message_summary(
+    input_value: object,
+    expected_file_bytes: bytes,
+) -> Mapping[str, object]:
+    assert isinstance(input_value, Message)
+    content = input_value.content
+    assert isinstance(content, list)
+    blocks = cast(list[Any], content)
+    text_blocks = [
+        block for block in blocks if isinstance(block, MessageContentText)
+    ]
+    file_blocks = [
+        block for block in blocks if isinstance(block, MessageContentFile)
+    ]
+    assert len(text_blocks) == 1
+    assert len(file_blocks) == 1
+    file = file_blocks[0].file
+    file_data = file["file_data"]
+    assert isinstance(file_data, str)
+    assert b64decode(file_data) == expected_file_bytes
+    return {
+        "text": text_blocks[0].text,
+        "mime_type": file["mime_type"],
+        "file_bytes": len(expected_file_bytes),
+    }
+
+
 class ExtractionFakeResponse:
     input_token_count = 19
     output_token_count = 23
@@ -975,6 +1007,190 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("sample.pdf", inspection_value)
         self.assertNotIn("private-provider-token", inspection_value)
         self.assertNotIn("file_data", inspection_value)
+
+    async def test_poc_extraction_flow_matches_direct_provider_payload(
+        self,
+    ) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        pdf_bytes = (fixture / "sample.pdf").read_bytes()
+        direct_definition = TaskDefinitionLoader().load(fixture / "task.toml")
+        flow_definition = TaskDefinitionLoader().load(
+            fixture / "flow_task.toml"
+        )
+        output = _extraction_output()
+        orchestrator = ExtractionFakeOrchestrator(output)
+        settings_values: list[Any] = []
+
+        async def from_settings(
+            loader: OrchestratorLoader,
+            settings: object,
+            *,
+            tool_settings: object | None = None,
+            tool_format: object | None = None,
+        ) -> ExtractionFakeOrchestrator:
+            _ = loader, tool_settings, tool_format
+            call_options = cast(Any, settings).call_options
+            assert isinstance(call_options, Mapping)
+            response_format = cast(
+                Mapping[str, object],
+                call_options["response_format"],
+            )
+            orchestrator.text_formats.append(
+                {
+                    "type": response_format["type"],
+                    "name": response_format["name"],
+                    "schema": response_format["schema"],
+                    "strict": response_format["strict"],
+                }
+            )
+            orchestrator.reasoning_options.append(
+                cast(Mapping[str, object], call_options["reasoning"])
+            )
+            settings_values.append(settings)
+            return orchestrator
+
+        with TemporaryDirectory() as artifact_root:
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=cast(Any, object()),
+                logger=getLogger("avalan.tests.task.extraction.flow"),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            agent_runner = AgentTaskTargetRunner(loader, ref_base=fixture)
+
+            def resolve_flow(context: TaskTargetContext) -> Flow:
+                result = FlowDefinitionLoader(
+                    registry=task_flow_node_registry(
+                        context,
+                        agent_runner=agent_runner,
+                        execution_roots=(fixture,),
+                    )
+                ).load_result(fixture / "flow.toml")
+                assert result.flow is not None, result.issues
+                return result.flow
+
+            try:
+                with patch.object(
+                    OrchestratorLoader,
+                    "from_settings",
+                    new=from_settings,
+                ):
+                    direct_client = TaskClient(
+                        InMemoryTaskStore(
+                            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                        ),
+                        target=agent_runner,
+                        artifact_store=LocalArtifactStore(
+                            Path(artifact_root) / "direct",
+                            raw_storage_allowed=True,
+                        ),
+                        hmac_provider=StaticHmacProvider(),
+                        execution_roots=(fixture,),
+                        definition_hash=lambda task: (
+                            f"direct-parity-{task.task.name}"
+                        ),
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                    )
+                    flow_client = TaskClient(
+                        InMemoryTaskStore(
+                            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                        ),
+                        target=FlowTaskTargetRunner(
+                            ref_base=fixture,
+                            flow_resolver=resolve_flow,
+                        ),
+                        artifact_store=LocalArtifactStore(
+                            Path(artifact_root) / "flow",
+                            raw_storage_allowed=True,
+                        ),
+                        hmac_provider=StaticHmacProvider(),
+                        execution_roots=(fixture,),
+                        definition_hash=lambda task: (
+                            f"flow-parity-{task.task.name}"
+                        ),
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                    )
+                    direct_descriptor = TaskClient.local_file(
+                        "./sample.pdf",
+                        mime_type="application/pdf",
+                        size_bytes=len(pdf_bytes),
+                    )
+                    flow_descriptor = TaskClient.local_file(
+                        "./sample.pdf",
+                        mime_type="application/pdf",
+                        size_bytes=len(pdf_bytes),
+                    )
+
+                    direct_result = await direct_client.run(
+                        direct_definition,
+                        input_value=direct_descriptor,
+                    )
+                    flow_result = await flow_client.run(
+                        flow_definition,
+                        input_value=flow_descriptor,
+                    )
+                    direct_inspection = await direct_client.inspect(
+                        direct_result.run.run_id
+                    )
+                    flow_inspection = await flow_client.inspect(
+                        flow_result.run.run_id
+                    )
+            finally:
+                await stack.aclose()
+
+        self.assertEqual(direct_result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(flow_result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(direct_result.output, output)
+        self.assertEqual(flow_result.output, output)
+        self.assertEqual(len(settings_values), 2)
+        self.assertEqual(
+            [
+                settings.engine_config["base_url"]
+                for settings in settings_values
+            ],
+            [
+                "https://tenant.openai.azure.com/openai/v1/",
+                "https://tenant.openai.azure.com/openai/v1/",
+            ],
+        )
+        self.assertEqual(
+            orchestrator.reasoning_options,
+            [{"effort": "high"}, {"effort": "high"}],
+        )
+        self.assertEqual(
+            [
+                canonical_schema_json(text_format["schema"])
+                for text_format in orchestrator.text_formats
+            ],
+            [
+                canonical_schema_json(direct_definition.output.schema),
+                canonical_schema_json(flow_definition.output.schema),
+            ],
+        )
+        self.assertEqual(len(orchestrator.inputs), 2)
+        direct_message = _extraction_message_summary(
+            orchestrator.inputs[0],
+            pdf_bytes,
+        )
+        flow_message = _extraction_message_summary(
+            orchestrator.inputs[1],
+            pdf_bytes,
+        )
+        self.assertEqual(flow_message, direct_message)
+        for inspection in (direct_inspection, flow_inspection):
+            inspection_value = str(inspection.as_dict())
+            self.assertEqual(inspection.usage_totals.total_tokens, 42)
+            self.assertNotIn("Analyze the attached", inspection_value)
+            self.assertNotIn("sample.pdf", inspection_value)
+            self.assertNotIn("file_data", inspection_value)
+            self.assertNotIn("private-provider-token", inspection_value)
 
     async def test_poc_extraction_failures_are_classified_and_sanitized(
         self,

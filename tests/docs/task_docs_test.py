@@ -148,9 +148,12 @@ class TaskDocsTest(TestCase):
         self.assertIn("`avalan task run`", docs)
         self.assertIn("registered built-in nodes", docs)
         self.assertIn("field-addressed `--input-name`", docs)
-        self.assertIn("File and file-array task inputs are rejected.", docs)
+        self.assertIn(
+            "File and file-array task inputs are passed through", docs
+        )
+        self.assertIn("Agent nodes reuse the task agent runner", docs)
         self.assertIn("Dynamic Python callable imports.", docs)
-        self.assertNotIn("native TOML flow execution is available", docs)
+        self.assertIn("support is available for compatible definitions", docs)
 
     def test_flow_compatibility_matrix_covers_poc_fields(self) -> None:
         docs = FLOW_COMPATIBILITY_DOC.read_text(encoding="utf-8")
