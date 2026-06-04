@@ -10,6 +10,10 @@ from re import findall
 from types import MappingProxyType
 
 TokenCounter = Callable[[str], int]
+RetrievalSelector = Callable[
+    [Sequence["TextChunk"], str, int, int],
+    Sequence["TextChunk"],
+]
 
 
 class TextStrategyKind(StrEnum):
@@ -181,8 +185,10 @@ def plan_text_strategy(
     token_counter: TokenCounter,
     retrieval_top_k: int = 2,
     retrieval_neighbor_count: int = 1,
+    retrieval_selector: RetrievalSelector | None = None,
     chunk_tokens: int | None = None,
     overlap_tokens: int | None = None,
+    max_map_chunks: int = 64,
 ) -> TextStrategyPlan:
     assert isinstance(prompt_texts, Sequence)
     assert isinstance(document_texts, Sequence)
@@ -190,6 +196,11 @@ def plan_text_strategy(
     assert not isinstance(token_limit, bool)
     assert token_limit > 0
     assert callable(token_counter)
+    assert isinstance(max_map_chunks, int)
+    assert not isinstance(max_map_chunks, bool)
+    assert max_map_chunks > 0
+    if retrieval_selector is not None:
+        assert callable(retrieval_selector)
     prompts = tuple(prompt_texts)
     documents = tuple(document_texts)
     for text in (*prompts, *documents):
@@ -220,11 +231,12 @@ def plan_text_strategy(
     if not chunks:
         return _reject_plan(prompts)
     query = "\n".join(prompts)
-    selected_chunks = select_retrieval_chunks(
+    selected_chunks = _select_retrieval_chunks(
         chunks,
         query=query,
         top_k=retrieval_top_k,
         neighbor_count=retrieval_neighbor_count,
+        retrieval_selector=retrieval_selector,
     )
     retrieval_chunks = _bounded_retrieval_chunks(
         selected_chunks,
@@ -232,9 +244,9 @@ def plan_text_strategy(
         available_tokens=available_tokens,
         token_counter=token_counter,
     )
-    if retrieval_chunks and _has_positive_retrieval_match(
-        retrieval_chunks,
-        query,
+    if retrieval_chunks and (
+        retrieval_selector is not None
+        or _has_positive_retrieval_match(retrieval_chunks, query)
     ):
         return TextStrategyPlan(
             kind=TextStrategyKind.RETRIEVAL,
@@ -246,11 +258,36 @@ def plan_text_strategy(
             chunks=chunks,
             selected_chunks=retrieval_chunks,
         )
+    if len(chunks) > max_map_chunks:
+        return _reject_plan(prompts)
     return TextStrategyPlan(
         kind=TextStrategyKind.MAP_REDUCE,
         prompt_texts=prompts,
         chunks=chunks,
     )
+
+
+def _select_retrieval_chunks(
+    chunks: Sequence[TextChunk],
+    *,
+    query: str,
+    top_k: int,
+    neighbor_count: int,
+    retrieval_selector: RetrievalSelector | None,
+) -> tuple[TextChunk, ...]:
+    if retrieval_selector is None:
+        return select_retrieval_chunks(
+            chunks,
+            query=query,
+            top_k=top_k,
+            neighbor_count=neighbor_count,
+        )
+    selected = tuple(retrieval_selector(chunks, query, top_k, neighbor_count))
+    available = {(chunk.file_index, chunk.chunk_index) for chunk in chunks}
+    for chunk in selected:
+        assert isinstance(chunk, TextChunk)
+        assert (chunk.file_index, chunk.chunk_index) in available
+    return selected
 
 
 def _bounded_retrieval_chunks(

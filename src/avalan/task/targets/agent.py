@@ -165,6 +165,10 @@ class AgentTaskTargetRunner(TaskTargetRunner):
                         orchestrator,
                         context=context,
                         plan=text_plan,
+                        token_counter=self._token_counter,
+                        token_limit=(
+                            context.definition.limits.total_tokens or maxsize
+                        ),
                     )
                 else:
                     response = await orchestrator(agent_input)
@@ -548,7 +552,13 @@ async def _run_map_reduce(
     *,
     context: TaskTargetContext,
     plan: TextStrategyPlan,
+    token_counter: TokenCounter,
+    token_limit: int,
 ) -> object:
+    assert callable(token_counter)
+    assert isinstance(token_limit, int)
+    assert not isinstance(token_limit, bool)
+    assert token_limit > 0
     summaries: list[str] = []
     for chunk in plan.chunks:
         await context.check_cancelled()
@@ -562,9 +572,23 @@ async def _run_map_reduce(
             await context.observe_usage(response)
         await context.check_cancelled()
     await context.check_cancelled()
-    return await orchestrator(
-        _text_strategy_input((*plan.prompt_texts, *summaries))
-    )
+    reduce_texts = (*plan.prompt_texts, *summaries)
+    if _text_token_total(reduce_texts, token_counter) > token_limit:
+        raise TaskValidationError(
+            (
+                TaskValidationIssue(
+                    code="limits.invalid_value",
+                    path="limits.total_tokens",
+                    message="Task input exceeds the configured token limit.",
+                    hint=(
+                        "Reduce the input text, raise the token limit, or "
+                        "use a smaller file input."
+                    ),
+                    category=TaskValidationCategory.VALUE,
+                ),
+            )
+        )
+    return await orchestrator(_text_strategy_input(reduce_texts))
 
 
 def _input_text_blocks(value: Input) -> tuple[str, ...]:
@@ -603,6 +627,20 @@ def _message_text_blocks(message: Message) -> tuple[str, ...]:
 def _estimated_token_count(text: str) -> int:
     assert isinstance(text, str)
     return len(text.split())
+
+
+def _text_token_total(
+    texts: tuple[str, ...],
+    token_counter: TokenCounter,
+) -> int:
+    total = 0
+    for text in texts:
+        count = token_counter(text)
+        assert isinstance(count, int)
+        assert not isinstance(count, bool)
+        assert count >= 0
+        total += count
+    return total
 
 
 def _validate_agent_file_input(

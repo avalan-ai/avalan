@@ -1252,8 +1252,8 @@ file_delivery_profile = "multimodal"
         self,
     ) -> None:
         responses = (
-            FakeResponse("map one", input_token_count=3),
-            FakeResponse("map two", input_token_count=3),
+            FakeResponse("one", input_token_count=3),
+            FakeResponse("two", input_token_count=3),
             FakeResponse(
                 "final summary",
                 input_token_count=4,
@@ -1304,7 +1304,7 @@ file_delivery_profile = "multimodal"
             [
                 ["summarize", "alpha beta gamma"],
                 ["summarize", "delta epsilon zeta"],
-                ["summarize", "map one", "map two"],
+                ["summarize", "one", "two"],
             ],
         )
         self.assertEqual(observed, list(responses))
@@ -1392,6 +1392,49 @@ file_delivery_profile = "multimodal"
 
         self.assertNotIn("alpha beta gamma", str(error.exception))
 
+    async def test_run_rejects_reduce_input_over_token_limit_safely(
+        self,
+    ) -> None:
+        responses = (
+            FakeResponse("private map one two three"),
+            FakeResponse("private map four five six"),
+            FakeResponse("final summary"),
+        )
+        loader = FakeLoader(responses=responses)
+        observed: list[object] = []
+        runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(limits=TaskLimitsPolicy(total_tokens=4)),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="text/plain",
+                            size_bytes=36,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(
+                        b"alpha beta gamma delta epsilon zeta"
+                    ),
+                    usage_observer=lambda response: observed.append(response),
+                )
+            )
+
+        self.assertEqual(len(loader.inputs), 2)
+        self.assertEqual(observed, list(responses[:2]))
+        self.assertEqual(error.exception.issues[0].path, "limits.total_tokens")
+        self.assertNotIn("alpha beta gamma", str(error.exception))
+        self.assertNotIn("private map", str(error.exception))
+
     async def test_direct_runner_retries_transient_map_failure(
         self,
     ) -> None:
@@ -1414,8 +1457,8 @@ uri = "ai://local/model"
             loader = FakeLoader(
                 responses=(
                     RuntimeError("private transient failure"),
-                    FakeResponse("map one"),
-                    FakeResponse("map two"),
+                    FakeResponse("one"),
+                    FakeResponse("two"),
                     FakeResponse("final summary"),
                 )
             )

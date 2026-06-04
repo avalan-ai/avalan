@@ -283,6 +283,7 @@ from .store import (
 from .target import CallableTaskTargetRunner as CallableTaskTargetRunner
 from .target import TaskTargetRunner as TaskTargetRunner
 from .target import TaskValidationContext as TaskValidationContext
+from .text_strategy import RetrievalSelector as RetrievalSelector
 from .text_strategy import TextChunk as TextChunk
 from .text_strategy import TextStrategyKind as TextStrategyKind
 from .text_strategy import TextStrategyPlan as TextStrategyPlan

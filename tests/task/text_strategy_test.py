@@ -1,6 +1,8 @@
+from collections.abc import Sequence
 from unittest import TestCase, main
 
 from avalan.task import (
+    TextChunk,
     TextStrategyKind,
     chunk_text_documents,
     plan_text_strategy,
@@ -157,6 +159,87 @@ class TaskTextStrategyTest(TestCase):
             [chunk.text for chunk in plan.chunks],
             ["alpha beta gamma", "delta epsilon zeta"],
         )
+
+    def test_plan_uses_supplied_retrieval_selector_without_lexical_match(
+        self,
+    ) -> None:
+        def selector(
+            chunks: Sequence[TextChunk],
+            query: str,
+            top_k: int,
+            neighbor_count: int,
+        ) -> tuple[TextChunk, ...]:
+            self.assertEqual(query, "semantic")
+            self.assertEqual(top_k, 2)
+            self.assertEqual(neighbor_count, 1)
+            return (chunks[1],)
+
+        plan = plan_text_strategy(
+            prompt_texts=("semantic",),
+            document_texts=("alpha beta gamma delta",),
+            token_limit=3,
+            token_counter=_count_tokens,
+            retrieval_selector=selector,
+            chunk_tokens=2,
+            overlap_tokens=0,
+        )
+
+        self.assertEqual(plan.kind, TextStrategyKind.RETRIEVAL)
+        self.assertEqual(plan.texts, ("semantic", "gamma delta"))
+
+    def test_plan_rejects_unbounded_map_reduce(self) -> None:
+        plan = plan_text_strategy(
+            prompt_texts=("summarize",),
+            document_texts=("alpha beta gamma delta epsilon zeta",),
+            token_limit=2,
+            token_counter=_count_tokens,
+            chunk_tokens=1,
+            overlap_tokens=0,
+            max_map_chunks=2,
+        )
+
+        self.assertEqual(plan.kind, TextStrategyKind.REJECT)
+        self.assertEqual(plan.issues[0].path, "limits.total_tokens")
+        self.assertNotIn("alpha beta", str(plan.issues))
+
+    def test_plan_rejects_selector_chunks_outside_plan(self) -> None:
+        def selector(
+            chunks: Sequence[TextChunk],
+            query: str,
+            top_k: int,
+            neighbor_count: int,
+        ) -> tuple[TextChunk, ...]:
+            return (
+                TextChunk(
+                    file_index=9,
+                    chunk_index=9,
+                    start_token=0,
+                    end_token=1,
+                    text="outside",
+                    token_count=1,
+                ),
+            )
+
+        with self.assertRaises(AssertionError):
+            plan_text_strategy(
+                prompt_texts=("semantic",),
+                document_texts=("alpha beta gamma delta",),
+                token_limit=3,
+                token_counter=_count_tokens,
+                retrieval_selector=selector,
+                chunk_tokens=2,
+                overlap_tokens=0,
+            )
+
+    def test_plan_rejects_invalid_map_chunk_limit(self) -> None:
+        with self.assertRaises(AssertionError):
+            plan_text_strategy(
+                prompt_texts=("summarize",),
+                document_texts=("alpha beta gamma delta",),
+                token_limit=2,
+                token_counter=_count_tokens,
+                max_map_chunks=0,
+            )
 
     def test_plan_rejects_when_prompt_exhausts_budget_safely(self) -> None:
         plan = plan_text_strategy(
