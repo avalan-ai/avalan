@@ -1058,6 +1058,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
                 queue,
                 target=target,
                 artifact_store=artifact_store,
+                file_converters={"prefix": PrefixTextConverter()},
                 execution_roots=(root,),
                 clock=clock,
             )
@@ -2710,6 +2711,7 @@ def _client(
     *,
     target: TaskTargetRunner,
     artifact_store: LocalArtifactStore | None = None,
+    file_converters: Mapping[str, FileConverter] | None = None,
     execution_roots: tuple[Path, ...] = (),
     clock: Clock,
 ) -> TaskClient:
@@ -2721,6 +2723,7 @@ def _client(
         encryption_provider=StaticEncryptionProvider(),
         raw_storage_allowed=True,
         artifact_store=artifact_store,
+        file_converters=file_converters,
         definition_hash=lambda definition: "queue-worker-e2e",
         execution_roots=execution_roots,
         clock=lambda: clock.now,

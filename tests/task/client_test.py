@@ -633,6 +633,66 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertTrue(result.valid)
         self.assertEqual(result.issues, ())
 
+    async def test_validate_uses_default_file_converters(self) -> None:
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        result = await client.validate(
+            _definition(
+                input_contract=TaskInputContract.file(
+                    conversions=("text",),
+                    mime_types=("text/plain",),
+                )
+            ),
+            input_value=TaskClient.local_file(
+                "private.txt",
+                mime_type="text/plain",
+                conversions=(TaskClient.file_conversion("text"),),
+            ),
+        )
+
+        self.assertTrue(result.valid)
+        self.assertEqual(result.issues, ())
+
+    async def test_validate_rejects_default_converter_bad_options(
+        self,
+    ) -> None:
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        result = await client.validate(
+            _definition(
+                input_contract=TaskInputContract.file(
+                    conversions=("text",),
+                    mime_types=("text/plain",),
+                )
+            ),
+            input_value=TaskClient.local_file(
+                "private.txt",
+                mime_type="text/plain",
+                conversions=(
+                    TaskClient.file_conversion(
+                        "text",
+                        options={"errors": "private-mode"},
+                    ),
+                ),
+            ),
+        )
+
+        self.assertFalse(result.valid)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in result.issues],
+            [("input.invalid_file", "input.conversions[0]")],
+        )
+        self.assertNotIn("private.txt", str(result.issues))
+        self.assertNotIn("private-mode", str(result.issues))
+
     async def test_validate_rejects_missing_file_converter(self) -> None:
         client = TaskClient(
             InMemoryTaskStore(),
@@ -644,14 +704,14 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         result = await client.validate(
             _definition(
                 input_contract=TaskInputContract.file(
-                    conversions=("text",),
+                    conversions=("custom",),
                     mime_types=("application/pdf",),
                 )
             ),
             input_value=TaskClient.local_file(
                 "private.pdf",
                 mime_type="application/pdf",
-                conversions=(TaskClient.file_conversion("text"),),
+                conversions=(TaskClient.file_conversion("custom"),),
             ),
         )
 
@@ -725,7 +785,7 @@ version = "1"
 [input]
 type = "file"
 file_conversions = ["text"]
-mime_types = ["application/pdf"]
+mime_types = ["text/plain"]
 
 [output]
 type = "text"
@@ -741,7 +801,7 @@ ref = "agents/reviewer.toml"
                 task=TaskMetadata(name="document_review", version="1"),
                 input=TaskInputContract.file(
                     conversions=("text",),
-                    mime_types=("application/pdf",),
+                    mime_types=("text/plain",),
                 ),
                 output=TaskOutputContract.text(),
                 execution=TaskExecutionTarget.agent("agents/reviewer.toml"),
@@ -752,9 +812,9 @@ ref = "agents/reviewer.toml"
                 hmac_provider=StaticHmacProvider(),
             )
             descriptor = TaskClient.local_file(
-                "report.pdf",
+                "report.txt",
                 role="source",
-                mime_type="application/pdf",
+                mime_type="text/plain",
                 size_bytes=2048,
                 sha256="a" * 64,
                 conversions=(
@@ -775,9 +835,9 @@ ref = "agents/reviewer.toml"
             spec_hash(loaded_definition), spec_hash(sdk_definition)
         )
         self.assertTrue(validation.valid)
-        self.assertEqual(descriptor.reference, "report.pdf")
+        self.assertEqual(descriptor.reference, "report.txt")
         self.assertEqual(descriptor.role, "source")
-        self.assertEqual(descriptor.mime_type, "application/pdf")
+        self.assertEqual(descriptor.mime_type, "text/plain")
         self.assertEqual(descriptor.size_bytes, 2048)
         self.assertEqual(descriptor.sha256, "a" * 64)
         self.assertEqual(descriptor.conversions[0].name, "text")

@@ -46,6 +46,7 @@ from .runner import (
     TaskDirectTarget,
     TaskExecutableInputFileEntry,
     TaskRunResult,
+    _file_converters,
     _input_summary_value,
     _sanitize_artifact_ref,
     _snapshot_value,
@@ -218,7 +219,7 @@ class TaskClient:
         self._encryption_provider = encryption_provider
         self._raw_storage_allowed = raw_storage_allowed
         self._artifact_store = artifact_store
-        self._file_converters = file_converters
+        self._file_converters = _file_converters(file_converters)
         self._definition_hash = definition_hash
         self._execution_roots = tuple(execution_roots)
         self._remote_url_policy = remote_url_policy
