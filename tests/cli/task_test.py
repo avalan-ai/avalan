@@ -1,18 +1,21 @@
 from argparse import Namespace
-from collections.abc import Callable
+from base64 import b64decode
+from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from io import StringIO
+from json import dumps
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest import TestCase, main
 from unittest.mock import MagicMock, patch
 
 from rich.console import Console
 
 from avalan.cli.commands import task as task_cmds
+from avalan.entities import Message, MessageContentFile, MessageContentText
 from avalan.task import (
     ArtifactStoreError,
     CallableTaskTargetRunner,
@@ -29,6 +32,7 @@ from avalan.task import (
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
+    canonical_schema_json,
 )
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "task" / "fixtures"
@@ -263,6 +267,70 @@ class _FakeRetentionService:
         self.purposes = purposes
         self.limit = limit
         return SimpleNamespace(limit=limit, results=self.results)
+
+
+class _ExtractionCliResponse:
+    input_token_count = 19
+    output_token_count = 23
+    total_token_count = 42
+
+    def __init__(self, output: Mapping[str, object]) -> None:
+        self.output = output
+
+    async def to_json(self) -> str:
+        return dumps(self.output, sort_keys=True, separators=(",", ":"))
+
+    async def to_str(self) -> str:
+        return await self.to_json()
+
+
+class _ExtractionCliOrchestrator:
+    def __init__(self, output: Mapping[str, object]) -> None:
+        self.output = output
+        self.inputs: list[object] = []
+        self.text_formats: list[Mapping[str, object]] = []
+        self.reasoning_options: list[Mapping[str, object]] = []
+
+    async def __aenter__(self) -> "_ExtractionCliOrchestrator":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        return None
+
+    async def __call__(self, input: object) -> _ExtractionCliResponse:
+        self.inputs.append(input)
+        return _ExtractionCliResponse(self.output)
+
+
+def _extraction_cli_output() -> dict[str, object]:
+    return {
+        "line_items": [
+            {
+                "line_number": 1,
+                "vendor_name": "Northwind Office Supplies",
+                "vendor_address": "42 Market St, Denver, CO 80202",
+                "customer_name": "Contoso Research Lab",
+                "customer_address": "100 Example Ave, Suite 1, Denver, CO 80202",
+                "invoice_number": "INV-1001",
+                "invoice_date": "01/15/2026",
+                "due_date": "02/14/2026",
+                "purchase_order": "PO-555100",
+                "description": "Document processing services",
+                "quantity": "5",
+                "unit_price": "25.00",
+                "line_amount": "125.00",
+                "tax_amount": "0.00",
+                "total_amount": "125.00",
+                "currency": "USD",
+                "notes": "Synthetic invoice fixture",
+            }
+        ]
+    }
 
 
 class CliTaskValidateTestCase(TestCase):
@@ -1086,6 +1154,157 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertTrue(result)
         self.assertEqual(stream.getvalue(), expected)
         self.assertEqual(written, expected)
+
+    def test_run_poc_extraction_fixture_reaches_fake_provider(self) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        pdf_bytes = (fixture / "sample.pdf").read_bytes()
+        output = _extraction_cli_output()
+        expected = dumps(output, sort_keys=True, separators=(",", ":")) + "\n"
+        cases = (
+            (
+                "pdf",
+                {
+                    "task_pdf": "./sample.pdf",
+                    "task_files": (),
+                    "task_file_mime_types": (),
+                },
+            ),
+            (
+                "file",
+                {
+                    "task_pdf": None,
+                    "task_files": ("input=./sample.pdf",),
+                    "task_file_mime_types": ("input=application/pdf",),
+                },
+            ),
+        )
+
+        for name, input_args in cases:
+            with self.subTest(command=name):
+                stream = StringIO()
+                console = Console(file=stream, width=160)
+                orchestrator = _ExtractionCliOrchestrator(output)
+                settings_values: list[Any] = []
+
+                async def from_settings(
+                    loader: object,
+                    settings: object,
+                    *,
+                    tool_settings: object | None = None,
+                    tool_format: object | None = None,
+                ) -> _ExtractionCliOrchestrator:
+                    _ = loader, tool_settings, tool_format
+                    call_options = cast(Any, settings).call_options
+                    assert isinstance(call_options, Mapping)
+                    response_format = cast(
+                        Mapping[str, object],
+                        call_options["response_format"],
+                    )
+                    orchestrator.text_formats.append(
+                        {
+                            "type": response_format["type"],
+                            "name": response_format["name"],
+                            "schema": response_format["schema"],
+                            "strict": response_format["strict"],
+                        }
+                    )
+                    orchestrator.reasoning_options.append(
+                        cast(Mapping[str, object], call_options["reasoning"])
+                    )
+                    settings_values.append(settings)
+                    return orchestrator
+
+                with (
+                    TemporaryDirectory() as tmpdir,
+                    patch.object(
+                        task_cmds.OrchestratorLoader,
+                        "from_settings",
+                        new=from_settings,
+                    ),
+                    patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+                ):
+                    output_path = Path(tmpdir) / "extraction.json"
+                    result = task_cmds.task_run(
+                        Namespace(
+                            definition=str(fixture / "task.toml"),
+                            task_input=None,
+                            task_input_json=None,
+                            task_input_fields=(),
+                            task_file_descriptors=(),
+                            task_provider_file_ids=(),
+                            task_hosted_urls=(),
+                            task_object_store_uris=(),
+                            task_file_roles=(),
+                            task_file_sizes=(),
+                            task_file_sha256=(),
+                            task_file_conversions=(),
+                            store_dsn=None,
+                            store_schema=None,
+                            ephemeral=True,
+                            task_run_json=True,
+                            task_output_path=str(output_path),
+                            quiet=True,
+                            **input_args,
+                        ),
+                        console,
+                        self.theme,
+                    )
+                    written = output_path.read_text(encoding="utf-8")
+
+                self.assertTrue(result)
+                self.assertEqual(stream.getvalue(), expected)
+                self.assertEqual(written, expected)
+                self.assertEqual(len(settings_values), 1)
+                self.assertEqual(
+                    orchestrator.reasoning_options,
+                    [{"effort": "high"}],
+                )
+                self.assertEqual(
+                    canonical_schema_json(
+                        orchestrator.text_formats[0]["schema"]
+                    ),
+                    canonical_schema_json(
+                        task_cmds.TaskDefinitionLoader()
+                        .load(fixture / "task.toml")
+                        .output.schema
+                    ),
+                )
+                self.assertEqual(len(orchestrator.inputs), 1)
+                agent_input = orchestrator.inputs[0]
+                self.assertIsInstance(agent_input, Message)
+                content = cast(Message, agent_input).content
+                self.assertIsInstance(content, list)
+                blocks = cast(list[Any], content)
+                text_blocks = [
+                    block
+                    for block in blocks
+                    if isinstance(block, MessageContentText)
+                ]
+                file_blocks = [
+                    block
+                    for block in blocks
+                    if isinstance(block, MessageContentFile)
+                ]
+                self.assertEqual(len(text_blocks), 1)
+                self.assertIn(
+                    "Analyze the attached synthetic invoice PDF",
+                    text_blocks[0].text,
+                )
+                self.assertEqual(len(file_blocks), 1)
+                self.assertEqual(
+                    file_blocks[0].file["mime_type"],
+                    "application/pdf",
+                )
+                self.assertEqual(
+                    b64decode(cast(str, file_blocks[0].file["file_data"])),
+                    pdf_bytes,
+                )
 
     def test_structured_output_writer_reports_safe_failures(self) -> None:
         stream = StringIO()

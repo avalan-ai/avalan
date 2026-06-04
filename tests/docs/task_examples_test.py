@@ -1,7 +1,9 @@
 from collections.abc import Iterable
 from importlib.util import module_from_spec, spec_from_file_location
+from json import load
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 from unittest import TestCase, main
 
 from avalan.task import (
@@ -10,6 +12,7 @@ from avalan.task import (
     TaskFileSourceKind,
     TaskProviderReferenceKind,
     canonical_json,
+    canonical_schema_json,
     load_task_definition,
     validate_task_definition,
     validate_task_input,
@@ -24,6 +27,7 @@ VALID_EXAMPLES = (
     "file_array_comparison.task.toml",
     "large_direct_file.task.toml",
     "provider_reference_direct.task.toml",
+    "poc_extraction/task.toml",
     "local_multimodal_media.task.toml",
     "queued_file_task.task.toml",
     "output_artifact.task.toml",
@@ -168,9 +172,84 @@ class TaskExamplesTest(TestCase):
             str(provider_id.provider_reference.summary()),
         )
 
+    def test_poc_extraction_fixture_contract_and_provenance(self) -> None:
+        root = EXAMPLE_ROOT / "poc_extraction"
+        task_path = root / "task.toml"
+        definition = load_task_definition(task_path)
+        with (root / "invoice.schema.json").open(encoding="utf-8") as file:
+            schema = load(file)
+
+        valid_output = _poc_extraction_output()
+        invalid_output = _poc_extraction_output()
+        line_items = cast(
+            list[dict[str, object]],
+            invalid_output["line_items"],
+        )
+        line_items[0]["currency"] = "US"
+
+        self.assertEqual(
+            canonical_schema_json(definition.output.schema),
+            canonical_schema_json(schema),
+        )
+        self.assertEqual(
+            validate_task_input(
+                definition,
+                {
+                    "source_kind": "local_path",
+                    "reference": "./sample.pdf",
+                    "mime_type": "application/pdf",
+                },
+            ),
+            (),
+        )
+        self.assertEqual(validate_task_output(definition, valid_output), ())
+        self.assertEqual(
+            _issue_codes(validate_task_output(definition, invalid_output)),
+            {"output.invalid_type"},
+        )
+
+        combined = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix != ".pdf"
+        )
+        self.assertIn('schema_ref = "invoice.schema.json"', combined)
+        self.assertNotIn("run_flow.py", combined)
+        self.assertNotIn("Pulumi", combined)
+        self.assertNotIn("vdocintel", combined)
+        self.assertNotIn("staging", combined.lower())
+        self.assertNotIn("LA_Checkmate", combined)
+        self.assertNotIn("/".join(("specs", "poc")), combined)
+
 
 def _issue_codes(issues: Iterable[object]) -> set[str]:
     return {getattr(issue, "code") for issue in issues}
+
+
+def _poc_extraction_output() -> dict[str, object]:
+    return {
+        "line_items": [
+            {
+                "line_number": 1,
+                "vendor_name": "Northwind Office Supplies",
+                "vendor_address": "42 Market St, Denver, CO 80202",
+                "customer_name": "Contoso Research Lab",
+                "customer_address": "100 Example Ave, Suite 1, Denver, CO 80202",
+                "invoice_number": "INV-1001",
+                "invoice_date": "01/15/2026",
+                "due_date": "02/14/2026",
+                "purchase_order": "PO-555100",
+                "description": "Document processing services",
+                "quantity": "5",
+                "unit_price": "25.00",
+                "line_amount": "125.00",
+                "tax_amount": "0.00",
+                "total_amount": "125.00",
+                "currency": "USD",
+                "notes": "Synthetic invoice fixture",
+            }
+        ]
+    }
 
 
 def _load_sdk_module(filename: str) -> ModuleType:

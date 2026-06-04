@@ -21,6 +21,8 @@ runtime configuration.
 - [provider_reference_direct.task.toml](provider_reference_direct.task.toml)
   accepts provider file ids, hosted URLs, and object-store references supplied
   by CLI or SDK descriptors.
+- [poc_extraction/task.toml](poc_extraction/task.toml) accepts one PDF and
+  returns a structured invoice extraction object.
 - [local_multimodal_media.task.toml](local_multimodal_media.task.toml) shows a
   local multimodal media contract without downloading a model in CI.
 - [queued_file_task.task.toml](queued_file_task.task.toml) shows a queued file
@@ -68,6 +70,8 @@ poetry run avalan task run docs/examples/tasks/structured_json.task.toml \
   --input-json '{"question":"What changed?","priority":2}' \
   --json \
   --output result.json
+
+poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
 ```
 
 Queue examples require PostgreSQL task storage, a migrated schema, HMAC keys,

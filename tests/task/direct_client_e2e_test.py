@@ -1,14 +1,20 @@
 from base64 import b64decode
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from json import dumps
+from logging import getLogger
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any, BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
+from uuid import uuid4
 
-from avalan.entities import Message, MessageContentFile
+from avalan.agent.loader import OrchestratorLoader
+from avalan.entities import Message, MessageContentFile, MessageContentText
 from avalan.event import Event, EventType
 from avalan.task import (
     HASHED_MARKER,
@@ -44,6 +50,7 @@ from avalan.task import (
     TaskValidationError,
     TaskValidationIssue,
     UsageSource,
+    canonical_schema_json,
     spec_hash,
 )
 from avalan.task.artifacts import LocalArtifactStore
@@ -305,6 +312,32 @@ def _provider_definition(
             capture_events=True,
         ),
     )
+
+
+def _extraction_output() -> dict[str, object]:
+    return {
+        "line_items": [
+            {
+                "line_number": 1,
+                "vendor_name": "Northwind Office Supplies",
+                "vendor_address": "42 Market St, Denver, CO 80202",
+                "customer_name": "Contoso Research Lab",
+                "customer_address": "100 Example Ave, Suite 1, Denver, CO 80202",
+                "invoice_number": "INV-1001",
+                "invoice_date": "01/15/2026",
+                "due_date": "02/14/2026",
+                "purchase_order": "PO-555100",
+                "description": "Document processing services",
+                "quantity": "5",
+                "unit_price": "25.00",
+                "line_amount": "125.00",
+                "tax_amount": "0.00",
+                "total_amount": "125.00",
+                "currency": "USD",
+                "notes": "Synthetic invoice fixture",
+            }
+        ]
+    }
 
 
 class StaticHmacProvider:
@@ -692,7 +725,197 @@ def _only_file_block(input_value: object) -> MessageContentFile:
     return blocks[0]
 
 
+class ExtractionFakeResponse:
+    input_token_count = 19
+    output_token_count = 23
+    total_token_count = 42
+
+    def __init__(self, output: Mapping[str, object]) -> None:
+        self.output = output
+
+    async def to_json(self) -> str:
+        return dumps(self.output, sort_keys=True, separators=(",", ":"))
+
+    async def to_str(self) -> str:
+        return await self.to_json()
+
+
+class ExtractionFakeOrchestrator:
+    def __init__(self, output: Mapping[str, object]) -> None:
+        self.output = output
+        self.event_manager = ProviderFakeEventManager()
+        self.inputs: list[object] = []
+        self.text_formats: list[Mapping[str, object]] = []
+        self.reasoning_options: list[Mapping[str, object]] = []
+        self.entered = 0
+        self.exited = 0
+
+    async def __aenter__(self) -> "ExtractionFakeOrchestrator":
+        self.entered += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        self.exited += 1
+        return None
+
+    async def __call__(self, input: object) -> ExtractionFakeResponse:
+        self.inputs.append(input)
+        await self.event_manager.emit_token()
+        return ExtractionFakeResponse(self.output)
+
+
 class DirectClientE2ETest(IsolatedAsyncioTestCase):
+    async def test_poc_extraction_fixture_sends_prompt_pdf_and_schema(
+        self,
+    ) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        pdf_bytes = (fixture / "sample.pdf").read_bytes()
+        definition = TaskDefinitionLoader().load(fixture / "task.toml")
+        output = _extraction_output()
+        orchestrator = ExtractionFakeOrchestrator(output)
+        settings_values: list[Any] = []
+
+        async def from_settings(
+            loader: OrchestratorLoader,
+            settings: object,
+            *,
+            tool_settings: object | None = None,
+            tool_format: object | None = None,
+        ) -> ExtractionFakeOrchestrator:
+            _ = loader, tool_settings, tool_format
+            call_options = cast(Any, settings).call_options
+            assert isinstance(call_options, Mapping)
+            response_format = cast(
+                Mapping[str, object],
+                call_options["response_format"],
+            )
+            text_format = {
+                "type": response_format["type"],
+                "name": response_format["name"],
+                "schema": response_format["schema"],
+                "strict": response_format["strict"],
+            }
+            orchestrator.text_formats.append(text_format)
+            orchestrator.reasoning_options.append(
+                cast(Mapping[str, object], call_options["reasoning"])
+            )
+            settings_values.append(settings)
+            return orchestrator
+
+        with TemporaryDirectory() as artifact_root:
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=cast(Any, object()),
+                logger=getLogger("avalan.tests.task.extraction"),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            try:
+                with patch.object(
+                    OrchestratorLoader,
+                    "from_settings",
+                    new=from_settings,
+                ):
+                    client = TaskClient(
+                        InMemoryTaskStore(
+                            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                        ),
+                        target=AgentTaskTargetRunner(loader, ref_base=fixture),
+                        artifact_store=LocalArtifactStore(
+                            Path(artifact_root),
+                            raw_storage_allowed=True,
+                        ),
+                        hmac_provider=StaticHmacProvider(),
+                        execution_roots=(fixture,),
+                        definition_hash=lambda task: "extraction-fixture-e2e",
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                    )
+                    descriptor = TaskClient.local_file(
+                        "./sample.pdf",
+                        mime_type="application/pdf",
+                        size_bytes=len(pdf_bytes),
+                    )
+
+                    validation = await client.validate(
+                        definition,
+                        input_value=descriptor,
+                    )
+                    result = await client.run(
+                        definition,
+                        input_value=descriptor,
+                    )
+                    inspection = await client.inspect(result.run.run_id)
+            finally:
+                await stack.aclose()
+
+        self.assertTrue(validation.valid)
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, output)
+        self.assertEqual(orchestrator.entered, 1)
+        self.assertEqual(orchestrator.exited, 1)
+        self.assertEqual(len(orchestrator.inputs), 1)
+        self.assertEqual(len(settings_values), 1)
+        settings = cast(Any, settings_values[-1])
+        self.assertEqual(
+            settings.engine_config["base_url"],
+            "https://tenant.openai.azure.com/openai/v1/",
+        )
+        self.assertEqual(
+            orchestrator.reasoning_options[-1],
+            {"effort": "high"},
+        )
+        self.assertEqual(orchestrator.text_formats[-1]["type"], "json_schema")
+        self.assertEqual(
+            orchestrator.text_formats[-1]["name"],
+            "invoice_extraction",
+        )
+        self.assertTrue(orchestrator.text_formats[-1]["strict"])
+        self.assertEqual(
+            canonical_schema_json(orchestrator.text_formats[-1]["schema"]),
+            canonical_schema_json(definition.output.schema),
+        )
+
+        agent_input = orchestrator.inputs[0]
+        self.assertIsInstance(agent_input, Message)
+        content = cast(Message, agent_input).content
+        self.assertIsInstance(content, list)
+        blocks = cast(list[Any], content)
+        text_blocks = [
+            block for block in blocks if isinstance(block, MessageContentText)
+        ]
+        file_blocks = [
+            block for block in blocks if isinstance(block, MessageContentFile)
+        ]
+        self.assertEqual(len(text_blocks), 1)
+        self.assertEqual(len(file_blocks), 1)
+        self.assertEqual(
+            text_blocks[0].text,
+            "Analyze the attached synthetic invoice PDF and "
+            "extract all data according to the system instructions.",
+        )
+        self.assertEqual(file_blocks[0].file["mime_type"], "application/pdf")
+        self.assertEqual(
+            b64decode(cast(str, file_blocks[0].file["file_data"])),
+            pdf_bytes,
+        )
+        self.assertEqual(len(inspection.events), 1)
+        self.assertEqual(inspection.usage_totals.total_tokens, 42)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("sample.pdf", inspection_value)
+        self.assertNotIn("private-provider-token", inspection_value)
+        self.assertNotIn("file_data", inspection_value)
+
     async def test_loaded_provider_references_run_directly_and_inspect_safely(
         self,
     ) -> None:

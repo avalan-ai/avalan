@@ -1,0 +1,49 @@
+[task]
+name = "poc_invoice_extraction"
+version = "1"
+description = "Extract invoice line items from one PDF."
+labels = ["example", "invoice", "extraction"]
+
+[input]
+type = "file"
+description = "Synthetic PDF to extract without document-memory loading."
+mime_types = ["application/pdf"]
+
+[output]
+type = "object"
+description = "Invoice extraction object."
+schema_ref = "invoice.schema.json"
+
+[execution]
+type = "agent"
+ref = "agent.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 300
+idempotency = "input_and_files_hash"
+
+[artifact]
+storage = "local"
+store_bytes = false
+max_count = 4
+max_bytes = 1048576
+
+[privacy]
+input = "drop"
+prompt = "drop"
+output = "drop"
+files = "drop"
+file_bytes = "drop"
+token_text = "drop"
+tool_arguments = "drop"
+tool_results = "drop"
+events = "drop"
+errors = "drop"
+raw_retention_days = 0
+
+[limits]
+file_count = 1
+file_bytes = 1048576
+output_bytes = 131072
+total_tokens = 100000

@@ -1688,6 +1688,15 @@ avalan task run docs/examples/tasks/structured_json.task.toml \
   --input-json '{"question":"What changed?","priority":2}' \
   --json \
   --output result.json
+
+poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+
+poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml \
+  --ephemeral \
+  --file input=./sample.pdf \
+  --file-mime input=application/pdf \
+  --json \
+  --output extraction.json
 ```
 
 Use `--store-schema` or `AVALAN_TASK_STORE_SCHEMA` when the task schema is not
