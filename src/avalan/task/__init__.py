@@ -281,6 +281,14 @@ from .store import (
 from .target import CallableTaskTargetRunner as CallableTaskTargetRunner
 from .target import TaskTargetRunner as TaskTargetRunner
 from .target import TaskValidationContext as TaskValidationContext
+from .text_strategy import TextChunk as TextChunk
+from .text_strategy import TextStrategyKind as TextStrategyKind
+from .text_strategy import TextStrategyPlan as TextStrategyPlan
+from .text_strategy import chunk_text_documents as chunk_text_documents
+from .text_strategy import plan_text_strategy as plan_text_strategy
+from .text_strategy import (
+    select_retrieval_chunks as select_retrieval_chunks,
+)
 from .usage import TaskUsageMetadata as TaskUsageMetadata
 from .usage import TaskUsageStore as TaskUsageStore
 from .usage import TaskUsageValue as TaskUsageValue

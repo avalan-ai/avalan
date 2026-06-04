@@ -1,3 +1,4 @@
+from asyncio import CancelledError
 from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -41,6 +42,7 @@ from avalan.task import (
     TaskMetadata,
     TaskOutputContract,
     TaskProviderReferenceKind,
+    TaskRetryPolicy,
     TaskRunState,
     TaskTargetContext,
     TaskValidationContext,
@@ -158,7 +160,9 @@ class FakeOrchestrator:
                     },
                 )
             )
-        response = self._loader.response
+        response = self._loader.next_response()
+        if isinstance(response, BaseException):
+            raise response
         if response is not None:
             return response
         return FakeResponse(self._loader.response_text)
@@ -170,10 +174,12 @@ class FakeLoader:
         *,
         response_text: str = "summary",
         response: object | None = None,
+        responses: tuple[object, ...] = (),
         emit_event: bool = False,
     ) -> None:
         self.response_text = response_text
         self.response = response
+        self.responses = list(responses)
         self.emit_event = emit_event
         self.event_manager: object = FakeEventManager()
         self.paths: list[str] = []
@@ -183,6 +189,11 @@ class FakeLoader:
         self.inputs: list[object] = []
         self.entered = 0
         self.exited = 0
+
+    def next_response(self) -> object | None:
+        if self.responses:
+            return self.responses.pop(0)
+        return self.response
 
     async def from_file(
         self,
@@ -1109,7 +1120,9 @@ file_delivery_profile = "multimodal"
         self.assertEqual(error.exception.issues[0].path, "input.files[0]")
         self.assertEqual(loader.inputs, [])
 
-    async def test_run_rejects_local_text_token_budget_excess(self) -> None:
+    async def test_run_rejects_local_text_when_prompt_exhausts_budget(
+        self,
+    ) -> None:
         loader = FakeLoader()
         runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
         artifact_ref = TaskArtifactRef(
@@ -1122,9 +1135,9 @@ file_delivery_profile = "multimodal"
             await runner.run(
                 self._context(
                     self._definition(
-                        limits=TaskLimitsPolicy(total_tokens=3),
+                        limits=TaskLimitsPolicy(total_tokens=1),
                     ),
-                    "summarize",
+                    "summarize now",
                     files=(
                         TaskInputFile(
                             logical_path="artifact:artifact-1",
@@ -1143,6 +1156,283 @@ file_delivery_profile = "multimodal"
         self.assertEqual(error.exception.issues[0].path, "limits.total_tokens")
         self.assertNotIn("one two three four", str(error.exception))
         self.assertEqual(loader.inputs, [])
+
+    async def test_run_retrieves_matching_local_text_chunks(self) -> None:
+        loader = FakeLoader(response="accepted")
+        runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(limits=TaskLimitsPolicy(total_tokens=5)),
+                "needle",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="text/plain",
+                        size_bytes=64,
+                    ),
+                ),
+                artifact_store=FakeArtifactStore(
+                    b"zero one two three needle five six seven eight nine"
+                ),
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(
+            [block.text for block in content],
+            ["needle", "needle five six seven"],
+        )
+        self.assertNotIn("zero one two three", str(loader.inputs[0]))
+        self.assertTrue(
+            all(isinstance(block, MessageContentText) for block in content)
+        )
+
+    async def test_run_plans_file_input_without_prompt_text(self) -> None:
+        loader = FakeLoader(response="accepted")
+        runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("text",),
+                        mime_types=("text/plain",),
+                    ),
+                    limits=TaskLimitsPolicy(total_tokens=3),
+                ),
+                "ignored file prompt",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="text/plain",
+                        size_bytes=11,
+                    ),
+                ),
+                artifact_store=FakeArtifactStore(b"alpha beta"),
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual([block.text for block in content], ["alpha beta"])
+
+    async def test_run_uses_map_reduce_for_unmatched_local_text(
+        self,
+    ) -> None:
+        responses = (
+            FakeResponse("map one", input_token_count=3),
+            FakeResponse("map two", input_token_count=3),
+            FakeResponse(
+                "final summary",
+                input_token_count=4,
+                output_token_count=2,
+            ),
+        )
+        loader = FakeLoader(responses=responses)
+        observed: list[object] = []
+        runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        result = await runner.run(
+            self._context(
+                self._definition(limits=TaskLimitsPolicy(total_tokens=4)),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="text/plain",
+                        size_bytes=36,
+                    ),
+                ),
+                artifact_store=FakeArtifactStore(
+                    b"alpha beta gamma delta epsilon zeta"
+                ),
+                usage_observer=lambda response: observed.append(response),
+            )
+        )
+
+        self.assertEqual(result, "final summary")
+        self.assertEqual(len(loader.inputs), 3)
+        self.assertEqual(
+            [
+                [
+                    block.text
+                    for block in cast(
+                        list[Any],
+                        cast(Message, input_value).content,
+                    )
+                ]
+                for input_value in loader.inputs
+            ],
+            [
+                ["summarize", "alpha beta gamma"],
+                ["summarize", "delta epsilon zeta"],
+                ["summarize", "map one", "map two"],
+            ],
+        )
+        self.assertEqual(observed, list(responses))
+
+    async def test_run_checks_cancellation_between_map_calls(self) -> None:
+        loader = FakeLoader(
+            responses=(
+                FakeResponse("map one"),
+                FakeResponse("map two"),
+                FakeResponse("final summary"),
+            )
+        )
+        calls = 0
+        runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        async def check_cancelled() -> None:
+            nonlocal calls
+            calls += 1
+            if calls >= 4:
+                raise CancelledError()
+
+        with self.assertRaises(CancelledError):
+            await runner.run(
+                self._context(
+                    self._definition(limits=TaskLimitsPolicy(total_tokens=4)),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="text/plain",
+                            size_bytes=36,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(
+                        b"alpha beta gamma delta epsilon zeta"
+                    ),
+                    cancellation_checker=check_cancelled,
+                )
+            )
+
+        self.assertEqual(len(loader.inputs), 1)
+
+    async def test_run_raises_invalid_reduce_output_safely(self) -> None:
+        loader = FakeLoader(
+            responses=(
+                FakeResponse('{"partial": 1}'),
+                FakeResponse('{"partial": 2}'),
+                FakeResponse("private invalid json"),
+            )
+        )
+        runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(ValueError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(
+                        output=TaskOutputContract.json(),
+                        limits=TaskLimitsPolicy(total_tokens=4),
+                    ),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="text/plain",
+                            size_bytes=36,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(
+                        b"alpha beta gamma delta epsilon zeta"
+                    ),
+                )
+            )
+
+        self.assertNotIn("alpha beta gamma", str(error.exception))
+
+    async def test_direct_runner_retries_transient_map_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+instructions = "Be brief."
+
+[engine]
+uri = "ai://local/model"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader(
+                responses=(
+                    RuntimeError("private transient failure"),
+                    FakeResponse("map one"),
+                    FakeResponse("map two"),
+                    FakeResponse("final summary"),
+                )
+            )
+            runner = DirectTaskRunner(
+                InMemoryTaskStore(),
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=FakeArtifactStore(
+                    b"alpha beta gamma delta epsilon zeta"
+                ),
+                definition_hash=lambda task: "agent-map-retry-hash",
+            )
+            artifact_ref = TaskArtifactRef(
+                artifact_id="artifact-1",
+                store="local",
+                storage_key="ar/artifact-1",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    limits=TaskLimitsPolicy(total_tokens=4),
+                    retry=TaskRetryPolicy(max_attempts=2),
+                ),
+                input_value="summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="text/plain",
+                        size_bytes=36,
+                    ),
+                ),
+            )
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "final summary")
+        self.assertEqual(len(loader.inputs), 4)
 
     async def test_run_rejects_unsupported_provider_uri_scheme(self) -> None:
         runner = AgentTaskTargetRunner(
@@ -1904,6 +2194,9 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         files: tuple[TaskInputFile, ...] = (),
         artifact_store: FakeArtifactStore | None = None,
         cancellation_checker: Callable[[], Awaitable[None]] | None = None,
+        usage_observer: (
+            Callable[[object], Awaitable[None] | None] | None
+        ) = None,
     ) -> TaskTargetContext:
         return TaskTargetContext(
             definition=definition,
@@ -1916,6 +2209,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             files=files,
             artifact_store=artifact_store,
             cancellation_checker=cancellation_checker,
+            usage_observer=usage_observer,
         )
 
     def _definition(
@@ -1925,6 +2219,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         output: TaskOutputContract | None = None,
         artifact: TaskArtifactPolicy | None = None,
         limits: TaskLimitsPolicy | None = None,
+        retry: TaskRetryPolicy | None = None,
     ) -> TaskDefinition:
         return TaskDefinition(
             task=TaskMetadata(name="agent", version="1"),
@@ -1933,6 +2228,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             execution=TaskExecutionTarget.agent("agents/valid.toml"),
             artifact=artifact or TaskArtifactPolicy(),
             limits=limits or TaskLimitsPolicy(),
+            retry=retry or TaskRetryPolicy(),
         )
 
 

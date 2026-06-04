@@ -28,6 +28,11 @@ from ..definition import (
     TaskTargetType,
 )
 from ..target import TaskTargetRunner, TaskValidationContext
+from ..text_strategy import (
+    TextStrategyKind,
+    TextStrategyPlan,
+    plan_text_strategy,
+)
 from ..validation import (
     TaskValidationCategory,
     TaskValidationError,
@@ -137,7 +142,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         await context.check_cancelled()
         profile = self._agent_file_profile(context.definition)
         agent_input = await _agent_input(context, profile)
-        _validate_local_text_token_budget(
+        agent_input, text_plan = _plan_local_text_delivery(
             agent_input,
             context=context,
             profile=profile,
@@ -152,7 +157,17 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         async with orchestrator:
             async with _agent_event_listener(orchestrator, context):
                 await context.check_cancelled()
-                response = await orchestrator(agent_input)
+                if (
+                    text_plan is not None
+                    and text_plan.kind == TextStrategyKind.MAP_REDUCE
+                ):
+                    response = await _run_map_reduce(
+                        orchestrator,
+                        context=context,
+                        plan=text_plan,
+                    )
+                else:
+                    response = await orchestrator(agent_input)
                 _attach_cancellation_checker(response, context.check_cancelled)
                 try:
                     output = await _agent_output(context.definition, response)
@@ -482,34 +497,84 @@ def _file_prompt_text(
     return "\n".join(value)
 
 
-def _validate_local_text_token_budget(
+def _plan_local_text_delivery(
     agent_input: Input,
     *,
     context: TaskTargetContext,
     profile: FileDeliveryProfile,
     token_counter: TokenCounter,
-) -> None:
+) -> tuple[Input, TextStrategyPlan | None]:
     if (
         not context.files
         or not profile.requires_conversion_for_file_blocks
         or context.definition.limits.total_tokens is None
     ):
-        return
-    token_count = sum(
-        token_counter(text) for text in _input_text_blocks(agent_input)
+        return agent_input, None
+    prompt_texts, document_texts = _local_text_prompt_and_documents(
+        agent_input,
+        file_count=len(context.files),
     )
-    if token_count <= context.definition.limits.total_tokens:
-        return
-    raise TaskValidationError(
-        (
-            TaskValidationIssue(
-                code="limits.invalid_value",
-                path="limits.total_tokens",
-                message="Task input exceeds the configured token limit.",
-                hint="Reduce the input text or raise the token limit.",
-                category=TaskValidationCategory.VALUE,
-            ),
+    plan = plan_text_strategy(
+        prompt_texts=prompt_texts,
+        document_texts=document_texts,
+        token_limit=context.definition.limits.total_tokens,
+        token_counter=token_counter,
+    )
+    if plan.kind == TextStrategyKind.INLINE:
+        return agent_input, plan
+    if plan.kind == TextStrategyKind.RETRIEVAL:
+        return _text_strategy_input(plan.texts), plan
+    if plan.kind == TextStrategyKind.MAP_REDUCE:
+        return agent_input, plan
+    raise TaskValidationError(plan.issues)
+
+
+def _local_text_prompt_and_documents(
+    value: Input,
+    *,
+    file_count: int,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    assert isinstance(file_count, int)
+    assert not isinstance(file_count, bool)
+    assert file_count > 0
+    texts = _input_text_blocks(value)
+    if len(texts) <= file_count:
+        return (), texts
+    return texts[:-file_count], texts[-file_count:]
+
+
+def _text_strategy_input(texts: tuple[str, ...]) -> Message:
+    return Message(
+        role=MessageRole.USER,
+        content=[
+            MessageContentText(type="text", text=text)
+            for text in texts
+            if text
+        ],
+    )
+
+
+async def _run_map_reduce(
+    orchestrator: AgentOrchestrator,
+    *,
+    context: TaskTargetContext,
+    plan: TextStrategyPlan,
+) -> object:
+    summaries: list[str] = []
+    for chunk in plan.chunks:
+        await context.check_cancelled()
+        response = await orchestrator(
+            _text_strategy_input((*plan.prompt_texts, chunk.text))
         )
+        _attach_cancellation_checker(response, context.check_cancelled)
+        try:
+            summaries.append(await _response_text(response))
+        finally:
+            await context.observe_usage(response)
+        await context.check_cancelled()
+    await context.check_cancelled()
+    return await orchestrator(
+        _text_strategy_input((*plan.prompt_texts, *summaries))
     )
 
 
