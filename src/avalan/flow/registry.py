@@ -11,6 +11,26 @@ class FlowNodeFactory(Protocol):
     def __call__(self, definition: FlowNodeDefinition) -> Node: ...
 
 
+class FlowNodeConfigurationError(ValueError):
+    def __init__(
+        self,
+        *,
+        code: str,
+        path: str,
+        message: str,
+        hint: str,
+    ) -> None:
+        assert isinstance(code, str) and code.strip()
+        assert isinstance(path, str) and path.strip()
+        assert isinstance(message, str) and message.strip()
+        assert isinstance(hint, str) and hint.strip()
+        self.code = code
+        self.path = path
+        self.message = message
+        self.hint = hint
+        super().__init__(code)
+
+
 class FlowNodeRegistry:
     def __init__(
         self,

@@ -972,6 +972,8 @@ class DirectTaskRunner:
                 else None
             ),
             artifact_store=self._artifact_store,
+            task_store=self._store,
+            file_converters=self._file_converters,
         )
         await self._check_cancellation_or_expiry(run, expires_at)
         output = await wait_for(

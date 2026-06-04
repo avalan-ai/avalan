@@ -431,6 +431,146 @@ class CliTaskValidateTestCase(TestCase):
         self.assertNotIn("feature.flow_backed_tasks_disabled", output)
         self.assertNotIn("flows/private.toml", output)
 
+    def test_validate_reports_flow_load_issues(self) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            definition = root / "task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "flow-task"
+                version = "1"
+
+                [input]
+                type = "file"
+                mime_types = ["application/pdf"]
+
+                [output]
+                type = "object"
+                schema = {type = "object", additionalProperties = true}
+
+                [execution]
+                type = "flow"
+                ref = "flow.toml"
+                """,
+                encoding="utf-8",
+            )
+            (root / "flow.toml").write_text(
+                """
+                [flow]
+                name = "render"
+                entrypoint = "render"
+                output_node = "render"
+
+                [nodes.render]
+                type = "file_convert"
+
+                [nodes.render.config]
+                converter = "private_converter"
+                """,
+                encoding="utf-8",
+            )
+
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = task_cmds.task_validate(
+                    Namespace(definition=str(definition)),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task definition is invalid.", output)
+        self.assertIn("flow.converter_unsupported", output)
+        self.assertNotIn("private_converter", output)
+
+    def test_validate_checks_readable_flow_reference(self) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            definition = root / "task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "flow-task"
+                version = "1"
+
+                [input]
+                type = "string"
+
+                [output]
+                type = "object"
+                schema = {type = "object", additionalProperties = true}
+
+                [execution]
+                type = "flow"
+                ref = "flow.toml"
+                """,
+                encoding="utf-8",
+            )
+            (root / "flow.toml").write_text(
+                """
+                [flow]
+                name = "constant"
+                entrypoint = "start"
+                output_node = "start"
+
+                [nodes.start]
+                type = "constant"
+                value = {ok = true}
+                """,
+                encoding="utf-8",
+            )
+
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = task_cmds.task_validate(
+                    Namespace(definition=str(definition)),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("Task definition is valid: flow-task 1", output)
+
+    def test_validate_reports_missing_flow_reference_safely(self) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            definition = root / "task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "flow-task"
+                version = "1"
+
+                [input]
+                type = "string"
+
+                [output]
+                type = "object"
+                schema = {type = "object", additionalProperties = true}
+
+                [execution]
+                type = "flow"
+                ref = "private-flow.toml"
+                """,
+                encoding="utf-8",
+            )
+
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = task_cmds.task_validate(
+                    Namespace(definition=str(definition)),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("flow.read_failed", output)
+        self.assertNotIn("private-flow.toml", output)
+
     def test_validate_missing_file_prints_safe_diagnostic(self) -> None:
         console = Console(record=True, width=160)
 

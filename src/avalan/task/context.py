@@ -1,10 +1,12 @@
 from ..event import Event
 from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactRef
+from .converters import FileConverter
 from .definition import TaskDefinition
 from .input import TaskProviderReference
 from .store import (
     TaskExecutionContext,
+    TaskStore,
     freeze_snapshot_metadata,
     freeze_snapshot_value,
 )
@@ -83,6 +85,10 @@ class TaskTargetContext:
     event_listener: TaskEventListener | None = None
     usage_observer: TaskUsageObserver | None = None
     artifact_store: ArtifactStore | None = None
+    task_store: TaskStore | None = None
+    file_converters: Mapping[str, FileConverter] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __post_init__(self) -> None:
         assert isinstance(self.definition, TaskDefinition)
@@ -103,6 +109,14 @@ class TaskTargetContext:
             assert callable(self.usage_observer)
         if self.artifact_store is not None:
             assert callable(getattr(self.artifact_store, "open_stream", None))
+        if self.task_store is not None:
+            assert callable(getattr(self.task_store, "append_artifact", None))
+        assert isinstance(self.file_converters, Mapping)
+        object.__setattr__(
+            self,
+            "file_converters",
+            MappingProxyType(dict(self.file_converters)),
+        )
 
     async def check_cancelled(self) -> None:
         if self.cancellation_checker is not None:

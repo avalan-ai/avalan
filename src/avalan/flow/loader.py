@@ -8,7 +8,11 @@ from .definition import (
     FlowOutputType,
 )
 from .flow import Flow
-from .registry import FlowNodeRegistry, default_flow_node_registry
+from .registry import (
+    FlowNodeConfigurationError,
+    FlowNodeRegistry,
+    default_flow_node_registry,
+)
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -63,7 +67,13 @@ _ALLOWED_NODE_FIELDS = frozenset(
         "value",
     }
 )
-_KNOWN_DEFERRED_NODE_TYPES = frozenset({"agent"})
+_KNOWN_DEFERRED_NODE_TYPES = frozenset(
+    {
+        "agent",
+        "file_convert",
+        "pdf_to_images",
+    }
+)
 _UNTRUSTED_NODE_TYPES = frozenset(
     {
         "callable",
@@ -302,6 +312,19 @@ def _build_result(
         return FlowLoadResult(definition=None, issues=tuple(issues))
     try:
         flow = build_flow(definition, registry)
+    except FlowNodeConfigurationError as error:
+        return FlowLoadResult(
+            definition=None,
+            issues=(
+                _issue(
+                    code=error.code,
+                    path=error.path,
+                    message=error.message,
+                    hint=error.hint,
+                    category=FlowLoadIssueCategory.VALUE,
+                ),
+            ),
+        )
     except (AssertionError, KeyError, TypeError, ValueError):
         return FlowLoadResult(
             definition=None,

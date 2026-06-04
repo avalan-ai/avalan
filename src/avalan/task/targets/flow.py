@@ -3,11 +3,22 @@ from ...flow.definition import FlowNodeDefinition
 from ...flow.flow import Flow
 from ...flow.node import Node
 from ...flow.registry import (
+    FlowNodeConfigurationError,
     FlowNodeFactory,
     FlowNodeRegistry,
     default_flow_node_registry,
 )
-from ..context import TaskTargetContext
+from ..artifact import TaskArtifactRef, TaskArtifactRetention
+from ..context import TaskInputFile, TaskTargetContext
+from ..converters import (
+    FileConverter,
+    TaskFileConversionDependencyError,
+    TaskFileConversionError,
+    TaskFileConversionPageCollection,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
+    convert_task_artifact_pages,
+)
 from ..definition import (
     RunMode,
     TaskDefinition,
@@ -15,6 +26,8 @@ from ..definition import (
     TaskOutputType,
     TaskTargetType,
 )
+from ..feature_gate import TaskFeature, feature_available, feature_diagnostic
+from ..input import TaskFileConversionRequest
 from ..privacy import (
     DROPPED_MARKER,
     ENCRYPTED_MARKER,
@@ -37,11 +50,24 @@ from dataclasses import dataclass, replace
 from inspect import isawaitable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from time import perf_counter
+from types import MappingProxyType
 from typing import cast
 
 FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
 FLOW_TASK_INPUT_KEY = "__task_input__"
 FLOW_TASK_FILES_KEY = "__task_files__"
+_FILE_CONVERT_CONFIG_KEYS = frozenset(
+    {
+        "converter",
+        "dpi",
+        "format",
+        "max_pages",
+        "max_pixels_per_page",
+        "max_total_pixels",
+        "pages",
+        "quality",
+    }
+)
 _UNAVAILABLE_PRIVACY_MARKERS = frozenset(
     {
         DROPPED_MARKER,
@@ -201,6 +227,14 @@ def task_flow_node_registry(
 ) -> FlowNodeRegistry:
     assert isinstance(context, TaskTargetContext)
     registry = default_flow_node_registry()
+    registry.register(
+        "file_convert",
+        _file_convert_node_factory(context),
+    )
+    registry.register(
+        "pdf_to_images",
+        _file_convert_node_factory(context, default_converter="pdf_image"),
+    )
     if agent_runner is not None:
         registry.register(
             "agent",
@@ -211,6 +245,270 @@ def task_flow_node_registry(
             ),
         )
     return registry
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _FlowConversionLimits:
+    max_pages: int | None = None
+    max_pixels_per_page: int | None = None
+    max_total_pixels: int | None = None
+
+
+class _FlowFileConverter:
+    def __init__(
+        self,
+        converter: FileConverter,
+        *,
+        limits: _FlowConversionLimits,
+    ) -> None:
+        assert isinstance(limits, _FlowConversionLimits)
+        self._converter = converter
+        self._limits = limits
+
+    @property
+    def name(self) -> str:
+        return self._converter.name
+
+    @property
+    def version(self) -> str:
+        return self._converter.version
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        capability = self._converter.capability
+        return TaskFileConverterCapability(
+            source_mime_types=capability.source_mime_types,
+            output_mime_types=capability.output_mime_types,
+            supports_streaming=capability.supports_streaming,
+            max_input_bytes=capability.max_input_bytes,
+            max_output_bytes=capability.max_output_bytes,
+            max_pages=_lower_limit(
+                capability.max_pages,
+                self._limits.max_pages,
+            ),
+            min_dpi=capability.min_dpi,
+            max_dpi=capability.max_dpi,
+            min_quality=capability.min_quality,
+            max_quality=capability.max_quality,
+            max_pixels=_lower_limit(
+                capability.max_pixels,
+                self._limits.max_pixels_per_page,
+            ),
+            estimated_memory_bytes=capability.estimated_memory_bytes,
+            timeout_seconds=capability.timeout_seconds,
+            options_schema=capability.options_schema,
+            dependency_gates=capability.dependency_gates,
+        )
+
+    def validate_options(self, options: Mapping[str, object]) -> None:
+        validate_options = getattr(self._converter, "validate_options", None)
+        if callable(validate_options):
+            validate_options(options)
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        return await self._converter.convert(
+            content,
+            source_media_type=source_media_type,
+            options=options,
+        )
+
+    async def convert_pages(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionPageCollection:
+        convert_pages = getattr(self._converter, "convert_pages", None)
+        if not callable(convert_pages):
+            raise TaskFileConversionError(
+                "file converter does not produce page artifacts"
+            )
+        collection = await convert_pages(
+            content,
+            source_media_type=source_media_type,
+            options=options,
+        )
+        assert isinstance(collection, TaskFileConversionPageCollection)
+        if (
+            self._limits.max_pages is not None
+            and len(collection.pages) > self._limits.max_pages
+        ):
+            raise TaskFileConversionError(
+                "file conversion exceeded the page limit"
+            )
+        if self._limits.max_total_pixels is not None:
+            total_pixels = sum(
+                page.width_pixels * page.height_pixels
+                for page in collection.pages
+            )
+            if total_pixels > self._limits.max_total_pixels:
+                raise TaskFileConversionError(
+                    "file conversion exceeded the pixel limit"
+                )
+        return collection
+
+
+def _file_convert_node_factory(
+    context: TaskTargetContext,
+    *,
+    default_converter: str | None = None,
+) -> FlowNodeFactory:
+    def build(definition: FlowNodeDefinition) -> Node:
+        request = _file_conversion_request(
+            definition,
+            default_converter=default_converter,
+        )
+        limits = _file_conversion_limits(definition.config)
+        converter = context.file_converters.get(request.name)
+        if converter is None:
+            raise FlowNodeConfigurationError(
+                code="flow.converter_unsupported",
+                path=f"nodes.{definition.name}.config.converter",
+                message="Flow file conversion is not supported.",
+                hint="Use a registered task file converter.",
+            )
+        adapted = _FlowFileConverter(converter, limits=limits)
+        try:
+            _validate_file_conversion_preflight(adapted, request)
+        except TaskFileConversionDependencyError as error:
+            diagnostic = feature_diagnostic(
+                error.feature,
+                path=f"nodes.{definition.name}.config.converter",
+            )
+            raise FlowNodeConfigurationError(
+                code=diagnostic.code,
+                path=diagnostic.path,
+                message=diagnostic.message,
+                hint=diagnostic.hint,
+            ) from error
+        except TaskFileConversionError as error:
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_node",
+                path=f"nodes.{definition.name}.config",
+                message="Flow file conversion options are invalid.",
+                hint="Use supported file conversion options.",
+            ) from error
+
+        async def run(inputs: dict[str, object]) -> object:
+            await context.check_cancelled()
+            files = _flow_node_input_files(
+                definition,
+                inputs,
+                context=context,
+            )
+            if context.artifact_store is None:
+                raise TaskValidationError(
+                    (
+                        _unsupported_flow_issue(
+                            path=f"nodes.{definition.name}.config",
+                            message=(
+                                "Flow file conversion requires an artifact"
+                                " store."
+                            ),
+                            hint="Configure artifact storage before running.",
+                        ),
+                    )
+                )
+            if context.task_store is None:
+                raise TaskValidationError(
+                    (
+                        _unsupported_flow_issue(
+                            path=f"nodes.{definition.name}.config",
+                            message=(
+                                "Flow file conversion requires a task store."
+                            ),
+                            hint="Run the node inside task execution.",
+                        ),
+                    )
+                )
+            converted_files: list[object] = []
+            for index, file in enumerate(files):
+                await context.check_cancelled()
+                if file.artifact_ref is None:
+                    raise TaskValidationError(
+                        (
+                            _invalid_flow_file_issue(
+                                definition.name,
+                                index,
+                                "Flow file conversion requires artifact "
+                                "backed files.",
+                                "Materialize the file into an artifact store "
+                                "before conversion.",
+                            ),
+                        )
+                    )
+                try:
+                    collection = await convert_task_artifact_pages(
+                        file.artifact_ref,
+                        request,
+                        converter=adapted,
+                        artifact_store=context.artifact_store,
+                        task_store=context.task_store,
+                        run_id=context.execution.run_id,
+                        attempt_id=context.execution.attempt_id,
+                        retention=TaskArtifactRetention(
+                            delete_after_days=(
+                                context.definition.artifact.retention_days
+                            ),
+                        ),
+                    )
+                except TaskFileConversionDependencyError as error:
+                    raise TaskValidationError(
+                        (
+                            _feature_issue(
+                                error.feature,
+                                path=(
+                                    f"nodes.{definition.name}.config.converter"
+                                ),
+                            ),
+                        )
+                    ) from error
+                except TaskFileConversionError as error:
+                    raise TaskValidationError(
+                        (
+                            _invalid_flow_file_issue(
+                                definition.name,
+                                index,
+                                "Flow file conversion could not be completed.",
+                                "Use a supported file, converter, and "
+                                "conversion options.",
+                            ),
+                        )
+                    ) from error
+                converted_files.extend(
+                    _converted_flow_file(page.ref) for page in collection.pages
+                )
+            await context.check_cancelled()
+            if definition.output is None:
+                return converted_files
+            return {definition.output: converted_files}
+
+        return Node(definition.name, func=run)
+
+    return build
+
+
+def _validate_file_conversion_preflight(
+    converter: _FlowFileConverter,
+    request: TaskFileConversionRequest,
+) -> None:
+    assert isinstance(converter, _FlowFileConverter)
+    assert isinstance(request, TaskFileConversionRequest)
+    for feature in converter.capability.dependency_gates:
+        if not feature_available(feature):
+            raise TaskFileConversionDependencyError(feature)
+    if not callable(getattr(converter._converter, "convert_pages", None)):
+        raise TaskFileConversionError(
+            "file converter does not produce page artifacts"
+        )
+    converter.validate_options(request.options)
 
 
 def _validate_flow_reference(
@@ -235,6 +533,193 @@ def _validate_flow_reference(
         if _is_relative_to(candidate, resolved_root):
             return None
     return _path_escape_issue()
+
+
+def _file_conversion_request(
+    definition: FlowNodeDefinition,
+    *,
+    default_converter: str | None,
+) -> TaskFileConversionRequest:
+    config = definition.config
+    _validate_file_conversion_config_keys(config)
+    converter = _file_conversion_name(config, default_converter)
+    if definition.type == "pdf_to_images" and converter != "pdf_image":
+        raise ValueError("pdf_to_images requires pdf_image conversion")
+    options: dict[str, object] = {}
+    for key in ("dpi", "format", "quality"):
+        if key in config:
+            options[key] = config[key]
+    if "pages" in config:
+        options["pages"] = _page_range_option(config["pages"])
+    return TaskFileConversionRequest(name=converter, options=options)
+
+
+def _file_conversion_limits(
+    config: Mapping[str, object],
+) -> _FlowConversionLimits:
+    return _FlowConversionLimits(
+        max_pages=_positive_config_int(config, "max_pages"),
+        max_pixels_per_page=_positive_config_int(
+            config,
+            "max_pixels_per_page",
+        ),
+        max_total_pixels=_positive_config_int(config, "max_total_pixels"),
+    )
+
+
+def _validate_file_conversion_config_keys(
+    config: Mapping[str, object],
+) -> None:
+    for key in config:
+        if key not in _FILE_CONVERT_CONFIG_KEYS:
+            raise ValueError("file conversion node option is unsupported")
+
+
+def _file_conversion_name(
+    config: Mapping[str, object],
+    default_converter: str | None,
+) -> str:
+    value = config.get("converter", default_converter)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("file conversion node requires a converter")
+    return value
+
+
+def _page_range_option(value: object) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        return MappingProxyType(dict(value))
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return MappingProxyType({"start": value, "end": value})
+    if not isinstance(value, str):
+        raise ValueError("file conversion page range is invalid")
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("file conversion page range is invalid")
+    if stripped.isdecimal():
+        page = int(stripped)
+        if page <= 0:
+            raise ValueError("file conversion page range is invalid")
+        return MappingProxyType({"start": page, "end": page})
+    if ".." not in stripped:
+        raise ValueError("file conversion page range is invalid")
+    start_text, end_text = stripped.split("..", 1)
+    if not start_text.isdecimal() or (end_text and not end_text.isdecimal()):
+        raise ValueError("file conversion page range is invalid")
+    start = int(start_text)
+    if start <= 0:
+        raise ValueError("file conversion page range is invalid")
+    pages: dict[str, object] = {"start": start}
+    if end_text:
+        end = int(end_text)
+        if end < start:
+            raise ValueError("file conversion page range is invalid")
+        pages["end"] = end
+    return MappingProxyType(pages)
+
+
+def _positive_config_int(
+    config: Mapping[str, object],
+    key: str,
+) -> int | None:
+    value = config.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError("file conversion limit is invalid")
+    return value
+
+
+def _flow_node_input_files(
+    definition: FlowNodeDefinition,
+    inputs: Mapping[str, object],
+    *,
+    context: TaskTargetContext,
+) -> tuple[TaskInputFile, ...]:
+    value = _flow_node_file_value(definition, inputs, context=context)
+    values = _flow_files_from_value(value)
+    if not values:
+        raise TaskValidationError(
+            (
+                _unsupported_flow_issue(
+                    path=f"nodes.{definition.name}.input",
+                    message="Flow file conversion requires file input.",
+                    hint="Pass one or more task input files to the node.",
+                ),
+            )
+        )
+    files: list[TaskInputFile] = []
+    for index, item in enumerate(values):
+        if not isinstance(item, TaskInputFile):
+            raise TaskValidationError(
+                (
+                    _invalid_flow_file_issue(
+                        definition.name,
+                        index,
+                        "Flow file conversion input is invalid.",
+                        "Pass task input file values to the conversion node.",
+                    ),
+                )
+            )
+        files.append(item)
+    return tuple(files)
+
+
+def _flow_node_file_value(
+    definition: FlowNodeDefinition,
+    inputs: Mapping[str, object],
+    *,
+    context: TaskTargetContext,
+) -> object:
+    if definition.input is not None and definition.input in inputs:
+        return inputs[definition.input]
+    if definition.input is not None:
+        if context.files and len(context.files) == 1:
+            return context.files[0]
+        raise TaskValidationError(
+            (
+                _unsupported_flow_issue(
+                    path=f"nodes.{definition.name}.input",
+                    message="Flow file input selector is unavailable.",
+                    hint="Use a selector that resolves to one file value.",
+                ),
+            )
+        )
+    if FLOW_TASK_FILES_KEY in inputs:
+        return inputs[FLOW_TASK_FILES_KEY]
+    if "files" in inputs:
+        return inputs["files"]
+    if "file" in inputs:
+        return inputs["file"]
+    return _flow_node_input_value(definition, inputs)
+
+
+def _flow_files_from_value(value: object) -> tuple[object, ...]:
+    if isinstance(value, Mapping):
+        if "files" in value:
+            return _flow_files_from_value(value["files"])
+        if "file" in value:
+            return _flow_files_from_value(value["file"])
+    if isinstance(value, list | tuple):
+        return tuple(value)
+    return (value,)
+
+
+def _converted_flow_file(ref: TaskArtifactRef) -> TaskInputFile:
+    return TaskInputFile(
+        logical_path=f"artifact:{ref.artifact_id}",
+        artifact_ref=ref,
+        media_type=ref.media_type,
+        size_bytes=ref.size_bytes,
+        metadata=ref.metadata,
+    )
+
+
+def _lower_limit(first: int | None, second: int | None) -> int | None:
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return min(first, second)
 
 
 def _validate_flow_contracts(
@@ -320,6 +805,8 @@ def _agent_node_factory(
                     event_listener=context.event_listener,
                     usage_observer=context.usage_observer,
                     artifact_store=context.artifact_store,
+                    task_store=context.task_store,
+                    file_converters=context.file_converters,
                 )
             )
 
@@ -518,5 +1005,35 @@ def _unsupported_flow_issue(
         path=path,
         message=message,
         hint=hint,
+        category=TaskValidationCategory.UNSUPPORTED,
+    )
+
+
+def _invalid_flow_file_issue(
+    node_name: str,
+    index: int,
+    message: str,
+    hint: str,
+) -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="execution.unsupported_flow",
+        path=f"nodes.{node_name}.input[{index}]",
+        message=message,
+        hint=hint,
+        category=TaskValidationCategory.UNSUPPORTED,
+    )
+
+
+def _feature_issue(
+    feature: TaskFeature,
+    *,
+    path: str,
+) -> TaskValidationIssue:
+    diagnostic = feature_diagnostic(feature, path=path)
+    return TaskValidationIssue(
+        code=diagnostic.code,
+        path=diagnostic.path,
+        message=diagnostic.message,
+        hint=diagnostic.hint,
         category=TaskValidationCategory.UNSUPPORTED,
     )

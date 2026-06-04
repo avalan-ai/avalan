@@ -18,6 +18,7 @@ from ...task import (
     TaskClientWaitTimeoutError,
     TaskDefinition,
     TaskDefinitionLoader,
+    TaskExecutionContext,
     TaskFeature,
     TaskInputType,
     TaskKeyMaterial,
@@ -45,6 +46,7 @@ from ...task import (
     validate_task_input,
 )
 from ...task.artifacts import LocalArtifactStore
+from ...task.converters.registry import default_file_converters
 from ...task.queues import PgsqlTaskQueue
 from ...task.stores import (
     TASK_PGSQL_ALEMBIC_VERSION_TABLE,
@@ -219,6 +221,13 @@ def task_validate(
     if issues:
         _print_issues(console, "Task definition is invalid.", issues)
         return False
+    flow_issues = _validate_task_flow_reference(
+        definition_path,
+        load_result.definition,
+    )
+    if flow_issues:
+        _print_issues(console, "Task definition is invalid.", flow_issues)
+        return False
 
     task_input: TaskCliInput | None = None
     if _task_cli_input_provided(args):
@@ -249,6 +258,55 @@ def task_validate(
             task_input.value,
         )
     return True
+
+
+def _validate_task_flow_reference(
+    definition_path: Path,
+    definition: TaskDefinition,
+) -> tuple[TaskValidationIssue, ...]:
+    assert isinstance(definition_path, Path)
+    assert isinstance(definition, TaskDefinition)
+    if definition.execution.type != TaskTargetType.FLOW:
+        return ()
+    flow_ref = definition.execution.ref
+    path = Path(flow_ref)
+    if not path.is_absolute():
+        path = definition_path.parent / path
+    context = TaskTargetContext(
+        definition=definition,
+        execution=TaskExecutionContext(
+            run_id="validation-run",
+            attempt_id="validation-attempt",
+            attempt_number=1,
+        ),
+        file_converters=default_file_converters(),
+    )
+    try:
+        result = FlowDefinitionLoader(
+            registry=task_flow_node_registry(context)
+        ).load_result(path)
+    except OSError:
+        return (
+            TaskValidationIssue(
+                code="flow.read_failed",
+                path="execution.ref",
+                message="Flow definition could not be read.",
+                hint="Use a readable flow TOML file.",
+                category=TaskValidationCategory.UNSUPPORTED,
+            ),
+        )
+    if result.flow is not None:
+        return ()
+    return tuple(
+        TaskValidationIssue(
+            code=issue.code,
+            path=issue.path,
+            message=issue.message,
+            hint=issue.hint,
+            category=TaskValidationCategory.UNSUPPORTED,
+        )
+        for issue in result.issues
+    )
 
 
 def task_run(

@@ -33,7 +33,15 @@ from avalan.task import (
     TaskArtifactState,
     TaskDefinition,
     TaskEventCategory,
+    TaskExecutionRequest,
     TaskExecutionTarget,
+    TaskFeature,
+    TaskFileConversionError,
+    TaskFileConversionPageCollection,
+    TaskFileConversionPageResult,
+    TaskFileConversionRequest,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
     TaskFileDescriptor,
     TaskInputContract,
     TaskInputFile,
@@ -52,6 +60,7 @@ from avalan.task import (
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
+    pdf_image_converter_capability,
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.store import TaskExecutionContext
@@ -65,6 +74,7 @@ from avalan.task.targets import (
     task_flow_node_registry,
     validate_flow_task_compatibility,
 )
+from avalan.task.targets import flow as flow_target_module
 
 
 class StaticHmacProvider:
@@ -213,6 +223,122 @@ class FailingArtifactStore:
     ) -> object:
         _ = ref, max_bytes
         raise AssertionError("private bytes were read")
+
+
+class RecordingPdfPageConverter:
+    name = "pdf_image"
+    version = "fake"
+
+    def __init__(
+        self,
+        pages: tuple[TaskFileConversionPageResult, ...],
+        *,
+        dependency_gates: tuple[TaskFeature, ...] = (),
+    ) -> None:
+        base = pdf_image_converter_capability()
+        self.calls: list[tuple[bytes, str | None, Mapping[str, object]]] = []
+        self._pages = pages
+        self._capability = TaskFileConverterCapability(
+            source_mime_types=base.source_mime_types,
+            output_mime_types=base.output_mime_types,
+            supports_streaming=base.supports_streaming,
+            max_input_bytes=base.max_input_bytes,
+            max_output_bytes=base.max_output_bytes,
+            max_pages=base.max_pages,
+            min_dpi=base.min_dpi,
+            max_dpi=base.max_dpi,
+            min_quality=base.min_quality,
+            max_quality=base.max_quality,
+            max_pixels=base.max_pixels,
+            estimated_memory_bytes=base.estimated_memory_bytes,
+            timeout_seconds=base.timeout_seconds,
+            options_schema=base.options_schema,
+            dependency_gates=dependency_gates,
+        )
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return self._capability
+
+    def validate_options(self, options: Mapping[str, object]) -> None:
+        if options.get("format") == "gif":
+            raise TaskFileConversionError("private invalid format")
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        raise AssertionError("page converter must use convert_pages")
+
+    async def convert_pages(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionPageCollection:
+        self.calls.append((content, source_media_type, dict(options or {})))
+        return TaskFileConversionPageCollection(
+            pages=self._pages,
+            metadata={"backend": "fake"},
+        )
+
+
+class SingleOutputConverter:
+    name = "single"
+    version = "fake"
+    capability = TaskFileConverterCapability(
+        source_mime_types=("application/pdf",),
+        output_mime_types=("image/png",),
+        supports_streaming=False,
+        max_input_bytes=1024,
+        max_output_bytes=1024,
+    )
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        return TaskFileConversionResult(
+            content=b"page",
+            media_type="image/png",
+            metadata={},
+        )
+
+
+def _page_result(
+    page_index: int,
+    content: bytes,
+    *,
+    width_pixels: int = 10,
+    height_pixels: int = 10,
+) -> TaskFileConversionPageResult:
+    return TaskFileConversionPageResult(
+        page_index=page_index,
+        page_count=2,
+        content=content,
+        media_type="image/png",
+        width_pixels=width_pixels,
+        height_pixels=height_pixels,
+        metadata={"page": page_index},
+    )
+
+
+def _id_factory(values: tuple[str, ...]) -> Callable[[], str]:
+    ids = iter(values)
+
+    def next_id() -> str:
+        return next(ids)
+
+    return next_id
 
 
 def _write_agent_flow_workspace(
@@ -532,6 +658,179 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
 
 
 class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
+    def test_task_scoped_registry_loads_file_convert_toml_shape(self) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        context = self._context(file_converters={"pdf_image": converter})
+
+        result = FlowDefinitionLoader(
+            registry=task_flow_node_registry(context)
+        ).loads_result(
+            """
+            [flow]
+            name = "render"
+            entrypoint = "render_pages"
+            output_node = "render_pages"
+
+            [nodes.render_pages]
+            type = "file_convert"
+            input = "pdf"
+            output = "files"
+
+            [nodes.render_pages.config]
+            converter = "pdf_image"
+            format = "png"
+            dpi = 144
+            pages = "1..2"
+            max_pages = 2
+            max_pixels_per_page = 12000000
+            max_total_pixels = 24000000
+            """
+        )
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        node = result.definition.node_map["render_pages"]
+        self.assertEqual(node.config["converter"], "pdf_image")
+        self.assertIsNotNone(result.flow)
+
+    def test_task_scoped_registry_rejects_bad_file_convert_config(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        context = self._context(file_converters={"pdf_image": converter})
+        cases = (
+            (
+                "pdf_to_images",
+                "raw = 'private.pdf'",
+                "unsupported option",
+                "flow.invalid_node",
+            ),
+            (
+                "pdf_to_images",
+                "pages = '../private.pdf'",
+                "bad pages",
+                "flow.invalid_node",
+            ),
+            (
+                "pdf_to_images",
+                "max_pages = 0",
+                "bad max pages",
+                "flow.invalid_node",
+            ),
+            (
+                "pdf_to_images",
+                "converter = 'text'",
+                "wrong pdf alias",
+                "flow.invalid_node",
+            ),
+            (
+                "file_convert",
+                "",
+                "missing converter",
+                "flow.invalid_node",
+            ),
+            (
+                "file_convert",
+                "converter = 'missing'",
+                "unknown converter",
+                "flow.converter_unsupported",
+            ),
+            (
+                "file_convert",
+                "converter = 'pdf_image'\nformat = 'gif'",
+                "bad converter option",
+                "flow.invalid_node",
+            ),
+        )
+
+        for node_type, config, name, expected_code in cases:
+            with self.subTest(name=name):
+                result = FlowDefinitionLoader(
+                    registry=task_flow_node_registry(context)
+                ).loads_result(
+                    f"""
+                    [flow]
+                    name = "render"
+                    entrypoint = "render_pages"
+                    output_node = "render_pages"
+
+                    [nodes.render_pages]
+                    type = "{node_type}"
+
+                    [nodes.render_pages.config]
+                    {config}
+                    """
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.issues[0].code, expected_code)
+                self.assertNotIn("private.pdf", str(result.issues))
+
+    def test_file_convert_private_helpers_cover_option_shapes(self) -> None:
+        self.assertEqual(
+            flow_target_module._page_range_option(2),  # type: ignore[attr-defined]
+            {"start": 2, "end": 2},
+        )
+        self.assertEqual(
+            flow_target_module._page_range_option(  # type: ignore[attr-defined]
+                {"start": 1, "end": 2}
+            ),
+            {"start": 1, "end": 2},
+        )
+        self.assertEqual(
+            flow_target_module._page_range_option("3"),  # type: ignore[attr-defined]
+            {"start": 3, "end": 3},
+        )
+        self.assertEqual(
+            flow_target_module._page_range_option("2.."),  # type: ignore[attr-defined]
+            {"start": 2},
+        )
+        self.assertIsNone(
+            flow_target_module._positive_config_int(  # type: ignore[attr-defined]
+                {},
+                "max_pages",
+            )
+        )
+        self.assertEqual(
+            flow_target_module._lower_limit(None, 3),  # type: ignore[attr-defined]
+            3,
+        )
+        self.assertEqual(
+            flow_target_module._lower_limit(4, None),  # type: ignore[attr-defined]
+            4,
+        )
+
+        for value in ([], "", "1-2", "0", "0..", "3..2"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    flow_target_module._page_range_option(value)  # type: ignore[attr-defined]
+
+    async def test_file_converter_wrapper_rejects_non_page_converter(
+        self,
+    ) -> None:
+        converter = flow_target_module._FlowFileConverter(  # type: ignore[attr-defined]
+            SingleOutputConverter(),
+            limits=flow_target_module._FlowConversionLimits(),  # type: ignore[attr-defined]
+        )
+
+        result = await converter.convert(
+            b"%PDF-private source",
+            source_media_type="application/pdf",
+        )
+        with self.assertRaises(TaskFileConversionError) as error:
+            await converter.convert_pages(
+                b"%PDF-private source",
+                source_media_type="application/pdf",
+            )
+
+        self.assertEqual(result.media_type, "image/png")
+        self.assertNotIn("%PDF-private", str(error.exception))
+        with self.assertRaises(TaskFileConversionError):
+            flow_target_module._validate_file_conversion_preflight(  # type: ignore[attr-defined]
+                converter,
+                TaskFileConversionRequest(name="single"),
+            )
+
     async def test_run_fails_closed_without_resolver(self) -> None:
         runner = FlowTaskTargetRunner()
 
@@ -1220,6 +1519,386 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                 timeout=0.001,
             )
 
+    async def test_file_convert_node_rejects_missing_converter_safely(
+        self,
+    ) -> None:
+        context = self._context()
+
+        result = FlowDefinitionLoader(
+            registry=task_flow_node_registry(context)
+        ).loads_result(
+            """
+            [flow]
+            name = "render"
+            entrypoint = "render"
+            output_node = "render"
+
+            [nodes.render]
+            type = "file_convert"
+
+            [nodes.render.config]
+            converter = "missing"
+            """
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "flow.converter_unsupported")
+        self.assertEqual(
+            result.issues[0].path,
+            "nodes.render.config.converter",
+        )
+        self.assertNotIn("missing", str(result.issues))
+
+    async def test_file_convert_node_reports_missing_dependency_safely(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter(
+            (_page_result(1, b"page"),),
+            dependency_gates=(TaskFeature.PDF_IMAGE_CONVERSION,),
+        )
+        context = self._context(file_converters={"pdf_image": converter})
+
+        with patch(
+            "avalan.task.targets.flow.feature_available",
+            return_value=False,
+        ):
+            result = FlowDefinitionLoader(
+                registry=task_flow_node_registry(context)
+            ).loads_result(
+                """
+                [flow]
+                name = "render"
+                entrypoint = "render"
+                output_node = "render"
+
+                [nodes.render]
+                type = "pdf_to_images"
+                output = "files"
+                """
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.issues[0].code,
+            "dependency.task_pdf_images_missing",
+        )
+        self.assertEqual(
+            result.issues[0].path,
+            "nodes.render.config.converter",
+        )
+        self.assertEqual(converter.calls, [])
+
+    async def test_file_convert_node_reports_runtime_dependency_safely(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter(
+            (_page_result(1, b"page"),),
+            dependency_gates=(TaskFeature.PDF_IMAGE_CONVERSION,),
+        )
+        with TemporaryDirectory() as artifacts:
+            context, file, store = await self._conversion_context(
+                artifacts,
+                converter,
+            )
+            with patch(
+                "avalan.task.targets.flow.feature_available",
+                return_value=True,
+            ):
+                node = task_flow_node_registry(context).build(
+                    FlowNodeDefinition(
+                        name="render",
+                        type="pdf_to_images",
+                        output="files",
+                    )
+                )
+
+            with patch(
+                "avalan.task.converters.feature_available",
+                return_value=False,
+            ):
+                with self.assertRaises(TaskValidationError) as error:
+                    await node.execute_async({"file": file})
+
+            records = await store.list_artifacts(context.execution.run_id)
+
+        self.assertEqual(
+            error.exception.issues[0].code,
+            "dependency.task_pdf_images_missing",
+        )
+        self.assertEqual(records, ())
+        self.assertEqual(converter.calls, [])
+        self.assertNotIn("%PDF-private", str(error.exception))
+
+    async def test_file_convert_node_rejects_non_file_input_safely(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        context = self._context(
+            file_converters={"pdf_image": converter},
+        )
+        node = task_flow_node_registry(context).build(
+            FlowNodeDefinition(
+                name="render",
+                type="pdf_to_images",
+            )
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await node.execute_async({"file": "private.pdf"})
+
+        self.assertEqual(
+            error.exception.issues[0].path,
+            "nodes.render.input[0]",
+        )
+        self.assertEqual(converter.calls, [])
+        self.assertNotIn("private.pdf", str(error.exception))
+
+    async def test_file_convert_node_rejects_missing_stores_and_refs_safely(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        file = TaskInputFile(
+            logical_path="artifact:source-1",
+            artifact_ref=TaskArtifactRef(
+                artifact_id="source-1",
+                store="local",
+                storage_key="so/source-1",
+                media_type="application/pdf",
+                size_bytes=10,
+            ),
+            media_type="application/pdf",
+            size_bytes=10,
+        )
+        cases = (
+            (
+                "artifact_store",
+                self._context(
+                    files=(file,),
+                    file_converters={"pdf_image": converter},
+                ),
+                file,
+                "artifact store",
+            ),
+            (
+                "task_store",
+                self._context(
+                    files=(file,),
+                    artifact_store=FailingArtifactStore(),
+                    file_converters={"pdf_image": converter},
+                ),
+                file,
+                "task store",
+            ),
+            (
+                "artifact_ref",
+                self._context(
+                    files=(file,),
+                    artifact_store=FailingArtifactStore(),
+                    task_store=InMemoryTaskStore(),
+                    file_converters={"pdf_image": converter},
+                ),
+                TaskInputFile(
+                    logical_path="provider:openai:file",
+                    media_type="application/pdf",
+                ),
+                "artifact backed",
+            ),
+        )
+
+        for name, context, input_file, expected in cases:
+            with self.subTest(name=name):
+                node = task_flow_node_registry(context).build(
+                    FlowNodeDefinition(name="render", type="pdf_to_images")
+                )
+
+                with self.assertRaises(TaskValidationError) as error:
+                    await node.execute_async({"file": input_file})
+
+                self.assertIn(expected, error.exception.issues[0].message)
+                self.assertNotIn("source-1", str(error.exception))
+
+    async def test_file_convert_node_enforces_total_pixel_limit_safely(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter(
+            (
+                _page_result(1, b"page one", width_pixels=10),
+                _page_result(2, b"page two", width_pixels=10),
+            )
+        )
+        with TemporaryDirectory() as artifacts:
+            context, file, store = await self._conversion_context(
+                artifacts,
+                converter,
+            )
+            node = task_flow_node_registry(context).build(
+                FlowNodeDefinition(
+                    name="render",
+                    type="file_convert",
+                    config={
+                        "converter": "pdf_image",
+                        "max_total_pixels": 50,
+                    },
+                )
+            )
+
+            with self.assertRaises(TaskValidationError) as error:
+                await node.execute_async({"file": file})
+
+            records = await store.list_artifacts(context.execution.run_id)
+
+        self.assertEqual(records, ())
+        self.assertEqual(len(converter.calls), 1)
+        self.assertNotIn("%PDF-private", str(error.exception))
+        self.assertNotIn("page one", str(error.exception))
+
+    async def test_file_convert_node_enforces_page_limit_safely(self) -> None:
+        converter = RecordingPdfPageConverter(
+            (
+                _page_result(1, b"page one"),
+                _page_result(2, b"page two"),
+            )
+        )
+        with TemporaryDirectory() as artifacts:
+            context, file, store = await self._conversion_context(
+                artifacts,
+                converter,
+            )
+            node = task_flow_node_registry(context).build(
+                FlowNodeDefinition(
+                    name="render",
+                    type="file_convert",
+                    config={
+                        "converter": "pdf_image",
+                        "max_pages": 1,
+                    },
+                )
+            )
+
+            with self.assertRaises(TaskValidationError) as error:
+                await node.execute_async({"file": file})
+
+            records = await store.list_artifacts(context.execution.run_id)
+
+        self.assertEqual(records, ())
+        self.assertEqual(len(converter.calls), 1)
+        self.assertNotIn("%PDF-private", str(error.exception))
+        self.assertNotIn("page one", str(error.exception))
+
+    async def test_file_convert_node_returns_unwrapped_files(self) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        with TemporaryDirectory() as artifacts:
+            context, file, _ = await self._conversion_context(
+                artifacts,
+                converter,
+            )
+            node = task_flow_node_registry(context).build(
+                FlowNodeDefinition(
+                    name="render",
+                    type="pdf_to_images",
+                    input="bundle",
+                )
+            )
+
+            result = await node.execute_async({"bundle": {"files": [file]}})
+
+        files = cast(list[TaskInputFile], result)
+        self.assertEqual(
+            [file.logical_path for file in files],
+            ["artifact:page-1"],
+        )
+        self.assertEqual(files[0].media_type, "image/png")
+        with TemporaryDirectory() as artifacts:
+            context, file, _ = await self._conversion_context(
+                artifacts,
+                converter,
+            )
+            node = task_flow_node_registry(context).build(
+                FlowNodeDefinition(
+                    name="render",
+                    type="pdf_to_images",
+                    input="bundle",
+                )
+            )
+
+            result = await node.execute_async({"bundle": {"file": file}})
+
+        files = cast(list[TaskInputFile], result)
+        self.assertEqual(
+            [file.logical_path for file in files],
+            ["artifact:page-1"],
+        )
+        with TemporaryDirectory() as artifacts:
+            context, file, _ = await self._conversion_context(
+                artifacts,
+                converter,
+            )
+            node = task_flow_node_registry(context).build(
+                FlowNodeDefinition(name="render", type="pdf_to_images")
+            )
+
+            result = await node.execute_async({FLOW_TASK_FILES_KEY: [file]})
+
+        files = cast(list[TaskInputFile], result)
+        self.assertEqual(
+            [file.logical_path for file in files],
+            ["artifact:page-1"],
+        )
+
+    async def test_file_convert_node_rejects_empty_and_missing_selectors(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        for inputs, definition in (
+            (
+                {"files": []},
+                FlowNodeDefinition(name="render", type="pdf_to_images"),
+            ),
+            (
+                {"value": "private.pdf"},
+                FlowNodeDefinition(
+                    name="render",
+                    type="pdf_to_images",
+                    input="missing",
+                ),
+            ),
+            (
+                {"value": "private.pdf"},
+                FlowNodeDefinition(name="render", type="pdf_to_images"),
+            ),
+        ):
+            with self.subTest(inputs=tuple(inputs)):
+                context = self._context(
+                    file_converters={"pdf_image": converter},
+                )
+                node = task_flow_node_registry(context).build(definition)
+
+                with self.assertRaises(TaskValidationError) as error:
+                    await node.execute_async(inputs)
+
+                self.assertNotIn("private.pdf", str(error.exception))
+
+    async def test_file_convert_node_checks_cancellation_before_work(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+
+        async def cancel() -> None:
+            raise CancelledError()
+
+        context = self._context(
+            cancellation_checker=cancel,
+            file_converters={"pdf_image": converter},
+        )
+        node = task_flow_node_registry(context).build(
+            FlowNodeDefinition(name="render", type="pdf_to_images")
+        )
+
+        with self.assertRaises(CancelledError):
+            await node.execute_async({"file": "private.pdf"})
+
+        self.assertEqual(converter.calls, [])
+
     async def test_run_rejects_non_flow_definition(self) -> None:
         runner = FlowTaskTargetRunner(flow_resolver=lambda _: Flow())
 
@@ -1242,15 +1921,65 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             ["execution.unknown_target"],
         )
 
+    async def _conversion_context(
+        self,
+        artifacts: str,
+        converter: RecordingPdfPageConverter,
+    ) -> tuple[TaskTargetContext, TaskInputFile, InMemoryTaskStore]:
+        artifact_store = LocalArtifactStore(
+            artifacts,
+            raw_storage_allowed=True,
+            id_factory=_id_factory(("page-1", "page-2")),
+        )
+        source_ref = await artifact_store.put(
+            b"%PDF-private source",
+            artifact_id="source-1",
+            media_type="application/pdf",
+        )
+        task_store = InMemoryTaskStore()
+        definition = self._context_definition(
+            input_contract=TaskInputContract.file(
+                mime_types=("application/pdf",)
+            ),
+            output_contract=self._object_output_contract(),
+        )
+        await task_store.register_definition(
+            definition,
+            definition_hash="flow-conversion-node",
+        )
+        run = await task_store.create_run(
+            TaskExecutionRequest(definition_id="flow-conversion-node")
+        )
+        attempt = await task_store.create_attempt(run.run_id)
+        file = TaskInputFile(
+            logical_path="artifact:source-1",
+            artifact_ref=source_ref,
+            media_type="application/pdf",
+            size_bytes=source_ref.size_bytes,
+        )
+        context = TaskTargetContext(
+            definition=definition,
+            execution=attempt.context,
+            files=(file,),
+            artifact_store=artifact_store,
+            task_store=task_store,
+            file_converters={"pdf_image": converter},
+        )
+        return context, file, task_store
+
     def _context(
         self,
         *,
         definition: TaskDefinition | None = None,
         input_value: object = None,
+        files: tuple[TaskInputFile, ...] = (),
         cancellation_checker: Callable[[], Awaitable[None]] | None = None,
         event_listener: (
             Callable[[Event], Awaitable[None] | None] | None
         ) = None,
+        artifact_store: object | None = None,
+        task_store: object | None = None,
+        file_converters: Mapping[str, object] | None = None,
     ) -> TaskTargetContext:
         return TaskTargetContext(
             definition=definition or self._context_definition(),
@@ -1260,8 +1989,12 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                 attempt_number=1,
             ),
             input_value=input_value,
+            files=files,
             cancellation_checker=cancellation_checker,
             event_listener=event_listener,
+            artifact_store=cast(Any, artifact_store),
+            task_store=cast(Any, task_store),
+            file_converters=cast(Mapping[str, Any], file_converters or {}),
         )
 
     def _context_definition(
@@ -1732,6 +2465,150 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             "application/pdf",
         )
         self.assertNotIn("private-tenant", str(result.run.result))
+
+    async def test_direct_runner_converts_pdf_flow_file_to_ordered_images(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter(
+            (
+                _page_result(1, b"page one"),
+                _page_result(2, b"page two"),
+            )
+        )
+
+        def resolve(context: TaskTargetContext) -> Flow:
+            registry = task_flow_node_registry(context)
+            flow = Flow()
+            flow.add_node(
+                registry.build(
+                    FlowNodeDefinition(
+                        name="render",
+                        type="file_convert",
+                        input="pdf",
+                        output="files",
+                        config={
+                            "converter": "pdf_image",
+                            "dpi": 144,
+                            "format": "png",
+                            "max_pages": 2,
+                            "pages": "1..2",
+                        },
+                    )
+                )
+            )
+
+            def inspect(inputs: dict[str, object]) -> Mapping[str, object]:
+                rendered = cast(Mapping[str, object], inputs["render"])
+                files = cast(list[TaskInputFile], rendered["files"])
+                refs = [file.artifact_ref for file in files]
+                return {
+                    "artifact_ids": [
+                        ref.artifact_id for ref in refs if ref is not None
+                    ],
+                    "count": len(files),
+                    "media_types": [file.media_type for file in files],
+                    "paths": [file.logical_path for file in files],
+                }
+
+            flow.add_node(Node("inspect", func=inspect))
+            flow.add_connection("render", "inspect")
+            return flow
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "private.pdf").write_bytes(b"%PDF-private source")
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=_id_factory(("source-1", "page-1", "page-2")),
+            )
+            runner = DirectTaskRunner(
+                self.store,
+                target=FlowTaskTargetRunner(flow_resolver=resolve),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                file_converters={"pdf_image": converter},
+                execution_roots=(root,),
+                definition_hash=lambda _: "flow-direct-file-convert",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",)
+                    ),
+                    output_contract=TaskOutputContract.object(
+                        {
+                            "type": "object",
+                            "required": [
+                                "artifact_ids",
+                                "count",
+                                "media_types",
+                                "paths",
+                            ],
+                            "additionalProperties": False,
+                            "properties": {
+                                "artifact_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "count": {"type": "integer"},
+                                "media_types": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                                "paths": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                        }
+                    ),
+                    artifact=TaskArtifactPolicy.references_only(
+                        retention_days=4,
+                    ),
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "private.pdf",
+                    mime_type="application/pdf",
+                ),
+            )
+
+        records = await self.store.list_artifacts(
+            result.run.run_id,
+            purpose=TaskArtifactPurpose.CONVERTED,
+        )
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            result.output,
+            {
+                "artifact_ids": ["page-1", "page-2"],
+                "count": 2,
+                "media_types": ["image/png", "image/png"],
+                "paths": ["artifact:page-1", "artifact:page-2"],
+            },
+        )
+        self.assertEqual(
+            [record.artifact_id for record in records],
+            ["page-1", "page-2"],
+        )
+        self.assertEqual(
+            [record.retention.delete_after_days for record in records],
+            [4, 4],
+        )
+        self.assertEqual(len(converter.calls), 1)
+        self.assertEqual(converter.calls[0][0], b"%PDF-private source")
+        self.assertEqual(converter.calls[0][1], "application/pdf")
+        self.assertEqual(
+            converter.calls[0][2],
+            {
+                "dpi": 144,
+                "format": "png",
+                "pages": {"start": 1, "end": 2},
+            },
+        )
+        self.assertNotIn("private.pdf", str(result.run.result))
+        self.assertNotIn("%PDF-private", str(result.run.result))
 
     async def test_direct_runner_rejects_flow_agent_provider_mismatch(
         self,

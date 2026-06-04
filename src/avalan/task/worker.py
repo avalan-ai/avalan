@@ -310,6 +310,8 @@ class TaskWorker:
                 else None
             ),
             artifact_store=self._artifact_store,
+            task_store=self._store,
+            file_converters=self._file_converters,
         )
         await self._check_cancelled(run.run_id)
         output = await self._run_target(

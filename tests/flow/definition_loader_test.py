@@ -479,6 +479,30 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 self.assertIn(code, [issue.code for issue in result.issues])
                 self.assertNotIn("package.module", str(result.issues))
 
+    def test_rejects_task_scoped_file_conversion_without_task_context(
+        self,
+    ) -> None:
+        for node_type in ("file_convert", "pdf_to_images"):
+            with self.subTest(node_type=node_type):
+                result = loads_flow_definition_result(f"""
+                    [flow]
+                    name = "convert"
+                    entrypoint = "render"
+                    output_node = "render"
+
+                    [nodes.render]
+                    type = "{node_type}"
+
+                    [nodes.render.config]
+                    converter = "pdf_image"
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    [issue.code for issue in result.issues],
+                    ["flow.unsupported_node_type"],
+                )
+
     def test_rejects_invalid_node_and_edge_shapes(self) -> None:
         cases = (
             (
