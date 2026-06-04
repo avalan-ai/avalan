@@ -439,7 +439,7 @@ def validate_task_input(
                 )
             else:
                 issues.extend(
-                    _validate_file_descriptor_count(definition, value)
+                    _validate_file_descriptor_count(definition, len(value))
                 )
                 for index, item in enumerate(value):
                     issues.extend(
@@ -754,10 +754,10 @@ def _validate_file_contract(
 
 def _validate_file_descriptor_count(
     definition: TaskDefinition,
-    values: list[object] | tuple[object, ...],
+    count: int,
 ) -> tuple[TaskValidationIssue, ...]:
     limit = definition.limits.file_count
-    if limit is None or len(values) <= limit:
+    if limit is None or count <= limit:
         return ()
     return (
         _invalid_file_issue(
@@ -978,7 +978,40 @@ def _validate_structured_file_descriptors(
         remote_url_policy=remote_url_policy,
         file_converters=file_converters,
     )
+    issues.extend(
+        _validate_file_descriptor_count(
+            definition,
+            _count_structured_file_descriptors(value),
+        )
+    )
     return tuple(issues)
+
+
+def _count_structured_file_descriptors(value: object) -> int:
+    try:
+        descriptor = _file_descriptor_mapping(value)
+        is_descriptor = descriptor is not None and "source_kind" in descriptor
+    except Exception:
+        return 0
+    if is_descriptor:
+        return 1
+    if isinstance(value, Mapping):
+        try:
+            items = tuple(value.items())
+        except Exception:
+            return 0
+        return sum(
+            _count_structured_file_descriptors(item)
+            for key, item in items
+            if isinstance(key, str)
+        )
+    if isinstance(value, list | tuple):
+        try:
+            values = tuple(value)
+        except Exception:
+            return 0
+        return sum(_count_structured_file_descriptors(item) for item in values)
+    return 0
 
 
 def _collect_structured_file_descriptor_issues(
@@ -1036,7 +1069,18 @@ def _collect_structured_file_descriptor_issues(
                 file_converters=file_converters,
             )
     elif isinstance(value, list | tuple):
-        for index, item in enumerate(value):
+        try:
+            values = tuple(value)
+        except Exception:
+            issues.append(
+                _invalid_file_issue(
+                    path,
+                    "Task input must contain valid file descriptors.",
+                    "Pass stable file descriptor arrays.",
+                )
+            )
+            return
+        for index, item in enumerate(values):
             _collect_structured_file_descriptor_issues(
                 definition,
                 item,
@@ -2247,7 +2291,11 @@ def _json_compatible_data(value: object) -> object:
             for key, item in value.items()
         }
     if isinstance(value, list | tuple):
-        return [_json_compatible_data(item) for item in value]
+        try:
+            values = tuple(value)
+        except Exception:
+            return []
+        return [_json_compatible_data(item) for item in values]
     return value
 
 

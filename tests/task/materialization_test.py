@@ -857,6 +857,41 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             self.assertNotIn("report-a.txt", str(files[0].identity))
             self.assertNotIn("private report", str(files[1].identity))
 
+    async def test_structured_provider_references_enforce_file_count_limit(
+        self,
+    ) -> None:
+        with self.assertRaises(TaskFileMaterializationError) as error:
+            await materialize_task_input_files(
+                _definition(
+                    input_contract=_object_contract(),
+                    artifact=TaskArtifactPolicy(max_count=5),
+                    limits=TaskLimitsPolicy(file_count=1),
+                ),
+                {
+                    "documents": [
+                        TaskFileDescriptor.provider_reference_descriptor(
+                            "private-file-a",
+                            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                            provider="openai",
+                        ),
+                        TaskFileDescriptor.provider_reference_descriptor(
+                            "private-file-b",
+                            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                            provider="openai",
+                        ),
+                    ]
+                },
+                roots=(),
+                artifact_store=None,
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("input.invalid_file", "input")],
+        )
+        self.assertNotIn("private-file-a", str(error.exception))
+        self.assertNotIn("private-file-b", str(error.exception))
+
     async def test_mixed_file_array_preserves_descriptor_order(self) -> None:
         content = b"remote text"
         client = FakeRemoteClient(

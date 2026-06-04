@@ -693,8 +693,8 @@ def _validate_count_limits(
     descriptors: tuple[TaskFileDescriptor, ...],
 ) -> tuple[TaskValidationIssue, ...]:
     count = len(descriptors)
-    limit = definition.artifact.max_count
-    if limit is None or count <= limit:
+    limits = (definition.limits.file_count, definition.artifact.max_count)
+    if all(limit is None or count <= limit for limit in limits):
         return ()
     return (
         _issue(

@@ -110,6 +110,20 @@ class HostileTuple(tuple[object, ...]):
         raise RuntimeError("private raw array value")
 
 
+class CountHostileTuple(tuple[object, ...]):
+    def __new__(cls, values: tuple[object, ...]) -> "CountHostileTuple":
+        return tuple.__new__(cls, values)
+
+    def __init__(self, values: tuple[object, ...]) -> None:
+        self._remaining_safe_iterations = 1
+
+    def __iter__(self) -> Iterator[object]:
+        if self._remaining_safe_iterations <= 0:
+            raise RuntimeError("private count traversal value")
+        self._remaining_safe_iterations -= 1
+        return tuple.__iter__(self)
+
+
 class CapabilityConverter:
     name = "convert"
     version = "1"
@@ -932,6 +946,109 @@ class TaskValidationTest(TestCase):
         )
 
         self.assertEqual(issues, ())
+
+    def test_structured_input_enforces_nested_file_count_limit(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.object(schema={"type": "object"}),
+            limits=TaskLimitsPolicy(file_count=1),
+        )
+
+        issues = validate_task_input(
+            definition,
+            {
+                "documents": [
+                    {
+                        "source_kind": "provider_reference",
+                        "reference": "private-file-a",
+                        "provider_reference": {
+                            "kind": "provider_file_id",
+                            "provider": "openai",
+                            "reference": "private-file-a",
+                        },
+                    },
+                    {
+                        "source_kind": "provider_reference",
+                        "reference": "private-file-b",
+                        "provider_reference": {
+                            "kind": "provider_file_id",
+                            "provider": "openai",
+                            "reference": "private-file-b",
+                        },
+                    },
+                ]
+            },
+        )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("input.invalid_file", "input")],
+        )
+        self.assertNotIn("private-file-a", str(issues))
+        self.assertNotIn("private-file-b", str(issues))
+
+    def test_structured_input_counts_repeated_container_paths(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.object(schema={"type": "object"}),
+            limits=TaskLimitsPolicy(file_count=1),
+        )
+        shared = [
+            {
+                "source_kind": "provider_reference",
+                "reference": "private-file",
+                "provider_reference": {
+                    "kind": "provider_file_id",
+                    "provider": "openai",
+                    "reference": "private-file",
+                },
+            }
+        ]
+
+        issues = validate_task_input(
+            definition,
+            {"primary": shared, "secondary": shared},
+        )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("input.invalid_file", "input")],
+        )
+        self.assertNotIn("private-file", str(issues))
+
+    def test_structured_input_count_failure_is_safe(self) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.object(schema={"type": "object"}),
+            limits=TaskLimitsPolicy(file_count=1),
+        )
+
+        issues = validate_task_input(
+            definition,
+            {
+                "documents": CountHostileTuple(
+                    (
+                        {
+                            "source_kind": "provider_reference",
+                            "reference": "private-file",
+                            "provider_reference": {
+                                "kind": "provider_file_id",
+                                "provider": "openai",
+                                "reference": "private-file",
+                            },
+                        },
+                    )
+                )
+            },
+        )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("input.invalid_file", "input.documents")],
+        )
+        self.assertNotIn("private count traversal value", str(issues))
+        self.assertNotIn("private-file", str(issues))
 
     def test_structured_descriptor_lookup_failure_is_safe(self) -> None:
         definition = self._definition(
