@@ -138,6 +138,37 @@ class ModelManagerExtraTestCase(TestCase):
         args = get_mock.call_args.args[1]
         self.assertEqual(args["backend"], Backend.MLXLM)
 
+    def test_get_engine_settings_uses_azure_api_version_from_uri(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = EngineUri(
+            host="openai",
+            port=None,
+            user=None,
+            password=None,
+            vendor="openai",
+            model_id="deployment",
+            params={"azure_api_version": "2025-04-01-preview"},
+        )
+
+        settings = manager.get_engine_settings(uri, {})
+
+        self.assertEqual(settings.azure_api_version, "2025-04-01-preview")
+
+    def test_get_engine_settings_rejects_invalid_azure_api_version(self):
+        manager = ModelManager(self.hub, self.logger)
+        uri = EngineUri(
+            host="openai",
+            port=None,
+            user=None,
+            password=None,
+            vendor="openai",
+            model_id="deployment",
+            params={"azure_api_version": 20250401},
+        )
+
+        with self.assertRaises(AssertionError):
+            manager.get_engine_settings(uri, {})
+
     def test_backend_ds4_value(self):
         self.assertEqual(Backend("ds4"), Backend.DS4)
 

@@ -883,6 +883,12 @@ class OrchestratorLoader:
         assert isinstance(
             value, str
         ), "engine.file_delivery_profile must be a string"
+        uri = engine_config.get("uri")
+        assert isinstance(uri, str), "engine.uri must be a string"
+        engine_uri = ModelManager.parse_uri(uri)
+        assert (
+            engine_uri.vendor is None
+        ), "engine.file_delivery_profile is only supported for local models"
         assert value in {
             profile.value for profile in LocalFileDeliveryProfile
         }, "engine.file_delivery_profile is not supported"

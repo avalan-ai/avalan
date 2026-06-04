@@ -319,6 +319,10 @@ class ModelManager:
             backend_param = engine_uri.params["backend"]
             assert isinstance(backend_param, str)
             engine_settings_args["backend"] = Backend(backend_param)
+        if "azure_api_version" in engine_uri.params:
+            azure_api_version = engine_uri.params["azure_api_version"]
+            assert isinstance(azure_api_version, str)
+            engine_settings_args["azure_api_version"] = azure_api_version
 
         backend = engine_settings_args.get("backend", Backend.TRANSFORMERS)
         if _is_ds4_backend(cast(Backend | str, backend)):

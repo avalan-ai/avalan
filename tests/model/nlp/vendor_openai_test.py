@@ -163,6 +163,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             },
             model="m",
             input=[{"c": 1}],
+            store=False,
             stream=True,
             timeout=None,
         )
@@ -235,6 +236,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             },
             model="default",
             input=[{"c": 1}],
+            store=False,
             stream=False,
             timeout=None,
         )
@@ -254,6 +256,27 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         self.assertIs(loaded, ClientMock.return_value)
 
+    async def test_model_loads_with_azure_api_version(self):
+        with patch.object(self.mod, "OpenAIClient") as ClientMock:
+            settings = TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+                access_token="token",
+                azure_api_version="2025-04-01-preview",
+                base_url=(
+                    "https://tenant.openai.azure.com/openai/deployments/d"
+                ),
+            )
+            model = self.mod.OpenAIModel("deployment", settings)
+            loaded = model._load_model()
+
+        ClientMock.assert_called_once_with(
+            base_url="https://tenant.openai.azure.com/openai/deployments/d",
+            api_key="token",
+            azure_api_version="2025-04-01-preview",
+        )
+        self.assertIs(loaded, ClientMock.return_value)
+
     async def test_stream_event_types(self):
         events = [
             SimpleNamespace(type="response.output_item.added"),
@@ -261,6 +284,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             SimpleNamespace(type="response.reasoning_text.delta", delta="r1"),
             SimpleNamespace(type="response.reasoning_text.delta", delta="r2"),
             SimpleNamespace(type="response.output_item.done"),
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    custom_tool_call=SimpleNamespace(id=object())
+                ),
+            ),
             SimpleNamespace(
                 type="response.output_item.added",
                 item=SimpleNamespace(
@@ -371,7 +400,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             top_p=0.8,
             max_new_tokens=10,
             stop_strings=["stop"],
-            response_format={"type": "json_schema"},
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "result",
+                    "schema": {"type": "object"},
+                    "strict": True,
+                },
+            },
         )
         await client(
             "m",
@@ -386,15 +422,200 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             },
             model="m",
             input=[{"c": 1}],
+            store=False,
             stream=True,
             timeout=None,
             max_output_tokens=10,
             temperature=0.5,
             top_p=0.8,
-            text={"stop": ["stop"]},
-            response_format={"type": "json_schema"},
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "result",
+                    "schema": {"type": "object"},
+                    "strict": True,
+                },
+                "stop": ["stop"],
+            },
             tools=[{"type": "function", "name": "pkg__func"}],
         )
+
+    async def test_azure_responses_payload_uses_text_format(self):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
+        )
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url="https://tenant.openai.azure.com/openai/v1/",
+        )
+        client._template_messages = MagicMock(return_value=[{"c": 1}])
+        settings = GenerationSettings(
+            max_new_tokens=20,
+            temperature=0.3,
+            top_p=0.4,
+            stop_strings="END",
+            response_format={"type": "json_object"},
+            reasoning=ReasoningSettings(effort=ReasoningEffort.HIGH),
+        )
+
+        await client(
+            "claims-extractor-prod",
+            [],
+            settings=settings,
+            use_async_generator=False,
+        )
+
+        create_mock.assert_awaited_once_with(
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
+            model="claims-extractor-prod",
+            input=[{"c": 1}],
+            store=False,
+            stream=False,
+            timeout=None,
+            max_output_tokens=20,
+            text={"format": {"type": "json_object"}, "stop": "END"},
+            reasoning={"effort": "high"},
+        )
+
+    async def test_azure_legacy_api_version_uses_extra_query(self):
+        response = SimpleNamespace(output=[])
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url="https://tenant.openai.azure.com/openai/deployments/dep",
+            azure_api_version="2025-04-01-preview",
+        )
+        client._template_messages = MagicMock(return_value=[])
+
+        await client("dep", [], use_async_generator=False)
+
+        self.assertEqual(
+            create_mock.await_args.kwargs["extra_query"],
+            {"api-version": "2025-04-01-preview"},
+        )
+
+    async def test_rejects_invalid_responses_options_before_provider_call(
+        self,
+    ):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        invalid_settings = GenerationSettings(
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"schema": {"type": "object"}},
+                "schema": {"type": "object"},
+            }
+        )
+
+        with self.assertRaisesRegex(AssertionError, "ambiguous"):
+            await client("model", [], settings=invalid_settings)
+
+        create_mock.assert_not_awaited()
+
+    async def test_rejects_incompatible_reasoning_effort(self):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url="https://tenant.openai.azure.com/openai/v1/",
+        )
+        settings = GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+        )
+
+        with self.assertRaisesRegex(AssertionError, "reasoning effort"):
+            await client("deployment", [], settings=settings)
+
+        create_mock.assert_not_awaited()
+
+    def test_response_text_format_normalizes_supported_shapes(self):
+        self.assertEqual(
+            self.mod.OpenAIClient._response_text_format({"type": "text"}),
+            {"type": "text"},
+        )
+        self.assertEqual(
+            self.mod.OpenAIClient._response_text_format(
+                {
+                    "type": "json_schema",
+                    "name": "document",
+                    "schema": {"type": "object"},
+                    "strict": False,
+                }
+            ),
+            {
+                "type": "json_schema",
+                "name": "document",
+                "schema": {"type": "object"},
+                "strict": False,
+            },
+        )
+        with self.assertRaisesRegex(AssertionError, "not supported"):
+            self.mod.OpenAIClient._response_text_format({"type": "xml"})
+        with self.assertRaises(AssertionError):
+            self.mod.OpenAIClient._response_text_format(
+                {
+                    "type": "json_schema",
+                    "schema": {"type": "object"},
+                }
+            )
+        with self.assertRaises(AssertionError):
+            self.mod.OpenAIClient._response_text_format(
+                {
+                    "type": "json_schema",
+                    "json_schema": {"name": "bad"},
+                }
+            )
+
+    def test_azure_configuration_validation(self):
+        self.assertFalse(self.mod.OpenAIClient._is_azure_base_url(None))
+
+        with self.assertRaisesRegex(AssertionError, "/openai/v1/"):
+            self.mod.OpenAIClient(
+                api_key="key",
+                base_url=(
+                    "https://tenant.openai.azure.com/openai/deployments/dep"
+                ),
+            )
+
+        try:
+            self.mod.OpenAIClient(
+                api_key="key",
+                base_url=(
+                    "https://tenant.openai.azure.com/openai/v1/"
+                    "?api-version=super-secret"
+                ),
+            )
+        except AssertionError as exc:
+            self.assertIn("query parameters", str(exc))
+            self.assertNotIn("super-secret", str(exc))
+
+        with self.assertRaisesRegex(AssertionError, "api-key"):
+            self.mod.OpenAIClient(
+                api_key=None,
+                base_url="https://tenant.openai.azure.com/openai/v1/",
+            )
+
+        with self.assertRaisesRegex(AssertionError, "only supported"):
+            self.mod.OpenAIClient(
+                api_key="key",
+                base_url="https://api.openai.com/v1",
+                azure_api_version="2025-04-01-preview",
+            )
 
 
 class VendorClientsTestCase(TestCase):
@@ -492,6 +713,7 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
             },
             model="m",
             input=[{"role": "user", "content": "hi"}],
+            store=False,
             stream=False,
             timeout=None,
             temperature=1.0,

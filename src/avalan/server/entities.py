@@ -60,7 +60,32 @@ class JSONSchemaSettings(BaseModel):
 
 class ResponseFormatJSONSchema(BaseModel):
     type: Literal["json_schema"]
-    json_schema: JSONSchemaSettings
+    json_schema: JSONSchemaSettings | None = None
+    name: str | None = None
+    schema_: JSONSchema | None = Field(
+        None,
+        validation_alias="schema",
+        serialization_alias="schema",
+    )
+    strict: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_schema_shape(self) -> "ResponseFormatJSONSchema":
+        has_chat_schema = self.json_schema is not None
+        has_responses_schema = self.schema_ is not None
+        if has_chat_schema == has_responses_schema:
+            raise ValueError(
+                "Provide either json_schema or schema for json_schema format"
+            )
+        if has_chat_schema and (
+            self.name is not None or self.strict is not None
+        ):
+            raise ValueError(
+                "Chat-style json_schema format cannot include Responses fields"
+            )
+        if has_responses_schema and self.name is not None and not self.name:
+            raise ValueError("Responses json_schema name cannot be empty")
+        return self
 
 
 class FunctionParameters(BaseModel):
@@ -146,6 +171,11 @@ class ChatMessage(BaseModel):
 
 class ReasoningConfig(BaseModel):
     effort: ReasoningEffort | None = None
+
+
+class ResponsesTextConfig(BaseModel):
+    format: ResponseFormat | None = None
+    stop: str | list[str] | None = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -237,12 +267,29 @@ class ResponsesRequest(BaseModel):
     stream: bool | None = False
     stop: str | list[str] | None = None
     max_tokens: int | None = None
+    text: ResponsesTextConfig | None = None
     response_format: ResponseFormat | None = None
     reasoning: ReasoningConfig | None = None
 
     @property
     def messages(self) -> list[ChatMessage]:
         return self.input
+
+    @model_validator(mode="after")
+    def validate_text_aliases(self) -> "ResponsesRequest":
+        if (
+            self.text is not None
+            and self.text.format is not None
+            and self.response_format is not None
+        ):
+            raise ValueError("Use either text.format or response_format")
+        if (
+            self.text is not None
+            and self.text.stop is not None
+            and self.stop is not None
+        ):
+            raise ValueError("Use either text.stop or stop")
+        return self
 
 
 class MCPToolRequest(BaseModel):

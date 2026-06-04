@@ -25,6 +25,7 @@ from . import (
 from importlib import import_module
 from mimetypes import guess_type
 from typing import Any, AsyncIterator, cast
+from urllib.parse import urlparse
 
 
 class _OmitPlaceholder:  # noqa: D101
@@ -135,10 +136,35 @@ class OpenAIStream(TextGenerationVendorStream):
 
 class OpenAIClient(TextGenerationVendor):
     _DEFAULT_MODEL_ID = "default"
+    _REASONING_EFFORTS = frozenset(
+        {
+            ReasoningEffort.MINIMAL,
+            ReasoningEffort.LOW,
+            ReasoningEffort.MEDIUM,
+            ReasoningEffort.HIGH,
+        }
+    )
     _client: Any
+    _extra_query: dict[str, str] | None
+    _is_azure: bool
 
-    def __init__(self, api_key: str | None, base_url: str | None):
+    def __init__(
+        self,
+        api_key: str | None,
+        base_url: str | None,
+        *,
+        azure_api_version: str | None = None,
+    ):
         global Omit
+
+        self._is_azure = self._is_azure_base_url(base_url)
+        self._extra_query = self._azure_extra_query(
+            base_url, azure_api_version
+        )
+        if self._is_azure and api_key is None:
+            raise AssertionError(
+                "Azure OpenAI Responses requires api-key authentication"
+            )
 
         openai_module = import_module("openai")
         async_openai_type = getattr(openai_module, "AsyncOpenAI")
@@ -165,6 +191,7 @@ class OpenAIClient(TextGenerationVendor):
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str] | TextGenerationSingleStream:
         template_messages = self._template_messages(messages)
+        use_reasoning_profile = self._uses_reasoning_profile(model_id)
         kwargs: dict[str, Any] = {
             "extra_headers": {
                 "X-Title": "Avalan",
@@ -172,21 +199,26 @@ class OpenAIClient(TextGenerationVendor):
             },
             "model": model_id or self._DEFAULT_MODEL_ID,
             "input": template_messages,
+            "store": False,
             "stream": use_async_generator,
             "timeout": timeout,
         }
+        if self._extra_query is not None:
+            kwargs["extra_query"] = self._extra_query
         if settings:
             if settings.max_new_tokens is not None:
                 kwargs["max_output_tokens"] = settings.max_new_tokens
-            if settings.temperature is not None:
+            if settings.temperature is not None and not use_reasoning_profile:
                 kwargs["temperature"] = settings.temperature
-            if settings.top_p is not None:
+            if settings.top_p is not None and not use_reasoning_profile:
                 kwargs["top_p"] = settings.top_p
-            if settings.stop_strings is not None:
-                kwargs["text"] = {"stop": settings.stop_strings}
-            if settings.response_format is not None:
-                kwargs["response_format"] = settings.response_format
-            reasoning = OpenAIClient._reasoning_config(settings)
+            text = OpenAIClient._text_config(settings)
+            if text:
+                kwargs["text"] = text
+            reasoning = OpenAIClient._reasoning_config(
+                settings,
+                restricted=use_reasoning_profile,
+            )
             if reasoning:
                 kwargs["reasoning"] = reasoning
         if tool:
@@ -258,13 +290,145 @@ class OpenAIClient(TextGenerationVendor):
     @staticmethod
     def _reasoning_config(
         settings: GenerationSettings,
+        *,
+        restricted: bool = False,
     ) -> dict[str, str] | None:
         effort = settings.reasoning.effort
-        if effort is None:
+        if effort is None or effort == ReasoningEffort.NONE:
             return None
         if effort == ReasoningEffort.MAX:
             effort = ReasoningEffort.XHIGH
+        if restricted and effort not in OpenAIClient._REASONING_EFFORTS:
+            raise AssertionError(
+                "OpenAI Responses reasoning effort is not supported"
+            )
         return {"effort": effort.value}
+
+    @staticmethod
+    def _text_config(settings: GenerationSettings) -> dict[str, Any]:
+        text: dict[str, Any] = {}
+        if settings.response_format is not None:
+            text["format"] = OpenAIClient._response_text_format(
+                settings.response_format
+            )
+        if settings.stop_strings is not None:
+            text["stop"] = settings.stop_strings
+        return text
+
+    @staticmethod
+    def _response_text_format(
+        response_format: dict[str, Any],
+    ) -> dict[str, Any]:
+        assert isinstance(response_format, dict)
+        format_type = response_format.get("type")
+        match format_type:
+            case "text" | "json_object":
+                return {"type": format_type}
+            case "json_schema":
+                return OpenAIClient._json_schema_format(response_format)
+            case _:
+                raise AssertionError(
+                    "OpenAI Responses response format is not supported"
+                )
+
+    @staticmethod
+    def _json_schema_format(
+        response_format: dict[str, Any],
+    ) -> dict[str, Any]:
+        has_chat_schema = "json_schema" in response_format
+        has_responses_schema = "schema" in response_format
+        if has_chat_schema == has_responses_schema:
+            raise AssertionError(
+                "OpenAI Responses json_schema format is ambiguous"
+            )
+        if has_chat_schema:
+            return OpenAIClient._chat_json_schema_format(response_format)
+        return OpenAIClient._responses_json_schema_format(response_format)
+
+    @staticmethod
+    def _chat_json_schema_format(
+        response_format: dict[str, Any],
+    ) -> dict[str, Any]:
+        json_schema = response_format["json_schema"]
+        assert isinstance(json_schema, dict)
+        schema = json_schema.get("schema")
+        assert isinstance(schema, dict)
+        name = json_schema.get("name") or schema.get("title") or "response"
+        assert isinstance(name, str) and name
+        output: dict[str, Any] = {
+            "type": "json_schema",
+            "name": name,
+            "schema": schema,
+        }
+        if "strict" in json_schema:
+            strict = json_schema["strict"]
+            assert isinstance(strict, bool)
+            output["strict"] = strict
+        return output
+
+    @staticmethod
+    def _responses_json_schema_format(
+        response_format: dict[str, Any],
+    ) -> dict[str, Any]:
+        schema = response_format["schema"]
+        name = response_format.get("name")
+        assert isinstance(schema, dict)
+        assert isinstance(name, str) and name
+        output: dict[str, Any] = {
+            "type": "json_schema",
+            "name": name,
+            "schema": schema,
+        }
+        if "strict" in response_format:
+            strict = response_format["strict"]
+            assert isinstance(strict, bool)
+            output["strict"] = strict
+        return output
+
+    @staticmethod
+    def _is_azure_base_url(base_url: str | None) -> bool:
+        if not isinstance(base_url, str):
+            return False
+        host = urlparse(base_url).hostname or ""
+        return host.endswith(".openai.azure.com") or host.endswith(
+            ".cognitiveservices.azure.com"
+        )
+
+    @staticmethod
+    def _azure_extra_query(
+        base_url: str | None,
+        azure_api_version: str | None,
+    ) -> dict[str, str] | None:
+        is_azure = OpenAIClient._is_azure_base_url(base_url)
+        parsed = urlparse(base_url or "")
+        if is_azure and parsed.query:
+            raise AssertionError(
+                "Azure OpenAI base_url must not include query parameters"
+            )
+        if azure_api_version is None:
+            if is_azure and not parsed.path.rstrip("/").endswith("/openai/v1"):
+                raise AssertionError(
+                    "Azure OpenAI Responses base_url must end with /openai/v1/"
+                )
+            return None
+        assert isinstance(azure_api_version, str) and azure_api_version.strip()
+        if not is_azure:
+            raise AssertionError(
+                "azure_api_version is only supported for Azure OpenAI"
+            )
+        return {"api-version": azure_api_version}
+
+    def _uses_reasoning_profile(self, model_id: str) -> bool:
+        normalized = (model_id or self._DEFAULT_MODEL_ID).lower()
+        return (
+            self._is_azure
+            or normalized.startswith("gpt-5")
+            or (
+                len(normalized) > 1
+                and normalized[0] == "o"
+                and normalized[1].isdigit()
+            )
+        )
 
     @staticmethod
     def _content_block(block: dict[str, Any]) -> dict[str, Any]:
@@ -444,6 +608,12 @@ class OpenAIModel(TextGenerationVendorModel):
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.base_url or self._settings.access_token
+        if self._settings.azure_api_version is not None:
+            return OpenAIClient(
+                base_url=self._settings.base_url,
+                api_key=self._settings.access_token,
+                azure_api_version=self._settings.azure_api_version,
+            )
         return OpenAIClient(
             base_url=self._settings.base_url,
             api_key=self._settings.access_token,

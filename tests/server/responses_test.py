@@ -30,9 +30,11 @@ class SimpleOrchestrator(Orchestrator):
         self.synced = False
         self._model_ids = {"server-model"}
         self.last_messages = None
+        self.last_settings = None
 
     async def __call__(self, messages, settings=None):
         self.last_messages = messages
+        self.last_settings = settings
 
         def output_fn(**_):
             return "c"
@@ -175,3 +177,28 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
                 ),
             ],
         )
+
+    async def test_non_streaming_response_accepts_text_format(self):
+        app = self.FastAPI()
+        orchestrator = SimpleOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        payload = {
+            "input": [{"role": "user", "content": "hi"}],
+            "text": {
+                "format": {"type": "json_object"},
+                "stop": "DONE",
+            },
+            "stream": False,
+        }
+        resp = client.post("/responses", json=payload)
+
+        self.assertEqual(resp.status_code, 200)
+        assert orchestrator.last_settings is not None
+        self.assertEqual(
+            orchestrator.last_settings.response_format,
+            {"type": "json_object"},
+        )
+        self.assertEqual(orchestrator.last_settings.stop_strings, "DONE")

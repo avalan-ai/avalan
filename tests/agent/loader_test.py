@@ -1383,6 +1383,36 @@ file_delivery_profile = {raw_value}
                         OrchestratorLoader.validate_agent_file(path)
                     await stack.aclose()
 
+    async def test_hosted_file_delivery_profile_hint_rejects(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://openai/deployment\"
+file_delivery_profile = \"multimodal\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with self.assertRaisesRegex(AssertionError, "local models"):
+                await loader.from_file(path, agent_id=uuid4())
+            with self.assertRaisesRegex(AssertionError, "local models"):
+                OrchestratorLoader.validate_agent_file(path)
+            await stack.aclose()
+
     async def test_run_chat_settings_from_file(self):
         config = """
 [agent]

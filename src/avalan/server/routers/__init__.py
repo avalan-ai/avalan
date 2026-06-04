@@ -67,11 +67,19 @@ async def orchestrate(
     response_id = uuid4()
     timestamp = int(time())
 
+    stop_strings = request.stop
+    response_format = request.response_format
+    if isinstance(request, ResponsesRequest) and request.text is not None:
+        if request.text.stop is not None:
+            stop_strings = request.text.stop
+        if request.text.format is not None:
+            response_format = request.text.format
+
     settings = GenerationSettings(
         use_async_generator=bool(request.stream),
         temperature=request.temperature,
         max_new_tokens=request.max_tokens,
-        stop_strings=request.stop,
+        stop_strings=stop_strings,
         top_p=request.top_p,
         num_return_sequences=request.n,
         reasoning=ReasoningSettings(
@@ -83,10 +91,8 @@ async def orchestrate(
             )
         ),
         response_format=(
-            request.response_format.model_dump(
-                by_alias=True, exclude_none=True
-            )
-            if request.response_format
+            response_format.model_dump(by_alias=True, exclude_none=True)
+            if response_format
             else None
         ),
     )
