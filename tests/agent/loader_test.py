@@ -96,6 +96,43 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             with self.assertRaises(PermissionError):
                 OrchestratorLoader.validate_agent_file(path)
 
+    def test_validate_agent_file_returns_config_and_missing_file(self):
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("""
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+""")
+
+            config = OrchestratorLoader.validate_agent_file(path)
+
+        self.assertEqual(config["engine"]["uri"], "ai://local/model")
+        with self.assertRaises(FileNotFoundError):
+            OrchestratorLoader.validate_agent_file("missing-agent.toml")
+
+    def test_validate_agent_config_rejects_conflicting_user_templates(self):
+        with self.assertRaises(AssertionError):
+            OrchestratorLoader.validate_agent_config(
+                {
+                    "agent": {
+                        "user": "literal",
+                        "user_template": "template",
+                    },
+                    "engine": {"uri": "ai://local/model"},
+                }
+            )
+        with self.assertRaises(AssertionError):
+            OrchestratorLoader.validate_agent_config(
+                {
+                    "agent": {"type": "invalid"},
+                    "engine": {"uri": "ai://local/model"},
+                }
+            )
+
     async def test_load_default_orchestrator(self):
         config = """
 [agent]
@@ -1203,6 +1240,74 @@ value = { type = \"string\", description = \"d\" }
                     {"value": {"type": "string", "description": "d"}},
                 )
         await stack.aclose()
+
+    async def test_file_delivery_profile_hint_is_not_engine_setting(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+file_delivery_profile = \"multimodal\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=uuid4())
+
+                self.assertEqual(result, "orch")
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(settings.engine_config, {})
+            await stack.aclose()
+
+    async def test_invalid_file_delivery_profile_hint_rejects(self):
+        for raw_value in ('"binary"', "42"):
+            with self.subTest(raw_value=raw_value):
+                config = f"""
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+file_delivery_profile = {raw_value}
+"""
+                with TemporaryDirectory() as tmp:
+                    path = f"{tmp}/agent.toml"
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(config)
+
+                    hub = MagicMock(spec=HuggingfaceHub)
+                    logger = MagicMock(spec=Logger)
+                    stack = AsyncExitStack()
+                    loader = OrchestratorLoader(
+                        hub=hub,
+                        logger=logger,
+                        participant_id=uuid4(),
+                        stack=stack,
+                    )
+
+                    with self.assertRaises(AssertionError):
+                        await loader.from_file(path, agent_id=uuid4())
+                    with self.assertRaises(AssertionError):
+                        OrchestratorLoader.validate_agent_file(path)
+                    await stack.aclose()
 
     async def test_run_chat_settings_from_file(self):
         config = """

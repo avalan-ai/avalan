@@ -9,13 +9,19 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
-from avalan.entities import Message, MessageContentText, MessageRole
+from avalan.entities import (
+    Message,
+    MessageContentFile,
+    MessageContentText,
+    MessageRole,
+)
 from avalan.event import Event, EventType
 from avalan.model import (
     FileDeliveryDecision,
     FileDeliveryLimit,
     FileDeliveryMode,
     FileDeliveryProfile,
+    LocalFileDeliveryProfile,
 )
 from avalan.task import (
     DirectTaskRunner,
@@ -31,6 +37,7 @@ from avalan.task import (
     TaskInputFile,
     TaskKeyMaterial,
     TaskKeyPurpose,
+    TaskLimitsPolicy,
     TaskMetadata,
     TaskOutputContract,
     TaskProviderReferenceKind,
@@ -396,8 +403,12 @@ uri = "ai://env:KEY@google/gemini-2.0-flash"
             runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
 
             uri = runner._agent_uri(self._definition())
+            profile = runner._agent_local_file_delivery_profile(
+                self._definition()
+            )
 
         self.assertIsNone(uri)
+        self.assertEqual(profile, LocalFileDeliveryProfile.TEXT)
 
     def test_local_text_target_requires_compatible_text_delivery(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -448,6 +459,100 @@ uri = "ai://local/model"
         self.assertEqual(pdf_issues[0].path, "input.file_conversions")
         self.assertEqual(text_issues, ())
         self.assertEqual(converted_issues, ())
+
+    def test_local_multimodal_profile_accepts_supported_media(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://local/model"
+file_delivery_profile = "multimodal"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            image_issues = self._run_validate(
+                runner,
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("image/png",),
+                    )
+                ),
+            )
+            pdf_issues = self._run_validate(
+                runner,
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",),
+                    )
+                ),
+            )
+
+        self.assertEqual(image_issues, ())
+        self.assertEqual(
+            [issue.code for issue in pdf_issues], ["input.invalid_file"]
+        )
+        self.assertEqual(pdf_issues[0].path, "input.file_conversions")
+
+    def test_invalid_file_delivery_profile_hint_is_safe(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://local/model"
+file_delivery_profile = "binary"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            issues = self._run_validate(
+                runner,
+                self._definition(input_contract=TaskInputContract.file()),
+            )
+
+        self.assertEqual(
+            [issue.code for issue in issues], ["execution.unknown_target"]
+        )
+        self.assertEqual(issues[0].path, "execution.ref")
+        self.assertNotIn("binary", str(issues[0].as_dict()))
+
+    def test_invalid_file_delivery_profile_hint_fails_closed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://local/model"
+file_delivery_profile = "binary"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            profile = runner._agent_local_file_delivery_profile(
+                self._definition()
+            )
+
+        self.assertEqual(profile, LocalFileDeliveryProfile.TEXT)
 
     def test_unknown_agent_provider_rejects_file_contract(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -884,8 +989,12 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
 
     async def test_run_maps_local_text_artifact_to_text_block(self) -> None:
         loader = FakeLoader(response="accepted")
+        tokenized_texts: list[str] = []
         runner = AgentTaskTargetRunner(
             loader,
+            token_counter=lambda text: (
+                tokenized_texts.append(text) or len(text.split())
+            ),
             uri="ai://local/model",
         )
         artifact_ref = TaskArtifactRef(
@@ -896,7 +1005,9 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
 
         await runner.run(
             self._context(
-                self._definition(),
+                self._definition(
+                    limits=TaskLimitsPolicy(total_tokens=3),
+                ),
                 "summarize",
                 files=(
                     TaskInputFile(
@@ -915,6 +1026,123 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(content[0].text, "summarize")
         self.assertEqual(content[1].type, "text")
         self.assertEqual(content[1].text, "private text")
+        self.assertEqual(tokenized_texts, ["summarize", "private text"])
+
+    async def test_run_maps_explicit_local_multimodal_image_to_file_block(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+
+[engine]
+uri = "ai://local/model"
+file_delivery_profile = "multimodal"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader(response="accepted")
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+            artifact_ref = TaskArtifactRef(
+                artifact_id="artifact-1",
+                store="local",
+                storage_key="ar/artifact-1",
+            )
+
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "describe",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="image/png",
+                            size_bytes=4,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(b"\x89PNG"),
+                )
+            )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(content[0].type, "text")
+        self.assertEqual(content[0].text, "describe")
+        self.assertEqual(content[1].type, "file")
+        self.assertEqual(content[1].file["file_data"], "iVBORw==")
+        self.assertEqual(content[1].file["mime_type"], "image/png")
+
+    async def test_run_rejects_local_native_media_without_profile(
+        self,
+    ) -> None:
+        loader = FakeLoader()
+        runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "describe",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="image/png",
+                            size_bytes=4,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(b"\x89PNG"),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertEqual(loader.inputs, [])
+
+    async def test_run_rejects_local_text_token_budget_excess(self) -> None:
+        loader = FakeLoader()
+        runner = AgentTaskTargetRunner(loader, uri="ai://local/model")
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(
+                        limits=TaskLimitsPolicy(total_tokens=3),
+                    ),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="text/plain",
+                            size_bytes=18,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(b"one two three four"),
+                )
+            )
+
+        self.assertEqual(
+            error.exception.issues[0].code, "limits.invalid_value"
+        )
+        self.assertEqual(error.exception.issues[0].path, "limits.total_tokens")
+        self.assertNotIn("one two three four", str(error.exception))
+        self.assertEqual(loader.inputs, [])
 
     async def test_run_rejects_unsupported_provider_uri_scheme(self) -> None:
         runner = AgentTaskTargetRunner(
@@ -1034,6 +1262,59 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
         self.assertEqual(error.exception.issues[0].path, "input.files")
+
+    def test_text_block_helpers_cover_input_shapes(self) -> None:
+        text_message = Message(role=MessageRole.USER, content="one")
+        block_message = Message(
+            role=MessageRole.USER,
+            content=MessageContentText(type="text", text="two"),
+        )
+        list_message = Message(
+            role=MessageRole.USER,
+            content=[MessageContentText(type="text", text="three")],
+        )
+
+        self.assertEqual(agent_module._input_text_blocks("zero"), ("zero",))
+        self.assertEqual(
+            agent_module._input_text_blocks(["one", "two"]),
+            ("one", "two"),
+        )
+        self.assertEqual(
+            agent_module._input_text_blocks([text_message]),
+            ("one",),
+        )
+        self.assertEqual(
+            agent_module._input_text_blocks(cast(Any, object())),
+            (),
+        )
+        self.assertEqual(
+            agent_module._message_text_blocks(
+                Message(role=MessageRole.USER, content=None)
+            ),
+            (),
+        )
+        self.assertEqual(
+            agent_module._message_text_blocks(text_message),
+            ("one",),
+        )
+        self.assertEqual(
+            agent_module._message_text_blocks(block_message),
+            ("two",),
+        )
+        self.assertEqual(
+            agent_module._message_text_blocks(list_message),
+            ("three",),
+        )
+        self.assertEqual(
+            agent_module._message_text_blocks(
+                Message(
+                    role=MessageRole.USER,
+                    content=MessageContentFile(type="file", file={}),
+                )
+            ),
+            (),
+        )
+        self.assertEqual(agent_module._estimated_token_count("one two"), 2)
 
     async def test_run_appends_files_to_message_inputs(self) -> None:
         message_loader = FakeLoader(response="accepted")
@@ -1643,6 +1924,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         input_contract: TaskInputContract | None = None,
         output: TaskOutputContract | None = None,
         artifact: TaskArtifactPolicy | None = None,
+        limits: TaskLimitsPolicy | None = None,
     ) -> TaskDefinition:
         return TaskDefinition(
             task=TaskMetadata(name="agent", version="1"),
@@ -1650,6 +1932,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             output=output or TaskOutputContract.text(),
             execution=TaskExecutionTarget.agent("agents/valid.toml"),
             artifact=artifact or TaskArtifactPolicy(),
+            limits=limits or TaskLimitsPolicy(),
         )
 
 

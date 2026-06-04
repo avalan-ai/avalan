@@ -12,6 +12,7 @@ from ..entities import (
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
+from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
 from ..tool.browser import (
@@ -322,6 +323,7 @@ class OrchestratorLoader:
         assert (
             "uri" in config["engine"]
         ), "No uri defined in engine section of configuration"
+        cls._validate_engine_file_delivery_profile(config["engine"])
         agent_config = config["agent"]
         assert not (
             "user" in agent_config and "user_template" in agent_config
@@ -377,6 +379,9 @@ class OrchestratorLoader:
 
             uri = uri or config["engine"]["uri"]
             engine_config = config["engine"]
+            OrchestratorLoader._validate_engine_file_delivery_profile(
+                engine_config
+            )
             assert "tools" not in engine_config, (
                 "tools option in [engine] is no longer supported; "
                 "configure tools under [tool.enable]"
@@ -405,6 +410,7 @@ class OrchestratorLoader:
                         ), "tool.enable entries must be strings"
                         enable_tools.append(tool_name)
             engine_config.pop("uri", None)
+            engine_config.pop("file_delivery_profile", None)
             orchestrator_type = (
                 config["agent"]["type"] if "type" in config["agent"] else None
             )
@@ -870,6 +876,20 @@ class OrchestratorLoader:
             template_vars=template_vars,
         )
         return agent
+
+    @staticmethod
+    def _validate_engine_file_delivery_profile(
+        engine_config: dict[str, Any],
+    ) -> None:
+        value = engine_config.get("file_delivery_profile")
+        if value is None:
+            return
+        assert isinstance(
+            value, str
+        ), "engine.file_delivery_profile must be a string"
+        assert value in {
+            profile.value for profile in LocalFileDeliveryProfile
+        }, "engine.file_delivery_profile is not supported"
 
     @staticmethod
     def _log_wrapper(logger: Logger) -> Callable[..., Any]:

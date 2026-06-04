@@ -16,6 +16,7 @@ from ...model.file_delivery import (
     FileDeliveryMode,
     FileDeliveryProfile,
     FileDeliveryRequest,
+    LocalFileDeliveryProfile,
     plan_file_delivery,
     resolve_file_delivery_profile,
 )
@@ -43,6 +44,7 @@ from typing import Protocol, cast
 from uuid import UUID
 
 FileDeliveryProfileResolver = Callable[[str | None], FileDeliveryProfile]
+TokenCounter = Callable[[str], int]
 
 
 class AgentOrchestrator(Protocol):
@@ -81,6 +83,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             resolve_file_delivery_profile
         ),
         ref_base: str | Path | None = None,
+        token_counter: TokenCounter | None = None,
         uri: str | None = None,
     ) -> None:
         self._loader = loader
@@ -89,6 +92,9 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         assert callable(file_delivery_resolver)
         self._file_delivery_resolver = file_delivery_resolver
         self._ref_base = Path(ref_base) if ref_base is not None else None
+        if token_counter is not None:
+            assert callable(token_counter)
+        self._token_counter = token_counter or _estimated_token_count
         self._uri = uri
 
     async def validate_definition(
@@ -129,9 +135,13 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         assert isinstance(context, TaskTargetContext)
         assert context.definition.execution.type == TaskTargetType.AGENT
         await context.check_cancelled()
-        agent_input = await _agent_input(
-            context,
-            self._agent_file_profile(context.definition),
+        profile = self._agent_file_profile(context.definition)
+        agent_input = await _agent_input(context, profile)
+        _validate_local_text_token_budget(
+            agent_input,
+            context=context,
+            profile=profile,
+            token_counter=self._token_counter,
         )
         orchestrator = await self._loader.from_file(
             str(self._agent_path(context.definition)),
@@ -160,6 +170,16 @@ class AgentTaskTargetRunner(TaskTargetRunner):
     def _agent_uri(self, definition: TaskDefinition) -> str | None:
         if self._uri is not None:
             return self._uri
+        engine = self._agent_engine_config(definition)
+        if engine is None:
+            return None
+        uri = engine.get("uri")
+        return uri if isinstance(uri, str) else None
+
+    def _agent_engine_config(
+        self,
+        definition: TaskDefinition,
+    ) -> Mapping[str, object] | None:
         try:
             with self._agent_path(definition).open("rb") as file:
                 data = load(file)
@@ -168,14 +188,35 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         engine = data.get("engine")
         if not isinstance(engine, Mapping):
             return None
-        uri = engine.get("uri")
-        return uri if isinstance(uri, str) else None
+        return engine
+
+    def _agent_local_file_delivery_profile(
+        self,
+        definition: TaskDefinition,
+    ) -> LocalFileDeliveryProfile:
+        engine = self._agent_engine_config(definition)
+        if engine is None:
+            return LocalFileDeliveryProfile.TEXT
+        value = engine.get("file_delivery_profile")
+        if not isinstance(value, str):
+            return LocalFileDeliveryProfile.TEXT
+        try:
+            return LocalFileDeliveryProfile(value)
+        except ValueError:
+            return LocalFileDeliveryProfile.TEXT
 
     def _agent_file_profile(
         self,
         definition: TaskDefinition,
     ) -> FileDeliveryProfile:
-        return self._file_delivery_resolver(self._agent_uri(definition))
+        uri = self._agent_uri(definition)
+        local_profile = self._agent_local_file_delivery_profile(definition)
+        if self._file_delivery_resolver is resolve_file_delivery_profile:
+            return resolve_file_delivery_profile(
+                uri,
+                local_profile=local_profile,
+            )
+        return self._file_delivery_resolver(uri)
 
 
 def _attach_cancellation_checker(
@@ -439,6 +480,75 @@ def _file_prompt_text(
     if isinstance(value, str):
         return value
     return "\n".join(value)
+
+
+def _validate_local_text_token_budget(
+    agent_input: Input,
+    *,
+    context: TaskTargetContext,
+    profile: FileDeliveryProfile,
+    token_counter: TokenCounter,
+) -> None:
+    if (
+        not context.files
+        or not profile.requires_conversion_for_file_blocks
+        or context.definition.limits.total_tokens is None
+    ):
+        return
+    token_count = sum(
+        token_counter(text) for text in _input_text_blocks(agent_input)
+    )
+    if token_count <= context.definition.limits.total_tokens:
+        return
+    raise TaskValidationError(
+        (
+            TaskValidationIssue(
+                code="limits.invalid_value",
+                path="limits.total_tokens",
+                message="Task input exceeds the configured token limit.",
+                hint="Reduce the input text or raise the token limit.",
+                category=TaskValidationCategory.VALUE,
+            ),
+        )
+    )
+
+
+def _input_text_blocks(value: Input) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, Message):
+        return _message_text_blocks(value)
+    if isinstance(value, list):
+        texts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                texts.append(item)
+            elif isinstance(item, Message):
+                texts.extend(_message_text_blocks(item))
+        return tuple(texts)
+    return ()
+
+
+def _message_text_blocks(message: Message) -> tuple[str, ...]:
+    content = message.content
+    if content is None:
+        return ()
+    if isinstance(content, str):
+        return (content,)
+    if isinstance(content, MessageContentText):
+        return (content.text,)
+    if isinstance(content, list):
+        return tuple(
+            block.text
+            for block in content
+            if isinstance(block, MessageContentText)
+        )
+    return ()
+
+
+def _estimated_token_count(text: str) -> int:
+    assert isinstance(text, str)
+    return len(text.split())
 
 
 def _validate_agent_file_input(
