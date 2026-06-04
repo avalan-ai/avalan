@@ -214,6 +214,42 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
 
         self.assertNotIn("%PDF-private", str(error.exception))
 
+    async def test_converter_rejects_non_pdf_media_type_before_backend(
+        self,
+    ) -> None:
+        converter = PdfImageFileConverter()
+
+        with self.assertRaises(TaskFileConversionError) as error:
+            await converter.convert(
+                b"private content",
+                source_media_type="text/plain",
+                options={"raw": "private.pdf"},
+            )
+
+        self.assertEqual(
+            str(error.exception),
+            "PDF image source media type is not supported",
+        )
+        self.assertNotIn("private content", str(error.exception))
+        self.assertNotIn("private.pdf", str(error.exception))
+
+    async def test_converter_accepts_pdf_media_type_case_insensitively(
+        self,
+    ) -> None:
+        converter = PdfImageFileConverter()
+
+        with self.assertRaises(TaskFileConversionError) as error:
+            await converter.convert(
+                b"%PDF-private",
+                source_media_type="Application/PDF",
+                options={"format": "png"},
+            )
+
+        self.assertEqual(
+            str(error.exception), "PDF image conversion is unavailable"
+        )
+        self.assertNotIn("%PDF-private", str(error.exception))
+
     def test_page_collection_contract_preserves_order_and_metadata(
         self,
     ) -> None:

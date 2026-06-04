@@ -94,6 +94,7 @@ class PdfImageFileConverter:
         assert isinstance(content, bytes)
         if source_media_type is not None:
             _assert_non_empty_string(source_media_type, "source_media_type")
+            _validate_source_media_type(source_media_type, self._capability)
         _validate_options(options or {}, self._capability)
         raise TaskFileConversionError("PDF image conversion is unavailable")
 
@@ -119,6 +120,16 @@ def _output_format(value: object) -> str:
     if value in {"png", "jpeg"}:
         return str(value)
     raise TaskFileConversionError("PDF image output format is not supported")
+
+
+def _validate_source_media_type(
+    value: str,
+    capability: TaskFileConverterCapability,
+) -> None:
+    if value.lower() not in capability.source_mime_types:
+        raise TaskFileConversionError(
+            "PDF image source media type is not supported"
+        )
 
 
 def _validate_dpi(
