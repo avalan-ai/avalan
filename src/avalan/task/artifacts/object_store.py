@@ -834,8 +834,6 @@ def _public_ref_metadata(
             "key_id": encryption.key_id,
             "privacy": ENCRYPTED_MARKER,
         }
-        if encryption.metadata:
-            encryption_metadata["metadata"] = dict(encryption.metadata)
         metadata["encryption"] = encryption_metadata
     return freeze_snapshot_metadata(metadata)
 

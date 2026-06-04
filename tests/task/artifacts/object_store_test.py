@@ -61,7 +61,14 @@ class FakeUploadState:
 
 
 class XorObjectCipher:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        encryption_metadata: Mapping[str, str] | None = None,
+    ) -> None:
+        self._encryption_metadata = encryption_metadata or {
+            "cipher_scope": "safe",
+        }
         self.start_context: Mapping[str, str] | None = None
         self.encrypt_contexts: list[Mapping[str, str] | None] = []
         self.decrypt_contexts: list[Mapping[str, str] | None] = []
@@ -78,7 +85,7 @@ class XorObjectCipher:
         return ObjectArtifactEncryption(
             key_id=key_id or "object-key-v1",
             algorithm="xor-test",
-            metadata={"cipher_scope": "safe"},
+            metadata=self._encryption_metadata,
         )
 
     def encrypt_chunk(
@@ -346,6 +353,7 @@ class ObjectArtifactStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(object_metadata["reference"], "object_store")
         self.assertEqual(encryption["privacy"], "<encrypted>")
         self.assertEqual(encryption["key_id"], "object-key-v1")
+        self.assertNotIn("metadata", encryption)
         self.assertNotIn(ref.storage_key, str(ref.summary()))
         self.assertNotIn(ref.storage_key, str(ref.metadata))
         self.assertNotIn("private", str(ref.summary()))
@@ -353,6 +361,35 @@ class ObjectArtifactStoreTest(IsolatedAsyncioTestCase):
         self.assertNotIn(ref.storage_key, client.objects)
         with self.assertRaises(ArtifactStoreNotFoundError):
             await store.stat(ref)
+
+    async def test_public_ref_omits_private_encryption_metadata(self) -> None:
+        client = FakeObjectClient()
+        cipher = XorObjectCipher(
+            encryption_metadata={
+                "private_bucket": "customer-secret-bucket",
+                "private_context": "tenant-secret-context",
+            }
+        )
+        store = _store(
+            client,
+            cipher=cipher,
+            id_factory=lambda: "artifact-1",
+        )
+
+        ref = await store.put(b"private bytes")
+        stored = client.objects[ref.storage_key]
+        encryption = cast(Mapping[str, object], ref.metadata["encryption"])
+
+        self.assertEqual(
+            stored.metadata["encryption_metadata_private_bucket"],
+            "customer-secret-bucket",
+        )
+        self.assertEqual(encryption["privacy"], "<encrypted>")
+        self.assertNotIn("metadata", encryption)
+        self.assertNotIn("customer-secret-bucket", str(ref.metadata))
+        self.assertNotIn("tenant-secret-context", str(ref.metadata))
+        self.assertNotIn("customer-secret-bucket", str(ref.summary()))
+        self.assertNotIn("tenant-secret-context", str(ref.summary()))
 
     async def test_put_rejects_unconfigured_storage_policy(self) -> None:
         client = FakeObjectClient()
