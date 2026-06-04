@@ -210,6 +210,21 @@ class TaskValidationError(ValueError):
         super().__init__(f"task validation failed: {summary}")
 
 
+def deduplicate_task_validation_issues(
+    issues: Iterable[TaskValidationIssue],
+) -> tuple[TaskValidationIssue, ...]:
+    seen: set[tuple[str, str, TaskValidationCategory]] = set()
+    deduplicated: list[TaskValidationIssue] = []
+    for issue in issues:
+        assert isinstance(issue, TaskValidationIssue)
+        key = (issue.code, issue.path, issue.category)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(issue)
+    return tuple(deduplicated)
+
+
 def validate_task_definition(
     definition: TaskDefinition,
     *,

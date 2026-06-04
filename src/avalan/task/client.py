@@ -76,6 +76,7 @@ from .validation import (
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
+    deduplicate_task_validation_issues,
     validate_task_definition,
     validate_task_input,
 )
@@ -433,6 +434,7 @@ class TaskClient:
                 require_configured_keys=True,
                 raw_storage_allowed=self._raw_storage_allowed,
                 execution_roots=self._execution_roots,
+                file_converters=self._file_converters,
             )
         )
         issues.extend(
@@ -453,7 +455,9 @@ class TaskClient:
                 ),
             )
         )
-        return TaskClientValidationResult(issues=tuple(issues))
+        return TaskClientValidationResult(
+            issues=deduplicate_task_validation_issues(issues)
+        )
 
     async def run(
         self,

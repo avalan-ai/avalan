@@ -77,6 +77,7 @@ from .validation import (
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
+    deduplicate_task_validation_issues,
     validate_task_definition,
     validate_task_input,
     validate_task_output,
@@ -924,6 +925,7 @@ class DirectTaskRunner:
                 remote_url_policy=self._remote_url_policy,
             )
         )
+        issues = list(deduplicate_task_validation_issues(issues))
         if issues:
             raise TaskValidationError(tuple(issues))
 

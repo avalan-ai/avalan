@@ -32,6 +32,8 @@ from avalan.task import (
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
     TaskFileDescriptor,
     TaskIdempotencyError,
     TaskIdempotencyIdentity,
@@ -324,6 +326,35 @@ class FakeRemoteResolver:
         return value
 
 
+class TextFileConverter:
+    name = "text"
+    version = "test"
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return TaskFileConverterCapability(
+            source_mime_types=("application/pdf",),
+            output_mime_types=("text/plain",),
+            supports_streaming=False,
+            max_input_bytes=1024,
+            max_output_bytes=1024,
+        )
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        return TaskFileConversionResult(
+            content=b"converted",
+            media_type="text/plain",
+            metadata={},
+        )
+
+
 class FakeRemoteClient:
     def __init__(
         self,
@@ -576,6 +607,63 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(validation.as_dict(), {"valid": True, "issues": ()})
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(result.output, "callable summary")
+
+    async def test_validate_uses_configured_file_converters(self) -> None:
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+            file_converters={"text": TextFileConverter()},
+        )
+
+        result = await client.validate(
+            _definition(
+                input_contract=TaskInputContract.file(
+                    conversions=("text",),
+                    mime_types=("application/pdf",),
+                )
+            ),
+            input_value=TaskClient.local_file(
+                "private.pdf",
+                mime_type="application/pdf",
+                conversions=(TaskClient.file_conversion("text"),),
+            ),
+        )
+
+        self.assertTrue(result.valid)
+        self.assertEqual(result.issues, ())
+
+    async def test_validate_rejects_missing_file_converter(self) -> None:
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+            file_converters={},
+        )
+
+        result = await client.validate(
+            _definition(
+                input_contract=TaskInputContract.file(
+                    conversions=("text",),
+                    mime_types=("application/pdf",),
+                )
+            ),
+            input_value=TaskClient.local_file(
+                "private.pdf",
+                mime_type="application/pdf",
+                conversions=(TaskClient.file_conversion("text"),),
+            ),
+        )
+
+        self.assertFalse(result.valid)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in result.issues],
+            [
+                ("input.invalid_file", "input.file_conversions[0]"),
+                ("input.invalid_file", "input.conversions[0]"),
+            ],
+        )
+        self.assertNotIn("private.pdf", str(result.issues))
 
     async def test_validate_aggregates_definition_input_and_target_issues(
         self,
