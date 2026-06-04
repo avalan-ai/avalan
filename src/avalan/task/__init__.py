@@ -159,6 +159,11 @@ from .materialization import (
 )
 from .materialization import TaskMaterializedFile as TaskMaterializedFile
 from .materialization import (
+    TaskRemoteUrlHttpClient as TaskRemoteUrlHttpClient,
+)
+from .materialization import TaskRemoteUrlResolver as TaskRemoteUrlResolver
+from .materialization import TaskRemoteUrlResponse as TaskRemoteUrlResponse
+from .materialization import (
     materialize_task_input_files as materialize_task_input_files,
 )
 from .materialization import (

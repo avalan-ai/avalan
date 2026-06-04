@@ -48,6 +48,7 @@ from avalan.task import (
     TaskQueueItem,
     TaskQueueItemState,
     TaskQueueSubmission,
+    TaskRemoteUrlPolicy,
     TaskRun,
     TaskRunPolicy,
     TaskRunState,
@@ -62,6 +63,7 @@ from avalan.task import (
     read_artifact_stream_bytes,
     spec_hash,
 )
+from avalan.task.materialization import TaskRemoteUrlResponse
 from avalan.task.runner import TaskExecutableInputFileEntry
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
@@ -304,6 +306,60 @@ class RecordingArtifactStore:
 
     async def delete(self, ref: TaskArtifactRef) -> None:
         self.deleted.append(ref)
+
+
+class FakeRemoteResolver:
+    def __init__(
+        self,
+        addresses: Mapping[str, tuple[str, ...] | OSError] | None = None,
+    ) -> None:
+        self.addresses = dict(addresses or {})
+        self.calls: list[str] = []
+
+    def resolve(self, hostname: str) -> tuple[str, ...]:
+        self.calls.append(hostname)
+        value = self.addresses.get(hostname, ("8.8.8.8",))
+        if isinstance(value, OSError):
+            raise value
+        return value
+
+
+class FakeRemoteClient:
+    def __init__(
+        self,
+        responses: Mapping[str, TaskRemoteUrlResponse | Exception],
+    ) -> None:
+        self.responses = dict(responses)
+        self.calls: list[tuple[str, float]] = []
+
+    def open(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float,
+    ) -> TaskRemoteUrlResponse:
+        self.calls.append((url, timeout_seconds))
+        response = self.responses[url]
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def _remote_response(
+    content: bytes,
+    *,
+    status_code: int = 200,
+    headers: Mapping[str, str] | None = None,
+) -> TaskRemoteUrlResponse:
+    return TaskRemoteUrlResponse(
+        status_code=status_code,
+        headers=headers
+        or {
+            "Content-Length": str(len(content)),
+            "Content-Type": "text/plain",
+        },
+        stream=BytesIO(content),
+    )
 
 
 class RecordingQueue:
@@ -742,6 +798,115 @@ ref = "agents/reviewer.toml"
             "input.conversions",
         )
         self.assertNotIn("file-private", str(error.exception))
+
+    async def test_direct_remote_file_uses_configured_policy(self) -> None:
+        seen_files: list[tuple[TaskInputFile, ...]] = []
+        remote_client = FakeRemoteClient(
+            {
+                "https://example.test/private.txt": _remote_response(
+                    b"private remote body"
+                )
+            }
+        )
+        remote_resolver = FakeRemoteResolver()
+        artifact_store = RecordingArtifactStore()
+
+        async def target(context: TaskTargetContext) -> object:
+            seen_files.append(context.files)
+            return "accepted"
+
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=target,
+            hmac_provider=StaticHmacProvider(),
+            artifact_store=artifact_store,
+            definition_hash=lambda task: "client-remote-direct-hash",
+            remote_url_policy=TaskRemoteUrlPolicy(
+                enabled=True,
+                max_bytes=100,
+                timeout_seconds=2.5,
+            ),
+            remote_url_http_client=remote_client,
+            remote_url_resolver=remote_resolver,
+        )
+
+        result = await client.run(
+            _definition(input_contract=TaskInputContract.file()),
+            input_value=TaskClient.remote_url_file(
+                "https://example.test/private.txt",
+                mime_type="text/plain",
+                size_bytes=len(b"private remote body"),
+            ),
+        )
+        inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "accepted")
+        self.assertEqual(
+            remote_client.calls,
+            [("https://example.test/private.txt", 2.5)],
+        )
+        self.assertEqual(remote_resolver.calls, ["example.test"])
+        self.assertEqual(artifact_store.puts[0][0], b"private remote body")
+        self.assertEqual(len(seen_files), 1)
+        file = seen_files[0][0]
+        self.assertIsNotNone(file.artifact_ref)
+        self.assertEqual(file.media_type, "text/plain")
+        self.assertEqual(file.size_bytes, len(b"private remote body"))
+        self.assertNotIn("private.txt", str(inspection.as_dict()))
+        self.assertNotIn("private remote body", str(inspection.as_dict()))
+
+    async def test_direct_remote_file_requires_policy_before_fetch(
+        self,
+    ) -> None:
+        remote_client = FakeRemoteClient(
+            {
+                "https://example.test/private.txt": _remote_response(
+                    b"private remote body"
+                )
+            }
+        )
+        target_calls = 0
+
+        async def target(context: TaskTargetContext) -> object:
+            nonlocal target_calls
+            target_calls += 1
+            return "unused"
+
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=target,
+            hmac_provider=StaticHmacProvider(),
+            artifact_store=RecordingArtifactStore(),
+            definition_hash=lambda task: "client-remote-disabled-hash",
+            remote_url_http_client=remote_client,
+            remote_url_resolver=FakeRemoteResolver(),
+        )
+
+        validation = await client.validate(
+            _definition(input_contract=TaskInputContract.file()),
+            input_value=TaskClient.remote_url_file(
+                "https://example.test/private.txt",
+                mime_type="text/plain",
+            ),
+        )
+        with self.assertRaises(TaskValidationError) as error:
+            await client.run(
+                _definition(input_contract=TaskInputContract.file()),
+                input_value=TaskClient.remote_url_file(
+                    "https://example.test/private.txt",
+                    mime_type="text/plain",
+                ),
+            )
+
+        self.assertFalse(validation.valid)
+        self.assertEqual(
+            [issue.code for issue in validation.issues],
+            ["feature.remote_url_file_inputs_disabled"],
+        )
+        self.assertEqual(remote_client.calls, [])
+        self.assertEqual(target_calls, 0)
+        self.assertNotIn("private.txt", str(error.exception))
 
     async def test_sdk_file_helpers_cover_source_variants(self) -> None:
         expires_at = datetime(2026, 1, 1, tzinfo=UTC)
@@ -1464,6 +1629,66 @@ ref = "agents/reviewer.toml"
         self.assertEqual(output.state, TaskRunState.FAILED)
         self.assertFalse(output.ready)
         self.assertEqual(output.error, {"code": "runnable.failed"})
+
+    async def test_enqueue_materializes_remote_file_with_policy(self) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        artifact_store = RecordingArtifactStore()
+        remote_client = FakeRemoteClient(
+            {
+                "https://example.test/private.txt": _remote_response(
+                    b"private queue body"
+                )
+            }
+        )
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+            artifact_store=artifact_store,
+            definition_hash=lambda task: "client-remote-queue-hash",
+            remote_url_policy=TaskRemoteUrlPolicy(
+                enabled=True,
+                max_bytes=100,
+            ),
+            remote_url_http_client=remote_client,
+            remote_url_resolver=FakeRemoteResolver(),
+        )
+
+        submission = await client.enqueue(
+            _definition(
+                input_contract=TaskInputContract.file(),
+                run=TaskRunPolicy.queued("documents"),
+            ),
+            input_value=TaskClient.remote_url_file(
+                "https://example.test/private.txt",
+                mime_type="text/plain",
+                size_bytes=len(b"private queue body"),
+            ),
+        )
+
+        self.assertEqual(submission.run.state, TaskRunState.QUEUED)
+        self.assertEqual(
+            remote_client.calls,
+            [("https://example.test/private.txt", 10.0)],
+        )
+        self.assertEqual(artifact_store.puts[0][0], b"private queue body")
+        self.assertEqual(len(queue.requests), 1)
+        request = queue.requests[0]
+        self.assertIsNotNone(request.input_payload)
+        assert request.input_payload is not None
+        self.assertEqual(len(request.input_payload.file_values), 1)
+        self.assertEqual(len(queue.artifacts), 1)
+        descriptor = queue.artifacts[0].metadata["descriptor"]
+        assert isinstance(descriptor, Mapping)
+        self.assertEqual(descriptor["descriptor_path"], "input")
+        self.assertEqual(descriptor["source_kind"], "remote_url")
+        self.assertNotIn("private.txt", str(request))
+        self.assertNotIn("private queue body", str(request))
+        self.assertNotIn("private.txt", str(queue.artifacts))
 
     async def test_enqueue_deletes_materialized_file_when_queue_fails(
         self,

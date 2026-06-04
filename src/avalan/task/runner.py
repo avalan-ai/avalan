@@ -30,9 +30,12 @@ from .input import (
     TaskFileSourceKind,
     TaskProviderReference,
     TaskProviderReferenceKind,
+    TaskRemoteUrlPolicy,
 )
 from .materialization import (
     TaskMaterializedFile,
+    TaskRemoteUrlHttpClient,
+    TaskRemoteUrlResolver,
     materialize_task_input_files,
     task_file_descriptors_from_input,
     task_provider_reference_input_files_from_input,
@@ -534,6 +537,9 @@ class DirectTaskRunner:
         finalizer: TaskRunFinalizer | None = None,
         definition_hash: Callable[[TaskDefinition], str] | None = None,
         execution_roots: Iterable[str | Path] = (),
+        remote_url_policy: TaskRemoteUrlPolicy | None = None,
+        remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
+        remote_url_resolver: TaskRemoteUrlResolver | None = None,
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
@@ -550,6 +556,9 @@ class DirectTaskRunner:
         self._finalizer = finalizer or TaskRunFinalizer()
         self._definition_hash = definition_hash or spec_hash
         self._execution_roots = tuple(execution_roots)
+        self._remote_url_policy = remote_url_policy
+        self._remote_url_http_client = remote_url_http_client
+        self._remote_url_resolver = remote_url_resolver
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
         self._observability_sink = observability_sink
@@ -906,6 +915,7 @@ class DirectTaskRunner:
                 definition,
                 input_value,
                 file_converters=self._file_converters,
+                remote_url_policy=self._remote_url_policy,
             )
         )
         if issues:
@@ -1142,6 +1152,9 @@ class DirectTaskRunner:
             roots=self._execution_roots,
             artifact_store=self._artifact_store,
             hmac_provider=self._hmac_provider,
+            remote_url_policy=self._remote_url_policy,
+            remote_url_http_client=self._remote_url_http_client,
+            remote_url_resolver=self._remote_url_resolver,
             task_store=self._store,
             run_id=run.run_id,
             attempt_id=attempt.attempt_id,

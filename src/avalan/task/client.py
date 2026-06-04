@@ -20,9 +20,12 @@ from .input import (
     TaskFileConversionRequest,
     TaskFileDescriptor,
     TaskProviderReferenceKind,
+    TaskRemoteUrlPolicy,
 )
 from .materialization import (
     TaskMaterializedFile,
+    TaskRemoteUrlHttpClient,
+    TaskRemoteUrlResolver,
     materialize_task_input_files,
     task_provider_reference_input_files_from_input,
 )
@@ -198,6 +201,9 @@ class TaskClient:
         file_converters: Mapping[str, FileConverter] | None = None,
         definition_hash: Callable[[TaskDefinition], str] | None = None,
         execution_roots: Iterable[str | Path] = (),
+        remote_url_policy: TaskRemoteUrlPolicy | None = None,
+        remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
+        remote_url_resolver: TaskRemoteUrlResolver | None = None,
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
@@ -214,6 +220,9 @@ class TaskClient:
         self._file_converters = file_converters
         self._definition_hash = definition_hash
         self._execution_roots = tuple(execution_roots)
+        self._remote_url_policy = remote_url_policy
+        self._remote_url_http_client = remote_url_http_client
+        self._remote_url_resolver = remote_url_resolver
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
         self._observability_sink = observability_sink
@@ -426,7 +435,14 @@ class TaskClient:
                 execution_roots=self._execution_roots,
             )
         )
-        issues.extend(validate_task_input(definition, input_value))
+        issues.extend(
+            validate_task_input(
+                definition,
+                input_value,
+                file_converters=self._file_converters,
+                remote_url_policy=self._remote_url_policy,
+            )
+        )
         issues.extend(
             await self._target.validate_definition(
                 definition,
@@ -515,6 +531,9 @@ class TaskClient:
             roots=self._execution_roots,
             artifact_store=self._artifact_store,
             hmac_provider=self._hmac_provider,
+            remote_url_policy=self._remote_url_policy,
+            remote_url_http_client=self._remote_url_http_client,
+            remote_url_resolver=self._remote_url_resolver,
         )
         input_files = tuple(
             materialized_file.as_input_file()
@@ -727,6 +746,9 @@ class TaskClient:
             file_converters=self._file_converters,
             definition_hash=self._definition_hash,
             execution_roots=self._execution_roots,
+            remote_url_policy=self._remote_url_policy,
+            remote_url_http_client=self._remote_url_http_client,
+            remote_url_resolver=self._remote_url_resolver,
             metrics_event_observer=self._metrics_event_observer,
             trace_event_observer=self._trace_event_observer,
             observability_sink=self._observability_sink,
