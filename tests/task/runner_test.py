@@ -26,11 +26,13 @@ from avalan.task import (
     TaskDefinition,
     TaskDirectTarget,
     TaskErrorCode,
+    TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
     TaskFileConversionError,
     TaskFileConversionRequest,
     TaskFileConversionResult,
+    TaskFileConverterCapability,
     TaskFileDescriptor,
     TaskInputContract,
     TaskInputFile,
@@ -318,6 +320,16 @@ class MaterializationFailureRunner(DirectTaskRunner):
 class FailingTextConverter:
     name = "text"
     version = "failure"
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return TaskFileConverterCapability(
+            source_mime_types=("text/*",),
+            output_mime_types=("text/plain",),
+            supports_streaming=False,
+            max_input_bytes=1024,
+            max_output_bytes=1024,
+        )
 
     async def convert(
         self,
@@ -1080,7 +1092,9 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             self.assertNotIn("private conversion failure", str(error_summary))
             self.assertNotIn("input.txt", str(error_summary))
 
-    async def test_missing_file_converter_finalizes_run_safely(self) -> None:
+    async def test_missing_file_converter_rejects_before_run(
+        self,
+    ) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:
             Path(root, "input.txt").write_bytes(b"private text")
             target = RecordingTarget("unused")
@@ -1097,30 +1111,87 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
                 execution_roots=(root,),
             )
 
-            result = await runner.run(
-                definition(
-                    input_contract=TaskInputContract.file(
-                        conversions=("markdown",),
-                    )
-                ),
-                input_value=TaskFileDescriptor.local_path(
-                    "input.txt",
-                    mime_type="text/plain",
-                    conversions=(TaskFileConversionRequest(name="markdown"),),
-                ),
+            with self.assertRaises(TaskValidationError) as error:
+                await runner.run(
+                    definition(
+                        input_contract=TaskInputContract.file(
+                            conversions=("unknown",),
+                        )
+                    ),
+                    input_value=TaskFileDescriptor.local_path(
+                        "input.txt",
+                        mime_type="text/plain",
+                        conversions=(
+                            TaskFileConversionRequest(name="unknown"),
+                        ),
+                    ),
+                )
+
+            self.assertEqual(target.contexts, [])
+            self.assertEqual(
+                error.exception.issues[0].code,
+                "input.invalid_file",
+            )
+            self.assertEqual(
+                error.exception.issues[0].path,
+                "input.file_conversions[0]",
+            )
+            self.assertNotIn("unknown", str(error.exception))
+            self.assertNotIn("input.txt", str(error.exception))
+
+    async def test_converted_input_file_rejects_missing_converter_guard(
+        self,
+    ) -> None:
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, RecordingTarget("unused")),
+            hmac_provider=self.hmac_provider,
+            file_converters={},
+        )
+        definition_value = definition(
+            input_contract=TaskInputContract.file(
+                conversions=("unknown",),
+            )
+        )
+        await self.store.register_definition(
+            definition_value,
+            definition_hash="definition-1",
+        )
+        run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="definition-1")
+        )
+        attempt = await self.store.create_attempt(run.run_id)
+        materialized = TaskMaterializedFile(
+            descriptor=TaskFileDescriptor.local_path(
+                "input.txt",
+                conversions=(TaskFileConversionRequest(name="unknown"),),
+            ),
+            descriptor_path="input",
+            ref=TaskArtifactRef(
+                artifact_id="artifact-1",
+                store="local",
+                storage_key="artifact-1",
+                media_type="text/plain",
+                size_bytes=4,
+            ),
+            identity={},
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner._converted_input_file(
+                definition_value,
+                materialized,
+                index=0,
+                run=run,
+                attempt=attempt,
             )
 
-            self.assertEqual(result.run.state, TaskRunState.FAILED)
-            self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
-            self.assertEqual(target.contexts, [])
-            error_summary = cast(
-                Mapping[str, object],
-                result.run.result.error if result.run.result else {},
-            )
-            self.assertEqual(error_summary["category"], "input_contract")
-            self.assertEqual(error_summary["code"], "input_contract.failed")
-            self.assertNotIn("private text", str(error_summary))
-            self.assertNotIn("input.txt", str(error_summary))
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(
+            error.exception.issues[0].path,
+            "input.conversions[0]",
+        )
+        self.assertNotIn("unknown", str(error.exception))
 
     async def test_file_materialization_failure_finalizes_run(
         self,

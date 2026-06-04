@@ -21,6 +21,7 @@ from avalan.task import (
     TaskExecutionTarget,
     TaskFileConversionRequest,
     TaskFileConversionResult,
+    TaskFileConverterCapability,
     TaskFileDescriptor,
     TaskInputContract,
     TaskInputFile,
@@ -242,6 +243,16 @@ class PrefixingTextConverter:
     @property
     def version(self) -> str:
         return "direct-e2e"
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return TaskFileConverterCapability(
+            source_mime_types=("text/*",),
+            output_mime_types=("text/plain",),
+            supports_streaming=False,
+            max_input_bytes=1024,
+            max_output_bytes=1024,
+        )
 
     async def convert(
         self,

@@ -1,10 +1,23 @@
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
 
-from avalan.task.converters import TaskFileConversionError
+from avalan.task.converters import (
+    TaskFileConversionDependencyError,
+    TaskFileConversionError,
+)
 from avalan.task.converters.markdown import MarkdownFileConverter
 
 
 class MarkdownFileConverterTest(IsolatedAsyncioTestCase):
+    def test_markdown_converter_capability_and_options(self) -> None:
+        converter = MarkdownFileConverter()
+
+        self.assertIn("text/html", converter.capability.source_mime_types)
+        converter.validate_options({"html_heading_style": "SETEXT"})
+
+        with self.assertRaises(TaskFileConversionError):
+            converter.validate_options({"html_heading_style": "PRIVATE"})
+
     async def test_markdown_converter_preserves_markdown_text(self) -> None:
         converter = MarkdownFileConverter()
 
@@ -29,6 +42,23 @@ class MarkdownFileConverterTest(IsolatedAsyncioTestCase):
         self.assertIn(b"# Title", result.content)
         self.assertIn(b"Body", result.content)
         self.assertEqual(result.metadata["source_media_type"], "text/html")
+
+    async def test_markdown_converter_reports_missing_dependency(
+        self,
+    ) -> None:
+        converter = MarkdownFileConverter()
+
+        with patch(
+            "avalan.task.converters.markdown.import_module",
+            side_effect=ModuleNotFoundError("private missing module"),
+        ):
+            with self.assertRaises(TaskFileConversionDependencyError) as error:
+                await converter.convert(
+                    b"<h1>Private</h1>",
+                    source_media_type="text/html",
+                )
+
+        self.assertNotIn("Private", str(error.exception))
 
     async def test_markdown_converter_rejects_binary_and_bad_options(
         self,

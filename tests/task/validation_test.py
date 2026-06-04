@@ -18,6 +18,10 @@ from avalan.task import (
     TaskArtifactState,
     TaskDefinition,
     TaskExecutionTarget,
+    TaskFeature,
+    TaskFileConversionRequest,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
     TaskFileDescriptor,
     TaskInputContract,
     TaskInputType,
@@ -38,6 +42,7 @@ from avalan.task import (
     validate_task_output,
     validate_task_sections,
 )
+from avalan.task.converters import TaskFileConversionError
 
 
 class ConfiguredHmacProvider:
@@ -100,6 +105,54 @@ class HostileTuple(tuple[object, ...]):
         raise RuntimeError("private raw array value")
 
 
+class CapabilityConverter:
+    name = "convert"
+    version = "1"
+
+    def __init__(
+        self,
+        *,
+        source_mime_types: tuple[str, ...],
+        output_mime_types: tuple[str, ...] = ("text/plain",),
+        max_input_bytes: int | None = 1024,
+        reject_options: bool = False,
+        dependency_gates: tuple[TaskFeature, ...] = (),
+    ) -> None:
+        self._reject_options = reject_options
+        self._capability = TaskFileConverterCapability(
+            source_mime_types=source_mime_types,
+            output_mime_types=output_mime_types,
+            supports_streaming=False,
+            max_input_bytes=max_input_bytes,
+            max_output_bytes=1024,
+            dependency_gates=dependency_gates,
+        )
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return self._capability
+
+    def validate_options(
+        self,
+        options: Mapping[str, object] | None = None,
+    ) -> None:
+        if self._reject_options:
+            raise TaskFileConversionError("private option value")
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        return TaskFileConversionResult(
+            content=content,
+            media_type="text/plain",
+            metadata={},
+        )
+
+
 class TaskValidationTest(TestCase):
     def test_validation_issue_serializes_stable_fields(self) -> None:
         issue = TaskValidationIssue(
@@ -159,6 +212,7 @@ class TaskValidationTest(TestCase):
                 "artifact.bytes_unsupported",
                 "artifact.retention_required",
                 "dependency.jsonschema_missing",
+                "dependency.task_documents_missing",
                 "execution.path_escape",
                 "execution.unknown_target",
                 "execution.unsupported_flow",
@@ -779,6 +833,227 @@ class TaskValidationTest(TestCase):
             [("input.invalid_file", "input")],
         )
         self.assertNotIn("private raw", str(issues))
+
+    def test_file_conversion_capabilities_validate_mime_examples(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.file(
+                conversions=("text", "markdown")
+            )
+        )
+        converters = {
+            "text": CapabilityConverter(
+                source_mime_types=(
+                    "text/*",
+                    "application/json",
+                    "application/*+json",
+                )
+            ),
+            "markdown": CapabilityConverter(
+                source_mime_types=(
+                    "text/markdown",
+                    "text/plain",
+                    "text/html",
+                ),
+                output_mime_types=("text/markdown",),
+            ),
+        }
+        accepted = (
+            ("text/plain", "text"),
+            ("application/json", "text"),
+            ("application/activity+json", "text"),
+            ("text/markdown", "markdown"),
+            ("text/html", "markdown"),
+        )
+        rejected = (
+            ("application/pdf", "markdown"),
+            (
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "markdown",
+            ),
+            ("image/png", "markdown"),
+            ("application/octet-stream", "text"),
+            ("application/x-custom", "text"),
+        )
+
+        for mime_type, conversion in accepted:
+            with self.subTest(mime_type=mime_type, conversion=conversion):
+                issues = validate_task_input(
+                    definition,
+                    TaskFileDescriptor.local_path(
+                        "uploads/private-input",
+                        mime_type=mime_type,
+                        size_bytes=8,
+                        conversions=(
+                            TaskFileConversionRequest(name=conversion),
+                        ),
+                    ),
+                    file_converters=converters,
+                )
+                self.assertEqual(issues, ())
+
+        for mime_type, conversion in rejected:
+            with self.subTest(mime_type=mime_type, conversion=conversion):
+                issues = validate_task_input(
+                    definition,
+                    TaskFileDescriptor.local_path(
+                        "uploads/private-input",
+                        mime_type=mime_type,
+                        size_bytes=8,
+                        conversions=(
+                            TaskFileConversionRequest(name=conversion),
+                        ),
+                    ),
+                    file_converters=converters,
+                )
+                self.assertEqual(
+                    [issue.code for issue in issues],
+                    ["input.invalid_file"],
+                )
+                self.assertEqual(issues[0].path, "input.conversions[0]")
+                self.assertNotIn("private-input", str(issues))
+
+    def test_file_conversion_capabilities_reject_bad_requests(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.file(
+                conversions=("text", "blocked")
+            )
+        )
+
+        unknown = validate_task_input(
+            definition,
+            TaskFileDescriptor.local_path(
+                "uploads/private.txt",
+                mime_type="text/plain",
+                size_bytes=4,
+                conversions=(TaskFileConversionRequest(name="text"),),
+            ),
+            file_converters={},
+        )
+        bad_options = validate_task_input(
+            definition,
+            TaskFileDescriptor.local_path(
+                "uploads/private.txt",
+                mime_type="text/plain",
+                size_bytes=4,
+                conversions=(
+                    TaskFileConversionRequest(
+                        name="text",
+                        options={"private": "value"},
+                    ),
+                ),
+            ),
+            file_converters={
+                "text": CapabilityConverter(
+                    source_mime_types=("text/plain",),
+                    reject_options=True,
+                )
+            },
+        )
+        oversized = validate_task_input(
+            definition,
+            TaskFileDescriptor.local_path(
+                "uploads/private.txt",
+                mime_type="text/plain",
+                size_bytes=5,
+                conversions=(TaskFileConversionRequest(name="text"),),
+            ),
+            file_converters={
+                "text": CapabilityConverter(
+                    source_mime_types=("text/plain",),
+                    max_input_bytes=4,
+                )
+            },
+        )
+        missing_cap = validate_task_input(
+            definition,
+            TaskFileDescriptor.local_path(
+                "uploads/private.txt",
+                mime_type="text/plain",
+                size_bytes=4,
+                conversions=(TaskFileConversionRequest(name="text"),),
+            ),
+            file_converters={
+                "text": CapabilityConverter(
+                    source_mime_types=("text/plain",),
+                    max_input_bytes=None,
+                )
+            },
+        )
+        with patch(
+            "avalan.task.converters.feature_available",
+            return_value=False,
+        ):
+            dependency_blocked = validate_task_input(
+                definition,
+                TaskFileDescriptor.local_path(
+                    "uploads/private.txt",
+                    mime_type="text/plain",
+                    size_bytes=4,
+                    conversions=(TaskFileConversionRequest(name="blocked"),),
+                ),
+                file_converters={
+                    "text": CapabilityConverter(
+                        source_mime_types=("text/plain",),
+                    ),
+                    "blocked": CapabilityConverter(
+                        source_mime_types=("text/plain",),
+                        dependency_gates=(TaskFeature.DOCUMENT_CONVERSION,),
+                    ),
+                },
+            )
+
+        self.assertEqual(
+            unknown[0].message, "Task file conversion is not supported."
+        )
+        self.assertEqual(bad_options[0].code, "input.invalid_file")
+        self.assertEqual(oversized[0].code, "input.invalid_file")
+        self.assertEqual(missing_cap[0].code, "input.invalid_file")
+        self.assertEqual(
+            dependency_blocked[0].code,
+            "dependency.task_documents_missing",
+        )
+        rendered = (
+            f"{unknown} {bad_options} {oversized} "
+            f"{missing_cap} {dependency_blocked}"
+        )
+        self.assertNotIn("private.txt", rendered)
+        self.assertNotIn("private option value", rendered)
+
+    def test_definition_validation_checks_registered_converters(self) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.file(
+                conversions=("unknown", "blocked")
+            )
+        )
+
+        with patch(
+            "avalan.task.converters.feature_available",
+            return_value=False,
+        ):
+            issues = validate_task_definition(
+                definition,
+                file_converters={
+                    "blocked": CapabilityConverter(
+                        source_mime_types=("text/plain",),
+                        dependency_gates=(TaskFeature.DOCUMENT_CONVERSION,),
+                    )
+                },
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [
+                ("input.invalid_file", "input.file_conversions[0]"),
+                (
+                    "dependency.task_documents_missing",
+                    "input.file_conversions[1]",
+                ),
+            ],
+        )
 
     def test_missing_json_schema_dependency_returns_safe_diagnostic(
         self,

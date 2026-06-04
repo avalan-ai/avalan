@@ -1,17 +1,32 @@
 from ...types import assert_non_empty_string as _assert_non_empty_string
-from . import TaskFileConversionError, TaskFileConversionResult
+from ..feature_gate import TaskFeature
+from . import (
+    TaskFileConversionDependencyError,
+    TaskFileConversionError,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
+    markdown_converter_capability,
+)
 
 from collections.abc import Mapping
 from importlib import import_module
 from typing import Any, cast
-
-markdownify = cast(Any, import_module("markdownify").markdownify)
 
 
 class MarkdownFileConverter:
     name = "markdown"
     version = "1"
     media_type = "text/markdown"
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return markdown_converter_capability()
+
+    def validate_options(
+        self,
+        options: Mapping[str, object] | None = None,
+    ) -> None:
+        _MarkdownConversionOptions.from_mapping(options)
 
     async def convert(
         self,
@@ -63,7 +78,7 @@ class MarkdownFileConverter:
         if lowered in {"text/markdown", "text/x-markdown", "text/plain"}:
             return text
         if lowered in {"text/html", "application/xhtml+xml"}:
-            return str(markdownify(text, heading_style=heading_style))
+            return str(_markdownify_html(text, heading_style=heading_style))
         raise TaskFileConversionError(
             "file media type is not supported by the markdown converter"
         )
@@ -124,3 +139,13 @@ def _string_option(
     if not isinstance(value, str) or not value.strip():
         raise TaskFileConversionError("markdown converter option is invalid")
     return value
+
+
+def _markdownify_html(text: str, *, heading_style: str) -> str:
+    try:
+        markdownify = cast(Any, import_module("markdownify").markdownify)
+    except ModuleNotFoundError as error:
+        raise TaskFileConversionDependencyError(
+            TaskFeature.DOCUMENT_CONVERSION
+        ) from error
+    return cast(str, markdownify(text, heading_style=heading_style))

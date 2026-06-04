@@ -5,6 +5,12 @@ from .artifact import (
     TaskArtifactState,
     task_output_artifact_from_value,
 )
+from .converters import (
+    FileConverter,
+    TaskFileConversionDependencyError,
+    TaskFileConversionError,
+    validate_conversion_request,
+)
 from .definition import (
     PrivacyAction,
     TaskArtifactPolicy,
@@ -83,6 +89,7 @@ TASK_VALIDATION_ISSUE_CODES = frozenset(
         "artifact.bytes_unsupported",
         "artifact.retention_required",
         "dependency.jsonschema_missing",
+        "dependency.task_documents_missing",
         "execution.path_escape",
         "execution.unknown_target",
         "execution.unsupported_flow",
@@ -177,10 +184,16 @@ def validate_task_definition(
     require_configured_keys: bool = False,
     raw_storage_allowed: bool | None = None,
     execution_roots: Iterable[str | Path] = (),
+    file_converters: Mapping[str, FileConverter] | None = None,
 ) -> tuple[TaskValidationIssue, ...]:
     assert isinstance(definition, TaskDefinition)
     issues: list[TaskValidationIssue] = []
-    issues.extend(_validate_input_contract(definition.input))
+    issues.extend(
+        _validate_input_contract(
+            definition.input,
+            file_converters=file_converters,
+        )
+    )
     issues.extend(_validate_output_contract(definition.output))
     issues.extend(
         _validate_execution_target(
@@ -229,9 +242,15 @@ def validate_task_input(
     value: object,
     *,
     remote_url_policy: TaskRemoteUrlPolicy | None = None,
+    file_converters: Mapping[str, FileConverter] | None = None,
 ) -> tuple[TaskValidationIssue, ...]:
     assert isinstance(definition, TaskDefinition)
-    issues = list(_validate_input_contract(definition.input))
+    issues = list(
+        _validate_input_contract(
+            definition.input,
+            file_converters=file_converters,
+        )
+    )
     input_type = definition.input.type
     if not isinstance(input_type, TaskInputType):
         return tuple(issues)
@@ -346,6 +365,7 @@ def validate_task_input(
                     value,
                     path="input",
                     remote_url_policy=remote_url_policy,
+                    file_converters=file_converters,
                 )
             )
         case TaskInputType.FILE_ARRAY:
@@ -376,6 +396,7 @@ def validate_task_input(
                             item,
                             path=f"input[{index}]",
                             remote_url_policy=remote_url_policy,
+                            file_converters=file_converters,
                         )
                     )
     return tuple(issues)
@@ -607,6 +628,8 @@ def raise_task_validation_error(
 
 def _validate_input_contract(
     contract: TaskInputContract,
+    *,
+    file_converters: Mapping[str, FileConverter] | None,
 ) -> tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
     if not isinstance(contract.type, TaskInputType):
@@ -630,12 +653,19 @@ def _validate_input_contract(
         )
     )
     if contract.type in {TaskInputType.FILE, TaskInputType.FILE_ARRAY}:
-        issues.extend(_validate_file_contract(contract))
+        issues.extend(
+            _validate_file_contract(
+                contract,
+                file_converters=file_converters,
+            )
+        )
     return tuple(issues)
 
 
 def _validate_file_contract(
     contract: TaskInputContract,
+    *,
+    file_converters: Mapping[str, FileConverter] | None,
 ) -> tuple[TaskValidationIssue, ...]:
     issues: list[TaskValidationIssue] = []
     for index, mime_type in enumerate(contract.mime_types):
@@ -656,6 +686,17 @@ def _validate_file_contract(
                     "Use a stable conversion name.",
                 )
             )
+            continue
+        issues.extend(
+            _validate_file_conversion_capability(
+                conversion,
+                None,
+                source_media_type=None,
+                source_size_bytes=None,
+                path=f"input.file_conversions[{index}]",
+                file_converters=file_converters,
+            )
+        )
     return tuple(issues)
 
 
@@ -681,6 +722,7 @@ def _validate_file_descriptor_value(
     *,
     path: str,
     remote_url_policy: TaskRemoteUrlPolicy | None,
+    file_converters: Mapping[str, FileConverter] | None,
 ) -> tuple[TaskValidationIssue, ...]:
     descriptor = _file_descriptor_mapping(value)
     if descriptor is None:
@@ -821,6 +863,16 @@ def _validate_file_descriptor_value(
             definition,
             conversions,
             path=f"{path}.conversions",
+            file_converters=file_converters,
+            source_media_type=(
+                mime_type if isinstance(mime_type, str) else None
+            ),
+            source_size_bytes=(
+                size_bytes
+                if isinstance(size_bytes, int)
+                and not isinstance(size_bytes, bool)
+                else None
+            ),
         )
     )
     if metadata is not None and (
@@ -1128,6 +1180,9 @@ def _validate_file_conversions(
     value: object,
     *,
     path: str,
+    file_converters: Mapping[str, FileConverter] | None,
+    source_media_type: str | None,
+    source_size_bytes: int | None,
 ) -> tuple[TaskValidationIssue, ...]:
     if not isinstance(value, list | tuple):
         return (
@@ -1171,7 +1226,65 @@ def _validate_file_conversions(
                     "Use JSON-compatible conversion options.",
                 )
             )
+            continue
+        issues.extend(
+            _validate_file_conversion_capability(
+                name,
+                options,
+                source_media_type=source_media_type,
+                source_size_bytes=source_size_bytes,
+                path=f"{path}[{index}]",
+                file_converters=file_converters,
+            )
+        )
     return tuple(issues)
+
+
+def _validate_file_conversion_capability(
+    name: str,
+    options: object,
+    *,
+    source_media_type: str | None,
+    source_size_bytes: int | None,
+    path: str,
+    file_converters: Mapping[str, FileConverter] | None,
+) -> tuple[TaskValidationIssue, ...]:
+    if name in {"native", "none"}:
+        return ()
+    if file_converters is None:
+        return ()
+    converter = file_converters.get(name)
+    if converter is None:
+        return (
+            _invalid_file_issue(
+                path,
+                "Task file conversion is not supported.",
+                "Register a converter with this name or use a supported"
+                " conversion.",
+            ),
+        )
+    try:
+        validate_conversion_request(
+            converter,
+            TaskFileConversionRequest(
+                name=name,
+                options=(options if isinstance(options, Mapping) else {}),
+            ),
+            source_media_type=source_media_type,
+            source_size_bytes=source_size_bytes,
+        )
+    except TaskFileConversionDependencyError as error:
+        return (_feature_issue(error.feature, path=path),)
+    except TaskFileConversionError:
+        return (
+            _invalid_file_issue(
+                path,
+                "Task file conversion is not compatible with this input.",
+                "Use a conversion that supports the MIME type, size, and"
+                " options.",
+            ),
+        )
+    return ()
 
 
 def _file_conversion_name(value: object) -> str | None:

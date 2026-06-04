@@ -1,5 +1,10 @@
 from ...types import assert_non_empty_string as _assert_non_empty_string
-from . import TaskFileConversionError, TaskFileConversionResult
+from . import (
+    TaskFileConversionError,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
+    text_converter_capability,
+)
 
 from collections.abc import Mapping
 
@@ -8,6 +13,16 @@ class TextFileConverter:
     name = "text"
     version = "1"
     media_type = "text/plain"
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return text_converter_capability()
+
+    def validate_options(
+        self,
+        options: Mapping[str, object] | None = None,
+    ) -> None:
+        _TextConversionOptions.from_mapping(options)
 
     async def convert(
         self,

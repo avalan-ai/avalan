@@ -1500,34 +1500,27 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
                 definition_hash=lambda task: "agent-file-bad-conversion-hash",
             )
 
-            result = await runner.run(
-                self._definition(
-                    input_contract=TaskInputContract.file(
-                        conversions=("image",),
+            with self.assertRaises(TaskValidationError) as error:
+                await runner.run(
+                    self._definition(
+                        input_contract=TaskInputContract.file(
+                            conversions=("image",),
+                        ),
                     ),
-                ),
-                input_value=TaskFileDescriptor.local_path(
-                    "uploads/private.bin",
-                    conversions=(TaskFileConversionRequest(name="image"),),
-                ),
-            )
-            records = await task_store.list_artifacts(result.run.run_id)
+                    input_value=TaskFileDescriptor.local_path(
+                        "uploads/private.bin",
+                        conversions=(TaskFileConversionRequest(name="image"),),
+                    ),
+                )
 
-        self.assertEqual(result.run.state, TaskRunState.FAILED)
-        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
         self.assertEqual(loader.inputs, [])
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
         self.assertEqual(
-            [record.purpose for record in records],
-            [TaskArtifactPurpose.INPUT],
+            error.exception.issues[0].path,
+            "input.file_conversions[0]",
         )
-        error_summary = cast(
-            dict[str, object],
-            result.run.result.error if result.run.result else {},
-        )
-        self.assertEqual(error_summary["code"], "input_contract.failed")
-        self.assertIn("input.conversions[0]", str(error_summary))
-        self.assertNotIn("private.bin", str(error_summary))
-        self.assertNotIn("private bytes", str(error_summary))
+        self.assertNotIn("private.bin", str(error.exception))
+        self.assertNotIn("private bytes", str(error.exception))
 
     async def test_direct_runner_rejects_file_without_artifact_backend(
         self,

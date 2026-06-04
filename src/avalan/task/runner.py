@@ -15,7 +15,7 @@ from .converters import (
     TaskFileConversionError,
     convert_task_artifact,
 )
-from .converters.text import TextFileConverter
+from .converters.registry import default_file_converters
 from .definition import (
     ObservabilitySinkType,
     RunMode,
@@ -636,9 +636,16 @@ class DirectTaskRunner:
                 require_configured_keys=True,
                 raw_storage_allowed=self._raw_storage_allowed,
                 execution_roots=self._execution_roots,
+                file_converters=self._file_converters,
             )
         )
-        issues.extend(validate_task_input(definition, input_value))
+        issues.extend(
+            validate_task_input(
+                definition,
+                input_value,
+                file_converters=self._file_converters,
+            )
+        )
         if issues:
             raise TaskValidationError(tuple(issues))
 
@@ -1000,7 +1007,7 @@ def _target_runner(
 def _file_converters(
     converters: Mapping[str, FileConverter] | None,
 ) -> Mapping[str, FileConverter]:
-    values: dict[str, FileConverter] = {"text": TextFileConverter()}
+    values: dict[str, FileConverter] = dict(default_file_converters())
     values.update(converters or {})
     return values
 

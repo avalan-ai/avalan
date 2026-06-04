@@ -60,7 +60,20 @@ from .converters import FileConverter as FileConverter
 from .converters import TaskConvertedArtifact as TaskConvertedArtifact
 from .converters import TaskFileConversionError as TaskFileConversionError
 from .converters import TaskFileConversionResult as TaskFileConversionResult
+from .converters import (
+    TaskFileConverterCapability as TaskFileConverterCapability,
+)
 from .converters import convert_task_artifact as convert_task_artifact
+from .converters import (
+    markdown_converter_capability as markdown_converter_capability,
+)
+from .converters import text_converter_capability as text_converter_capability
+from .converters import (
+    validate_conversion_request as validate_conversion_request,
+)
+from .converters.registry import (
+    default_file_converters as default_file_converters,
+)
 from .definition import IdempotencyMode as IdempotencyMode
 from .definition import ObservabilitySinkType as ObservabilitySinkType
 from .definition import PrivacyAction as PrivacyAction
