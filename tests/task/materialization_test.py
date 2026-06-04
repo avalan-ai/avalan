@@ -38,6 +38,8 @@ from avalan.task import (
     TaskOutputContract,
     TaskProviderReferenceKind,
     TaskRemoteUrlPolicy,
+    TaskValidationCategory,
+    TaskValidationIssue,
     materialize_task_input_files,
     read_artifact_stream_bytes,
     task_file_descriptors_from_input,
@@ -937,7 +939,7 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
                     "reference": "private.txt",
                     "role": 1,
                 },
-                "input.document",
+                "input.document.role",
             ),
         )
 
@@ -956,6 +958,32 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
                 [path],
             )
             self.assertNotIn("private.txt", str(error.exception))
+
+    def test_duplicate_materialization_issues_are_collapsed(self) -> None:
+        issue = TaskValidationIssue(
+            code="input.invalid_file",
+            path="input.document.source_kind",
+            message="Task file source kind is invalid.",
+            hint="Use a supported file source kind.",
+            category=TaskValidationCategory.VALUE,
+        )
+        other = TaskValidationIssue(
+            code="input.invalid_file",
+            path="input.document.reference",
+            message="Task file reference is invalid.",
+            hint="Pass a non-empty file reference.",
+            category=TaskValidationCategory.VALUE,
+        )
+
+        deduplicated = task_materialization._deduplicate_issues(
+            (
+                issue,
+                issue,
+                other,
+            )
+        )
+
+        self.assertEqual(deduplicated, [issue, other])
 
     async def test_hmac_failure_falls_back_to_redacted_identity(self) -> None:
         with TemporaryDirectory() as root, TemporaryDirectory() as artifacts:

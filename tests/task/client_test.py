@@ -908,6 +908,69 @@ ref = "agents/reviewer.toml"
         self.assertEqual(target_calls, 0)
         self.assertNotIn("private.txt", str(error.exception))
 
+    async def test_structured_remote_file_requires_policy_before_fetch(
+        self,
+    ) -> None:
+        remote_client = FakeRemoteClient(
+            {
+                "https://example.test/private.txt": _remote_response(
+                    b"private remote body"
+                )
+            }
+        )
+        target_calls = 0
+
+        async def target(context: TaskTargetContext) -> object:
+            nonlocal target_calls
+            target_calls += 1
+            return "unused"
+
+        definition = _definition(
+            input_contract=TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "required": ["document"],
+                    "properties": {"document": {"type": "object"}},
+                }
+            )
+        )
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=target,
+            hmac_provider=StaticHmacProvider(),
+            artifact_store=RecordingArtifactStore(),
+            definition_hash=lambda task: "client-nested-remote-disabled-hash",
+            remote_url_http_client=remote_client,
+            remote_url_resolver=FakeRemoteResolver(),
+        )
+        input_value = {
+            "document": TaskClient.remote_url_file(
+                "https://example.test/private.txt",
+                mime_type="text/plain",
+            )
+        }
+
+        validation = await client.validate(
+            definition,
+            input_value=input_value,
+        )
+        with self.assertRaises(TaskValidationError) as error:
+            await client.run(definition, input_value=input_value)
+
+        self.assertFalse(validation.valid)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in validation.issues],
+            [
+                (
+                    "feature.remote_url_file_inputs_disabled",
+                    "input.document.source_kind",
+                )
+            ],
+        )
+        self.assertEqual(remote_client.calls, [])
+        self.assertEqual(target_calls, 0)
+        self.assertNotIn("private.txt", str(error.exception))
+
     async def test_sdk_file_helpers_cover_source_variants(self) -> None:
         expires_at = datetime(2026, 1, 1, tzinfo=UTC)
 

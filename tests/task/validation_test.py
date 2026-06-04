@@ -35,6 +35,7 @@ from avalan.task import (
     TaskOutputContract,
     TaskPrivacyPolicy,
     TaskProviderReferenceKind,
+    TaskRemoteUrlPolicy,
     TaskTargetType,
     TaskValidationCategory,
     TaskValidationError,
@@ -813,6 +814,150 @@ class TaskValidationTest(TestCase):
             ],
             ["output.invalid_type"],
         )
+
+    def test_structured_input_validates_nested_file_descriptors(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "document": {"type": "object"},
+                        "attachments": {"type": "array"},
+                    },
+                }
+            )
+        )
+
+        issues = validate_task_input(
+            definition,
+            {
+                "document": {
+                    "source_kind": "remote_url",
+                    "reference": "https://private.example.test/source.txt",
+                    "mime_type": "text/plain",
+                },
+                "attachments": [
+                    {
+                        "source_kind": "provider_reference",
+                        "reference": "raw-secret-handle",
+                        "mime_type": "application/pdf",
+                        "provider_reference": {
+                            "kind": "provider_file_id",
+                            "provider": "openai",
+                            "reference": "other-secret-handle",
+                        },
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [
+                (
+                    "feature.remote_url_file_inputs_disabled",
+                    "input.document.source_kind",
+                ),
+                (
+                    "input.invalid_file",
+                    "input.attachments[0].provider_reference.reference",
+                ),
+            ],
+        )
+        rendered = " ".join(
+            value for issue in issues for value in issue.as_dict().values()
+        )
+        self.assertNotIn("private.example.test", rendered)
+        self.assertNotIn("source.txt", rendered)
+        self.assertNotIn("raw-secret-handle", rendered)
+        self.assertNotIn("other-secret-handle", rendered)
+
+    def test_structured_input_accepts_nested_descriptor_values(
+        self,
+    ) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["document"],
+                    "properties": {
+                        "converted": {"type": "object"},
+                        "document": {
+                            "type": "object",
+                            "required": ["source_kind", "reference"],
+                            "properties": {
+                                "source_kind": {"type": "string"},
+                                "reference": {"type": "string"},
+                            },
+                        },
+                        "provider": {"type": "object"},
+                    },
+                }
+            ),
+        )
+
+        issues = validate_task_input(
+            definition,
+            {
+                "converted": TaskFileDescriptor.local_path(
+                    "uploads/private.txt",
+                    mime_type="text/plain",
+                    conversions=(
+                        TaskFileConversionRequest(
+                            name="text",
+                            options={"mode": "strict"},
+                        ),
+                    ),
+                ),
+                "document": TaskFileDescriptor.remote_url(
+                    "https://example.test/source.txt",
+                    mime_type="text/plain",
+                    size_bytes=12,
+                ),
+                "provider": TaskFileDescriptor.provider_reference_descriptor(
+                    "file-private",
+                    kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    provider="openai",
+                    owner_scope="tenant-a",
+                    mime_type="application/pdf",
+                ),
+            },
+            remote_url_policy=TaskRemoteUrlPolicy(
+                enabled=True,
+                max_bytes=100,
+            ),
+        )
+
+        self.assertEqual(issues, ())
+
+    def test_structured_descriptor_lookup_failure_is_safe(self) -> None:
+        definition = self._definition(
+            input_contract=TaskInputContract.object(schema={"type": "object"})
+        )
+
+        with patch(
+            "avalan.task.validation._file_descriptor_mapping",
+            side_effect=RuntimeError("private descriptor lookup"),
+        ):
+            issues = validate_task_input(
+                definition,
+                {
+                    "document": {
+                        "source_kind": "local_path",
+                        "reference": "private.txt",
+                    }
+                },
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("input.invalid_file", "input")],
+        )
+        self.assertNotIn("private descriptor lookup", str(issues))
+        self.assertNotIn("private.txt", str(issues))
 
     def test_structured_validation_rejects_hostile_mapping_safely(
         self,

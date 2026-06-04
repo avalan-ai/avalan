@@ -199,13 +199,14 @@ async def materialize_task_input_files(
     descriptor_entries, descriptor_issues = (
         _task_file_descriptor_entries_from_input(definition, value)
     )
-    issues.extend(descriptor_issues)
+    _extend_missing_issue_paths(issues, descriptor_issues)
     if not descriptor_entries:
         if issues:
             raise TaskFileMaterializationError(tuple(issues))
         return ()
     descriptors = tuple(entry.descriptor for entry in descriptor_entries)
     issues.extend(_validate_count_limits(definition, descriptors))
+    issues = _deduplicate_issues(issues)
     local_entries = tuple(
         entry
         for entry in descriptor_entries
@@ -230,6 +231,7 @@ async def materialize_task_input_files(
         raise TaskFileMaterializationError(tuple(issues))
     for entry in unsupported_entries:
         issues.append(_unsupported_source_issue(path=entry.path))
+    issues = _deduplicate_issues(issues)
     materializable_count = len(local_entries) + len(remote_entries)
     if not materializable_count:
         if issues:
@@ -265,6 +267,7 @@ async def materialize_task_input_files(
                 issues.extend(validated_result)
             else:
                 validated.append(validated_result)
+    issues = _deduplicate_issues(issues)
     if issues:
         raise TaskFileMaterializationError(tuple(issues))
 
@@ -1614,6 +1617,47 @@ def _is_relative_to(path: Path, root: Path) -> bool:
 
 def _has_issue_code(issues: Iterable[TaskValidationIssue], code: str) -> bool:
     return any(issue.code == code for issue in issues)
+
+
+def _deduplicate_issues(
+    issues: Iterable[TaskValidationIssue],
+) -> list[TaskValidationIssue]:
+    seen: set[tuple[str, str, str, str]] = set()
+    deduplicated: list[TaskValidationIssue] = []
+    for issue in issues:
+        key = (issue.code, issue.path, issue.message, issue.hint)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(issue)
+    return deduplicated
+
+
+def _extend_missing_issue_paths(
+    issues: list[TaskValidationIssue],
+    new_issues: Iterable[TaskValidationIssue],
+) -> None:
+    existing = {(issue.code, issue.path) for issue in issues}
+    for issue in new_issues:
+        key = (issue.code, issue.path)
+        if key in existing or any(
+            issue.code == existing_issue.code
+            and _issue_paths_overlap(existing_issue.path, issue.path)
+            for existing_issue in issues
+        ):
+            continue
+        existing.add(key)
+        issues.append(issue)
+
+
+def _issue_paths_overlap(left: str, right: str) -> bool:
+    return (
+        left == right
+        or left.startswith(f"{right}.")
+        or left.startswith(f"{right}[")
+        or right.startswith(f"{left}.")
+        or right.startswith(f"{left}[")
+    )
 
 
 def _close_stream(stream: BinaryIO) -> None:

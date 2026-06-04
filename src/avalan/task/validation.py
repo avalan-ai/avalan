@@ -345,7 +345,7 @@ def validate_task_input(
                         "Pass an object value.",
                     )
                 )
-            elif not _is_json_value(value):
+            elif not _is_json_value(_structured_input_schema_value(value)):
                 issues.append(
                     _invalid_input_type(
                         "input",
@@ -357,11 +357,20 @@ def validate_task_input(
                 issues.extend(
                     _validate_value_schema(
                         schema=definition.input.schema,
-                        value=value,
+                        value=_structured_input_schema_value(value),
                         code="input.invalid_type",
                         path="input",
                         message="Task input does not match its schema.",
                         hint="Pass a value matching the declared schema.",
+                    )
+                )
+                issues.extend(
+                    _validate_structured_file_descriptors(
+                        definition,
+                        value,
+                        path="input",
+                        remote_url_policy=remote_url_policy,
+                        file_converters=file_converters,
                     )
                 )
         case TaskInputType.ARRAY:
@@ -373,7 +382,7 @@ def validate_task_input(
                         "Pass an array value.",
                     )
                 )
-            elif not _is_json_value(value):
+            elif not _is_json_value(_structured_input_schema_value(value)):
                 issues.append(
                     _invalid_input_type(
                         "input",
@@ -385,11 +394,20 @@ def validate_task_input(
                 issues.extend(
                     _validate_value_schema(
                         schema=definition.input.schema,
-                        value=value,
+                        value=_structured_input_schema_value(value),
                         code="input.invalid_type",
                         path="input",
                         message="Task input does not match its schema.",
                         hint="Pass a value matching the declared schema.",
+                    )
+                )
+                issues.extend(
+                    _validate_structured_file_descriptors(
+                        definition,
+                        value,
+                        path="input",
+                        remote_url_policy=remote_url_policy,
+                        file_converters=file_converters,
                     )
                 )
         case TaskInputType.FILE:
@@ -941,6 +959,92 @@ def _file_descriptor_mapping(
     if isinstance(value, Mapping):
         return value
     return None
+
+
+def _validate_structured_file_descriptors(
+    definition: TaskDefinition,
+    value: object,
+    *,
+    path: str,
+    remote_url_policy: TaskRemoteUrlPolicy | None,
+    file_converters: Mapping[str, FileConverter] | None,
+) -> tuple[TaskValidationIssue, ...]:
+    issues: list[TaskValidationIssue] = []
+    _collect_structured_file_descriptor_issues(
+        definition,
+        value,
+        path=path,
+        issues=issues,
+        remote_url_policy=remote_url_policy,
+        file_converters=file_converters,
+    )
+    return tuple(issues)
+
+
+def _collect_structured_file_descriptor_issues(
+    definition: TaskDefinition,
+    value: object,
+    *,
+    path: str,
+    issues: list[TaskValidationIssue],
+    remote_url_policy: TaskRemoteUrlPolicy | None,
+    file_converters: Mapping[str, FileConverter] | None,
+) -> None:
+    try:
+        descriptor = _file_descriptor_mapping(value)
+    except Exception:
+        issues.append(
+            _invalid_file_issue(
+                path,
+                "Task input must be a valid file descriptor.",
+                "Pass a file descriptor with safe metadata values.",
+            )
+        )
+        return
+    if descriptor is not None and "source_kind" in descriptor:
+        issues.extend(
+            _validate_file_descriptor_value(
+                definition,
+                value,
+                path=path,
+                remote_url_policy=remote_url_policy,
+                file_converters=file_converters,
+            )
+        )
+        return
+    if isinstance(value, Mapping):
+        try:
+            items = tuple(value.items())
+        except Exception:
+            issues.append(
+                _invalid_file_issue(
+                    path,
+                    "Task input must be a valid file descriptor.",
+                    "Pass a file descriptor with safe metadata values.",
+                )
+            )
+            return
+        for key, item in items:
+            if not isinstance(key, str):
+                continue
+            _collect_structured_file_descriptor_issues(
+                definition,
+                item,
+                path=f"{path}.{key}",
+                issues=issues,
+                remote_url_policy=remote_url_policy,
+                file_converters=file_converters,
+            )
+    elif isinstance(value, list | tuple):
+        for index, item in enumerate(value):
+            _collect_structured_file_descriptor_issues(
+                definition,
+                item,
+                path=f"{path}[{index}]",
+                issues=issues,
+                remote_url_policy=remote_url_policy,
+                file_converters=file_converters,
+            )
 
 
 def _validate_provider_reference_descriptor(
@@ -2100,6 +2204,40 @@ def _is_json_value(value: object) -> bool:
         except Exception:
             return False
     return False
+
+
+def _structured_input_schema_value(value: object) -> object:
+    if isinstance(value, TaskFileDescriptor):
+        descriptor = _file_descriptor_mapping(value)
+        assert descriptor is not None
+        return {
+            key: _structured_input_schema_value(item)
+            for key, item in descriptor.items()
+        }
+    if isinstance(value, TaskFileConversionRequest):
+        return {
+            "name": value.name,
+            "options": _structured_input_schema_value(value.options),
+        }
+    if isinstance(value, TaskProviderReference):
+        return {
+            key: _structured_input_schema_value(item)
+            for key, item in value.execution_metadata().items()
+        }
+    if isinstance(value, Mapping):
+        try:
+            return {
+                key: _structured_input_schema_value(item)
+                for key, item in value.items()
+            }
+        except Exception:
+            return value
+    if isinstance(value, list | tuple):
+        try:
+            return [_structured_input_schema_value(item) for item in value]
+        except Exception:
+            return value
+    return value
 
 
 def _json_compatible_data(value: object) -> object:
