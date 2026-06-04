@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, main
 
@@ -14,19 +15,25 @@ from avalan.pgsql import (
     PsycopgPoolSettings,
 )
 from avalan.task import (
+    EncryptedPrivacyValue,
     IdempotencyMode,
+    PrivacyAction,
+    PrivacySanitizer,
     TaskArtifactPurpose,
     TaskArtifactRef,
     TaskArtifactRetention,
     TaskAttemptState,
     TaskDefinition,
+    TaskExecutionPayload,
     TaskExecutionRequest,
     TaskExecutionTarget,
     TaskIdempotencyDigest,
     TaskIdempotencyIdentity,
     TaskInputContract,
+    TaskKeyPurpose,
     TaskMetadata,
     TaskOutputContract,
+    TaskPrivacyPolicy,
     TaskQueueArtifact,
     TaskQueueItemState,
     TaskRetryPolicy,
@@ -44,6 +51,41 @@ from avalan.task.stores import (
     PgsqlTaskStore,
     task_pgsql_upgrade,
 )
+
+
+class StaticEncryptionProvider:
+    def encrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> EncryptedPrivacyValue:
+        _ = purpose
+        return EncryptedPrivacyValue(
+            ciphertext=b"encrypted:" + value,
+            key_id=key_id or "pgsql-queue",
+            algorithm="test-aead",
+            metadata=context,
+        )
+
+    def decrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        algorithm: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> bytes:
+        _ = purpose, key_id, algorithm, context
+        prefix = b"encrypted:"
+        assert value.startswith(prefix)
+        return value[len(prefix) :]
+
+
+ENCRYPTION_PROVIDER = StaticEncryptionProvider()
 
 
 class RecordingTarget(TaskTargetRunner):
@@ -120,6 +162,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             TaskExecutionRequest(
                 definition_id=definition_hash,
                 input_summary="safe input",
+                input_payload=_input_payload("safe input"),
                 queue="pgsql-e2e",
                 metadata={"request": "safe"},
             ),
@@ -134,6 +177,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             target=target,
             worker_id="pgsql-e2e-worker",
             queue_name="pgsql-e2e",
+            encryption_provider=ENCRYPTION_PROVIDER,
         )
 
         result = await worker.process_once()
@@ -177,6 +221,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             TaskExecutionRequest(
                 definition_id=definition_hash,
                 input_summary="retry input",
+                input_payload=_input_payload("retry input"),
                 queue="pgsql-e2e",
             ),
             queue_name="pgsql-e2e",
@@ -188,6 +233,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             target=target,
             worker_id="pgsql-e2e-worker",
             queue_name="pgsql-e2e",
+            encryption_provider=ENCRYPTION_PROVIDER,
         )
 
         retry = await worker.process_once()
@@ -248,6 +294,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             TaskExecutionRequest(
                 definition_id=definition_hash,
                 input_summary="safe duplicate input",
+                input_payload=_input_payload("safe duplicate input"),
                 queue="pgsql-e2e",
             ),
             queue_name="pgsql-e2e",
@@ -258,6 +305,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             TaskExecutionRequest(
                 definition_id=definition_hash,
                 input_summary="safe duplicate input",
+                input_payload=_input_payload("safe duplicate input"),
                 queue="pgsql-e2e",
             ),
             queue_name="pgsql-e2e",
@@ -270,6 +318,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             target=target,
             worker_id="pgsql-e2e-worker",
             queue_name="pgsql-e2e",
+            encryption_provider=ENCRYPTION_PROVIDER,
         )
 
         result = await worker.process_once()
@@ -277,6 +326,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             TaskExecutionRequest(
                 definition_id=definition_hash,
                 input_summary="safe duplicate input",
+                input_payload=_input_payload("safe duplicate input"),
                 queue="pgsql-e2e",
             ),
             queue_name="pgsql-e2e",
@@ -333,6 +383,20 @@ def _definition(*, max_attempts: int = 1) -> TaskDefinition:
         execution=TaskExecutionTarget.agent("agent.toml"),
         run=TaskRunPolicy.queued("pgsql-e2e"),
         retry=TaskRetryPolicy(max_attempts=max_attempts),
+    )
+
+
+def _input_payload(value: object) -> TaskExecutionPayload:
+    sanitizer = PrivacySanitizer(
+        TaskPrivacyPolicy(raw_retention_days=1),
+        encryption_provider=ENCRYPTION_PROVIDER,
+        raw_storage_allowed=True,
+    )
+    return TaskExecutionPayload(
+        input_value=sanitizer.sanitize_with_action(
+            PrivacyAction.ENCRYPT,
+            value,
+        ),
     )
 
 
