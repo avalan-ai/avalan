@@ -1741,6 +1741,34 @@ icdiff locale/avalan.pot <(
 
 ![diff showing what the AI translator agent modified](https://avalan.ai/images/github/agent_gettext_translator.webp)
 
+For shorter agents, define direct prompts instead of building a role/task
+template. This support-reply agent uses a raw `system` prompt, a `developer`
+policy prompt, and a `user` prompt that prefixes each ticket passed to the
+agent:
+
+```toml
+[agent]
+name = "SupportReply"
+system = """
+You are a customer support assistant that drafts clear, empathetic replies.
+"""
+developer = """
+Do not promise refunds, credits, or resolution timelines unless the ticket
+explicitly says they are approved. Ask for one concrete next piece of
+information when the issue cannot be resolved from the ticket.
+"""
+user = """
+Draft a concise support reply for this customer ticket:
+"""
+
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4o-mini"
+
+[run]
+max_new_tokens = 512
+skip_special_tokens = true
+```
+
 There are more agent, NLP, multimodal, audio, and vision examples in the
 [docs/examples](docs/examples/README.md)
 folder.

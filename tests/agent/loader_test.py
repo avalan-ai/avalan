@@ -133,6 +133,17 @@ uri = \"ai://local/model\"
                 }
             )
 
+    def test_validate_agent_config_rejects_non_string_direct_prompts(self):
+        for key in ("system", "developer", "user", "user_template"):
+            with self.subTest(key=key):
+                with self.assertRaises(AssertionError):
+                    OrchestratorLoader.validate_agent_config(
+                        {
+                            "agent": {key: 1},
+                            "engine": {"uri": "ai://local/model"},
+                        }
+                    )
+
     async def test_load_default_orchestrator(self):
         config = """
 [agent]
@@ -1048,6 +1059,69 @@ uri = \"ai://local/model\"
         self.assertIsNone(kwargs["task"])
         self.assertIsNone(kwargs["instructions"])
         self.assertIsNone(kwargs["rules"])
+
+    async def test_agent_developer_only(self):
+        config = """
+[agent]
+developer = \"dev\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["developer"], "dev")
+        self.assertIsNone(kwargs["system"])
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertIsNone(kwargs["instructions"])
+
+    async def test_agent_system_and_developer_only(self):
+        config = """
+[agent]
+system = \"sys\"
+developer = \"dev\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["system"], "sys")
+        self.assertEqual(kwargs["developer"], "dev")
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertIsNone(kwargs["instructions"])
+
+    async def test_agent_system_developer_and_user_prompts(self):
+        config = """
+[agent]
+system = \"sys\"
+developer = \"dev\"
+user = \"prefix\"
+role = \"ignored\"
+task = \"ignored\"
+instructions = \"ignored\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["system"], "sys")
+        self.assertEqual(kwargs["developer"], "dev")
+        self.assertEqual(kwargs["user"], "prefix")
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertIsNone(kwargs["instructions"])
+
+    async def test_agent_direct_prompt_invalid_type_rejected(self):
+        config = """
+[agent]
+system = 1
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with self.assertRaises(AssertionError):
+            await self._run_loader(config)
 
     async def test_agent_role_task_only(self):
         config = """

@@ -325,9 +325,7 @@ class OrchestratorLoader:
         ), "No uri defined in engine section of configuration"
         cls._validate_engine_file_delivery_profile(config["engine"])
         agent_config = config["agent"]
-        assert not (
-            "user" in agent_config and "user_template" in agent_config
-        ), "user and user_template are mutually exclusive"
+        cls._validate_agent_section(agent_config)
         orchestrator_type = agent_config.get("type")
         assert orchestrator_type is None or orchestrator_type in ["json"], (
             f"Unknown type {agent_config['type']} in agent section "
@@ -366,9 +364,7 @@ class OrchestratorLoader:
             ), "No uri defined in engine section of configuration"
 
             agent_config = config["agent"]
-            assert not (
-                "user" in agent_config and "user_template" in agent_config
-            ), "user and user_template are mutually exclusive"
+            self._validate_agent_section(agent_config)
 
             assert (
                 "engine" in config
@@ -890,6 +886,17 @@ class OrchestratorLoader:
         assert value in {
             profile.value for profile in LocalFileDeliveryProfile
         }, "engine.file_delivery_profile is not supported"
+
+    @staticmethod
+    def _validate_agent_section(agent_config: dict[str, Any]) -> None:
+        assert not (
+            "user" in agent_config and "user_template" in agent_config
+        ), "user and user_template are mutually exclusive"
+        for key in ("system", "developer", "user", "user_template"):
+            value = agent_config.get(key)
+            assert value is None or isinstance(
+                value, str
+            ), f"agent.{key} must be a string"
 
     @staticmethod
     def _log_wrapper(logger: Logger) -> Callable[..., Any]:

@@ -112,6 +112,81 @@ class DefaultOrchestratorInitTestCase(TestCase):
         self.assertIsNone(op.specification.role)
         self.assertIsNone(op.specification.goal)
 
+    def test_initialization_with_developer(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        logger = MagicMock(spec=Logger)
+        model_manager = MagicMock(spec=ModelManager)
+        memory = MagicMock(spec=MemoryManager)
+        tool = MagicMock(spec=ToolManager)
+        event_manager = MagicMock(spec=EventManager)
+
+        orch = DefaultOrchestrator(
+            engine_uri,
+            logger,
+            model_manager,
+            memory,
+            tool,
+            event_manager,
+            name="Agent",
+            role="ignored",
+            task="ignored",
+            instructions="ignored",
+            rules=None,
+            developer="dev",
+        )
+
+        op = orch.operations[0]
+        self.assertEqual(op.specification.developer_prompt, "dev")
+        self.assertIsNone(op.specification.system_prompt)
+        self.assertIsNone(op.specification.role)
+        self.assertIsNone(op.specification.goal)
+
+    def test_initialization_with_system_and_developer_only(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        logger = MagicMock(spec=Logger)
+        model_manager = MagicMock(spec=ModelManager)
+        memory = MagicMock(spec=MemoryManager)
+        tool = MagicMock(spec=ToolManager)
+        event_manager = MagicMock(spec=EventManager)
+
+        orch = DefaultOrchestrator(
+            engine_uri,
+            logger,
+            model_manager,
+            memory,
+            tool,
+            event_manager,
+            name="Agent",
+            role=None,
+            task=None,
+            instructions=None,
+            rules=None,
+            system="sys",
+            developer="dev",
+        )
+
+        op = orch.operations[0]
+        self.assertEqual(op.specification.system_prompt, "sys")
+        self.assertEqual(op.specification.developer_prompt, "dev")
+        self.assertIsNone(op.specification.role)
+        self.assertIsNone(op.specification.goal)
+
 
 class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
@@ -309,7 +384,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
 
         context = agent_mock.await_args.args[0]
         self.assertIsInstance(context.input, Message)
-        self.assertEqual(context.input.content, b"hello world Bob")
+        self.assertEqual(context.input.content, "hello world Bob")
 
     async def test_user_template_rendering(self):
         with TemporaryDirectory() as tmp:
@@ -375,3 +450,57 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         context = agent_mock.await_args.args[0]
         self.assertIsInstance(context.input, Message)
         self.assertEqual(context.input.content, "hi earth Ann")
+
+    async def test_user_prefix_rendering(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        logger = MagicMock(spec=Logger)
+        model_manager = MagicMock(spec=ModelManager)
+        memory = MagicMock(spec=MemoryManager)
+        memory.has_permanent_message = False
+        memory.has_recent_message = False
+        memory.permanent_message = None
+        tool = MagicMock(spec=ToolManager)
+        tool.is_empty = True
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        settings = TransformerEngineSettings()
+
+        engine = MagicMock()
+        engine.model_id = "m"
+        engine.tokenizer = MagicMock()
+
+        agent_mock = AsyncMock()
+        agent_mock.engine = engine
+        agent_mock.return_value = MagicMock(spec=TextGenerationResponse)
+
+        orch = DefaultOrchestrator(
+            engine_uri,
+            logger,
+            model_manager,
+            memory,
+            tool,
+            event_manager,
+            name="Agent",
+            role="assistant",
+            task="do",
+            instructions="something",
+            rules=None,
+            user="Answer briefly.",
+            settings=settings,
+        )
+        environment_hash = dumps(asdict(orch.operations[0].environment))
+        orch._engine_agents = {environment_hash: agent_mock}
+
+        await orch("world")
+
+        context = agent_mock.await_args.args[0]
+        self.assertIsInstance(context.input, Message)
+        self.assertEqual(context.input.content, "Answer briefly.\n\nworld")

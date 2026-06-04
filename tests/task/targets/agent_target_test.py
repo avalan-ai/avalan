@@ -303,6 +303,63 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(issues, ())
         self.assertEqual(rooted_issues, ())
 
+    def test_simple_prompt_agent_reference_loads_through_loader_boundary(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+system = "Answer task inputs directly."
+user = "Use one sentence."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(
+                FakeLoader(),
+                ref_base=root,
+            )
+            issues = self._run_validate(runner, self._definition())
+
+        self.assertEqual(issues, ())
+
+    def test_simple_prompt_agent_reference_rejects_invalid_user_prompt(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+system = "Answer task inputs directly."
+user = 1
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            issues = self._run_validate(runner, self._definition())
+
+        self.assertEqual(
+            [issue.code for issue in issues],
+            [
+                "execution.unknown_target",
+            ],
+        )
+        self.assertEqual(issues[0].path, "execution.ref")
+
     def test_invalid_agent_reference_returns_safe_diagnostic(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

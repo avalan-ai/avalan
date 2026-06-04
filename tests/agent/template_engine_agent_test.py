@@ -173,6 +173,19 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         self.assertEqual(result["system_prompt"], "sys")
         self.assertEqual(result["developer_prompt"], "dev")
 
+    def test_prepare_call_developer_prompt_without_system_prompt(self) -> None:
+        spec = Specification(
+            role=None,
+            goal=None,
+            developer_prompt="dev",
+        )
+
+        context = ModelCallContext(specification=spec, input="hi")
+        result = self.agent._prepare_call(context)
+
+        self.assertNotIn("system_prompt", result)
+        self.assertEqual(result["developer_prompt"], "dev")
+
     def test_prepare_call_template_developer_prompt(self) -> None:
         spec = Specification(
             role="assistant",
@@ -184,7 +197,27 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
 
+        self.assertIn("system_prompt", result)
         self.assertEqual(result["developer_prompt"], "dev")
+
+    def test_prepare_call_template_keeps_engine_developer_prompt(
+        self,
+    ) -> None:
+        spec = Specification(
+            role="assistant",
+            goal=Goal(task="task", instructions=["inst"]),
+            developer_prompt="spec-dev",
+            rules=[],
+        )
+        context = ModelCallContext(
+            specification=spec,
+            input="hi",
+            engine_args={"developer_prompt": "engine-dev"},
+        )
+
+        result = self.agent._prepare_call(context)
+
+        self.assertEqual(result["developer_prompt"], "engine-dev")
 
 
 class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
