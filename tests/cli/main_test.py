@@ -1233,7 +1233,10 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         from logging import getLogger
 
         self.logger = getLogger("cli-additional-test")
-        with patch.object(sys, "argv", ["prog"]):
+        with (
+            patch.dict("os.environ", {"HF_TOKEN": ""}),
+            patch.object(sys, "argv", ["prog"]),
+        ):
             self.cli = CLI(self.logger)
 
     def test_add_tool_settings_arguments(self):

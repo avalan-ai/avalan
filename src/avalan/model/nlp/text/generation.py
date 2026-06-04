@@ -552,6 +552,7 @@ class TextGenerationModel(BaseNLPModel):
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         _l = self._log
         messages = self._messages(input, system_prompt, developer_prompt, tool)
+        has_chat_template = self._tokenizer_has_chat_template()
 
         def _format_content(
             content: str | MessageContent | list[MessageContent] | None,
@@ -565,7 +566,7 @@ class TextGenerationModel(BaseNLPModel):
                 return content.text
 
             if isinstance(content, MessageContentImage):
-                if self._tokenizer.chat_template:
+                if has_chat_template:
                     return [
                         {"type": "image_url", "image_url": content.image_url}
                     ]
@@ -575,7 +576,7 @@ class TextGenerationModel(BaseNLPModel):
                 return ""
 
             if isinstance(content, list):
-                if self._tokenizer.chat_template:
+                if has_chat_template:
                     blocks: list[dict[str, object]] = []
                     for c in content:
                         if isinstance(c, MessageContentImage):
@@ -616,7 +617,7 @@ class TextGenerationModel(BaseNLPModel):
                 }
             )
 
-        if not self._tokenizer.chat_template:
+        if not has_chat_template:
             _l("Model does not support template messages, so staying plain")
 
             prompt = f"{system_prompt}\n\n" or ""
@@ -643,9 +644,7 @@ class TextGenerationModel(BaseNLPModel):
                     else str(content_text)
                 ) + "\n"
 
-            inputs = self._tokenizer(
-                prompt, add_special_tokens=True, return_tensors=tensor_format
-            )
+            inputs = self._tokenize_prompt(prompt, tensor_format)
         else:
             _l(f"Got {len(template_messages)} template messages")
 
@@ -657,11 +656,89 @@ class TextGenerationModel(BaseNLPModel):
                 **(chat_template_settings or {}),
                 return_tensors=tensor_format,
             )
+            inputs = self._normalize_tokenized_inputs(inputs, tensor_format)
 
         if hasattr(self._model, "device"):
             _l(f"Translating inputs to {self._model.device}")
-            inputs = inputs.to(self._model.device)
+            inputs = self._move_inputs_to_device(inputs, self._model.device)
+        return inputs
+
+    def _tokenizer_has_chat_template(self) -> bool:
+        chat_template = getattr(self._tokenizer, "chat_template", None)
+        has_chat_template = getattr(
+            self._tokenizer, "has_chat_template", False
+        )
+        return bool(chat_template) or has_chat_template is True
+
+    def _tokenize_prompt(
+        self,
+        prompt: str,
+        tensor_format: Literal["pt"] = "pt",
+    ) -> dict[str, Tensor] | BatchEncoding | Tensor:
+        if callable(self._tokenizer):
+            return cast(
+                dict[str, Tensor] | BatchEncoding | Tensor,
+                self._tokenizer(
+                    prompt,
+                    add_special_tokens=True,
+                    return_tensors=tensor_format,
+                ),
+            )
+
+        encode = getattr(self._tokenizer, "encode", None)
+        if callable(encode):
+            return self._inputs_from_token_ids(
+                encode(prompt, add_special_tokens=True), tensor_format
+            )
+
+        raise TypeError(
+            f"Tokenizer {self._tokenizer.__class__.__name__} is not callable "
+            + "and does not provide encode()."
+        )
+
+    @classmethod
+    def _normalize_tokenized_inputs(
+        cls,
+        inputs: Any,
+        tensor_format: Literal["pt"] = "pt",
+    ) -> dict[str, Tensor] | BatchEncoding | Tensor:
+        if isinstance(inputs, (list, tuple)):
+            return cls._inputs_from_token_ids(inputs, tensor_format)
         return cast(dict[str, Tensor] | BatchEncoding | Tensor, inputs)
+
+    @staticmethod
+    def _inputs_from_token_ids(
+        token_ids: Any,
+        tensor_format: Literal["pt"] = "pt",
+    ) -> dict[str, Tensor]:
+        input_ids = token_ids
+        if not (
+            isinstance(input_ids, (list, tuple))
+            and input_ids
+            and isinstance(input_ids[0], (list, tuple))
+        ):
+            input_ids = [input_ids]
+
+        if tensor_format == "pt":
+            tensor = getattr(import_module("torch"), "tensor")
+            input_ids = tensor(input_ids)
+
+        return {"input_ids": cast(Tensor, input_ids)}
+
+    @staticmethod
+    def _move_inputs_to_device(
+        inputs: dict[str, Tensor] | BatchEncoding | Tensor,
+        device: Any,
+    ) -> dict[str, Tensor] | BatchEncoding | Tensor:
+        if hasattr(inputs, "to"):
+            return cast(
+                dict[str, Tensor] | BatchEncoding | Tensor, inputs.to(device)
+            )
+
+        return {
+            key: value.to(device) if hasattr(value, "to") else value
+            for key, value in inputs.items()
+        }
 
     def _messages(
         self,

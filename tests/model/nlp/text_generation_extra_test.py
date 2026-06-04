@@ -96,6 +96,68 @@ class TokenizeInputPrefixTestCase(TestCase):
         self.assertIs(result, token_out)
 
 
+class TokenizeInputWrapperTestCase(TestCase):
+    def test_mapping_inputs_move_to_device(self) -> None:
+        inputs = {"input_ids": torch.tensor([1, 2])}
+
+        result = TextGenerationModel._move_inputs_to_device(inputs, "cpu")
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["input_ids"].device.type, "cpu")
+
+    def test_tokenize_prompt_rejects_tokenizer_without_encode(self) -> None:
+        class BadTokenizer:
+            pass
+
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+        )
+        model._tokenizer = BadTokenizer()
+
+        with self.assertRaisesRegex(TypeError, "does not provide encode"):
+            model._tokenize_prompt("hi")
+
+    def test_wrapper_chat_template_flag_uses_template(self) -> None:
+        class WrapperLikeTokenizer:
+            chat_template = None
+            has_chat_template = True
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, dict[str, object]]] = []
+
+            def apply_chat_template(
+                self, *args: object, **kwargs: object
+            ) -> list[int]:
+                self.calls.append((args, kwargs))
+                return [4, 5]
+
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+        )
+        tokenizer = WrapperLikeTokenizer()
+        model._tokenizer = tokenizer
+        model._log = MagicMock()
+
+        result = model._tokenize_input("hi", None, context=None)
+
+        self.assertEqual(len(tokenizer.calls), 1)
+        args, kwargs = tokenizer.calls[0]
+        template_messages = args[0]
+        assert isinstance(template_messages, list)
+        self.assertEqual(template_messages[0]["content"], "hi")
+        self.assertEqual(kwargs["return_tensors"], "pt")
+        self.assertIsInstance(result, dict)
+        input_ids = result["input_ids"] if isinstance(result, dict) else None
+        assert input_ids is not None
+        self.assertTrue(torch.equal(input_ids, torch.tensor([[4, 5]])))
+
+
 class TokenizeInputContentTextTestCase(TestCase):
     def test_message_content_text_handled(self) -> None:
         model = TextGenerationModel(
