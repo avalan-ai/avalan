@@ -15,9 +15,7 @@ from ...model.file_delivery import (
     FileDeliveryDecision,
     FileDeliveryMode,
     FileDeliveryProfile,
-    FileDeliveryRequest,
     LocalFileDeliveryProfile,
-    plan_file_delivery,
     resolve_file_delivery_profile,
 )
 from ..context import TaskInputFile, TaskTargetContext
@@ -27,6 +25,7 @@ from ..definition import (
     TaskOutputType,
     TaskTargetType,
 )
+from ..delivery import plan_task_file_delivery
 from ..target import TaskTargetRunner, TaskValidationContext
 from ..text_strategy import (
     TextStrategyKind,
@@ -328,31 +327,13 @@ async def _agent_file_content(
         and file.provider_reference.is_expired()
     ):
         raise _agent_file_error(path=path)
-    metadata: Mapping[str, object] = file.metadata
-    if file.provider_reference is not None:
-        metadata = {
-            **file.metadata,
-            "provider_reference": file.provider_reference.execution_metadata(),
-        }
-    decision = plan_file_delivery(
-        profile,
-        FileDeliveryRequest(
-            mime_type=(
-                file.media_type
-                or (
-                    file.provider_reference.mime_type
-                    if file.provider_reference is not None
-                    else None
-                )
-            ),
-            size_bytes=file.size_bytes,
-            has_artifact=(
-                file.artifact_ref is not None
-                and context.artifact_store is not None
-            ),
-            metadata=metadata,
-        ),
+    plan = await plan_task_file_delivery(
+        context.definition,
+        file,
+        profile=profile,
+        artifact_store=context.artifact_store,
     )
+    decision = plan.decision
     match decision.mode:
         case FileDeliveryMode.PROVIDER_FILE_ID:
             return MessageContentFile(
@@ -384,6 +365,17 @@ async def _agent_file_content(
                 text = data.decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise _agent_file_error(path=path) from exc
+            return MessageContentText(type="text", text=text)
+        case (
+            FileDeliveryMode.CONVERTED_ARTIFACT
+            | FileDeliveryMode.RETRIEVAL_CONTEXT
+            | FileDeliveryMode.MAP_REDUCE_CONTEXT
+        ):
+            data = await _artifact_bytes(file, context=context, path=path)
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise _agent_file_error(path=path, decision=decision) from exc
             return MessageContentText(type="text", text=text)
         case _:
             raise _agent_file_error(path=path, decision=decision)

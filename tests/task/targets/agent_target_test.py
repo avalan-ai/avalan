@@ -29,6 +29,7 @@ from avalan.task import (
     TaskArtifactPolicy,
     TaskArtifactPurpose,
     TaskArtifactRef,
+    TaskArtifactStat,
     TaskAttemptState,
     TaskDefinition,
     TaskExecutionTarget,
@@ -217,6 +218,13 @@ class FakeArtifactStore:
 
     async def open(self, ref: TaskArtifactRef) -> BytesIO:
         return BytesIO(self.data)
+
+    async def stat(self, ref: TaskArtifactRef) -> TaskArtifactStat:
+        return TaskArtifactStat(
+            ref=ref,
+            size_bytes=len(self.data),
+            sha256=("0" * 64 if ref.sha256 is None else ref.sha256),
+        )
 
 
 class StaticHmacProvider:
@@ -1491,6 +1499,83 @@ uri = "ai://local/model"
         self.assertNotIn(
             "artifact-1", str(error.exception.issues[0].as_dict())
         )
+
+    async def test_run_rejects_invalid_strategy_text_bytes_safely(
+        self,
+    ) -> None:
+        runner = AgentTaskTargetRunner(
+            FakeLoader(),
+            uri="ai://local/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(
+                        input_contract=TaskInputContract.file(
+                            conversions=("text",),
+                            mime_types=("application/pdf",),
+                        )
+                    ),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="application/pdf",
+                            size_bytes=1,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(b"\xff"),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertNotIn(
+            "artifact-1", str(error.exception.issues[0].as_dict())
+        )
+
+    async def test_run_maps_strategy_text_artifact_to_text_block(self) -> None:
+        loader = FakeLoader(response="accepted")
+        runner = AgentTaskTargetRunner(
+            loader,
+            uri="ai://local/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("text",),
+                        mime_types=("application/pdf",),
+                    )
+                ),
+                "summarize",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="application/pdf",
+                        size_bytes=12,
+                    ),
+                ),
+                artifact_store=FakeArtifactStore(b"converted text"),
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual([block.text for block in content], ["converted text"])
 
     async def test_run_rejects_profile_file_count_limit(self) -> None:
         profile = FileDeliveryProfile(

@@ -93,6 +93,8 @@ from .definition import TaskPrivacyPolicy as TaskPrivacyPolicy
 from .definition import TaskRetryPolicy as TaskRetryPolicy
 from .definition import TaskRunPolicy as TaskRunPolicy
 from .definition import TaskTargetType as TaskTargetType
+from .delivery import TaskFileDeliveryPlan as TaskFileDeliveryPlan
+from .delivery import plan_task_file_delivery as plan_task_file_delivery
 from .error import TaskError as TaskError
 from .error import TaskErrorCategory as TaskErrorCategory
 from .error import TaskErrorCode as TaskErrorCode
