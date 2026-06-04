@@ -44,6 +44,11 @@ class GenerationCacheStrategy(StrEnum):
     QUANTIZED = "quantized"
 
 
+class PromptCacheRetention(StrEnum):
+    IN_MEMORY = "in_memory"
+    EXTENDED_24H = "24h"
+
+
 class Backend(StrEnum):
     TRANSFORMERS = "transformers"
     MLXLM = "mlx"
@@ -343,6 +348,9 @@ class GenerationSettings:
     # (if applicable to the model) to speed up decoding
     use_cache: bool = True
     cache_strategy: GenerationCacheStrategy | None = None
+    # Hosted Responses prompt cache retention. This is intentionally separate
+    # from local transformer key/value cache settings above.
+    prompt_cache_retention: PromptCacheRetention | str | None = None
 
     # Generation output variables --------------------------------------------
     # The number of independently computed returned sequences for each element

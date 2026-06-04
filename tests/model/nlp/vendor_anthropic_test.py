@@ -178,6 +178,21 @@ def test_client_call_and_model(anthropic_mod):
     assert loaded is ClientMock.return_value
 
 
+def test_provider_instructions_are_rejected_before_api_call(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+    create_mock = stub.AsyncAnthropic.return_value.messages.create
+    create_mock.reset_mock()
+
+    async def invoke():
+        with pytest.raises(AssertionError, match="provider instructions"):
+            await client("model", [], instructions="private policy")
+
+    asyncio.run(invoke())
+    create_mock.assert_not_called()
+
+
 def test_client_omits_unset_temperature_and_forwards_explicit(
     anthropic_mod,
 ):

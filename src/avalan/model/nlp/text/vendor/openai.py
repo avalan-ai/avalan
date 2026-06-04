@@ -3,6 +3,7 @@ from .....entities import (
     Input,
     Message,
     MessageRole,
+    PromptCacheRetention,
     ReasoningEffort,
     ReasoningToken,
     Token,
@@ -205,6 +206,9 @@ class OpenAIClient(TextGenerationVendor):
             "timeout": timeout,
         }
         if instructions is not None:
+            assert isinstance(
+                instructions, str
+            ), "OpenAI Responses instructions must be a string"
             kwargs["instructions"] = instructions
         if self._extra_query is not None:
             kwargs["extra_query"] = self._extra_query
@@ -224,6 +228,11 @@ class OpenAIClient(TextGenerationVendor):
             )
             if reasoning:
                 kwargs["reasoning"] = reasoning
+            prompt_cache_retention = (
+                OpenAIClient._prompt_cache_retention_config(settings)
+            )
+            if prompt_cache_retention is not None:
+                kwargs["prompt_cache_retention"] = prompt_cache_retention
         if tool:
             schemas = OpenAIClient._tool_schemas(tool)
             if schemas:
@@ -317,6 +326,23 @@ class OpenAIClient(TextGenerationVendor):
         if settings.stop_strings is not None:
             text["stop"] = settings.stop_strings
         return text
+
+    @staticmethod
+    def _prompt_cache_retention_config(
+        settings: GenerationSettings,
+    ) -> str | None:
+        retention = settings.prompt_cache_retention
+        if retention is None:
+            return None
+        if isinstance(retention, PromptCacheRetention):
+            return retention.value
+        assert isinstance(
+            retention, str
+        ), "OpenAI prompt cache retention must be a string"
+        assert retention in {
+            item.value for item in PromptCacheRetention
+        }, "OpenAI prompt cache retention is not supported"
+        return retention
 
     @staticmethod
     def _response_text_format(

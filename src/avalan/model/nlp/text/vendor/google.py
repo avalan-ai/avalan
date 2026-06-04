@@ -50,7 +50,9 @@ class GoogleClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
-        _ = instructions
+        assert (
+            instructions is None
+        ), "Google does not support provider instructions"
         contents = self._template_messages(messages, ["system", "tool"])
         kwargs: dict[str, Any] = {
             "model": model_id,

@@ -330,6 +330,21 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
         ClientMock.assert_called_once_with(api_key="tok")
         self.assertIs(loaded, ClientMock.return_value)
 
+    async def test_provider_instructions_are_rejected_before_api_call(self):
+        client = self.mod.GoogleClient("k")
+        stream_mock = client._client.aio.models.generate_content_stream
+        generate_mock = client._client.aio.models.generate_content
+
+        with self.assertRaisesRegex(AssertionError, "provider instructions"):
+            await client(
+                "m",
+                [Message(role=MessageRole.USER, content="hi")],
+                instructions="private policy",
+            )
+
+        stream_mock.assert_not_awaited()
+        generate_mock.assert_not_awaited()
+
     async def test_call_supports_file_and_image_parts(self):
         client = self.mod.GoogleClient("k")
         messages = [

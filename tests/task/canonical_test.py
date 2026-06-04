@@ -231,6 +231,122 @@ class TaskCanonicalizationTest(TestCase):
         self.assertEqual(spec_hash(first), spec_hash(second))
         self.assertNotIn("/Users/private", canonical_json(first))
 
+    def test_agent_provider_instructions_change_path_aware_identity(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            agent_path = root / "agents" / "extract.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+                [agent]
+                instructions = "private stable policy"
+                user = "extract"
+                """,
+                encoding="utf-8",
+            )
+            definition = loads_task_definition(
+                """
+                [task]
+                name = "extract"
+                version = "1"
+
+                [input]
+                type = "string"
+
+                [output]
+                type = "text"
+
+                [execution]
+                type = "agent"
+                ref = "agents/extract.toml"
+                """,
+                source_path=root / "extract.task.toml",
+            )
+
+            first = canonical_json(
+                definition,
+                schema_base_path=root / "extract.task.toml",
+            )
+            first_hash = spec_hash(
+                definition,
+                schema_base_path=root / "extract.task.toml",
+            )
+            agent_path.write_text(
+                """
+                [agent]
+                instructions = "different private policy"
+                user = "extract"
+                """,
+                encoding="utf-8",
+            )
+            second = canonical_json(
+                definition,
+                schema_base_path=root / "extract.task.toml",
+            )
+            second_hash = spec_hash(
+                definition,
+                schema_base_path=root / "extract.task.toml",
+            )
+
+        self.assertNotEqual(first_hash, second_hash)
+        self.assertNotEqual(
+            loads(first)["execution"]["provider_instructions_sha256"],
+            loads(second)["execution"]["provider_instructions_sha256"],
+        )
+        self.assertNotIn("private stable policy", first)
+        self.assertNotIn("different private policy", second)
+
+    def test_agent_provider_instruction_digest_fails_closed(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            no_agent = root / "no-agent.toml"
+            no_agent.write_text('[engine]\nuri = "ai://local/model"', "utf-8")
+            invalid_instructions = root / "invalid.toml"
+            invalid_instructions.write_text(
+                "[agent]\ninstructions = 123\n",
+                "utf-8",
+            )
+            cases = (
+                TaskDefinition(
+                    task=TaskMetadata(name="absolute_agent", version="1"),
+                    input=TaskInputContract.string(),
+                    output=TaskOutputContract.text(),
+                    execution=TaskExecutionTarget.agent(
+                        str(root / "private-agent.toml")
+                    ),
+                ),
+                TaskDefinition(
+                    task=TaskMetadata(name="missing_agent", version="1"),
+                    input=TaskInputContract.string(),
+                    output=TaskOutputContract.text(),
+                    execution=TaskExecutionTarget.agent("no-agent.toml"),
+                ),
+                TaskDefinition(
+                    task=TaskMetadata(
+                        name="invalid_instructions", version="1"
+                    ),
+                    input=TaskInputContract.string(),
+                    output=TaskOutputContract.text(),
+                    execution=TaskExecutionTarget.agent("invalid.toml"),
+                ),
+            )
+
+            for definition in cases:
+                with self.subTest(definition=definition.task.name):
+                    canonical = canonical_json(
+                        definition,
+                        schema_base_path=root / "task.toml",
+                    )
+                    self.assertIsNone(
+                        loads(canonical)["execution"][
+                            "provider_instructions_sha256"
+                        ]
+                    )
+                    self.assertNotIn("123", canonical)
+                    self.assertNotIn("private-agent", canonical)
+
     def test_machine_specific_values_do_not_enter_canonical_json(self) -> None:
         first = TaskDefinition(
             task=TaskMetadata(

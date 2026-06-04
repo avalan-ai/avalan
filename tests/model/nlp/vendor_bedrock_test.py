@@ -307,6 +307,18 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertIs(result, StreamMock.return_value)
         await exit_stack.aclose()
 
+    async def test_provider_instructions_are_rejected_before_api_call(self):
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(exit_stack=exit_stack)
+
+        with self.assertRaisesRegex(AssertionError, "provider instructions"):
+            await client("model", [], instructions="private policy")
+
+        self.session_mock.client.assert_not_called()
+        self.client.converse_stream.assert_not_awaited()
+        self.client.converse.assert_not_awaited()
+        await exit_stack.aclose()
+
     async def test_client_stream_payload_includes_configs(self):
         self.client.converse_stream.return_value = {"stream": AsyncIter([])}
         exit_stack = AsyncExitStack()

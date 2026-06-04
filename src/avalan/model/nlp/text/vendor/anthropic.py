@@ -150,7 +150,9 @@ class AnthropicClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationVendorStream:
-        _ = instructions
+        assert (
+            instructions is None
+        ), "Anthropic does not support provider instructions"
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])

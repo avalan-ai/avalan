@@ -683,9 +683,7 @@ def _message_file(
 
 def _message_file_name(media_type: object) -> str:
     extension = (
-        guess_extension(media_type)
-        if isinstance(media_type, str)
-        else None
+        guess_extension(media_type) if isinstance(media_type, str) else None
     )
     return f"task-file{extension or '.bin'}"
 

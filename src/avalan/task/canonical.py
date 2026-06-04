@@ -3,6 +3,7 @@ from .definition import (
     FrozenMetadata,
     ObservabilitySinkType,
     TaskDefinition,
+    TaskTargetType,
 )
 from .schema import (
     TaskSchemaResolutionError,
@@ -17,6 +18,8 @@ from hashlib import sha256
 from json import dumps
 from math import isfinite
 from pathlib import Path
+from tomllib import TOMLDecodeError
+from tomllib import loads as toml_loads
 from typing import TypeAlias, cast
 
 CanonicalValue: TypeAlias = LooseJsonValue
@@ -71,6 +74,10 @@ def canonical_definition(
             "store_bytes": definition.artifact.store_bytes,
         },
         "execution": {
+            "provider_instructions_sha256": _provider_instructions_digest(
+                definition,
+                schema_base_path,
+            ),
             "ref": _normalize_ref(definition.execution.ref),
             "type": definition.execution.type.value,
             "variables": _normalize_definition_mapping(
@@ -176,6 +183,38 @@ def spec_hash(
 ) -> str:
     canonical = canonical_json(definition, schema_base_path=schema_base_path)
     return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _provider_instructions_digest(
+    definition: TaskDefinition,
+    schema_base_path: str | Path | None,
+) -> str | None:
+    if definition.execution.type != TaskTargetType.AGENT:
+        return None
+    if schema_base_path is None:
+        return None
+    ref = Path(definition.execution.ref)
+    if ref.is_absolute():
+        return None
+
+    base = Path(schema_base_path)
+    base_dir = base.parent if base.suffix else base
+    try:
+        root = base_dir.resolve(strict=False)
+        source_path = (root / ref).resolve(strict=False)
+        source_path.relative_to(root)
+        source = source_path.read_text(encoding="utf-8")
+        raw = toml_loads(source)
+    except (OSError, TOMLDecodeError, ValueError):
+        return None
+
+    agent = raw.get("agent")
+    if not isinstance(agent, Mapping):
+        return None
+    instructions = agent.get("instructions")
+    if not isinstance(instructions, str):
+        return None
+    return sha256(instructions.encode("utf-8")).hexdigest()
 
 
 def _canonical_schema(

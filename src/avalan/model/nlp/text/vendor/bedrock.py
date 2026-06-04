@@ -257,7 +257,9 @@ class BedrockClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str] | TextGenerationSingleStream:
-        _ = instructions
+        assert (
+            instructions is None
+        ), "Amazon Bedrock does not support provider instructions"
         client = await self._client_instance()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])

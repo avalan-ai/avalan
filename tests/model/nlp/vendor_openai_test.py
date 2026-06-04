@@ -15,6 +15,7 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    PromptCacheRetention,
     ReasoningEffort,
     ReasoningSettings,
     ReasoningToken,
@@ -191,6 +192,119 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["instructions"], "top-level")
         self.assertEqual(kwargs["input"], [{"role": "user", "content": "hi"}])
         self.assertNotIn("top-level", str(kwargs["input"]))
+
+    async def test_responses_payload_combines_instructions_cache_and_options(
+        self,
+    ):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
+        )
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        tool = MagicMock()
+        tool.json_schemas.return_value = [
+            {"type": "function", "function": {"name": "pkg.lookup"}}
+        ]
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="system path"),
+            Message(role=MessageRole.DEVELOPER, content="developer path"),
+            Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(type="text", text="Summarize"),
+                    MessageContentFile(
+                        type="file",
+                        file={
+                            "file_data": "YWJj",
+                            "filename": "report.pdf",
+                        },
+                    ),
+                    MessageContentImage(
+                        type="image_url",
+                        image_url={
+                            "data": "aW1n",
+                            "mime_type": "image/png",
+                            "detail": "high",
+                        },
+                    ),
+                ],
+            ),
+        ]
+        settings = GenerationSettings(
+            max_new_tokens=10,
+            prompt_cache_retention=PromptCacheRetention.EXTENDED_24H,
+            reasoning=ReasoningSettings(effort=ReasoningEffort.HIGH),
+            response_format={"type": "json_object"},
+            stop_strings=["END"],
+        )
+
+        await client(
+            "gpt-5",
+            messages,
+            settings=settings,
+            instructions="top-level policy",
+            tool=tool,
+            use_async_generator=False,
+        )
+
+        create_mock.assert_awaited_once_with(
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
+            model="gpt-5",
+            input=[
+                {"role": "system", "content": "system path"},
+                {"role": "developer", "content": "developer path"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Summarize"},
+                        {
+                            "type": "input_file",
+                            "file_data": "data:application/pdf;base64,YWJj",
+                            "filename": "report.pdf",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,aW1n",
+                            "detail": "high",
+                        },
+                    ],
+                },
+            ],
+            store=False,
+            stream=False,
+            timeout=None,
+            instructions="top-level policy",
+            max_output_tokens=10,
+            text={"format": {"type": "json_object"}, "stop": ["END"]},
+            reasoning={"effort": "high"},
+            prompt_cache_retention="24h",
+            tools=[{"type": "function", "name": "pkg__lookup"}],
+        )
+        self.assertNotIn(
+            "top-level policy", str(create_mock.await_args.kwargs["input"])
+        )
+
+    async def test_rejects_invalid_instructions_before_provider_call(self):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+
+        with self.assertRaisesRegex(AssertionError, "instructions"):
+            await client(
+                "m",
+                [],
+                instructions={"raw": "prompt"},  # type: ignore[arg-type]
+            )
+
+        create_mock.assert_not_awaited()
 
     async def test_client_consumes_tokens(self):
         chunks = [
@@ -547,6 +661,34 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         create_mock.assert_not_awaited()
 
+    async def test_rejects_invalid_prompt_cache_retention_before_provider_call(
+        self,
+    ):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+
+        with self.assertRaisesRegex(AssertionError, "not supported"):
+            await client(
+                "model",
+                [],
+                settings=GenerationSettings(
+                    prompt_cache_retention="forever",
+                ),
+            )
+        with self.assertRaisesRegex(AssertionError, "must be a string"):
+            await client(
+                "model",
+                [],
+                settings=GenerationSettings(
+                    prompt_cache_retention=object(),  # type: ignore[arg-type]
+                ),
+            )
+
+        create_mock.assert_not_awaited()
+
     async def test_rejects_incompatible_reasoning_effort(self):
         create_mock = AsyncMock()
         self.openai_stub.AsyncOpenAI.return_value.responses.create = (
@@ -566,6 +708,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         create_mock.assert_not_awaited()
 
     def test_response_text_format_normalizes_supported_shapes(self):
+        self.assertEqual(
+            self.mod.OpenAIClient._prompt_cache_retention_config(
+                GenerationSettings(prompt_cache_retention="in_memory")
+            ),
+            "in_memory",
+        )
         self.assertEqual(
             self.mod.OpenAIClient._response_text_format({"type": "text"}),
             {"type": "text"},
