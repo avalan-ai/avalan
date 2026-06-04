@@ -1661,13 +1661,13 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(result.output, ["safe", "done"])
         self.assertIsInstance(result.output, list)
 
-    async def test_direct_runner_sends_file_input_to_flow_agent_node(
+    async def test_direct_runner_sends_file_input_to_flow_agent_node_output(
         self,
     ) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             flow_path = _write_agent_flow_workspace(root)
-            loader = FlowAgentLoader()
+            loader = FlowAgentLoader(text='{"status": "ready", "count": 2}')
             agent_runner = AgentTaskTargetRunner(loader, ref_base=root)
             runner = DirectTaskRunner(
                 self.store,
@@ -1690,7 +1690,7 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
                     input_contract=TaskInputContract.file(
                         mime_types=("application/pdf",)
                     ),
-                    output_contract=TaskOutputContract.text(),
+                    output_contract=self._object_output_contract(),
                     execution=TaskExecutionTarget.flow("flow.toml"),
                     observability=TaskObservabilityPolicy(),
                 ),
@@ -1709,7 +1709,7 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             result.run.state,
             TaskRunState.SUCCEEDED,
         )
-        self.assertEqual(result.output, "flow agent summary")
+        self.assertEqual(result.output, {"status": "ready", "count": 2})
         self.assertEqual(loader.paths, [expected_path])
         self.assertEqual(loader.entered, 1)
         self.assertEqual(loader.exited, 1)
