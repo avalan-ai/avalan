@@ -17,6 +17,7 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
 from avalan.task import (
+    EncryptedPrivacyValue,
     ObservabilitySinkType,
     PrivacyAction,
     PrivacySanitizer,
@@ -26,10 +27,12 @@ from avalan.task import (
     TaskArtifactState,
     TaskAttemptState,
     TaskDefinition,
+    TaskExecutionPayload,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
     TaskInputContract,
+    TaskKeyPurpose,
     TaskMetadata,
     TaskObservabilityPolicy,
     TaskOutputContract,
@@ -164,6 +167,38 @@ class UsageTarget(FakeTarget):
             SimpleNamespace(input_token_count=3, output_token_count=5)
         )
         return self.output
+
+
+class StaticEncryptionProvider:
+    def encrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> EncryptedPrivacyValue:
+        _ = purpose
+        return EncryptedPrivacyValue(
+            ciphertext=b"encrypted:" + value,
+            key_id=key_id or "raw-value",
+            algorithm="test-aead",
+            metadata=context,
+        )
+
+    def decrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        algorithm: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> bytes:
+        _ = purpose, key_id, algorithm, context
+        prefix = b"encrypted:"
+        assert value.startswith(prefix)
+        return value[len(prefix) :]
 
 
 class FakeQueue:
@@ -532,7 +567,6 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         run = await self.store.create_run(
             TaskExecutionRequest(
                 definition_id="hash-a",
-                input_summary={"privacy": "<redacted>"},
                 queue="default",
             )
         )
@@ -572,10 +606,42 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         run = await self.store.create_run(
             TaskExecutionRequest(
                 definition_id="hash-a",
-                input_summary={"privacy": "<redacted>"},
                 queue="default",
             )
         )
+        self.run = await self.store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.CREATED},
+            to_state=TaskRunState.VALIDATED,
+            reason="validated",
+        )
+        self.run = await self.store.transition_run(
+            self.run.run_id,
+            from_states={TaskRunState.VALIDATED},
+            to_state=TaskRunState.QUEUED,
+            reason="queued",
+        )
+        self.queue = FakeQueue(self.store, self.now)
+        self.queue.item = TaskQueueItem(
+            queue_item_id="queue-item-1",
+            run_id=self.run.run_id,
+            queue_name="default",
+            state=TaskQueueItemState.AVAILABLE,
+            priority=0,
+            available_at=self.now,
+            attempts=0,
+            created_at=self.now,
+            updated_at=self.now,
+            run_state=self.run.state,
+        )
+
+    async def _use_request(self, request: TaskExecutionRequest) -> None:
+        self.store = InMemoryTaskStore(clock=lambda: self.now)
+        await self.store.register_definition(
+            self.definition,
+            definition_hash="hash-a",
+        )
+        run = await self.store.create_run(request)
         self.run = await self.store.transition_run(
             run.run_id,
             from_states={TaskRunState.CREATED},
@@ -651,9 +717,111 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             target.contexts[0].execution.claim.worker_id, "worker-1"
         )
-        self.assertEqual(
-            target.contexts[0].input_value["privacy"], "<redacted>"
+        self.assertIsNone(target.contexts[0].input_value)
+
+    async def test_process_once_uses_encrypted_execution_payload(self) -> None:
+        sanitizer = PrivacySanitizer(
+            TaskPrivacyPolicy(raw_retention_days=1),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
         )
+        await self._use_request(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_summary={"privacy": "<redacted>"},
+                input_payload=TaskExecutionPayload(
+                    input_value=sanitizer.sanitize_with_action(
+                        PrivacyAction.ENCRYPT,
+                        "private prompt",
+                    ),
+                ),
+                queue="default",
+            )
+        )
+        target = FakeTarget("safe output")
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            encryption_provider=StaticEncryptionProvider(),
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(result.completion)
+        self.assertEqual(target.contexts[0].input_value, "private prompt")
+        self.assertNotIn("private prompt", str(result.completion))
+
+    async def test_process_once_fails_without_execution_payload(self) -> None:
+        await self._use_request(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_summary={"privacy": "<redacted>"},
+                queue="default",
+            )
+        )
+        target = FakeTarget("safe output")
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertIsNone(result.retry)
+        self.assertEqual(target.contexts, [])
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        rendered_result = str(self.queue.completed.run.result)
+        self.assertIn("privacy.failure", rendered_result)
+        self.assertNotIn("<redacted>", rendered_result)
+
+    async def test_process_once_fails_without_decryption_provider(
+        self,
+    ) -> None:
+        sanitizer = PrivacySanitizer(
+            TaskPrivacyPolicy(raw_retention_days=1),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+        )
+        await self._use_request(
+            TaskExecutionRequest(
+                definition_id="hash-a",
+                input_summary={"privacy": "<redacted>"},
+                input_payload=TaskExecutionPayload(
+                    input_value=sanitizer.sanitize_with_action(
+                        PrivacyAction.ENCRYPT,
+                        "private prompt",
+                    ),
+                ),
+                queue="default",
+            )
+        )
+        target = FakeTarget("safe output")
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=target,
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+
+        self.assertTrue(result.processed)
+        self.assertEqual(target.contexts, [])
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        self.assertNotIn("private prompt", str(self.queue.completed))
 
     async def test_process_once_retries_retryable_failures(self) -> None:
         target = FakeTarget()

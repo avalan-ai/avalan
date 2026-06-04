@@ -28,6 +28,7 @@ from .materialization import (
 )
 from .observability import ObservabilitySink, TaskSanitizedEventObserver
 from .privacy import (
+    ENCRYPTED_MARKER,
     EncryptionProvider,
     HmacProvider,
     PrivacyField,
@@ -1043,6 +1044,8 @@ def _run_inspection_value(run: TaskRun) -> dict[str, object]:
     }
     if run.request.input_summary is not None:
         value["input_summary"] = run.request.input_summary
+    if run.request.input_payload is not None:
+        value["input_payload"] = {"privacy": ENCRYPTED_MARKER}
     if run.request.file_summaries:
         value["file_summaries"] = run.request.file_summaries
     if run.request.queue is not None:

@@ -21,6 +21,8 @@ from avalan.task import (
     REDACTED_MARKER,
     STORED_MARKER,
     EncryptedPrivacyValue,
+    PrivacyAction,
+    PrivacySanitizer,
     TaskArtifactPolicy,
     TaskArtifactPurpose,
     TaskArtifactRef,
@@ -29,6 +31,7 @@ from avalan.task import (
     TaskClient,
     TaskClientWaitTimeoutError,
     TaskDefinition,
+    TaskExecutionPayload,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
@@ -1128,6 +1131,13 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(after_work.active, 0)
         self.assertEqual(target.inputs, ["same prompt"])
         self.assertEqual(len(inspection.attempts), 1)
+        inspection_run = cast(
+            Mapping[str, object], inspection.as_dict()["run"]
+        )
+        self.assertEqual(
+            inspection_run["input_payload"],
+            {"privacy": ENCRYPTED_MARKER},
+        )
         self.assertNotIn("same-window", str(inspection.as_dict()))
         self.assertNotIn("same-owner", str(inspection.as_dict()))
         self.assertNotIn("same prompt", str(inspection.as_dict()))
@@ -2436,12 +2446,9 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             run.request.input_summary,
-            {
-                "privacy": STORED_MARKER,
-                "value": "safe envelope value",
-                "limit": 2,
-            },
+            {"privacy": REDACTED_MARKER},
         )
+        self.assertIsNotNone(run.request.input_payload)
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
         self.assertEqual(output.output_summary, {"status": "ready"})
 
@@ -2590,7 +2597,17 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         return await queue.enqueue_run(
             TaskExecutionRequest(
                 definition_id="queue-worker-e2e",
-                input_summary=input_value,
+                input_summary={"privacy": REDACTED_MARKER},
+                input_payload=TaskExecutionPayload(
+                    input_value=PrivacySanitizer(
+                        definition.privacy,
+                        encryption_provider=StaticEncryptionProvider(),
+                        raw_storage_allowed=True,
+                    ).sanitize_with_action(
+                        PrivacyAction.ENCRYPT,
+                        input_value,
+                    ),
+                ),
                 queue=definition.run.queue,
             ),
             queue_name=definition.run.queue or "default",

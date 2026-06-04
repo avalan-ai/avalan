@@ -161,6 +161,8 @@ def classify_task_error(error: BaseException) -> TaskError:
     if isinstance(error, AsyncTimeoutError):
         return TaskError.timeout()
     if isinstance(error, TaskValidationError):
+        if _is_privacy_error(error.issues):
+            return TaskError.privacy()
         if _is_output_contract_error(error.issues):
             return TaskError.output_contract(error.issues)
         if _is_input_contract_error(error.issues):
@@ -191,6 +193,10 @@ def _is_input_contract_error(
         issue.code.startswith("input.") or issue.path.startswith("input")
         for issue in issues
     )
+
+
+def _is_privacy_error(issues: tuple[TaskValidationIssue, ...]) -> bool:
+    return all(issue.category.value == "privacy" for issue in issues)
 
 
 def _freeze_details(

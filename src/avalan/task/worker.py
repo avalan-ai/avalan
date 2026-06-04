@@ -2,7 +2,7 @@ from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactPurpose, TaskArtifactState
 from .attempt import TaskAttemptPolicy
 from .context import TaskInputFile, TaskTargetContext
-from .definition import ObservabilitySinkType, TaskDefinition
+from .definition import ObservabilitySinkType, TaskDefinition, TaskInputType
 from .error import TaskError, classify_task_error
 from .observability import (
     ObservabilitySink,
@@ -50,7 +50,12 @@ from .target import (
     TaskValidationContext,
 )
 from .usage import UsageRecord, usage_observation_from_response
-from .validation import TaskValidationError, validate_task_output
+from .validation import (
+    TaskValidationCategory,
+    TaskValidationError,
+    TaskValidationIssue,
+    validate_task_output,
+)
 
 from asyncio import (
     FIRST_COMPLETED,
@@ -276,7 +281,7 @@ class TaskWorker:
         context = TaskTargetContext(
             definition=definition,
             execution=attempt.context,
-            input_value=self._executable_input_value(run),
+            input_value=self._executable_input_value(definition, run),
             files=await self._input_files(run.run_id),
             metadata=run.request.metadata,
             cancellation_checker=lambda: self._check_cancelled(run.run_id),
@@ -320,14 +325,27 @@ class TaskWorker:
         await self._check_cancelled(run.run_id)
         return output
 
-    def _executable_input_value(self, run: TaskRun) -> object:
+    def _executable_input_value(
+        self,
+        definition: TaskDefinition,
+        run: TaskRun,
+    ) -> object:
         payload = run.request.input_payload
         if payload is None:
+            if _queued_input_payload_required(definition, run):
+                raise TaskValidationError(
+                    (_queue_input_payload_unavailable_issue(),)
+                )
             return run.request.input_summary
-        return decrypt_encrypted_privacy_value(
-            payload.input_value,
-            decryption_provider=self._encryption_provider,
-        )
+        try:
+            return decrypt_encrypted_privacy_value(
+                payload.input_value,
+                decryption_provider=self._encryption_provider,
+            )
+        except PrivacySanitizationError as error:
+            raise TaskValidationError(
+                (_queue_input_payload_unavailable_issue(),)
+            ) from error
 
     async def _run_target(
         self,
@@ -733,3 +751,30 @@ def _utc_now() -> datetime:
 
 def _worker_id() -> str:
     return f"worker-{uuid4().hex}"
+
+
+def _queued_input_payload_required(
+    definition: TaskDefinition,
+    run: TaskRun,
+) -> bool:
+    return (
+        run.request.input_summary is not None
+        and definition.input.type
+        not in {
+            TaskInputType.FILE,
+            TaskInputType.FILE_ARRAY,
+        }
+    )
+
+
+def _queue_input_payload_unavailable_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="queue.input_payload_unavailable",
+        path="request.input_payload",
+        message="Queued task input is unavailable for worker execution.",
+        hint=(
+            "Queue scalar and structured task inputs with encrypted payload "
+            "storage enabled."
+        ),
+        category=TaskValidationCategory.PRIVACY,
+    )
