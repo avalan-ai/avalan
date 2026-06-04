@@ -5,6 +5,7 @@ from . import (
     markdown_converter_capability,
 )
 from .markdown import MarkdownFileConverter
+from .pdf_image import PdfImageFileConverter, pdf_image_converter_capability
 from .text import TextFileConverter
 
 from collections.abc import Mapping
@@ -21,5 +22,14 @@ def default_file_converters() -> Mapping[str, FileConverter]:
             name="markdown",
             version="unavailable",
             capability=markdown_capability,
+        )
+    pdf_image_capability = pdf_image_converter_capability()
+    if feature_available(TaskFeature.PDF_IMAGE_CONVERSION):
+        values["pdf_image"] = PdfImageFileConverter()
+    else:
+        values["pdf_image"] = UnavailableFileConverter(
+            name="pdf_image",
+            version="unavailable",
+            capability=pdf_image_capability,
         )
     return MappingProxyType(values)

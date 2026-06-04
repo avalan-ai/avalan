@@ -63,6 +63,14 @@ class TaskFileConverterCapability:
     supports_streaming: bool
     max_input_bytes: int | None
     max_output_bytes: int | None
+    max_pages: int | None = None
+    min_dpi: int | None = None
+    max_dpi: int | None = None
+    min_quality: int | None = None
+    max_quality: int | None = None
+    max_pixels: int | None = None
+    estimated_memory_bytes: int | None = None
+    timeout_seconds: int | None = None
     options_schema: Mapping[str, object] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -90,6 +98,27 @@ class TaskFileConverterCapability:
                     value, bool
                 ), f"{field_name} must be an int"
                 assert value > 0, f"{field_name} must be positive"
+        for field_name in (
+            "max_pages",
+            "min_dpi",
+            "max_dpi",
+            "min_quality",
+            "max_quality",
+            "max_pixels",
+            "estimated_memory_bytes",
+            "timeout_seconds",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                assert isinstance(value, int), f"{field_name} must be an int"
+                assert not isinstance(
+                    value, bool
+                ), f"{field_name} must be an int"
+                assert value > 0, f"{field_name} must be positive"
+        if self.min_dpi is not None and self.max_dpi is not None:
+            assert self.min_dpi <= self.max_dpi
+        if self.min_quality is not None and self.max_quality is not None:
+            assert self.min_quality <= self.max_quality
         assert isinstance(self.options_schema, Mapping)
         object.__setattr__(
             self,

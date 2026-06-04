@@ -262,6 +262,9 @@ class FeatureGateTest(TestCase):
             ),
             TaskFeature.JSON_SCHEMA: "dependency.jsonschema_missing",
             TaskFeature.OPENTELEMETRY: "dependency.task_otel_missing",
+            TaskFeature.PDF_IMAGE_CONVERSION: (
+                "dependency.task_pdf_images_missing"
+            ),
             TaskFeature.POSTGRESQL: "dependency.task_pgsql_missing",
             TaskFeature.POSTGRESQL_MIGRATIONS: (
                 "dependency.task_pgsql_migrations_missing"
@@ -283,6 +286,37 @@ class FeatureGateTest(TestCase):
             self.assertEqual(diagnostic.code, code)
             self.assertNotIn("traceback", diagnostic.message.lower())
             self.assertNotIn("exception", diagnostic.hint.lower())
+
+    def test_pdf_image_conversion_gate_is_separate_from_documents(
+        self,
+    ) -> None:
+        diagnostics = require_feature(
+            TaskFeature.PDF_IMAGE_CONVERSION,
+            module_finder=self._missing_module,
+        )
+
+        self.assertEqual(
+            diagnostics[0].as_dict(),
+            {
+                "code": "dependency.task_pdf_images_missing",
+                "path": "input.file_conversions.pdf_image",
+                "category": "dependency",
+                "severity": "error",
+                "message": (
+                    "PDF image conversion requires the task-pdf-images extra."
+                ),
+                "hint": (
+                    "Install avalan[task-pdf-images] to rasterize PDF inputs."
+                ),
+            },
+        )
+        self.assertEqual(
+            require_feature(
+                TaskFeature.PDF_IMAGE_CONVERSION,
+                module_finder=self._present_module,
+            ),
+            (),
+        )
 
     def test_diagnostic_path_can_be_overridden(self) -> None:
         diagnostic = feature_diagnostic(

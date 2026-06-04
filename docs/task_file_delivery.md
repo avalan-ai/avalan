@@ -122,10 +122,11 @@ local documents, provider file ids, hosted URLs, and object-store URIs.
 
 Optional extras are scoped by capability: `task` for structured validation,
 `agent` for agent-backed task execution, `task-pgsql` for durable stores and
-workers, `task-documents` for document conversion, `task-prometheus` for
-metrics, and `task-otel` for traces. Local models may also require backend
-extras such as transformers, MLX-LM, vLLM, or DS4 plus the hardware and model
-downloads those backends need.
+workers, `task-documents` for document conversion, `task-pdf-images` for PDF
+page rasterization with `pypdfium2`, `task-prometheus` for metrics, and
+`task-otel` for traces. Local models may also require backend extras such as
+transformers, MLX-LM, vLLM, or DS4 plus the hardware and model downloads those
+backends need.
 
 ## Limit Composition
 

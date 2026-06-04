@@ -134,6 +134,7 @@ Install only the extras the deployment uses:
 | `agent` | Agent-backed task execution. |
 | `task-pgsql` | Durable PostgreSQL task store and queue workers. |
 | `task-documents` | Document conversion for file inputs. |
+| `task-pdf-images` | PDF page rasterization for image file delivery. |
 | `task-prometheus` | Prometheus task metrics sink. |
 | `task-otel` | OpenTelemetry task spans and metrics sink. |
 
@@ -329,7 +330,8 @@ Remediation:
    `input.file_conversions`.
 2. Pass `--file-conversion field=name` or an SDK descriptor conversion request;
    the definition allow-list does not request conversion automatically.
-3. Install the required extra for the converter, such as `task-documents`.
+3. Install the required extra for the converter, such as `task-documents` or
+   `task-pdf-images`.
 4. Check converter MIME support, input byte cap, output byte cap, and options
    schema before rerunning.
 

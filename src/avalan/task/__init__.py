@@ -71,6 +71,15 @@ from .converters import text_converter_capability as text_converter_capability
 from .converters import (
     validate_conversion_request as validate_conversion_request,
 )
+from .converters.pdf_image import (
+    PdfImageFileConverter as PdfImageFileConverter,
+)
+from .converters.pdf_image import (
+    pdf_image_converter_capability as pdf_image_converter_capability,
+)
+from .converters.pdf_image import (
+    safe_pdf_image_capability_metadata as safe_pdf_image_capability_metadata,
+)
 from .converters.registry import (
     default_file_converters as default_file_converters,
 )

@@ -90,6 +90,9 @@ task-documents = [
   "markitdown[pdf]>=0.1.2,<0.2.0 ; python_version < '3.14'",
   "markdownify>=1.1.0,<2.0.0",
 ]
+task-pdf-images = [
+  "pypdfium2>=5.1.0,<6.0.0",
+]
 task-pgsql = [
   "psycopg[pool]>=3.2.9,<4.0.0",
   "psycopg-binary>=3.2.9,<4.0.0 ; python_version < '3.14'",

@@ -31,6 +31,7 @@ class TaskFeature(StrEnum):
     FLOW_BACKED_TASKS = "flow_backed_tasks"
     JSON_SCHEMA = "json_schema"
     OPENTELEMETRY = "opentelemetry"
+    PDF_IMAGE_CONVERSION = "pdf_image_conversion"
     POSTGRESQL = "postgresql"
     POSTGRESQL_MIGRATIONS = "postgresql_migrations"
     PROMETHEUS = "prometheus"
@@ -117,6 +118,15 @@ _FEATURE_GATE_SPECS = {
         ),
         hint="Install avalan[task-otel] before enabling OpenTelemetry sinks.",
         modules=("opentelemetry.sdk",),
+    ),
+    TaskFeature.PDF_IMAGE_CONVERSION: FeatureGateSpec(
+        feature=TaskFeature.PDF_IMAGE_CONVERSION,
+        code="dependency.task_pdf_images_missing",
+        path="input.file_conversions.pdf_image",
+        category=FeatureGateCategory.DEPENDENCY,
+        message="PDF image conversion requires the task-pdf-images extra.",
+        hint="Install avalan[task-pdf-images] to rasterize PDF inputs.",
+        modules=("pypdfium2",),
     ),
     TaskFeature.POSTGRESQL: FeatureGateSpec(
         feature=TaskFeature.POSTGRESQL,
