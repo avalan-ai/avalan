@@ -1007,6 +1007,41 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("file-openai", str(result.run.request.input_summary))
 
+    async def test_provider_reference_bad_expiry_rejects_before_target(
+        self,
+    ) -> None:
+        target = RecordingTarget("unused")
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-provider-reference-expiry",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                definition(input_contract=TaskInputContract.file()),
+                input_value={
+                    "source_kind": "provider_reference",
+                    "reference": "file-private",
+                    "provider_reference": {
+                        "kind": "provider_file_id",
+                        "provider": "openai",
+                        "reference": "file-private",
+                        "expires_at": "private-invalid-expiry",
+                        "durable": False,
+                    },
+                },
+            )
+
+        self.assertEqual(target.contexts, [])
+        self.assertEqual(
+            error.exception.issues[0].path,
+            "input.provider_reference.expires_at",
+        )
+        self.assertNotIn("file-private", str(error.exception))
+        self.assertNotIn("private-invalid-expiry", str(error.exception))
+
     async def test_native_file_conversion_uses_materialized_input(
         self,
     ) -> None:

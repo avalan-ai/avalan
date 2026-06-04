@@ -46,6 +46,7 @@ from .privacy import (
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from importlib import import_module
 from ipaddress import ip_address
@@ -1018,12 +1019,14 @@ def _validate_provider_reference_descriptor(
                 "Use true for durable references and false otherwise.",
             )
         )
-    if expires_at is not None and not isinstance(expires_at, str):
+    if expires_at is not None and not _valid_provider_reference_expires_at(
+        expires_at
+    ):
         issues.append(
             _invalid_file_issue(
                 f"{path}.provider_reference.expires_at",
                 "Task file provider reference expiry is invalid.",
-                "Use an ISO 8601 timestamp string.",
+                "Use an ISO 8601 timestamp with timezone.",
             )
         )
     for field_name, field_value in (
@@ -1074,6 +1077,18 @@ def _is_valid_provider_reference_kind(value: object) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _valid_provider_reference_expires_at(value: object) -> bool:
+    if isinstance(value, datetime):
+        return value.tzinfo is not None
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
 
 
 def _is_valid_source_kind(value: object) -> bool:

@@ -34,6 +34,7 @@ from avalan.task import (
     TaskMetadata,
     TaskOutputContract,
     TaskPrivacyPolicy,
+    TaskProviderReferenceKind,
     TaskTargetType,
     TaskValidationCategory,
     TaskValidationError,
@@ -862,6 +863,71 @@ class TaskValidationTest(TestCase):
             [("input.invalid_file", "input")],
         )
         self.assertNotIn("private raw", str(issues))
+
+    def test_provider_reference_expiry_accepts_aware_values(self) -> None:
+        definition = self._definition(input_contract=TaskInputContract.file())
+        expires_at_values: tuple[object, ...] = (
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00+00:00",
+            datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        for expires_at in expires_at_values:
+            with self.subTest(expires_at=expires_at):
+                issues = validate_task_input(
+                    definition,
+                    {
+                        "source_kind": "provider_reference",
+                        "reference": "private-provider-handle",
+                        "provider_reference": {
+                            "kind": TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                            "provider": "openai",
+                            "reference": "private-provider-handle",
+                            "expires_at": expires_at,
+                            "durable": False,
+                        },
+                    },
+                )
+
+                self.assertEqual(issues, ())
+
+    def test_provider_reference_expiry_rejects_unsafe_values(self) -> None:
+        definition = self._definition(input_contract=TaskInputContract.file())
+        expires_at_values: tuple[object, ...] = (
+            "private-bad-expiry",
+            "2026-01-01T00:00:00",
+            datetime(2026, 1, 1),
+            1,
+        )
+
+        for expires_at in expires_at_values:
+            with self.subTest(expires_at=expires_at):
+                issues = validate_task_input(
+                    definition,
+                    {
+                        "source_kind": "provider_reference",
+                        "reference": "private-provider-handle",
+                        "provider_reference": {
+                            "kind": "provider_file_id",
+                            "provider": "openai",
+                            "reference": "private-provider-handle",
+                            "expires_at": expires_at,
+                            "durable": False,
+                        },
+                    },
+                )
+
+                self.assertEqual(
+                    [(issue.code, issue.path) for issue in issues],
+                    [
+                        (
+                            "input.invalid_file",
+                            "input.provider_reference.expires_at",
+                        )
+                    ],
+                )
+                self.assertNotIn("private-provider-handle", str(issues))
+                self.assertNotIn("private-bad-expiry", str(issues))
 
     def test_file_conversion_capabilities_validate_mime_examples(
         self,
