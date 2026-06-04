@@ -96,6 +96,35 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
         self.assertEqual(plan.decision.mode, FileDeliveryMode.PROVIDER_FILE_ID)
         self.assertEqual(plan.decision.reference, "file-test")
 
+    async def test_profile_source_kind_rejects_provider_reference(
+        self,
+    ) -> None:
+        plan = await plan_task_file_delivery(
+            _definition(artifact_max_bytes=None),
+            TaskInputFile(
+                logical_path="provider:file",
+                provider_reference=TaskProviderReference(
+                    kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    provider="test",
+                    reference="file-private",
+                    mime_type="application/pdf",
+                ),
+            ),
+            profile=_profile(
+                FileDeliveryMode.PROVIDER_FILE_ID,
+                source_kinds=frozenset({"artifact"}),
+            ),
+        )
+
+        self.assertEqual(plan.decision.mode, FileDeliveryMode.REJECT)
+        self.assertIsNotNone(plan.decision.diagnostic)
+        assert plan.decision.diagnostic is not None
+        self.assertEqual(
+            plan.decision.diagnostic.code,
+            "model.file_delivery.unsupported_source_kind",
+        )
+        self.assertNotIn("file-private", str(plan.decision))
+
     async def test_reference_metadata_does_not_require_artifact_stat(
         self,
     ) -> None:
@@ -548,7 +577,17 @@ def _profile(
     accepted_mime_types: tuple[str, ...] = ("*/*",),
     inline_byte_limit: FileDeliveryLimit | None = None,
     inline_text_limit: FileDeliveryLimit | None = None,
+    source_kinds: frozenset[str] | None = None,
 ) -> FileDeliveryProfile:
+    if source_kinds is not None:
+        return FileDeliveryProfile(
+            name="test",
+            delivery_modes=frozenset(modes),
+            accepted_mime_types=accepted_mime_types,
+            inline_byte_limit=inline_byte_limit,
+            inline_text_limit=inline_text_limit,
+            source_kinds=source_kinds,
+        )
     return FileDeliveryProfile(
         name="test",
         delivery_modes=frozenset(modes),

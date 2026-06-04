@@ -30,6 +30,7 @@ def test_hosted_provider_profiles_allow_expected_delivery_modes() -> None:
     assert openai.accepts_mime_type("application/pdf")
     assert not openai.accepts_mime_type(None)
     assert openai.accepts_source_kind("local_path")
+    assert openai.accepts_source_kind("provider_reference")
     assert openai.has_reference_delivery
     assert not openai.allows_object_store_uri("gs://bucket/object")
     assert anthropic.name == "anthropic"
@@ -445,6 +446,44 @@ def test_plan_delivery_rejects_unsupported_profiles_and_inputs() -> None:
             }
         )
     )
+    unsupported_source_kind = FileDeliveryProfile(
+        name="hosted_no_refs",
+        delivery_modes=frozenset({FileDeliveryMode.PROVIDER_FILE_ID}),
+        source_kinds=frozenset({"artifact"}),
+    ).plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "source_kind": "provider_reference",
+                "provider_file_id": "file-secret",
+            }
+        )
+    )
+    inferred_unsupported_source_kind = FileDeliveryProfile(
+        name="hosted_no_refs",
+        delivery_modes=frozenset({FileDeliveryMode.PROVIDER_FILE_ID}),
+        source_kinds=frozenset({"artifact"}),
+    ).plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_reference": {
+                    "kind": "provider_file_id",
+                    "provider": "hosted_no_refs",
+                    "reference": "file-secret",
+                }
+            }
+        )
+    )
+    unsupported_artifact_source_kind = FileDeliveryProfile(
+        name="inline_no_artifacts",
+        delivery_modes=frozenset({FileDeliveryMode.INLINE_TEXT}),
+        accepted_mime_types=("text/plain",),
+        source_kinds=frozenset({"remote_url"}),
+    ).plan_delivery(
+        FileDeliveryRequest(
+            mime_type="text/plain",
+            has_artifact=True,
+        )
+    )
 
     assert unsupported.mode == FileDeliveryMode.REJECT
     assert unsupported.diagnostic is not None
@@ -484,6 +523,23 @@ def test_plan_delivery_rejects_unsupported_profiles_and_inputs() -> None:
         == "model.file_delivery.unsupported_object_store_uri"
     )
     assert invalid_reference_metadata.mode == FileDeliveryMode.OBJECT_STORE_URI
+    assert unsupported_source_kind.diagnostic is not None
+    assert (
+        unsupported_source_kind.diagnostic.code
+        == "model.file_delivery.unsupported_source_kind"
+    )
+    assert "file-secret" not in str(unsupported_source_kind)
+    assert inferred_unsupported_source_kind.diagnostic is not None
+    assert (
+        inferred_unsupported_source_kind.diagnostic.code
+        == "model.file_delivery.unsupported_source_kind"
+    )
+    assert "file-secret" not in str(inferred_unsupported_source_kind)
+    assert unsupported_artifact_source_kind.diagnostic is not None
+    assert (
+        unsupported_artifact_source_kind.diagnostic.code
+        == "model.file_delivery.unsupported_source_kind"
+    )
 
 
 def test_plan_delivery_rejects_inline_limit_excess() -> None:

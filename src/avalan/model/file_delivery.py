@@ -113,6 +113,7 @@ class FileDeliveryProfile:
             "artifact",
             "inline_bytes",
             "local_path",
+            "provider_reference",
             "remote_url",
         }
     )
@@ -280,6 +281,18 @@ def plan_file_delivery(
             code="model.file_delivery.unsupported",
             message="Model file delivery is not supported.",
             hint="Use a target with file support or add a conversion path.",
+        )
+    source_kind = _request_source_kind(request)
+    if source_kind is not None and not profile.accepts_source_kind(
+        source_kind
+    ):
+        return _reject(
+            code="model.file_delivery.unsupported_source_kind",
+            message="Model file delivery does not accept this source kind.",
+            hint=(
+                "Use a file source kind accepted by the target profile or "
+                "declare conversion."
+            ),
         )
     if request.mime_type is not None and not profile.accepts_mime_type(
         request.mime_type
@@ -639,6 +652,29 @@ def _metadata_string(
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _request_source_kind(request: FileDeliveryRequest) -> str | None:
+    source_kind = _metadata_string(request.metadata, "source_kind")
+    if source_kind is not None:
+        return source_kind
+    if _has_reference_metadata(request.metadata):
+        return "provider_reference"
+    if request.has_artifact:
+        return "artifact"
+    return None
+
+
+def _has_reference_metadata(metadata: Mapping[str, object]) -> bool:
+    return any(
+        key in metadata
+        for key in (
+            "provider_file_id",
+            "provider_file_url",
+            "provider_reference",
+            "provider_uri",
+        )
+    )
 
 
 def _provider_reference(
