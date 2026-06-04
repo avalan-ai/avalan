@@ -205,7 +205,24 @@ def _digest(value: object, *, key: TaskKeyMaterial) -> TaskIdempotencyDigest:
 
 
 def _file_identity(files: tuple[TaskInputFile, ...]) -> tuple[object, ...]:
-    return tuple(file.summary() for file in files)
+    return tuple(_safe_file_identity(file) for file in files)
+
+
+def _safe_file_identity(file: TaskInputFile) -> Mapping[str, object]:
+    value: dict[str, object] = {"logical_path": file.logical_path}
+    if file.artifact_ref is not None:
+        value["artifact"] = file.artifact_ref.summary()
+    if file.provider_reference is not None:
+        value["provider_reference"] = file.provider_reference.summary()
+    if file.media_type is not None:
+        value["media_type"] = file.media_type
+    if file.size_bytes is not None:
+        value["size_bytes"] = file.size_bytes
+    if "identity" in file.metadata:
+        value["identity"] = file.metadata["identity"]
+    elif file.metadata:
+        value["metadata"] = {"privacy": "<redacted>"}
+    return value
 
 
 def _custom_key_value(

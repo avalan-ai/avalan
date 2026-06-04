@@ -1655,7 +1655,7 @@ def _file_descriptor_summary(file: TaskFileDescriptor) -> Mapping[str, object]:
     if file.provider_reference is not None:
         value["provider_reference"] = file.provider_reference.summary()
     else:
-        value["reference"] = file.reference
+        value["reference"] = {"privacy": "<redacted>"}
     if file.role is not None:
         value["role"] = file.role
     if file.mime_type is not None:
@@ -1668,12 +1668,12 @@ def _file_descriptor_summary(file: TaskFileDescriptor) -> Mapping[str, object]:
         value["conversions"] = tuple(
             {
                 "name": conversion.name,
-                "options": conversion.options,
+                "options": {"privacy": "<redacted>"},
             }
             for conversion in file.conversions
         )
     if file.metadata:
-        value["metadata"] = file.metadata
+        value["metadata"] = {"privacy": "<redacted>"}
     return value
 
 

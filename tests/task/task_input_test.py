@@ -11,6 +11,7 @@ from avalan.task import (
     TaskFileDescriptor,
     TaskFileSourceKind,
     TaskInputContract,
+    TaskInputFile,
     TaskLimitsPolicy,
     TaskMetadata,
     TaskOutputContract,
@@ -101,6 +102,7 @@ class TaskInputTest(TestCase):
         self.assertEqual(summary["kind"], "hosted_url")
         self.assertEqual(summary["provider"], "anthropic")
         self.assertEqual(summary["owner_scope"], "tenant-a")
+        self.assertEqual(summary["metadata"], {"privacy": "<redacted>"})
         self.assertNotIn("reference", summary)
         self.assertEqual(
             execution_metadata["reference"],
@@ -109,6 +111,30 @@ class TaskInputTest(TestCase):
         self.assertFalse(reference.durable_for_queue)
         self.assertFalse(reference.is_expired(datetime.now(UTC)))
         self.assertNotIn("private.example", str(summary))
+        self.assertNotIn("private.pdf", str(summary))
+
+    def test_input_file_summary_redacts_private_logical_path(self) -> None:
+        private_file = TaskInputFile(
+            logical_path="uploads/private.pdf",
+            media_type="application/pdf",
+            size_bytes=100,
+            metadata={"filename": "private.pdf"},
+        )
+        artifact_file = TaskInputFile(logical_path="artifact:artifact-1")
+
+        private_summary = private_file.summary()
+
+        self.assertEqual(
+            private_summary["logical_path"], {"privacy": "<redacted>"}
+        )
+        self.assertEqual(
+            private_summary["metadata"], {"privacy": "<redacted>"}
+        )
+        self.assertEqual(
+            artifact_file.summary()["logical_path"], "artifact:artifact-1"
+        )
+        self.assertNotIn("uploads/private.pdf", str(private_summary))
+        self.assertNotIn("private.pdf", str(private_summary))
 
     def test_file_input_accepts_descriptor_and_mapping_shapes(self) -> None:
         definition = self._definition(

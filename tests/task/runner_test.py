@@ -1702,7 +1702,14 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(first["size_bytes"], 12)
         self.assertEqual(first["sha256"], "a" * 64)
         self.assertIn("conversions", first)
-        self.assertIn("metadata", first)
+        conversions = cast(
+            tuple[Mapping[str, object], ...], first["conversions"]
+        )
+        self.assertEqual(first["reference"], {"privacy": "<redacted>"})
+        self.assertEqual(conversions[0]["options"], {"privacy": "<redacted>"})
+        self.assertEqual(first["metadata"], {"privacy": "<redacted>"})
+        self.assertNotIn("input-a.txt", str(first))
+        self.assertNotIn("private", str(first))
 
     def test_file_input_summary_returns_original_for_malformed_value(
         self,

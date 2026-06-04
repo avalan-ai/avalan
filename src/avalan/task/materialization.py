@@ -368,10 +368,25 @@ def task_provider_reference_input_files_from_input(
                 media_type=descriptor.mime_type
                 or provider_reference.mime_type,
                 size_bytes=descriptor.size_bytes,
-                metadata=descriptor.metadata,
+                metadata=_provider_reference_file_metadata(descriptor),
             )
         )
     return tuple(files)
+
+
+def _provider_reference_file_metadata(
+    descriptor: TaskFileDescriptor,
+) -> TaskSnapshotMetadata:
+    value: dict[str, object] = {
+        "source_kind": descriptor.source_kind.value,
+    }
+    if descriptor.role is not None:
+        value["role"] = descriptor.role
+    if descriptor.sha256 is not None:
+        value["sha256"] = descriptor.sha256
+    if descriptor.metadata:
+        value["metadata"] = {"privacy": "<redacted>"}
+    return freeze_snapshot_metadata(value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

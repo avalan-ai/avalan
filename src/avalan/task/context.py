@@ -13,6 +13,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+_REDACTED_METADATA_SUMMARY = MappingProxyType({"privacy": "<redacted>"})
+_SAFE_LOGICAL_PATH_PREFIXES = ("artifact:", "inline:", "provider:")
+
 TaskCancellationChecker = Callable[[], Awaitable[None]]
 TaskEventListener = Callable[[Event], Awaitable[None] | None]
 TaskUsageObserver = Callable[[object], Awaitable[None] | None]
@@ -51,7 +54,9 @@ class TaskInputFile:
         )
 
     def summary(self) -> Mapping[str, object]:
-        value: dict[str, object] = {"logical_path": self.logical_path}
+        value: dict[str, object] = {
+            "logical_path": _safe_logical_path(self.logical_path)
+        }
         if self.artifact_ref is not None:
             value["artifact"] = self.artifact_ref.summary()
         if self.provider_reference is not None:
@@ -61,7 +66,7 @@ class TaskInputFile:
         if self.size_bytes is not None:
             value["size_bytes"] = self.size_bytes
         if self.metadata:
-            value["metadata"] = self.metadata
+            value["metadata"] = _REDACTED_METADATA_SUMMARY
         return MappingProxyType(value)
 
 
@@ -119,3 +124,9 @@ def safe_target_metadata(
 
 def safe_target_value(value: object) -> object:
     return freeze_snapshot_value(value)
+
+
+def _safe_logical_path(value: str) -> str | Mapping[str, str]:
+    if value.startswith(_SAFE_LOGICAL_PATH_PREFIXES):
+        return value
+    return _REDACTED_METADATA_SUMMARY

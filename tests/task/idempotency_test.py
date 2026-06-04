@@ -37,6 +37,8 @@ class StaticHmacProvider:
 
 def definition(
     mode: IdempotencyMode = IdempotencyMode.INPUT_AND_FILES_HASH,
+    *,
+    version: str = "1",
 ) -> TaskDefinition:
     if mode == IdempotencyMode.CUSTOM:
         run = TaskRunPolicy(
@@ -48,7 +50,7 @@ def definition(
     else:
         run = TaskRunPolicy.queued("default", idempotency=mode)
     return TaskDefinition(
-        task=TaskMetadata(name="classify", version="1"),
+        task=TaskMetadata(name="classify", version=version),
         input=TaskInputContract.object(),
         output=TaskOutputContract.text(),
         execution=TaskExecutionTarget.agent("agents/classify.toml"),
@@ -150,18 +152,94 @@ class TaskIdempotencyIdentityTest(TestCase):
             hmac_provider=StaticHmacProvider(),
             window="window-1",
         )
+        different_spec_hash = task_idempotency_identity(
+            definition(),
+            definition_hash="other-spec-hash",
+            input_value={"a": 1},
+            files=(TaskInputFile(logical_path="a.txt"),),
+            owner_scope="owner-1",
+            hmac_provider=StaticHmacProvider(),
+            window="window-1",
+        )
+        different_task_version = task_idempotency_identity(
+            definition(version="2"),
+            definition_hash="spec-hash",
+            input_value={"a": 1},
+            files=(TaskInputFile(logical_path="a.txt"),),
+            owner_scope="owner-1",
+            hmac_provider=StaticHmacProvider(),
+            window="window-1",
+        )
+        different_strategy = task_idempotency_identity(
+            definition(IdempotencyMode.INPUT_HASH),
+            definition_hash="spec-hash",
+            input_value={"a": 1},
+            owner_scope="owner-1",
+            hmac_provider=StaticHmacProvider(),
+            window="window-1",
+        )
 
         self.assertIsNotNone(base)
         self.assertIsNotNone(different_owner)
         self.assertIsNotNone(different_window)
         self.assertIsNotNone(different_file)
+        self.assertIsNotNone(different_spec_hash)
+        self.assertIsNotNone(different_task_version)
+        self.assertIsNotNone(different_strategy)
         assert base is not None
         assert different_owner is not None
         assert different_window is not None
         assert different_file is not None
+        assert different_spec_hash is not None
+        assert different_task_version is not None
+        assert different_strategy is not None
         self.assertNotEqual(base.identity_key, different_owner.identity_key)
         self.assertNotEqual(base.identity_key, different_window.identity_key)
         self.assertNotEqual(base.identity_key, different_file.identity_key)
+        self.assertNotEqual(
+            base.identity_key, different_spec_hash.identity_key
+        )
+        self.assertNotEqual(
+            base.identity_key, different_task_version.identity_key
+        )
+        self.assertNotEqual(base.identity_key, different_strategy.identity_key)
+
+    def test_file_identity_redacts_hostile_metadata(self) -> None:
+        identity = task_idempotency_identity(
+            definition(),
+            definition_hash="spec-hash",
+            input_value={"a": 1},
+            files=(
+                TaskInputFile(
+                    logical_path="provider:openai:provider_file_id",
+                    media_type="application/pdf",
+                    size_bytes=100,
+                    metadata={
+                        "filename": "private.pdf",
+                        "url": "https://private.example.test/raw",
+                    },
+                ),
+                TaskInputFile(
+                    logical_path="artifact:artifact-1",
+                    media_type="text/plain",
+                    metadata={
+                        "identity": {
+                            "algorithm": "hmac-sha256",
+                            "digest": "file-identity-hmac",
+                        }
+                    },
+                ),
+            ),
+            owner_scope="owner",
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        self.assertIsNotNone(identity)
+        assert identity is not None
+        rendered = str(identity.as_dict())
+        self.assertNotIn("private.pdf", rendered)
+        self.assertNotIn("private.example", rendered)
+        self.assertNotIn("file-identity-hmac", rendered)
 
     def test_custom_identity_hashes_selected_value_only(self) -> None:
         task = definition(IdempotencyMode.CUSTOM)

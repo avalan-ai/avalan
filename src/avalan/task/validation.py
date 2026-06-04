@@ -84,30 +84,63 @@ _PATH_TARGET_TYPES = frozenset(
     }
 )
 
-TASK_VALIDATION_ISSUE_CODES = frozenset(
+TASK_FILE_DELIVERY_DIAGNOSTIC_CODES = frozenset(
     {
-        "artifact.bytes_unsupported",
-        "artifact.retention_required",
-        "dependency.jsonschema_missing",
-        "dependency.task_documents_missing",
-        "execution.path_escape",
-        "execution.unknown_target",
-        "execution.unsupported_flow",
-        "feature.flow_backed_tasks_disabled",
-        "feature.remote_url_file_inputs_disabled",
-        "input.invalid_file",
-        "input.invalid_schema",
-        "input.invalid_type",
-        "limits.invalid_value",
-        "observability.unsupported_sink",
-        "output.invalid_schema",
-        "output.invalid_type",
-        "privacy.encryption_key_missing",
-        "privacy.hmac_key_missing",
-        "privacy.raw_retention_required",
-        "privacy.unknown_action",
-        "task.missing_section",
+        "task.file_delivery.limit_exceeded",
+        "task.file_delivery.missing_artifact_store",
+        "task.file_delivery.missing_conversion",
+        "task.file_delivery.provider_mismatch",
+        "task.file_delivery.rejected",
+        "task.file_delivery.unknown_size",
+        "task.file_delivery.unsupported",
+        "task.file_delivery.unsupported_mime",
     }
+)
+TASK_SECURITY_DIAGNOSTIC_CODES = frozenset(
+    {
+        "artifact.retention_violation",
+        "input.unsafe_path",
+        "privacy.raw_storage_policy_violation",
+        "remote_url.ssrf_rejected",
+    }
+)
+TASK_QUEUE_DIAGNOSTIC_CODES = frozenset(
+    {
+        "queue.file_payload_unavailable",
+        "queue.input_payload_unavailable",
+    }
+)
+TASK_VALIDATION_ISSUE_CODES = (
+    frozenset(
+        {
+            "artifact.bytes_unsupported",
+            "artifact.retention_required",
+            "dependency.jsonschema_missing",
+            "dependency.task_documents_missing",
+            "execution.path_escape",
+            "execution.unknown_target",
+            "execution.unsupported_flow",
+            "feature.flow_backed_tasks_disabled",
+            "feature.remote_url_file_inputs_disabled",
+            "input.invalid_file",
+            "input.invalid_schema",
+            "input.invalid_type",
+            "limits.invalid_value",
+            "observability.unsupported_sink",
+            "output.invalid_schema",
+            "output.invalid_type",
+            "privacy.encryption_key_missing",
+            "privacy.hmac_key_missing",
+            "privacy.raw_retention_required",
+            "privacy.unknown_action",
+            "task.missing_section",
+        }
+    )
+    | TASK_FILE_DELIVERY_DIAGNOSTIC_CODES
+    | TASK_SECURITY_DIAGNOSTIC_CODES
+)
+TASK_VALIDATION_ISSUE_CODES = (
+    TASK_VALIDATION_ISSUE_CODES | TASK_QUEUE_DIAGNOSTIC_CODES
 )
 
 

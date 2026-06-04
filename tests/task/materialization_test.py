@@ -498,6 +498,10 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
             mime_type="application/pdf",
             owner_scope="tenant-a",
             identity_hmac="hmac-value",
+            metadata={
+                "filename": "private.pdf",
+                "url": "https://private.example.test/raw",
+            },
         )
 
         materialized = await materialize_task_input_files(
@@ -519,6 +523,11 @@ class TaskFileMaterializationTest(IsolatedAsyncioTestCase):
         self.assertIsNotNone(files[0].provider_reference)
         assert files[0].provider_reference is not None
         self.assertEqual(files[0].provider_reference.reference, "file-openai")
+        self.assertEqual(
+            files[0].metadata["metadata"], {"privacy": "<redacted>"}
+        )
+        self.assertNotIn("private.pdf", str(files[0].summary()))
+        self.assertNotIn("private.example", str(files[0].summary()))
 
     async def test_provider_reference_only_input_preserves_count_errors(
         self,

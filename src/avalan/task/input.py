@@ -8,6 +8,8 @@ from enum import StrEnum
 from math import isfinite
 from types import MappingProxyType
 
+_REDACTED_METADATA_SUMMARY = MappingProxyType({"privacy": "<redacted>"})
+
 
 class TaskFileSourceKind(StrEnum):
     LOCAL_PATH = "local_path"
@@ -103,6 +105,8 @@ class TaskProviderReference:
     def summary(self) -> Mapping[str, object]:
         value = dict(self.execution_metadata())
         value.pop("reference", None)
+        if "metadata" in value:
+            value["metadata"] = _REDACTED_METADATA_SUMMARY
         return MappingProxyType(value)
 
 

@@ -8,6 +8,9 @@ from unittest import TestCase, main
 from unittest.mock import patch
 
 from avalan.task import (
+    TASK_FILE_DELIVERY_DIAGNOSTIC_CODES,
+    TASK_QUEUE_DIAGNOSTIC_CODES,
+    TASK_SECURITY_DIAGNOSTIC_CODES,
     TASK_VALIDATION_ISSUE_CODES,
     EncryptedPrivacyValue,
     PrivacyAction,
@@ -211,6 +214,7 @@ class TaskValidationTest(TestCase):
             {
                 "artifact.bytes_unsupported",
                 "artifact.retention_required",
+                "artifact.retention_violation",
                 "dependency.jsonschema_missing",
                 "dependency.task_documents_missing",
                 "execution.path_escape",
@@ -221,16 +225,41 @@ class TaskValidationTest(TestCase):
                 "input.invalid_file",
                 "input.invalid_schema",
                 "input.invalid_type",
+                "input.unsafe_path",
                 "limits.invalid_value",
                 "observability.unsupported_sink",
                 "output.invalid_schema",
                 "output.invalid_type",
                 "privacy.encryption_key_missing",
                 "privacy.hmac_key_missing",
+                "privacy.raw_storage_policy_violation",
                 "privacy.raw_retention_required",
                 "privacy.unknown_action",
+                "queue.file_payload_unavailable",
+                "queue.input_payload_unavailable",
+                "remote_url.ssrf_rejected",
                 "task.missing_section",
+                "task.file_delivery.limit_exceeded",
+                "task.file_delivery.missing_artifact_store",
+                "task.file_delivery.missing_conversion",
+                "task.file_delivery.provider_mismatch",
+                "task.file_delivery.rejected",
+                "task.file_delivery.unknown_size",
+                "task.file_delivery.unsupported",
+                "task.file_delivery.unsupported_mime",
             },
+        )
+        self.assertLessEqual(
+            TASK_FILE_DELIVERY_DIAGNOSTIC_CODES,
+            TASK_VALIDATION_ISSUE_CODES,
+        )
+        self.assertLessEqual(
+            TASK_QUEUE_DIAGNOSTIC_CODES,
+            TASK_VALIDATION_ISSUE_CODES,
+        )
+        self.assertLessEqual(
+            TASK_SECURITY_DIAGNOSTIC_CODES,
+            TASK_VALIDATION_ISSUE_CODES,
         )
 
     def test_missing_sections_are_aggregated(self) -> None:
