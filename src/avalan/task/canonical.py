@@ -8,6 +8,7 @@ from .schema import (
     TaskSchemaResolutionError,
     normalize_schema_value,
     resolve_schema_ref,
+    task_definition_schema_base_path,
 )
 
 from collections.abc import Mapping
@@ -54,6 +55,10 @@ def canonical_definition(
     schema_base_path: str | Path | None = None,
 ) -> dict[str, object]:
     assert isinstance(definition, TaskDefinition)
+    schema_base_path = task_definition_schema_base_path(
+        definition,
+        schema_base_path=schema_base_path,
+    )
     return {
         "artifact": {
             "encrypt": definition.artifact.encrypt,

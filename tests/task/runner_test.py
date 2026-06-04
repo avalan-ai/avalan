@@ -2024,6 +2024,28 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             value,
         )
 
+    def test_late_schema_resolution_failure_is_sanitized(self) -> None:
+        runner = DirectTaskRunner(
+            InMemoryTaskStore(),
+            target=RecordingTarget("unused"),
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            runner._resolve_definition_schemas(
+                definition(
+                    input_contract=TaskInputContract.object(
+                        schema_ref="schemas/private-input.json"
+                    )
+                )
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("input.invalid_schema", "input.schema_ref")],
+        )
+        self.assertNotIn("private-input", str(error.exception))
+
 
 def _record_sleep(delays: list[float]) -> Callable[[float], Awaitable[None]]:
     async def sleep(delay: float) -> None:

@@ -35,6 +35,50 @@ class TaskSchemaResolutionTest(TestCase):
             definition,
         )
 
+    def test_resolve_task_definition_schemas_uses_definition_base(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "schemas" / "answer.json"
+            schema_path.parent.mkdir()
+            schema_path.write_text('{"type": "object"}', encoding="utf-8")
+            definition = TaskDefinition(
+                task=TaskMetadata(name="sdk_ref", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.object(
+                    schema_ref="schemas/answer.json"
+                ),
+                execution=TaskExecutionTarget.agent("agents/sdk_ref.toml"),
+                definition_base=root / "sdk_ref.task.toml",
+            )
+
+            resolved = resolve_task_definition_schemas(
+                definition,
+                schema_base_path=None,
+            )
+
+        self.assertIsNone(resolved.definition_base)
+        self.assertIsNone(resolved.output.schema_ref)
+        self.assertEqual(resolved.output.schema, {"type": "object"})
+
+    def test_resolve_task_definition_schemas_clears_unused_base(self) -> None:
+        definition = TaskDefinition(
+            task=TaskMetadata(name="plain", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/plain.toml"),
+            definition_base="tasks/plain.task.toml",
+        )
+
+        resolved = resolve_task_definition_schemas(
+            definition,
+            schema_base_path=None,
+        )
+
+        self.assertIsNone(resolved.definition_base)
+        self.assertIsNot(resolved, definition)
+
     def test_resolve_schema_ref_reports_read_errors_safely(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

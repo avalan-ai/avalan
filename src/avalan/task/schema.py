@@ -45,6 +45,10 @@ def resolve_task_definition_schemas(
     schema_base_path: str | Path | None,
 ) -> TaskDefinition:
     assert isinstance(definition, TaskDefinition)
+    schema_base_path = task_definition_schema_base_path(
+        definition,
+        schema_base_path=schema_base_path,
+    )
     input_contract = definition.input
     output_contract = definition.output
     if input_contract.schema_ref is not None:
@@ -61,11 +65,29 @@ def resolve_task_definition_schemas(
         input_contract is definition.input
         and output_contract is definition.output
     ):
-        return definition
+        return (
+            definition
+            if definition.definition_base is None
+            else replace(definition, definition_base=None)
+        )
     return replace(
         definition,
+        definition_base=None,
         input=input_contract,
         output=output_contract,
+    )
+
+
+def task_definition_schema_base_path(
+    definition: TaskDefinition,
+    *,
+    schema_base_path: str | Path | None = None,
+) -> str | Path | None:
+    assert isinstance(definition, TaskDefinition)
+    return (
+        schema_base_path
+        if schema_base_path is not None
+        else definition.definition_base
     )
 
 

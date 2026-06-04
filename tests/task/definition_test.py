@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 from typing import cast
 from unittest import TestCase, main
 
@@ -51,6 +52,21 @@ class TaskDefinitionTest(TestCase):
         self.assertEqual(definition.retry.max_attempts, 1)
         self.assertEqual(definition.retry.backoff, RetryBackoff.NONE)
         self.assertEqual(definition.observability.sinks, ("pgsql",))
+        self.assertIsNone(definition.definition_base)
+
+    def test_sdk_definition_base_can_be_declared(self) -> None:
+        definition = TaskDefinition(
+            task=TaskMetadata(name="sdk_base", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/sdk_base.toml"),
+            definition_base=Path("tasks/sdk_base.task.toml"),
+        )
+
+        self.assertEqual(
+            definition.definition_base,
+            Path("tasks/sdk_base.task.toml"),
+        )
 
     def test_enum_values_preserve_task_definition_vocabulary(self) -> None:
         self.assertEqual(TaskInputType.FILE_ARRAY.value, "file[]")
@@ -369,6 +385,14 @@ class TaskDefinitionTest(TestCase):
             )
         with self.assertRaises(AssertionError):
             TaskExecutionTarget.agent("")
+        with self.assertRaises(AssertionError):
+            TaskDefinition(
+                task=TaskMetadata(name="invalid_base", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agents/a.toml"),
+                definition_base="",
+            )
 
     def test_invalid_policy_boundaries_fail_fast(self) -> None:
         with self.assertRaises(AssertionError):

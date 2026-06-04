@@ -8,6 +8,7 @@ from ..types import (
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from types import MappingProxyType
 from typing import TypeAlias
 
@@ -624,6 +625,7 @@ class TaskDefinition:
     input: TaskInputContract
     output: TaskOutputContract
     execution: TaskExecutionTarget
+    definition_base: str | Path | None = None
     run: TaskRunPolicy = field(default_factory=TaskRunPolicy)
     retry: TaskRetryPolicy = field(default_factory=TaskRetryPolicy)
     privacy: TaskPrivacyPolicy = field(default_factory=TaskPrivacyPolicy)
@@ -638,6 +640,11 @@ class TaskDefinition:
         assert isinstance(self.input, TaskInputContract)
         assert isinstance(self.output, TaskOutputContract)
         assert isinstance(self.execution, TaskExecutionTarget)
+        if self.definition_base is not None:
+            assert isinstance(self.definition_base, str | Path)
+            _assert_non_empty_string(
+                str(self.definition_base), "definition_base"
+            )
         assert isinstance(self.run, TaskRunPolicy)
         assert isinstance(self.retry, TaskRetryPolicy)
         assert isinstance(self.privacy, TaskPrivacyPolicy)

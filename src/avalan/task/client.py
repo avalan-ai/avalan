@@ -49,10 +49,15 @@ from .runner import (
     _file_converters,
     _input_summary_value,
     _sanitize_artifact_ref,
+    _schema_resolution_issue,
     _snapshot_value,
     task_execution_file_entries_value,
     task_input_file_entries_for_queue,
     validate_explicit_task_input_files,
+)
+from .schema import (
+    TaskSchemaResolutionError,
+    resolve_task_definition_schemas,
 )
 from .state import TASK_RUN_TERMINAL_STATES, TaskRunState
 from .store import (
@@ -446,9 +451,10 @@ class TaskClient:
                 remote_url_policy=self._remote_url_policy,
             )
         )
+        target_definition = self._target_validation_definition(definition)
         issues.extend(
             await self._target.validate_definition(
-                definition,
+                target_definition,
                 TaskValidationContext(
                     execution_roots=tuple(
                         Path(root) for root in self._execution_roots
@@ -511,6 +517,7 @@ class TaskClient:
             raise _unsupported_queue_operation("enqueue")
         validation = await self.validate(definition, input_value=input_value)
         validation.raise_for_issues()
+        definition = self._resolve_definition_schemas(definition)
         sanitizer = self._sanitizer(definition)
         definition_id = self._definition_hash_value(definition)
         await self._store.register_definition(
@@ -767,6 +774,32 @@ class TaskClient:
             if self._definition_hash is not None
             else _default_definition_hash(definition)
         )
+
+    def _resolve_definition_schemas(
+        self,
+        definition: TaskDefinition,
+    ) -> TaskDefinition:
+        try:
+            return resolve_task_definition_schemas(
+                definition,
+                schema_base_path=None,
+            )
+        except TaskSchemaResolutionError as error:
+            raise TaskValidationError(
+                (_schema_resolution_issue(error),)
+            ) from error
+
+    def _target_validation_definition(
+        self,
+        definition: TaskDefinition,
+    ) -> TaskDefinition:
+        try:
+            return resolve_task_definition_schemas(
+                definition,
+                schema_base_path=None,
+            )
+        except TaskSchemaResolutionError:
+            return definition
 
     def _sanitizer(self, definition: TaskDefinition) -> PrivacySanitizer:
         return PrivacySanitizer(

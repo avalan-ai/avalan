@@ -1434,6 +1434,118 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private text prompt", str(toml_inspection.as_dict()))
         self.assertNotIn("private text prompt", str(sdk_inspection.as_dict()))
 
+    async def test_sdk_schema_ref_task_runs_with_same_identity_as_toml(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            (root / "agents").mkdir()
+            (root / "schemas").mkdir()
+            (root / "agents" / "structured.toml").write_text(
+                """
+[agent]
+name = "Structured"
+task = "Return structured answers."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            (root / "schemas" / "answer.json").write_text(
+                """
+                {
+                  "type": "object",
+                  "required": ["answer"],
+                  "properties": {"answer": {"type": "string"}}
+                }
+                """,
+                encoding="utf-8",
+            )
+            task_path = root / "structured.task.toml"
+            task_path.write_text(
+                """
+[task]
+name = "structured_schema_ref"
+version = "1"
+
+[input]
+type = "string"
+
+[output]
+type = "object"
+schema_ref = "schemas/answer.json"
+
+[execution]
+type = "agent"
+ref = "agents/structured.toml"
+
+[observability]
+metrics = false
+trace = false
+capture_events = false
+""",
+                encoding="utf-8",
+            )
+            toml_definition = TaskDefinitionLoader().load(task_path)
+            sdk_definition = TaskDefinition(
+                task=TaskMetadata(name="structured_schema_ref", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.object(
+                    schema_ref="schemas/answer.json"
+                ),
+                execution=TaskExecutionTarget.agent("agents/structured.toml"),
+                definition_base=root / "sdk_structured.task.toml",
+                observability=TaskObservabilityPolicy(
+                    metrics=False,
+                    trace=False,
+                    capture_events=False,
+                ),
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = StructuredTarget(output={"answer": "ok"})
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            toml_result = await client.run(
+                toml_definition,
+                input_value="private question",
+            )
+            sdk_result = await client.run(
+                sdk_definition,
+                input_value="private question",
+            )
+            record = await store.get_definition(sdk_result.run.definition_id)
+            toml_hash = spec_hash(toml_definition)
+            sdk_hash = spec_hash(sdk_definition)
+            root_text = str(root)
+
+        self.assertEqual(toml_hash, sdk_hash)
+        self.assertEqual(
+            toml_result.run.definition_id,
+            sdk_result.run.definition_id,
+        )
+        self.assertEqual(toml_result.output, {"answer": "ok"})
+        self.assertEqual(sdk_result.output, {"answer": "ok"})
+        self.assertIsNone(record.definition.output.schema_ref)
+        self.assertIsNone(record.definition.definition_base)
+        self.assertEqual(
+            record.definition.output.schema,
+            toml_definition.output.schema,
+        )
+        self.assertEqual(
+            target.definition_refs, ["agents/structured.toml"] * 2
+        )
+        self.assertNotIn(root_text, str(record.definition))
+        self.assertNotIn("private question", str(record.definition))
+
     async def test_loaded_text_task_retries_and_inspects_safely(
         self,
     ) -> None:

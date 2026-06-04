@@ -161,6 +161,76 @@ class TaskCanonicalizationTest(TestCase):
                 spec_hash(inline),
             )
 
+    def test_sdk_definition_base_resolves_schema_refs_for_hashing(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "schemas" / "invoice.schema.json"
+            schema_path.parent.mkdir()
+            schema_path.write_text(
+                """
+                {
+                  "type": "object",
+                  "properties": {
+                    "vendor": {"type": "string"},
+                    "total": {"type": "number"}
+                  },
+                  "required": ["total", "vendor"]
+                }
+                """,
+                encoding="utf-8",
+            )
+            referenced = TaskDefinition(
+                task=TaskMetadata(name="sdk_invoice", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.object(
+                    schema_ref="schemas/invoice.schema.json"
+                ),
+                execution=TaskExecutionTarget.agent("agents/invoice.toml"),
+                definition_base=root / "invoice.task.toml",
+            )
+            inline = TaskDefinition(
+                task=TaskMetadata(name="sdk_invoice", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.object(
+                    schema={
+                        "type": "object",
+                        "properties": {
+                            "total": {"type": "number"},
+                            "vendor": {"type": "string"},
+                        },
+                        "required": ["vendor", "total"],
+                    }
+                ),
+                execution=TaskExecutionTarget.agent("agents/invoice.toml"),
+            )
+
+            self.assertEqual(
+                canonical_json(referenced), canonical_json(inline)
+            )
+            self.assertEqual(spec_hash(referenced), spec_hash(inline))
+
+    def test_definition_base_is_not_canonical_content(self) -> None:
+        first = TaskDefinition(
+            task=TaskMetadata(name="base_hint", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/base_hint.toml"),
+            definition_base="/Users/private/tasks/base_hint.task.toml",
+        )
+        second = TaskDefinition(
+            task=TaskMetadata(name="base_hint", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/base_hint.toml"),
+            definition_base="/tmp/other/base_hint.task.toml",
+        )
+
+        self.assertEqual(canonical_json(first), canonical_json(second))
+        self.assertEqual(spec_hash(first), spec_hash(second))
+        self.assertNotIn("/Users/private", canonical_json(first))
+
     def test_machine_specific_values_do_not_enter_canonical_json(self) -> None:
         first = TaskDefinition(
             task=TaskMetadata(

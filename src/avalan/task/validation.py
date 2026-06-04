@@ -43,7 +43,11 @@ from .privacy import (
     privacy_policy_raw_fields,
     privacy_policy_store_fields,
 )
-from .schema import TaskSchemaResolutionError, resolve_schema_ref
+from .schema import (
+    TaskSchemaResolutionError,
+    resolve_schema_ref,
+    task_definition_schema_base_path,
+)
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -238,6 +242,10 @@ def validate_task_definition(
     schema_base_path: str | Path | None = None,
 ) -> tuple[TaskValidationIssue, ...]:
     assert isinstance(definition, TaskDefinition)
+    schema_base_path = task_definition_schema_base_path(
+        definition,
+        schema_base_path=schema_base_path,
+    )
     issues: list[TaskValidationIssue] = []
     issues.extend(
         _validate_input_contract(
@@ -324,6 +332,10 @@ def validate_task_input(
     schema_base_path: str | Path | None = None,
 ) -> tuple[TaskValidationIssue, ...]:
     assert isinstance(definition, TaskDefinition)
+    schema_base_path = task_definition_schema_base_path(
+        definition,
+        schema_base_path=schema_base_path,
+    )
     input_schema = _runtime_schema(
         definition.input.schema,
         definition.input.schema_ref,
@@ -513,6 +525,10 @@ def validate_task_output(
     schema_base_path: str | Path | None = None,
 ) -> tuple[TaskValidationIssue, ...]:
     assert isinstance(definition, TaskDefinition)
+    schema_base_path = task_definition_schema_base_path(
+        definition,
+        schema_base_path=schema_base_path,
+    )
     output_schema = _runtime_schema(
         definition.output.schema,
         definition.output.schema_ref,

@@ -54,6 +54,10 @@ from .privacy import (
     PrivacySanitizationError,
     PrivacySanitizer,
 )
+from .schema import (
+    TaskSchemaResolutionError,
+    resolve_task_definition_schemas,
+)
 from .state import TaskAttemptState, TaskRunState
 from .store import (
     TaskAttempt,
@@ -591,6 +595,7 @@ class DirectTaskRunner:
         if definition.run.mode != RunMode.DIRECT:
             raise TaskRunnerError("direct runner requires direct run mode")
         self._validate(definition, input_value)
+        definition = self._resolve_definition_schemas(definition)
         await self._validate_target(definition)
         sanitizer = self._sanitizer(definition)
         definition_id = self._definition_hash(definition)
@@ -928,6 +933,20 @@ class DirectTaskRunner:
         issues = list(deduplicate_task_validation_issues(issues))
         if issues:
             raise TaskValidationError(tuple(issues))
+
+    def _resolve_definition_schemas(
+        self,
+        definition: TaskDefinition,
+    ) -> TaskDefinition:
+        try:
+            return resolve_task_definition_schemas(
+                definition,
+                schema_base_path=None,
+            )
+        except TaskSchemaResolutionError as error:
+            raise TaskValidationError(
+                (_schema_resolution_issue(error),)
+            ) from error
 
     async def _validate_target(self, definition: TaskDefinition) -> None:
         issues = await self._target.validate_definition(
@@ -1458,6 +1477,24 @@ def _queue_file_payload_issue() -> TaskValidationIssue:
         ),
         hint="Queue file tasks with encrypted file payload storage enabled.",
         category=TaskValidationCategory.PRIVACY,
+    )
+
+
+def _schema_resolution_issue(
+    error: TaskSchemaResolutionError,
+) -> TaskValidationIssue:
+    path = error.path
+    code = (
+        "input.invalid_schema"
+        if path.startswith("input.")
+        else "output.invalid_schema"
+    )
+    return TaskValidationIssue(
+        code=code,
+        path=path,
+        message="Task contract schema reference cannot be resolved.",
+        hint="Use a local JSON object schema file.",
+        category=TaskValidationCategory.VALUE,
     )
 
 

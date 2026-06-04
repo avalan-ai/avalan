@@ -237,6 +237,24 @@ class RejectingTarget(TaskTargetRunner):
         return "unused"
 
 
+class CapturingTarget(TaskTargetRunner):
+    def __init__(self) -> None:
+        self.validated: list[TaskDefinition] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = context
+        self.validated.append(definition)
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        _ = context
+        return "unused"
+
+
 class RecordingArtifactStore:
     def __init__(self) -> None:
         self.puts: list[tuple[bytes, str | None, object]] = []
@@ -632,6 +650,40 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 
         self.assertTrue(result.valid)
         self.assertEqual(result.issues, ())
+
+    async def test_validate_passes_resolved_schema_refs_to_target(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "schemas" / "answer.json"
+            schema_path.parent.mkdir()
+            schema_path.write_text('{"type": "object"}', encoding="utf-8")
+            target = CapturingTarget()
+            client = TaskClient(
+                InMemoryTaskStore(),
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+            )
+
+            result = await client.validate(
+                TaskDefinition(
+                    task=TaskMetadata(name="validate_schema_ref", version="1"),
+                    input=TaskInputContract.string(),
+                    output=TaskOutputContract.object(
+                        schema_ref="schemas/answer.json"
+                    ),
+                    execution=TaskExecutionTarget.agent("agents/answer.toml"),
+                    definition_base=root / "validate_schema_ref.task.toml",
+                ),
+                input_value="private prompt",
+            )
+
+        self.assertTrue(result.valid)
+        self.assertEqual(len(target.validated), 1)
+        self.assertEqual(target.validated[0].output.schema, {"type": "object"})
+        self.assertIsNone(target.validated[0].output.schema_ref)
+        self.assertIsNone(target.validated[0].definition_base)
 
     async def test_validate_uses_default_file_converters(self) -> None:
         client = TaskClient(
@@ -1245,6 +1297,145 @@ ref = "agents/reviewer.toml"
         self.assertIsNone(queue.requests[0].idempotency_key)
         self.assertIsNotNone(queue.requests[0].input_payload)
         self.assertNotIn("private prompt", str(queue.requests[0]))
+
+    async def test_enqueue_resolves_sdk_schema_refs_before_persistence(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            schema_path = root / "schemas" / "answer.json"
+            schema_path.parent.mkdir()
+            schema_path.write_text(
+                """
+                {
+                  "type": "object",
+                  "required": ["answer"],
+                  "properties": {"answer": {"type": "string"}}
+                }
+                """,
+                encoding="utf-8",
+            )
+            referenced = TaskDefinition(
+                task=TaskMetadata(name="queued_schema", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.object(
+                    schema_ref="schemas/answer.json"
+                ),
+                execution=TaskExecutionTarget.agent("agents/answer.toml"),
+                definition_base=root / "queued_schema.task.toml",
+                run=TaskRunPolicy.queued(
+                    "documents",
+                    idempotency=IdempotencyMode.INPUT_HASH,
+                ),
+                privacy=TaskPrivacyPolicy(raw_retention_days=1),
+            )
+            inline = TaskDefinition(
+                task=TaskMetadata(name="queued_schema", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.object(
+                    schema={
+                        "type": "object",
+                        "properties": {"answer": {"type": "string"}},
+                        "required": ["answer"],
+                    }
+                ),
+                execution=TaskExecutionTarget.agent("agents/answer.toml"),
+                run=TaskRunPolicy.queued(
+                    "documents",
+                    idempotency=IdempotencyMode.INPUT_HASH,
+                ),
+                privacy=TaskPrivacyPolicy(raw_retention_days=1),
+            )
+            store = InMemoryTaskStore()
+            queue = RecordingQueue(store)
+            client = TaskClient(
+                store,
+                target=_noop_target,
+                queue=cast(TaskQueue, queue),
+                hmac_provider=StaticHmacProvider(),
+                encryption_provider=StaticEncryptionProvider(),
+                raw_storage_allowed=True,
+            )
+
+            submission = await client.enqueue(
+                referenced,
+                input_value="private prompt",
+            )
+            record = await store.get_definition(submission.run.definition_id)
+
+        self.assertEqual(submission.run.definition_id, spec_hash(inline))
+        self.assertEqual(record.definition.output.schema, inline.output.schema)
+        self.assertIsNone(record.definition.output.schema_ref)
+        self.assertIsNone(record.definition.definition_base)
+        self.assertIsInstance(queue.idempotency, TaskIdempotencyIdentity)
+        self.assertEqual(
+            cast(TaskIdempotencyIdentity, queue.idempotency).spec_hash,
+            spec_hash(inline),
+        )
+        self.assertNotIn(str(root), str(record.definition))
+        self.assertNotIn("private prompt", str(queue.requests[0]))
+
+    async def test_enqueue_rejects_relative_schema_ref_without_base(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        queue = RecordingQueue(store)
+        client = TaskClient(
+            store,
+            target=_noop_target,
+            queue=cast(TaskQueue, queue),
+            hmac_provider=StaticHmacProvider(),
+            encryption_provider=StaticEncryptionProvider(),
+            raw_storage_allowed=True,
+        )
+        definition = TaskDefinition(
+            task=TaskMetadata(name="missing_schema_base", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.object(
+                schema_ref="schemas/private-answer.json"
+            ),
+            execution=TaskExecutionTarget.agent("agents/answer.toml"),
+            run=TaskRunPolicy.queued(
+                "documents",
+                idempotency=IdempotencyMode.NONE,
+            ),
+            privacy=TaskPrivacyPolicy(raw_retention_days=1),
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await client.enqueue(definition, input_value="private prompt")
+
+        self.assertEqual(queue.requests, [])
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("output.invalid_schema", "output.schema_ref")],
+        )
+        self.assertNotIn("private-answer", str(error.exception))
+        self.assertNotIn("private prompt", str(error.exception))
+
+    def test_late_schema_resolution_failure_is_sanitized(self) -> None:
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=_noop_target,
+            hmac_provider=StaticHmacProvider(),
+        )
+        definition = TaskDefinition(
+            task=TaskMetadata(name="late_schema_failure", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.object(
+                schema_ref="schemas/private-answer.json"
+            ),
+            execution=TaskExecutionTarget.agent("agents/answer.toml"),
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            client._resolve_definition_schemas(definition)
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("output.invalid_schema", "output.schema_ref")],
+        )
+        self.assertNotIn("private-answer", str(error.exception))
 
     async def test_enqueue_rejects_scalar_input_without_payload_storage(
         self,
