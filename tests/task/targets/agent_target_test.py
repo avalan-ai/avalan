@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from avalan.entities import (
     Message,
     MessageContentFile,
+    MessageContentImage,
     MessageContentText,
     MessageRole,
 )
@@ -2083,7 +2084,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(content[1].text, "private text")
         self.assertEqual(tokenized_texts, ["summarize", "private text"])
 
-    async def test_run_maps_explicit_local_multimodal_image_to_file_block(
+    async def test_run_maps_explicit_local_multimodal_image_to_image_block(
         self,
     ) -> None:
         with TemporaryDirectory() as tmp:
@@ -2128,10 +2129,152 @@ file_delivery_profile = "multimodal"
         content = cast(list[Any], cast(Message, loader.inputs[0]).content)
         self.assertEqual(content[0].type, "text")
         self.assertEqual(content[0].text, "describe")
-        self.assertEqual(content[1].type, "file")
-        self.assertEqual(content[1].file["file_data"], "iVBORw==")
-        self.assertEqual(content[1].file["filename"], "task-file.png")
-        self.assertEqual(content[1].file["mime_type"], "image/png")
+        self.assertIsInstance(content[1], MessageContentImage)
+        self.assertEqual(content[1].type, "image_url")
+        self.assertEqual(content[1].image_url["data"], "iVBORw==")
+        self.assertEqual(content[1].image_url["mime_type"], "image/png")
+        self.assertNotIn("filename", content[1].image_url)
+
+    async def test_run_rejects_converted_image_append_policy_safely(
+        self,
+    ) -> None:
+        loader = FakeLoader()
+        runner = AgentTaskTargetRunner(
+            loader,
+            uri="ai://env:KEY@openai/gpt-4o-mini",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "describe",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="image/png",
+                            size_bytes=4,
+                            metadata={
+                                "file_policy": "append",
+                                "display_name": "private-source.pdf",
+                            },
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(b"\x89PNG"),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertEqual(loader.inputs, [])
+        self.assertNotIn("private-source.pdf", str(error.exception))
+
+    async def test_run_rejects_image_byte_limit_before_provider_call(
+        self,
+    ) -> None:
+        loader = FakeLoader()
+        profile = FileDeliveryProfile(
+            name="tiny-image",
+            delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+            accepted_mime_types=("image/*",),
+            inline_image_limit=FileDeliveryLimit(
+                name="inline_image_bytes",
+                source="test",
+                max_bytes=4,
+            ),
+        )
+        runner = AgentTaskTargetRunner(
+            loader,
+            file_delivery_resolver=lambda uri: profile,
+            uri="ai://env:KEY@fake/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "describe",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="image/png",
+                            size_bytes=4,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(b"\x89PNG"),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertEqual(loader.inputs, [])
+        self.assertNotIn("iVBOR", str(error.exception))
+
+    async def test_run_rejects_image_vision_limit_before_provider_call(
+        self,
+    ) -> None:
+        loader = FakeLoader()
+        profile = FileDeliveryProfile(
+            name="vision-limited",
+            delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+            accepted_mime_types=("image/*",),
+            vision_token_limit=FileDeliveryLimit(
+                name="vision_tokens",
+                source="test",
+                max_tokens=85,
+            ),
+        )
+        runner = AgentTaskTargetRunner(
+            loader,
+            file_delivery_resolver=lambda uri: profile,
+            uri="ai://env:KEY@fake/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "describe",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="image/png",
+                            size_bytes=4,
+                            metadata={
+                                "dimensions": {
+                                    "width_pixels": 513,
+                                    "height_pixels": 512,
+                                },
+                                "data_url": "data:image/png;base64,private",
+                            },
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(b"\x89PNG"),
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(error.exception.issues[0].path, "input.files[0]")
+        self.assertEqual(loader.inputs, [])
+        self.assertNotIn("private", str(error.exception))
 
     async def test_run_reads_inline_bytes_with_bounded_raw_limit(
         self,
@@ -2951,6 +3094,23 @@ file_delivery_profile = "multimodal"
         )
 
         self.assertIsNone(value)
+
+    def test_artifact_read_max_bytes_handles_inline_image_limit(self) -> None:
+        value = agent_module._artifact_read_max_bytes(
+            self._definition(limits=TaskLimitsPolicy(file_bytes=10)),
+            decision=FileDeliveryDecision(mode=FileDeliveryMode.INLINE_IMAGE),
+            profile=FileDeliveryProfile(
+                name="image",
+                delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+                inline_image_limit=FileDeliveryLimit(
+                    name="inline_image_bytes",
+                    source="test",
+                    max_bytes=8,
+                ),
+            ),
+        )
+
+        self.assertEqual(value, 6)
 
     def test_decision_reference_rejects_missing_reference(self) -> None:
         with self.assertRaises(TaskValidationError) as error:

@@ -43,6 +43,7 @@ from avalan.task import (
     TaskKeyPurpose,
     TaskMaterializedFile,
     TaskMetadata,
+    TaskObservabilityPolicy,
     TaskOutputContract,
     TaskPrivacyPolicy,
     TaskProviderReferenceKind,
@@ -72,11 +73,14 @@ from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.runner import (
     TaskExecutableInputFileEntry,
     TaskRunExpiredError,
+    _conversion_request_from_value,
+    _conversion_request_value,
     _error_summary_with_attempt_policy,
     _input_summary_value,
     build_task_executable_input_files,
     task_execution_file_entries_from_value,
     task_execution_file_entries_value,
+    task_input_file_entries_for_queue,
     task_input_files_from_materialized,
 )
 from avalan.task.stores import InMemoryTaskStore
@@ -502,6 +506,7 @@ class DisappearingDescriptor(Mapping[str, object]):
 def definition(
     *,
     artifact: TaskArtifactPolicy | None = None,
+    observability: TaskObservabilityPolicy | None = None,
     privacy: TaskPrivacyPolicy | None = None,
     run: TaskRunPolicy | None = None,
     retry: TaskRetryPolicy | None = None,
@@ -514,6 +519,7 @@ def definition(
         output=output_contract or TaskOutputContract.text(),
         execution=TaskExecutionTarget.agent("agents/summarize.toml"),
         artifact=artifact or TaskArtifactPolicy.references_only(),
+        observability=observability or TaskObservabilityPolicy(),
         privacy=privacy or TaskPrivacyPolicy(),
         run=run or TaskRunPolicy.direct(),
         retry=retry or TaskRetryPolicy(),
@@ -2320,6 +2326,71 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(cast(Mapping[str, object], value)["items"], ("a",))
         with self.assertRaises(TypeError):
             cast(dict[str, object], metadata)["raw"] = "leak"
+
+    async def test_runner_noop_observability_branches(self) -> None:
+        task = definition(observability=TaskObservabilityPolicy.noop())
+        runner = DirectTaskRunner(
+            self.store,
+            target=RecordingTarget("ok"),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda definition: "hash-observability-noop",
+        )
+        await self.store.register_definition(
+            task,
+            definition_hash="definition-observability-noop",
+        )
+        run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="definition-observability-noop")
+        )
+        attempt = await self.store.create_attempt(run.run_id)
+
+        self.assertIsNone(runner._observability_sink_for(task))
+        self.assertIsNone(
+            runner._event_pipeline(
+                task,
+                run=run,
+                attempt=attempt,
+                sanitizer=runner._sanitizer(task),
+            )
+        )
+
+    def test_queue_file_entries_and_conversion_values_round_trip(
+        self,
+    ) -> None:
+        request = TaskFileConversionRequest(
+            name="text",
+            options={"mode": "safe"},
+        )
+        source = TaskMaterializedFile(
+            descriptor=TaskFileDescriptor.artifact(
+                "artifact-source",
+                conversions=(request,),
+                mime_type="application/pdf",
+            ),
+            descriptor_path="input",
+            ref=TaskArtifactRef(
+                artifact_id="artifact-source",
+                store="local",
+                storage_key="ar/artifact-source",
+                media_type="application/pdf",
+                size_bytes=4,
+            ),
+            identity={"privacy": "<hmac-sha256>"},
+        )
+        entries = task_input_file_entries_for_queue(
+            files=(TaskInputFile(logical_path="inline:file"),),
+            provider_reference_files=(),
+            materialized_files=(source,),
+        )
+
+        value = _conversion_request_value(request)
+        restored = _conversion_request_from_value(value)
+
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].file.logical_path, "inline:file")
+        self.assertEqual(entries[1].materialized_file, source)
+        self.assertEqual(restored.name, "text")
+        self.assertEqual(restored.options, {"mode": "safe"})
 
     def test_attempt_policy_summary_leaves_non_mapping_values(self) -> None:
         self.assertEqual(

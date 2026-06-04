@@ -9,7 +9,12 @@ from typing import Any, BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.cli.commands import task as task_cmds
-from avalan.entities import Message, MessageContentFile, MessageContentText
+from avalan.entities import (
+    Message,
+    MessageContentFile,
+    MessageContentImage,
+    MessageContentText,
+)
 from avalan.event import Event, EventType
 from avalan.task import (
     ENCRYPTED_MARKER,
@@ -1047,7 +1052,7 @@ class FullE2EMatrixTest(IsolatedAsyncioTestCase):
         map_reduce_content = [
             _message_texts(value) for value in local_loader.inputs[2:5]
         ]
-        image_block = _only_file_block(local_loader.inputs[5])
+        image_block = _only_image_block(local_loader.inputs[5])
         self.assertIn(
             "converted:matrix private small body", conversion_content
         )
@@ -1060,7 +1065,8 @@ class FullE2EMatrixTest(IsolatedAsyncioTestCase):
                 ["summarize", "one", "two"],
             ],
         )
-        self.assertEqual(image_block.file["mime_type"], "image/png")
+        self.assertEqual(image_block.image_url["mime_type"], "image/png")
+        self.assertEqual(b64decode(image_block.image_url["data"]), b"\x89PNG")
         _assert_no_sentinels(
             (
                 provider_inspection.as_dict(),
@@ -1432,6 +1438,23 @@ def _file_blocks(input_value: object) -> tuple[MessageContentFile, ...]:
 
 def _only_file_block(input_value: object) -> MessageContentFile:
     blocks = _file_blocks(input_value)
+    assert len(blocks) == 1
+    return blocks[0]
+
+
+def _image_blocks(input_value: object) -> tuple[MessageContentImage, ...]:
+    assert isinstance(input_value, Message)
+    content = input_value.content
+    assert isinstance(content, list)
+    return tuple(
+        block
+        for block in cast(list[Any], content)
+        if isinstance(block, MessageContentImage)
+    )
+
+
+def _only_image_block(input_value: object) -> MessageContentImage:
+    blocks = _image_blocks(input_value)
     assert len(blocks) == 1
     return blocks[0]
 

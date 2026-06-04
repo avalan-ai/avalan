@@ -7,12 +7,15 @@ from types import MappingProxyType
 from typing import get_args
 from urllib.parse import urlparse
 
+_IMAGE_MIME_PATTERNS = ("image/*",)
+
 
 class FileDeliveryMode(StrEnum):
     PROVIDER_FILE_ID = "provider_file_id"
     HOSTED_URL = "hosted_url"
     OBJECT_STORE_URI = "object_store_uri"
     INLINE_BYTES = "inline_bytes"
+    INLINE_IMAGE = "inline_image"
     INLINE_TEXT = "inline_text"
     CONVERTED_ARTIFACT = "converted_artifact"
     RETRIEVAL_CONTEXT = "retrieval_context"
@@ -92,6 +95,7 @@ class FileDeliveryDecision:
     def needs_artifact_read(self) -> bool:
         return self.mode in {
             FileDeliveryMode.INLINE_BYTES,
+            FileDeliveryMode.INLINE_IMAGE,
             FileDeliveryMode.INLINE_TEXT,
         }
 
@@ -120,8 +124,10 @@ class FileDeliveryProfile:
     object_store_uri_schemes: tuple[str, ...] = ()
     limits: tuple[FileDeliveryLimit, ...] = ()
     inline_byte_limit: FileDeliveryLimit | None = None
+    inline_image_limit: FileDeliveryLimit | None = None
     inline_text_limit: FileDeliveryLimit | None = None
     file_count_limit: FileDeliveryLimit | None = None
+    vision_token_limit: FileDeliveryLimit | None = None
     requires_conversion_for_file_blocks: bool = False
     diagnostics: tuple[FileDeliveryDiagnostic, ...] = ()
     metadata: Mapping[str, object] = field(
@@ -153,8 +159,10 @@ class FileDeliveryProfile:
             ), "limits must contain FileDeliveryLimit values"
         for field_name in (
             "inline_byte_limit",
+            "inline_image_limit",
             "inline_text_limit",
             "file_count_limit",
+            "vision_token_limit",
         ):
             limit = getattr(self, field_name)
             if limit is not None:
@@ -188,6 +196,7 @@ class FileDeliveryProfile:
                     FileDeliveryMode.HOSTED_URL,
                     FileDeliveryMode.OBJECT_STORE_URI,
                     FileDeliveryMode.INLINE_BYTES,
+                    FileDeliveryMode.INLINE_IMAGE,
                 }
             )
         )
@@ -235,6 +244,9 @@ class FileDeliveryProfile:
         if self.file_count_limit.max_count is None:
             return True
         return count <= self.file_count_limit.max_count
+
+    def supports_image_blocks(self) -> bool:
+        return self.supports_delivery_mode(FileDeliveryMode.INLINE_IMAGE)
 
     def plan_delivery(
         self,
@@ -322,6 +334,19 @@ def plan_file_delivery(
             return limit_diagnostic
         return FileDeliveryDecision(mode=FileDeliveryMode.INLINE_BYTES)
 
+    if request.has_artifact and _can_inline_image(profile, request):
+        limit_diagnostic = _limit_diagnostic(
+            request,
+            profile.inline_image_limit,
+            expands_base64=True,
+        )
+        if limit_diagnostic is not None:
+            return limit_diagnostic
+        vision_diagnostic = _vision_token_diagnostic(request, profile)
+        if vision_diagnostic is not None:
+            return vision_diagnostic
+        return FileDeliveryDecision(mode=FileDeliveryMode.INLINE_IMAGE)
+
     if request.has_artifact and _can_inline_text(profile, request):
         limit_diagnostic = _limit_diagnostic(
             request,
@@ -394,6 +419,7 @@ def _hosted_provider_profile(
         FileDeliveryMode.PROVIDER_FILE_ID,
         FileDeliveryMode.HOSTED_URL,
         FileDeliveryMode.INLINE_BYTES,
+        FileDeliveryMode.INLINE_IMAGE,
         FileDeliveryMode.INLINE_TEXT,
         FileDeliveryMode.CONVERTED_ARTIFACT,
         FileDeliveryMode.RETRIEVAL_CONTEXT,
@@ -407,8 +433,10 @@ def _hosted_provider_profile(
         object_store_uri_schemes=object_store_uri_schemes,
         limits=_common_limits(provider),
         inline_byte_limit=_inline_byte_limit(provider),
+        inline_image_limit=_inline_image_limit(provider),
         inline_text_limit=_inline_text_limit(provider),
         file_count_limit=_file_count_limit(provider),
+        vision_token_limit=_vision_token_limit(provider),
     )
 
 
@@ -460,6 +488,7 @@ def _local_multimodal_profile() -> FileDeliveryProfile:
         delivery_modes=frozenset(
             {
                 FileDeliveryMode.INLINE_BYTES,
+                FileDeliveryMode.INLINE_IMAGE,
                 FileDeliveryMode.INLINE_TEXT,
                 FileDeliveryMode.CONVERTED_ARTIFACT,
                 FileDeliveryMode.RETRIEVAL_CONTEXT,
@@ -474,8 +503,10 @@ def _local_multimodal_profile() -> FileDeliveryProfile:
         object_store_uri_schemes=(),
         limits=_common_limits("local_multimodal"),
         inline_byte_limit=_inline_byte_limit("local_multimodal"),
+        inline_image_limit=_inline_image_limit("local_multimodal"),
         inline_text_limit=_inline_text_limit("local_multimodal"),
         file_count_limit=_file_count_limit("local_multimodal"),
+        vision_token_limit=_vision_token_limit("local_multimodal"),
     )
 
 
@@ -522,6 +553,13 @@ def _inline_byte_limit(provider: str) -> FileDeliveryLimit:
     )
 
 
+def _inline_image_limit(provider: str) -> FileDeliveryLimit:
+    return FileDeliveryLimit(
+        name="inline_image_bytes",
+        source=f"provider.{provider}",
+    )
+
+
 def _inline_text_limit(provider: str) -> FileDeliveryLimit:
     return FileDeliveryLimit(
         name="inline_text_bytes",
@@ -532,6 +570,13 @@ def _inline_text_limit(provider: str) -> FileDeliveryLimit:
 def _file_count_limit(provider: str) -> FileDeliveryLimit:
     return FileDeliveryLimit(
         name="file_count",
+        source=f"provider.{provider}",
+    )
+
+
+def _vision_token_limit(provider: str) -> FileDeliveryLimit:
+    return FileDeliveryLimit(
+        name="vision_tokens",
         source=f"provider.{provider}",
     )
 
@@ -554,9 +599,23 @@ def _can_inline_bytes(
 ) -> bool:
     if not profile.supports_delivery_mode(FileDeliveryMode.INLINE_BYTES):
         return False
+    if (
+        _is_image_mime_type(request.mime_type)
+        and profile.supports_image_blocks()
+    ):
+        return False
     return _has_provider_file_reference(profile) or _can_inline_text(
         profile,
         request,
+    )
+
+
+def _can_inline_image(
+    profile: FileDeliveryProfile,
+    request: FileDeliveryRequest,
+) -> bool:
+    return profile.supports_image_blocks() and _is_image_mime_type(
+        request.mime_type
     )
 
 
@@ -573,6 +632,15 @@ def _can_inline_text(
     return profile.supports_delivery_mode(
         FileDeliveryMode.INLINE_TEXT
     ) and profile.accepts_mime_type(request.mime_type)
+
+
+def _is_image_mime_type(mime_type: str | None) -> bool:
+    if mime_type is None:
+        return False
+    return any(
+        _mime_type_matches(mime_type, pattern)
+        for pattern in _IMAGE_MIME_PATTERNS
+    )
 
 
 def _limit_diagnostic(
@@ -596,6 +664,49 @@ def _limit_diagnostic(
         message="Model file delivery inline limit would be exceeded.",
         hint=f"Use a delivery mode within the {limit.name} limit.",
     )
+
+
+def _vision_token_diagnostic(
+    request: FileDeliveryRequest,
+    profile: FileDeliveryProfile,
+) -> FileDeliveryDecision | None:
+    limit = profile.vision_token_limit
+    if limit is None or limit.max_tokens is None:
+        return None
+    estimate = _metadata_positive_int(request.metadata, "vision_tokens")
+    if estimate is None:
+        width = _metadata_positive_int(request.metadata, "width_pixels")
+        height = _metadata_positive_int(request.metadata, "height_pixels")
+        if width is not None and height is not None:
+            estimate = _estimate_vision_tokens(width, height)
+    if estimate is None or estimate <= limit.max_tokens:
+        return None
+    return _reject(
+        code="model.file_delivery.vision_limit_exceeded",
+        message="Model image delivery would exceed the vision token limit.",
+        hint=f"Use a delivery mode within the {limit.name} limit.",
+    )
+
+
+def _metadata_positive_int(
+    metadata: Mapping[str, object],
+    key: str,
+) -> int | None:
+    value = metadata.get(key)
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def _estimate_vision_tokens(width_pixels: int, height_pixels: int) -> int:
+    assert isinstance(width_pixels, int)
+    assert not isinstance(width_pixels, bool)
+    assert width_pixels > 0
+    assert isinstance(height_pixels, int)
+    assert not isinstance(height_pixels, bool)
+    assert height_pixels > 0
+    patches = ((width_pixels + 511) // 512) * ((height_pixels + 511) // 512)
+    return patches * 85
 
 
 def _base64_size(size_bytes: int) -> int:

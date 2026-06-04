@@ -359,7 +359,10 @@ async def converted_task_input_files(
             artifact_ref=ref,
             media_type=ref.media_type,
             size_bytes=ref.size_bytes,
-            metadata=file.identity,
+            metadata={
+                **file.identity,
+                **ref.metadata,
+            },
         )
         for ref in source_refs
     )

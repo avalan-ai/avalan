@@ -13,6 +13,7 @@ import pytest
 from avalan.entities import (
     Message,
     MessageContentFile,
+    MessageContentImage,
     MessageContentText,
     MessageRole,
 )
@@ -57,7 +58,9 @@ class DummyVendor(TextGenerationVendor):
         return await super().__call__(*args, **kwargs)
 
 
-def _mixed_messages(*files: MessageContentFile) -> list[Message]:
+def _mixed_messages(
+    *files: MessageContentFile | MessageContentImage,
+) -> list[Message]:
     return [
         Message(
             role=MessageRole.USER,
@@ -238,6 +241,13 @@ def test_openai_file_envelopes_cover_streaming_and_non_streaming() -> None:
                 "mime_type": "application/pdf",
             },
         ),
+        MessageContentImage(
+            type="image_url",
+            image_url={
+                "data": "aW1hZ2U=",
+                "mime_type": "image/png",
+            },
+        ),
     )
     expected_input = [
         {
@@ -256,6 +266,10 @@ def test_openai_file_envelopes_cover_streaming_and_non_streaming() -> None:
                 {
                     "type": "input_file",
                     "file_url": "s3://bucket/private/report.pdf",
+                },
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,aW1hZ2U=",
                 },
             ],
         }

@@ -26,7 +26,9 @@ def test_hosted_provider_profiles_allow_expected_delivery_modes() -> None:
     assert openai.supports_delivery_mode(FileDeliveryMode.PROVIDER_FILE_ID)
     assert openai.supports_delivery_mode(FileDeliveryMode.HOSTED_URL)
     assert openai.supports_delivery_mode(FileDeliveryMode.INLINE_BYTES)
+    assert openai.supports_delivery_mode(FileDeliveryMode.INLINE_IMAGE)
     assert openai.supports_delivery_mode(FileDeliveryMode.INLINE_TEXT)
+    assert openai.supports_image_blocks()
     assert openai.accepts_mime_type("application/pdf")
     assert not openai.accepts_mime_type(None)
     assert openai.accepts_source_kind("local_path")
@@ -42,12 +44,20 @@ def test_hosted_provider_profiles_allow_expected_delivery_modes() -> None:
         name="inline_file_bytes",
         source="provider.google",
     )
+    assert google.inline_image_limit == FileDeliveryLimit(
+        name="inline_image_bytes",
+        source="provider.google",
+    )
     assert google.inline_text_limit == FileDeliveryLimit(
         name="inline_text_bytes",
         source="provider.google",
     )
     assert google.file_count_limit == FileDeliveryLimit(
         name="file_count",
+        source="provider.google",
+    )
+    assert google.vision_token_limit == FileDeliveryLimit(
+        name="vision_tokens",
         source="provider.google",
     )
     assert {limit.source for limit in google.limits} == {
@@ -98,6 +108,7 @@ def test_local_profiles_distinguish_text_and_multimodal_delivery() -> None:
     assert multimodal_profile.name == "local_multimodal"
     assert multimodal_profile.has_native_file_delivery
     assert not multimodal_profile.requires_conversion_for_file_blocks
+    assert multimodal_profile.supports_image_blocks()
     assert multimodal_profile.supports_delivery_mode(
         FileDeliveryMode.INLINE_BYTES
     )
@@ -305,7 +316,8 @@ def test_plan_delivery_selects_inline_bytes_and_text() -> None:
     assert bytes_decision.needs_artifact_read
     assert text_decision.mode == FileDeliveryMode.INLINE_TEXT
     assert text_decision.needs_artifact_read
-    assert image_decision.mode == FileDeliveryMode.INLINE_BYTES
+    assert image_decision.mode == FileDeliveryMode.INLINE_IMAGE
+    assert image_decision.needs_artifact_read
     assert multimodal_text_decision.mode == FileDeliveryMode.REJECT
     assert multimodal_text_decision.diagnostic is not None
     assert (
@@ -618,6 +630,16 @@ def test_plan_delivery_rejects_inline_limit_excess() -> None:
             max_bytes=4,
         ),
     )
+    image_profile = FileDeliveryProfile(
+        name="tiny_image",
+        delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+        accepted_mime_types=("image/*",),
+        inline_image_limit=FileDeliveryLimit(
+            name="tiny_image",
+            source="test",
+            max_bytes=4,
+        ),
+    )
 
     text_decision = text_profile.plan_delivery(
         FileDeliveryRequest(
@@ -627,6 +649,13 @@ def test_plan_delivery_rejects_inline_limit_excess() -> None:
         )
     )
     bytes_decision = bytes_profile.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="image/png",
+            size_bytes=5,
+            has_artifact=True,
+        )
+    )
+    image_decision = image_profile.plan_delivery(
         FileDeliveryRequest(
             mime_type="image/png",
             size_bytes=5,
@@ -648,6 +677,13 @@ def test_plan_delivery_rejects_inline_limit_excess() -> None:
         == "model.file_delivery.inline_limit_exceeded"
     )
     assert "tiny_bytes" in bytes_decision.diagnostic.hint
+    assert image_decision.mode == FileDeliveryMode.REJECT
+    assert image_decision.diagnostic is not None
+    assert (
+        image_decision.diagnostic.code
+        == "model.file_delivery.inline_limit_exceeded"
+    )
+    assert "tiny_image" in image_decision.diagnostic.hint
 
 
 def test_plan_delivery_accounts_for_base64_inline_byte_size() -> None:
@@ -689,6 +725,64 @@ def test_plan_delivery_accounts_for_base64_inline_byte_size() -> None:
         rejected.diagnostic.code == "model.file_delivery.inline_limit_exceeded"
     )
     assert "tiny_bytes" in rejected.diagnostic.hint
+
+
+def test_plan_delivery_rejects_image_vision_limit_safely() -> None:
+    profile = FileDeliveryProfile(
+        name="vision_limited",
+        delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+        accepted_mime_types=("image/*",),
+        vision_token_limit=FileDeliveryLimit(
+            name="vision_tokens",
+            source="test",
+            max_tokens=85,
+        ),
+    )
+
+    accepted = profile.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="image/png",
+            size_bytes=1,
+            has_artifact=True,
+            metadata={"width_pixels": 512, "height_pixels": 512},
+        )
+    )
+    rejected = profile.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="image/png",
+            size_bytes=1,
+            has_artifact=True,
+            metadata={
+                "width_pixels": 513,
+                "height_pixels": 512,
+                "data": "data:image/png;base64,private",
+            },
+        )
+    )
+
+    assert accepted.mode == FileDeliveryMode.INLINE_IMAGE
+    assert rejected.mode == FileDeliveryMode.REJECT
+    assert rejected.diagnostic is not None
+    assert (
+        rejected.diagnostic.code == "model.file_delivery.vision_limit_exceeded"
+    )
+    assert "private" not in str(rejected)
+
+
+def test_plan_delivery_rejects_image_without_mime_type() -> None:
+    profile = FileDeliveryProfile(
+        name="image",
+        delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+    )
+
+    decision = profile.plan_delivery(FileDeliveryRequest(has_artifact=True))
+
+    assert decision.mode == FileDeliveryMode.REJECT
+    assert decision.diagnostic is not None
+    assert (
+        decision.diagnostic.code
+        == "model.file_delivery.no_supported_delivery_mode"
+    )
 
 
 def test_profile_file_count_limits() -> None:
@@ -780,6 +874,16 @@ def test_profile_file_count_limits() -> None:
             name="bad",
             delivery_modes=frozenset({FileDeliveryMode.REJECT}),
             inline_byte_limit=cast(FileDeliveryLimit, "limit"),
+        ),
+        lambda: FileDeliveryProfile(
+            name="bad",
+            delivery_modes=frozenset({FileDeliveryMode.REJECT}),
+            inline_image_limit=cast(FileDeliveryLimit, "limit"),
+        ),
+        lambda: FileDeliveryProfile(
+            name="bad",
+            delivery_modes=frozenset({FileDeliveryMode.REJECT}),
+            vision_token_limit=cast(FileDeliveryLimit, "limit"),
         ),
         lambda: FileDeliveryProfile(
             name="bad",

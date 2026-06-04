@@ -40,6 +40,7 @@ DELIVERY_MODE_PHRASES = {
     FileDeliveryMode.HOSTED_URL: "hosted url",
     FileDeliveryMode.OBJECT_STORE_URI: "object-store uri",
     FileDeliveryMode.INLINE_BYTES: "inline bytes",
+    FileDeliveryMode.INLINE_IMAGE: "inline image",
     FileDeliveryMode.INLINE_TEXT: "inline text",
     FileDeliveryMode.CONVERTED_ARTIFACT: "converted artifact",
     FileDeliveryMode.RETRIEVAL_CONTEXT: "retrieval context",

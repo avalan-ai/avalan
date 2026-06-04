@@ -7,6 +7,7 @@ from ...entities import (
     Message,
     MessageContent,
     MessageContentFile,
+    MessageContentImage,
     MessageContentText,
     MessageFile,
     MessageRole,
@@ -527,6 +528,26 @@ async def _agent_file_content(
                 ),
                 metadata=metadata,
             )
+        case FileDeliveryMode.INLINE_IMAGE:
+            if not _append_policy_allowed(file, profile):
+                raise _agent_file_error(path=path, decision=decision)
+            data = await _artifact_bytes(
+                file,
+                context=context,
+                path=path,
+                max_bytes=_artifact_read_max_bytes(
+                    context.definition,
+                    decision=decision,
+                    profile=profile,
+                ),
+            )
+            return _AgentFileBlock(
+                content=MessageContentImage(
+                    type="image_url",
+                    image_url=_message_image(file, data),
+                ),
+                metadata=metadata,
+            )
         case FileDeliveryMode.INLINE_TEXT:
             data = await _artifact_bytes(
                 file,
@@ -609,6 +630,16 @@ def _artifact_read_max_bytes(
                         profile.inline_byte_limit.max_bytes
                     )
                 )
+        case FileDeliveryMode.INLINE_IMAGE:
+            if (
+                profile.inline_image_limit is not None
+                and profile.inline_image_limit.max_bytes is not None
+            ):
+                limits.append(
+                    _max_raw_bytes_for_base64(
+                        profile.inline_image_limit.max_bytes
+                    )
+                )
         case FileDeliveryMode.INLINE_TEXT:
             if (
                 profile.inline_text_limit is not None
@@ -679,6 +710,26 @@ def _message_file(
     if isinstance(media_type, str):
         payload["mime_type"] = media_type
     return payload
+
+
+def _message_image(file: object, data: bytes) -> dict[str, str]:
+    media_type = getattr(file, "media_type")
+    return {
+        "data": b64encode(data).decode("ascii"),
+        "mime_type": (
+            media_type if isinstance(media_type, str) else "image/png"
+        ),
+    }
+
+
+def _append_policy_allowed(
+    file: TaskInputFile,
+    profile: FileDeliveryProfile,
+) -> bool:
+    policy = file.metadata.get("file_policy")
+    if policy != "append":
+        return True
+    return profile.metadata.get("allow_append_file_policy") is True
 
 
 def _message_file_name(media_type: object) -> str:

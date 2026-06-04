@@ -22,6 +22,7 @@ from avalan.task import (
     TaskProviderReferenceKind,
     plan_task_file_delivery,
 )
+from avalan.task import delivery as delivery_module
 from avalan.task.artifact import ArtifactStoreError
 
 
@@ -597,6 +598,19 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(empty.size_bucket, "0B")
         self.assertEqual(large.size_bucket, "100MB+")
+
+    def test_mime_type_matching_covers_exact_and_negative_branches(
+        self,
+    ) -> None:
+        self.assertTrue(
+            delivery_module._mime_type_matches("image/png", "image/png")
+        )
+        self.assertFalse(
+            delivery_module._mime_type_matches("application/pdf", "image/*")
+        )
+        self.assertFalse(
+            delivery_module._mime_type_matches("application/pdf", "text/plain")
+        )
 
 
 def _definition(

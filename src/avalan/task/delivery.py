@@ -113,6 +113,22 @@ async def plan_task_file_delivery(
             size_bucket=size_bucket,
         )
     rejected_inline_decision: FileDeliveryDecision | None = None
+    if _can_inline_image(profile, file, mime_type=mime_type):
+        decision = profile.plan_delivery(
+            FileDeliveryRequest(
+                mime_type=mime_type,
+                size_bytes=size_bytes,
+                has_artifact=True,
+                metadata=metadata,
+            )
+        )
+        if decision.mode != FileDeliveryMode.REJECT:
+            return _plan(
+                decision,
+                size_bytes=size_bytes,
+                size_bucket=size_bucket,
+            )
+        rejected_inline_decision = decision
     if _can_inline_bytes(profile, file, mime_type=mime_type):
         decision = _inline_bytes_decision(
             profile,
@@ -175,11 +191,12 @@ async def plan_task_file_delivery(
 
 
 def _delivery_metadata(file: TaskInputFile) -> Mapping[str, object]:
+    metadata = _metadata_with_flat_dimensions(file.metadata)
     if file.provider_reference is None:
-        return _metadata_without_provider_reference(file.metadata)
+        return _metadata_without_provider_reference(metadata)
     return MappingProxyType(
         {
-            **file.metadata,
+            **metadata,
             "provider_reference": file.provider_reference.execution_metadata(),
         }
     )
@@ -197,6 +214,24 @@ def _metadata_without_provider_reference(
             if key != "provider_reference"
         }
     )
+
+
+def _metadata_with_flat_dimensions(
+    metadata: Mapping[str, object],
+) -> Mapping[str, object]:
+    dimensions = metadata.get("dimensions")
+    if not isinstance(dimensions, Mapping):
+        return metadata
+    flattened = dict(metadata)
+    for key in ("height_pixels", "width_pixels"):
+        value = dimensions.get(key)
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > 0
+        ):
+            flattened.setdefault(key, value)
+    return MappingProxyType(flattened)
 
 
 def _file_mime_type(file: TaskInputFile) -> str | None:
@@ -261,6 +296,7 @@ def _has_byte_limited_candidate(
         limit is not None and limit.max_bytes is not None
         for limit in (
             profile.inline_byte_limit,
+            profile.inline_image_limit,
             profile.inline_text_limit,
         )
     )
@@ -344,7 +380,23 @@ def _can_inline_bytes(
     return (
         file.artifact_ref is not None
         and profile.supports_delivery_mode(FileDeliveryMode.INLINE_BYTES)
+        and not (
+            _is_image_mime_type(mime_type) and profile.supports_image_blocks()
+        )
         and (mime_type is None or profile.accepts_mime_type(mime_type))
+    )
+
+
+def _can_inline_image(
+    profile: FileDeliveryProfile,
+    file: TaskInputFile,
+    *,
+    mime_type: str | None,
+) -> bool:
+    return (
+        file.artifact_ref is not None
+        and profile.supports_image_blocks()
+        and _is_image_mime_type(mime_type)
     )
 
 
@@ -389,6 +441,13 @@ def _inline_text_decision(
         if size_bytes > limit.max_bytes:
             return _limit_reject(limit.name, size_bucket)
     return FileDeliveryDecision(mode=FileDeliveryMode.INLINE_TEXT)
+
+
+def _is_image_mime_type(mime_type: str | None) -> bool:
+    return isinstance(mime_type, str) and _mime_type_matches(
+        mime_type,
+        "image/*",
+    )
 
 
 def _can_convert(
@@ -466,6 +525,16 @@ def _base64_size(size_bytes: int) -> int:
     assert not isinstance(size_bytes, bool)
     assert size_bytes >= 0
     return ((size_bytes + 2) // 3) * 4
+
+
+def _mime_type_matches(mime_type: str, pattern: str) -> bool:
+    lowered = mime_type.lower()
+    candidate = pattern.lower()
+    if candidate == "*/*" or candidate == lowered:
+        return True
+    if candidate.endswith("/*"):
+        return lowered.startswith(candidate[:-1])
+    return False
 
 
 def _size_bucket(size_bytes: int | None) -> str | None:
