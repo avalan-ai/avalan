@@ -46,9 +46,11 @@ class GoogleClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
+        _ = instructions
         contents = self._template_messages(messages, ["system", "tool"])
         kwargs: dict[str, Any] = {
             "model": model_id,

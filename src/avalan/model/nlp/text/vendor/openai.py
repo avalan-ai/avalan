@@ -186,6 +186,7 @@ class OpenAIClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         timeout: int | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
@@ -203,6 +204,8 @@ class OpenAIClient(TextGenerationVendor):
             "stream": use_async_generator,
             "timeout": timeout,
         }
+        if instructions is not None:
+            kwargs["instructions"] = instructions
         if self._extra_query is not None:
             kwargs["extra_query"] = self._extra_query
         if settings:
@@ -626,6 +629,7 @@ class OpenAIModel(TextGenerationVendorModel):
         developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         generation_settings = settings or GenerationSettings()
@@ -634,6 +638,7 @@ class OpenAIModel(TextGenerationVendorModel):
             self._model_id,
             messages,
             generation_settings,
+            instructions=instructions,
             tool=tool,
             use_async_generator=generation_settings.use_async_generator,
         )

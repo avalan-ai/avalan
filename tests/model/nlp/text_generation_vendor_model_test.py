@@ -123,6 +123,18 @@ class InputTokenCountTestCase(TestCase):
         resolve.assert_called_once_with("m", "cl100k_base")
         self.assertEqual(count, len("hi") + len("there"))
 
+    def test_input_token_count_includes_instructions(self):
+        encoding = MagicMock()
+        encoding.encode.side_effect = lambda text: list(text)
+        messages = [Message(role=MessageRole.USER, content="hi")]
+        with patch.object(
+            self.model, "_resolve_encoding", return_value=encoding
+        ):
+            self.model._messages = MagicMock(return_value=messages)
+            count = self.model.input_token_count("in", instructions="provider")
+
+        self.assertEqual(count, len("provider") + len("hi"))
+
     def test_input_token_count_fallback_encoding(self):
         encoding = MagicMock()
         encoding.encode.side_effect = lambda text: list(text)

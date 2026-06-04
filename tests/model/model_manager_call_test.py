@@ -126,6 +126,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     modality=Modality.TEXT_GENERATION,
                     parameters=OperationParameters(
                         text=OperationTextParameters(
+                            instructions="provider",
                             manual_sampling=False,
                             pick_tokens=0,
                             skip_special_tokens=False,
@@ -137,6 +138,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                 (
                     ("question",),
                     {
+                        "instructions": "provider",
                         "system_prompt": None,
                         "developer_prompt": None,
                         "settings": self.settings,
@@ -301,6 +303,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     parameters=OperationParameters(
                         vision=OperationVisionParameters(
                             path="img.png",
+                            instructions="vision instructions",
                             system_prompt=None,
                             developer_prompt=None,
                             width=256,
@@ -310,6 +313,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                 (
                     ("img.png", "txt"),
                     {
+                        "instructions": "vision instructions",
                         "system_prompt": None,
                         "developer_prompt": None,
                         "settings": self.settings,

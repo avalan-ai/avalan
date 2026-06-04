@@ -67,6 +67,29 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(response._kwargs["settings"].do_sample)
         self.assertTrue(response._use_async_generator)
 
+    async def test_instructions_are_tokenized_as_prompt_material(self):
+        tok_inputs = {"input_ids": [[7]]}
+        tokenize_mock = MagicMock(return_value=tok_inputs)
+        self.model._tokenize_input = tokenize_mock
+        self.model._stream_generator = MagicMock()
+        settings = GenerationSettings()
+
+        await self.model(
+            "go",
+            instructions="provider",
+            settings=settings,
+        )
+
+        tokenize_mock.assert_called_once_with(
+            "go",
+            instructions="provider",
+            system_prompt=None,
+            developer_prompt=None,
+            context=None,
+            tool=None,
+            chat_template_settings=asdict(settings.chat_settings),
+        )
+
     async def test_manual_sampling_token_generator(self):
         tok_inputs = {"input_ids": [[4]]}
         self.model._tokenize_input = MagicMock(return_value=tok_inputs)

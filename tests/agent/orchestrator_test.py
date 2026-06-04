@@ -101,7 +101,12 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
             Message(role=MessageRole.ASSISTANT, content="25"),
             Message(role=MessageRole.USER, content="and that times two?"),
         ]
-        self.engine_agent.last_prompt = (effective_messages, None, None)
+        self.engine_agent.last_prompt = (
+            effective_messages,
+            None,
+            None,
+            None,
+        )
 
         def response_factory(input_value, *args, **kwargs):
             del args, kwargs

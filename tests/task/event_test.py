@@ -168,6 +168,30 @@ class SanitizedTaskEventTest(TestCase):
         self.assertEqual(hostile_payload["event_type"], "unknown")
         self.assertNotIn("raw output", str(hostile_payload))
 
+    def test_model_execute_event_redacts_provider_instructions(self) -> None:
+        draft = sanitize_raw_task_event(
+            Event(
+                type=EventType.MODEL_EXECUTE_BEFORE,
+                payload={
+                    "name": "model-a",
+                    "status": "started",
+                    "instructions": "private instructions",
+                    "system_prompt": "private system",
+                    "developer_prompt": "private developer",
+                },
+            ),
+            PrivacySanitizer(),
+        )
+
+        payload = cast(dict[str, object], draft.payload)
+        self.assertEqual(draft.category, TaskEventCategory.MODEL)
+        self.assertEqual(payload["event_type"], "model_execute_before")
+        self.assertEqual(payload["name"], "model-a")
+        self.assertEqual(payload["status"], "started")
+        self.assertNotIn("private instructions", str(payload))
+        self.assertNotIn("private system", str(payload))
+        self.assertNotIn("private developer", str(payload))
+
     def test_task_event_values_are_frozen_and_reject_unsafe_values(
         self,
     ) -> None:

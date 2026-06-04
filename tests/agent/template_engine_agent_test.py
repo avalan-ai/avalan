@@ -151,6 +151,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         result = self.agent._prepare_call(context)
 
         self.assertEqual(spec.instructions, "provider-only")
+        self.assertEqual(result["instructions"], "provider-only")
         self.assertIn("goal", result["system_prompt"])
         self.assertNotIn("provider-only", result["system_prompt"])
 
@@ -166,6 +167,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         result = self.agent._prepare_call(context)
 
         self.assertIn("using JSON", result["system_prompt"])
+        self.assertEqual(result["instructions"], "provider-only")
         self.assertNotIn("provider-only", result["system_prompt"])
 
     def test_prepare_call_goal_none(self):
@@ -188,9 +190,15 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
         self.assertEqual(result["system_prompt"], expected_prompt)
 
     def test_prepare_call_system_prompt(self):
-        spec = Specification(role=None, goal=None, system_prompt="sys")
+        spec = Specification(
+            role=None,
+            goal=None,
+            instructions="provider",
+            system_prompt="sys",
+        )
         context = ModelCallContext(specification=spec, input="hi")
         result = self.agent._prepare_call(context)
+        self.assertEqual(result["instructions"], "provider")
         self.assertEqual(result["system_prompt"], "sys")
 
     def test_prepare_call_system_prompt_with_developer_prompt(self) -> None:

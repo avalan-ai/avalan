@@ -152,6 +152,22 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(prompt, "decoded")
 
+    def test_prompt_forwards_instructions(self):
+        model = self._make_model()
+        model._tokenizer = MagicMock(spec=PreTrainedTokenizerFast)
+        model._tokenizer.decode.return_value = "decoded"
+
+        with patch.object(
+            TextGenerationModel,
+            "_tokenize_input",
+            return_value={"input_ids": [[1, 2]]},
+        ) as tok:
+            prompt = model._prompt("hello", "sys", instructions="provider")
+
+        tok.assert_called_once()
+        self.assertEqual(tok.call_args.kwargs["instructions"], "provider")
+        self.assertEqual(prompt, "decoded")
+
     async def test_stream_generator(self):
         model = self._make_model()
         model._model = MagicMock()

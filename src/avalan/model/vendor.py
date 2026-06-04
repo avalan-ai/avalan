@@ -31,6 +31,7 @@ class TextGenerationVendor(ABC):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream | AsyncIterator[Token | TokenDetail | str]:

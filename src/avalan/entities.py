@@ -767,6 +767,7 @@ class OperationAudioParameters:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class OperationTextParameters:
     context: str | None = None
+    instructions: str | None = None
     labeled_only: bool | None = None
     language_destination: str | None = None
     language_source: str | None = None
@@ -783,6 +784,7 @@ class OperationTextParameters:
 class OperationVisionParameters:
     path: str
     reference_path: str | None = None
+    instructions: str | None = None
     negative_prompt: str | None = None
     height: int | None = None
     downscale: float | None = 2 / 3

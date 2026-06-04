@@ -184,6 +184,25 @@ class TextGenerationModelMethodsTestCase(TestCase):
         )
         self.assertEqual(count, 3)
 
+    def test_input_token_count_forwards_instructions(self):
+        self.model._tokenizer = MagicMock()
+        self.model._loaded_tokenizer = True
+        with patch.object(
+            TextGenerationModel,
+            "_tokenize_input",
+            return_value={"input_ids": tensor([[1, 2]])},
+        ) as tok:
+            count = self.model.input_token_count("hi", instructions="inst")
+
+        tok.assert_called_once_with(
+            "hi",
+            instructions="inst",
+            system_prompt=None,
+            developer_prompt=None,
+            context=None,
+        )
+        self.assertEqual(count, 2)
+
     def test_save_tokenizer(self):
         path = "/tmp/tok"
         tokenizer = MagicMock(spec=PreTrainedTokenizerFast)

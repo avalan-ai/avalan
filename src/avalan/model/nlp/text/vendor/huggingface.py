@@ -41,9 +41,11 @@ class HuggingfaceClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
+        _ = instructions
         settings = settings or GenerationSettings()
         template_messages = cast(
             list[dict[str, Any]], self._template_messages(messages)

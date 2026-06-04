@@ -201,11 +201,19 @@ class ChatEntitiesTestCase(TestCase):
         self.assertEqual(req.text.format.type, "json_object")
 
     def test_responses_request_accepts_string_input(self) -> None:
-        req = ResponsesRequest(input="summarize this")
+        req = ResponsesRequest(
+            input="summarize this",
+            instructions="top-level guidance",
+        )
 
+        self.assertEqual(req.instructions, "top-level guidance")
         self.assertEqual(len(req.messages), 1)
         self.assertEqual(req.messages[0].role, MessageRole.USER)
         self.assertEqual(req.messages[0].content, "summarize this")
+
+    def test_responses_request_rejects_non_string_instructions(self) -> None:
+        with self.assertRaises(ValidationError):
+            ResponsesRequest(input="hi", instructions={"raw": "prompt"})
 
     def test_responses_request_rejects_invalid_input_shape(self) -> None:
         with self.assertRaises(ValidationError):

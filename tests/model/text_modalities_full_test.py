@@ -439,6 +439,7 @@ def test_text_generation_load_engine_default(
 def test_text_generation_get_operation_from_arguments() -> None:
     args = Namespace(
         display_tokens=5,
+        instructions="provider",
         stop_on_keyword=["STOP"],
         quiet=True,
         skip_special_tokens=False,
@@ -455,6 +456,7 @@ def test_text_generation_get_operation_from_arguments() -> None:
     assert text_params.pick_tokens == 10
     assert text_params.skip_special_tokens is True
     assert text_params.stop_on_keywords == ["STOP"]
+    assert text_params.instructions == "provider"
     assert text_params.system_prompt == "sys"
     assert text_params.developer_prompt == "dev"
     assert operation.input == "question"
@@ -601,6 +603,35 @@ def test_text_generation_call_ds4_branch_avoids_tokenizer_kwargs(
     assert kwargs["tool"] is tool
 
 
+def test_text_generation_call_ds4_branch_forwards_instructions(
+    local_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class DummyDs4Model(DummyModel):
+        pass
+
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_mlx_model",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_ds4_model",
+        lambda: DummyDs4Model,
+    )
+    modality = TextGenerationModality()
+    model = DummyDs4Model()
+    operation = make_operation(
+        modality=Modality.TEXT_GENERATION,
+        text_params=OperationTextParameters(instructions="provider"),
+    )
+
+    result = run(modality(local_engine_uri, model, operation))
+
+    assert result == "result"
+    assert len(model.calls) == 1
+    _, kwargs = model.calls[0]
+    assert kwargs["instructions"] == "provider"
+
+
 def test_text_generation_call_remote_does_not_probe_mlx(
     remote_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -641,6 +672,32 @@ def test_text_generation_call_remote_does_not_probe_mlx(
         "tool",
     }
     assert kwargs["tool"] is tool
+
+
+def test_text_generation_call_remote_forwards_instructions(
+    remote_engine_uri: EngineUri, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_mlx_model",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "avalan.model.modalities.text._get_ds4_model",
+        lambda: None,
+    )
+    modality = TextGenerationModality()
+    model = DummyModel()
+    operation = make_operation(
+        modality=Modality.TEXT_GENERATION,
+        text_params=OperationTextParameters(instructions="provider"),
+    )
+
+    result = run(modality(remote_engine_uri, model, operation))
+
+    assert result == "result"
+    assert len(model.calls) == 1
+    _, kwargs = model.calls[0]
+    assert kwargs["instructions"] == "provider"
 
 
 def test_text_question_answering_load_engine_local(

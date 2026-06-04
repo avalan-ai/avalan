@@ -234,6 +234,7 @@ class VisionImageTextToTextModality:
         parameters = OperationParameters(
             vision=OperationVisionParameters(
                 path=args.path,
+                instructions=getattr(args, "instructions", None) or None,
                 system_prompt=args.system or None,
                 developer_prompt=getattr(args, "developer", None) or None,
                 width=getattr(
@@ -263,13 +264,24 @@ class VisionImageTextToTextModality:
             and operation.parameters["vision"].path
         )
 
+        vision_params = operation.parameters["vision"]
+        if vision_params.instructions is not None:
+            return await model(
+                vision_params.path,
+                operation.input,
+                instructions=vision_params.instructions,
+                system_prompt=vision_params.system_prompt,
+                developer_prompt=vision_params.developer_prompt,
+                settings=operation.generation_settings,
+                width=vision_params.width,
+            )
         return await model(
-            operation.parameters["vision"].path,
+            vision_params.path,
             operation.input,
-            system_prompt=operation.parameters["vision"].system_prompt,
-            developer_prompt=operation.parameters["vision"].developer_prompt,
+            system_prompt=vision_params.system_prompt,
+            developer_prompt=vision_params.developer_prompt,
             settings=operation.generation_settings,
-            width=operation.parameters["vision"].width,
+            width=vision_params.width,
         )
 
 

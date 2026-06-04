@@ -170,6 +170,28 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         StreamMock.assert_called_once_with(stream=stream_instance)
         self.assertIs(result, StreamMock.return_value)
 
+    async def test_client_sends_top_level_instructions(self):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=response
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        message = Message(role=MessageRole.USER, content="hi")
+
+        await client(
+            "m",
+            [message],
+            instructions="top-level",
+            use_async_generator=False,
+        )
+
+        kwargs = client._client.responses.create.await_args.kwargs
+        self.assertEqual(kwargs["instructions"], "top-level")
+        self.assertEqual(kwargs["input"], [{"role": "user", "content": "hi"}])
+        self.assertNotIn("top-level", str(kwargs["input"]))
+
     async def test_client_consumes_tokens(self):
         chunks = [
             SimpleNamespace(type="response.output_text.delta", delta="a"),

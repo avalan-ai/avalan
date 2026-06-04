@@ -97,7 +97,14 @@ async def orchestrate(
         ),
     )
 
-    response = await orchestrator(messages, settings=settings)
+    call_kwargs: dict[str, object] = {"settings": settings}
+    if (
+        isinstance(request, ResponsesRequest)
+        and request.instructions is not None
+    ):
+        call_kwargs["instructions"] = request.instructions
+
+    response = await orchestrator(messages, **call_kwargs)
     return response, str(response_id), timestamp
 
 

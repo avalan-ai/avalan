@@ -320,6 +320,7 @@ class TextGenerationModality:
                 ),
                 stop_on_keywords=args.stop_on_keyword,
                 skip_special_tokens=args.quiet or args.skip_special_tokens,
+                instructions=getattr(args, "instructions", None) or None,
                 system_prompt=args.system or None,
                 developer_prompt=getattr(args, "developer", None) or None,
             )
@@ -345,38 +346,73 @@ class TextGenerationModality:
         ds4_model = _get_ds4_model() if engine_uri.is_local else None
         is_mlx = mlx_model is not None and isinstance(model, mlx_model)
         is_ds4 = ds4_model is not None and isinstance(model, ds4_model)
+        text_params = operation.parameters["text"]
         if engine_uri.is_local and not is_mlx and not is_ds4:
             criteria = _stopping_criteria(operation, model)
+            if text_params.instructions is not None:
+                return await model(
+                    operation.input,
+                    instructions=text_params.instructions,
+                    system_prompt=text_params.system_prompt,
+                    developer_prompt=text_params.developer_prompt,
+                    settings=(
+                        operation.generation_settings or GenerationSettings()
+                    ),
+                    stopping_criterias=[criteria] if criteria else None,
+                    manual_sampling=text_params.manual_sampling or False,
+                    pick=text_params.pick_tokens,
+                    skip_special_tokens=(
+                        text_params.skip_special_tokens or False
+                    ),
+                    tool=tool,
+                )
             return await model(
                 operation.input,
-                system_prompt=operation.parameters["text"].system_prompt,
-                developer_prompt=operation.parameters["text"].developer_prompt,
+                system_prompt=text_params.system_prompt,
+                developer_prompt=text_params.developer_prompt,
                 settings=operation.generation_settings or GenerationSettings(),
                 stopping_criterias=[criteria] if criteria else None,
-                manual_sampling=operation.parameters["text"].manual_sampling
-                or False,
-                pick=operation.parameters["text"].pick_tokens,
-                skip_special_tokens=operation.parameters[
-                    "text"
-                ].skip_special_tokens
-                or False,
+                manual_sampling=text_params.manual_sampling or False,
+                pick=text_params.pick_tokens,
+                skip_special_tokens=text_params.skip_special_tokens or False,
                 tool=tool,
             )
         if is_ds4:
+            if text_params.instructions is not None:
+                return await model(
+                    operation.input,
+                    instructions=text_params.instructions,
+                    system_prompt=text_params.system_prompt,
+                    developer_prompt=text_params.developer_prompt,
+                    settings=(
+                        operation.generation_settings or GenerationSettings()
+                    ),
+                    manual_sampling=text_params.manual_sampling or False,
+                    pick=text_params.pick_tokens,
+                    tool=tool,
+                )
             return await model(
                 operation.input,
-                system_prompt=operation.parameters["text"].system_prompt,
-                developer_prompt=operation.parameters["text"].developer_prompt,
+                system_prompt=text_params.system_prompt,
+                developer_prompt=text_params.developer_prompt,
                 settings=operation.generation_settings or GenerationSettings(),
-                manual_sampling=operation.parameters["text"].manual_sampling
-                or False,
-                pick=operation.parameters["text"].pick_tokens,
+                manual_sampling=text_params.manual_sampling or False,
+                pick=text_params.pick_tokens,
+                tool=tool,
+            )
+        if text_params.instructions is not None:
+            return await model(
+                operation.input,
+                instructions=text_params.instructions,
+                system_prompt=text_params.system_prompt,
+                developer_prompt=text_params.developer_prompt,
+                settings=operation.generation_settings or GenerationSettings(),
                 tool=tool,
             )
         return await model(
             operation.input,
-            system_prompt=operation.parameters["text"].system_prompt,
-            developer_prompt=operation.parameters["text"].developer_prompt,
+            system_prompt=text_params.system_prompt,
+            developer_prompt=text_params.developer_prompt,
             settings=operation.generation_settings or GenerationSettings(),
             tool=tool,
         )

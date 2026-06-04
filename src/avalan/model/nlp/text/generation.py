@@ -226,6 +226,7 @@ class TextGenerationModel(BaseNLPModel):
         settings: GenerationSettings | None = None,
         stopping_criterias: list[StoppingCriteria] | None = None,
         *,
+        instructions: str | None = None,
         manual_sampling: bool = False,
         pick: int | None = None,
         skip_special_tokens: bool = False,
@@ -278,14 +279,25 @@ class TextGenerationModel(BaseNLPModel):
                 else self._tokenizer.eos_token_id
             ),
         )
-        inputs = self._tokenize_input(
-            input,
-            system_prompt,
-            developer_prompt,
-            context=None,
-            tool=tool,
-            chat_template_settings=asdict(settings.chat_settings),
-        )
+        if instructions is not None:
+            inputs = self._tokenize_input(
+                input,
+                instructions=instructions,
+                system_prompt=system_prompt,
+                developer_prompt=developer_prompt,
+                context=None,
+                tool=tool,
+                chat_template_settings=asdict(settings.chat_settings),
+            )
+        else:
+            inputs = self._tokenize_input(
+                input,
+                system_prompt,
+                developer_prompt,
+                context=None,
+                tool=tool,
+                chat_template_settings=asdict(settings.chat_settings),
+            )
         return TextGenerationResponse(
             output_fn,
             inputs=inputs,
@@ -549,6 +561,7 @@ class TextGenerationModel(BaseNLPModel):
         chat_template: str | None = None,
         chat_template_settings: dict[str, object] | None = None,
         tool: ToolManager | None = None,
+        instructions: str | None = None,
     ) -> dict[str, Tensor] | BatchEncoding | Tensor:
         _l = self._log
         messages = self._messages(input, system_prompt, developer_prompt, tool)
@@ -620,7 +633,8 @@ class TextGenerationModel(BaseNLPModel):
         if not has_chat_template:
             _l("Model does not support template messages, so staying plain")
 
-            prompt = f"{system_prompt}\n\n" or ""
+            prompt = f"{instructions}\n\n" if instructions else ""
+            prompt += f"{system_prompt}\n\n" or ""
             use_prefix = not any(
                 tm["role"] == MessageRole.USER for tm in template_messages
             )

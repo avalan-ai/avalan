@@ -54,9 +54,11 @@ class OllamaClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
+        _ = instructions
         template_messages = self._template_messages(messages)
         if use_async_generator:
             stream = await self._client.chat(

@@ -263,6 +263,7 @@ class ResponsesRequest(BaseModel):
             " omitted, use the server's configured model."
         ),
     )
+    instructions: str | None = None
     input: ResponsesInput = Field(...)
     temperature: float | None = 1.0
     top_p: float | None = 1.0

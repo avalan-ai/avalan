@@ -122,17 +122,19 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         input: Input,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
+        *,
+        instructions: str | None = None,
     ) -> int:
         encoding = self._resolve_encoding(
             self._model_id or self._TIKTOKEN_DEFAULT_MODEL,
             self._TIKTOKEN_DEFAULT_MODEL,
         )
 
-        messages = self._messages(
-            input, system_prompt, developer_prompt, tool=None
-        )
+        messages = self._messages(input, system_prompt, developer_prompt)
 
         total_tokens = 0
+        if instructions:
+            total_tokens += len(encoding.encode(instructions))
         for message in messages:
             if isinstance(message.content, str):
                 content = message.content
@@ -148,14 +150,19 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         messages = self._messages(input, system_prompt, developer_prompt, tool)
         gen_settings = settings or GenerationSettings()
+        instruction_kwargs: dict[str, str] = (
+            {"instructions": instructions} if instructions is not None else {}
+        )
         streamer = await self._model(
             self._model_id,
             messages,
             gen_settings,
+            **instruction_kwargs,
             tool=tool,
             use_async_generator=gen_settings.use_async_generator,
         )

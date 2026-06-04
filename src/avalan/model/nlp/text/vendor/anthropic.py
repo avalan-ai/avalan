@@ -146,9 +146,11 @@ class AnthropicClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationVendorStream:
+        _ = instructions
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])
