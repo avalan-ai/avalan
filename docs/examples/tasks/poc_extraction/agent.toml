@@ -1,50 +1,43 @@
 [agent]
 name = "Invoice Extraction"
 role = "invoice_extraction_agent"
-task = "Extract invoice line items from a directly attached PDF."
-system = """
-You are a check invoice data extraction specialist. Review the attached
-check invoice PDF and extract one JSON object that matches the configured
-schema.
+instructions = """
+You are an invoice data extraction specialist. Review the attached synthetic
+invoice PDF and extract one JSON object that matches the configured schema.
 
-Data to extract from the check or document metadata:
+Data to extract from the invoice header:
 
-* Payor name
-* Payor address
-* Check date
-* Check number
-* Gross check amount or net amount
-* Court location
+* Vendor name
+* Vendor address
+* Customer name
+* Customer address
+* Invoice number
+* Invoice date
+* Due date
+* Purchase order number
+* Invoice currency
+* Invoice total amount
 
 Data to extract from each line item:
 
-* Debtor first, middle, and last name
-* Item amount
-* Judgment case number
-* Court case number
-* Judgment amount
-* Debtor social or partial social
-* Debtor date of birth
+* Line number
+* Description
+* Quantity
+* Unit price
+* Line amount
+* Tax amount
 * Notes
-* Withholding date
-* Employer name
-* Employer FEIN
-* Voucher or transaction id
-* Payroll number
-* Account number
 
 Formatting rules:
 
 * Convert dates to MM/DD/YYYY.
-* Reuse the single check date for every line item when only one check date is
-  printed.
 * Omit currency symbols from amount fields.
-* Use two-letter US state abbreviations.
+* Use ISO 4217 currency codes.
 * Flatten multiline addresses into one comma-separated line.
 * Leave absent values as empty strings.
-* Extract one line_items entry per detail row, not one entry per summary row.
+* Extract one line_items entry per invoice detail row.
 """
-user = "Analyze the attached synthetic invoice PDF and extract all data according to the system instructions."
+user = "Analyze the attached synthetic invoice PDF and extract all data according to the extraction instructions."
 
 [engine]
 uri = "ai://env:AZURE_OPENAI_API_KEY@openai/invoice-extraction-sample"
@@ -61,3 +54,6 @@ type = "json_schema"
 name = "invoice_extraction"
 strict = true
 schema_ref = "invoice.schema.json"
+
+[tool]
+enable = []

@@ -1455,6 +1455,17 @@ class CliTaskCommandShellTestCase(TestCase):
                 self.assertEqual(stream.getvalue(), expected)
                 self.assertEqual(written, expected)
                 self.assertEqual(len(settings_values), 1)
+                settings = settings_values[0]
+                agent_config = settings.agent_config
+                self.assertIsInstance(agent_config, Mapping)
+                self.assertIn("instructions", agent_config)
+                self.assertNotIn("system", agent_config)
+                self.assertNotIn("task", agent_config)
+                self.assertEqual(settings.tools, [])
+                call_options = settings.call_options
+                self.assertIsInstance(call_options, Mapping)
+                self.assertNotIn("tools", call_options)
+                self.assertNotIn("tool_choice", call_options)
                 self.assertEqual(
                     orchestrator.reasoning_options,
                     [{"effort": "high"}],

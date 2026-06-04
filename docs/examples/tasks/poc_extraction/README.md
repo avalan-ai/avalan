@@ -2,8 +2,9 @@
 
 This directory contains a sanitized direct task fixture for extracting
 invoice line items from one PDF. The task owns the input and output
-contract, and the agent owns the system prompt, user prefix, reasoning effort,
-file delivery profile, and structured output format.
+contract, and the agent owns the provider instructions, user prefix, reasoning
+effort, file delivery profile, disabled tool selection, and structured output
+format.
 
 Default tracked command:
 

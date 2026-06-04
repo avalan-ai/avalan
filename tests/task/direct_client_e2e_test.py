@@ -959,10 +959,20 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(len(orchestrator.inputs), 1)
         self.assertEqual(len(settings_values), 1)
         settings = cast(Any, settings_values[-1])
+        agent_config = settings.agent_config
+        self.assertIsInstance(agent_config, Mapping)
+        self.assertIn("instructions", agent_config)
+        self.assertNotIn("system", agent_config)
+        self.assertNotIn("task", agent_config)
+        self.assertEqual(settings.tools, [])
         self.assertEqual(
             settings.engine_config["base_url"],
             "https://tenant.openai.azure.com/openai/v1/",
         )
+        call_options = settings.call_options
+        self.assertIsInstance(call_options, Mapping)
+        self.assertNotIn("tools", call_options)
+        self.assertNotIn("tool_choice", call_options)
         self.assertEqual(
             orchestrator.reasoning_options[-1],
             {"effort": "high"},
@@ -994,7 +1004,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(
             text_blocks[0].text,
             "Analyze the attached synthetic invoice PDF and "
-            "extract all data according to the system instructions.",
+            "extract all data according to the extraction instructions.",
         )
         self.assertEqual(file_blocks[0].file["mime_type"], "application/pdf")
         self.assertEqual(
@@ -1150,6 +1160,17 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(direct_result.output, output)
         self.assertEqual(flow_result.output, output)
         self.assertEqual(len(settings_values), 2)
+        for settings in settings_values:
+            agent_config = settings.agent_config
+            self.assertIsInstance(agent_config, Mapping)
+            self.assertIn("instructions", agent_config)
+            self.assertNotIn("system", agent_config)
+            self.assertNotIn("task", agent_config)
+            self.assertEqual(settings.tools, [])
+            call_options = settings.call_options
+            self.assertIsInstance(call_options, Mapping)
+            self.assertNotIn("tools", call_options)
+            self.assertNotIn("tool_choice", call_options)
         self.assertEqual(
             [
                 settings.engine_config["base_url"]

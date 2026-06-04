@@ -1,6 +1,7 @@
 from argparse import Namespace
 from asyncio import run as asyncio_run
 from base64 import b64decode
+from collections.abc import Mapping
 from io import StringIO
 from json import dumps
 from pathlib import Path
@@ -326,6 +327,7 @@ class FlowRunCommandTestCase(TestCase):
         stream = StringIO()
         console = Console(file=stream, width=160)
         orchestrator = _FlowCliAgentOrchestrator(output)
+        settings_values: list[Any] = []
 
         async def from_settings(
             loader: object,
@@ -337,6 +339,7 @@ class FlowRunCommandTestCase(TestCase):
             _ = loader, tool_settings, tool_format
             call_options = cast(Any, settings).call_options
             orchestrator.reasoning_options.append(call_options["reasoning"])
+            settings_values.append(settings)
             return orchestrator
 
         with (
@@ -359,6 +362,18 @@ class FlowRunCommandTestCase(TestCase):
 
         self.assertTrue(result)
         self.assertEqual(stream.getvalue(), expected)
+        self.assertEqual(len(settings_values), 1)
+        settings = settings_values[0]
+        agent_config = settings.agent_config
+        self.assertIsInstance(agent_config, Mapping)
+        self.assertIn("instructions", agent_config)
+        self.assertNotIn("system", agent_config)
+        self.assertNotIn("task", agent_config)
+        self.assertEqual(settings.tools, [])
+        call_options = settings.call_options
+        self.assertIsInstance(call_options, Mapping)
+        self.assertNotIn("tools", call_options)
+        self.assertNotIn("tool_choice", call_options)
         self.assertEqual(orchestrator.reasoning_options, [{"effort": "high"}])
         self.assertEqual(len(orchestrator.inputs), 1)
         message = orchestrator.inputs[0]
