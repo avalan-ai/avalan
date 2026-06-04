@@ -81,7 +81,9 @@ class TaskInputTest(TestCase):
             ],
         )
 
-    def test_provider_reference_summary_omits_raw_handle(self) -> None:
+    def test_provider_reference_summary_omits_private_identifiers(
+        self,
+    ) -> None:
         expires_at = datetime.now(UTC) + timedelta(hours=1)
         reference = TaskProviderReference(
             kind=TaskProviderReferenceKind.HOSTED_URL,
@@ -101,17 +103,19 @@ class TaskInputTest(TestCase):
 
         self.assertEqual(summary["kind"], "hosted_url")
         self.assertEqual(summary["provider"], "anthropic")
-        self.assertEqual(summary["owner_scope"], "tenant-a")
+        self.assertEqual(summary["owner_scope"], {"privacy": "<redacted>"})
         self.assertEqual(summary["metadata"], {"privacy": "<redacted>"})
         self.assertNotIn("reference", summary)
         self.assertEqual(
             execution_metadata["reference"],
             "https://private.example.test/raw",
         )
+        self.assertEqual(execution_metadata["owner_scope"], "tenant-a")
         self.assertFalse(reference.durable_for_queue)
         self.assertFalse(reference.is_expired(datetime.now(UTC)))
         self.assertNotIn("private.example", str(summary))
         self.assertNotIn("private.pdf", str(summary))
+        self.assertNotIn("tenant-a", str(summary))
 
     def test_input_file_summary_redacts_private_logical_path(self) -> None:
         private_file = TaskInputFile(

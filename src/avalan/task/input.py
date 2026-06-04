@@ -105,6 +105,8 @@ class TaskProviderReference:
     def summary(self) -> Mapping[str, object]:
         value = dict(self.execution_metadata())
         value.pop("reference", None)
+        if "owner_scope" in value:
+            value["owner_scope"] = _REDACTED_METADATA_SUMMARY
         if "metadata" in value:
             value["metadata"] = _REDACTED_METADATA_SUMMARY
         return MappingProxyType(value)
