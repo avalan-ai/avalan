@@ -164,7 +164,7 @@ def test_request_metadata_is_immutable() -> None:
         cast(dict[str, object], request.metadata)["provider_file_id"] = "x"
 
 
-def test_plan_delivery_prefers_provider_references() -> None:
+def test_plan_delivery_ignores_legacy_provider_reference_metadata() -> None:
     openai = resolve_file_delivery_profile("ai://env:KEY@openai/gpt-4o")
     google = resolve_file_delivery_profile("ai://env:KEY@google/gemini")
 
@@ -178,27 +178,36 @@ def test_plan_delivery_prefers_provider_references() -> None:
             },
         ),
     )
-    url_decision = openai.plan_delivery(
+    url_decision = google.plan_delivery(
         FileDeliveryRequest(
             metadata={"provider_file_url": "https://example.test/file"}
         )
     )
     uri_decision = google.plan_delivery(
-        FileDeliveryRequest(metadata={"provider_uri": "gs://bucket/object"})
+        FileDeliveryRequest(
+            mime_type="application/pdf",
+            size_bytes=12,
+            has_artifact=True,
+            metadata={"provider_uri": "gs://bucket/object"},
+        )
     )
 
-    assert id_decision == FileDeliveryDecision(
-        mode=FileDeliveryMode.PROVIDER_FILE_ID,
-        reference="file-1",
+    assert id_decision.mode == FileDeliveryMode.REJECT
+    assert id_decision.diagnostic is not None
+    assert (
+        id_decision.diagnostic.code
+        == "model.file_delivery.no_supported_delivery_mode"
     )
-    assert not id_decision.needs_artifact_read
-    assert url_decision == FileDeliveryDecision(
-        mode=FileDeliveryMode.HOSTED_URL,
-        reference="https://example.test/file",
+    assert "file-1" not in str(id_decision)
+    assert url_decision.mode == FileDeliveryMode.REJECT
+    assert url_decision.diagnostic is not None
+    assert (
+        url_decision.diagnostic.code
+        == "model.file_delivery.no_supported_delivery_mode"
     )
+    assert "example.test" not in str(url_decision)
     assert uri_decision == FileDeliveryDecision(
-        mode=FileDeliveryMode.OBJECT_STORE_URI,
-        reference="gs://bucket/object",
+        mode=FileDeliveryMode.INLINE_BYTES
     )
 
 
@@ -341,7 +350,15 @@ def test_fake_profiles_cover_delivery_shapes() -> None:
 
     assert (
         id_only.plan_delivery(
-            FileDeliveryRequest(metadata={"provider_file_id": "file-1"})
+            FileDeliveryRequest(
+                metadata={
+                    "provider_reference": {
+                        "kind": "provider_file_id",
+                        "provider": "id_only",
+                        "reference": "file-1",
+                    }
+                }
+            )
         ).mode
         == FileDeliveryMode.PROVIDER_FILE_ID
     )
@@ -356,7 +373,15 @@ def test_fake_profiles_cover_delivery_shapes() -> None:
     )
     assert (
         object_store_only.plan_delivery(
-            FileDeliveryRequest(metadata={"provider_uri": "s3://bucket/key"})
+            FileDeliveryRequest(
+                metadata={
+                    "provider_reference": {
+                        "kind": "object_store_uri",
+                        "provider": "object_store_only",
+                        "reference": "s3://bucket/key",
+                    }
+                }
+            )
         ).mode
         == FileDeliveryMode.OBJECT_STORE_URI
     )
@@ -395,7 +420,13 @@ def test_plan_delivery_rejects_unsupported_profiles_and_inputs() -> None:
     unsupported_uri = bedrock.plan_delivery(
         FileDeliveryRequest(
             mime_type="text/plain",
-            metadata={"provider_uri": "gs://bucket/object"},
+            metadata={
+                "provider_reference": {
+                    "kind": "object_store_uri",
+                    "provider": "bedrock",
+                    "reference": "gs://bucket/object",
+                }
+            },
         )
     )
     no_mode = local_text.plan_delivery(
@@ -442,6 +473,14 @@ def test_plan_delivery_rejects_unsupported_profiles_and_inputs() -> None:
                     "kind": "object_store_uri",
                     "provider": "bedrock",
                 },
+                "provider_uri": "s3://bucket/object",
+            }
+        )
+    )
+    legacy_reference_metadata = bedrock.plan_delivery(
+        FileDeliveryRequest(
+            metadata={
+                "provider_file_id": "file-secret",
                 "provider_uri": "s3://bucket/object",
             }
         )
@@ -522,7 +561,18 @@ def test_plan_delivery_rejects_unsupported_profiles_and_inputs() -> None:
         unsupported_reference_uri.diagnostic.code
         == "model.file_delivery.unsupported_object_store_uri"
     )
-    assert invalid_reference_metadata.mode == FileDeliveryMode.OBJECT_STORE_URI
+    assert invalid_reference_metadata.diagnostic is not None
+    assert (
+        invalid_reference_metadata.diagnostic.code
+        == "model.file_delivery.no_supported_delivery_mode"
+    )
+    assert legacy_reference_metadata.diagnostic is not None
+    assert (
+        legacy_reference_metadata.diagnostic.code
+        == "model.file_delivery.no_supported_delivery_mode"
+    )
+    assert "file-secret" not in str(legacy_reference_metadata)
+    assert "bucket/object" not in str(legacy_reference_metadata)
     assert unsupported_source_kind.diagnostic is not None
     assert (
         unsupported_source_kind.diagnostic.code

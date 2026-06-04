@@ -176,11 +176,25 @@ async def plan_task_file_delivery(
 
 def _delivery_metadata(file: TaskInputFile) -> Mapping[str, object]:
     if file.provider_reference is None:
-        return file.metadata
+        return _metadata_without_provider_reference(file.metadata)
     return MappingProxyType(
         {
             **file.metadata,
             "provider_reference": file.provider_reference.execution_metadata(),
+        }
+    )
+
+
+def _metadata_without_provider_reference(
+    metadata: Mapping[str, object],
+) -> Mapping[str, object]:
+    if "provider_reference" not in metadata:
+        return metadata
+    return MappingProxyType(
+        {
+            key: value
+            for key, value in metadata.items()
+            if key != "provider_reference"
         }
     )
 
@@ -302,15 +316,7 @@ def _reference_delivery_decision(
 
 
 def _has_reference_metadata(metadata: Mapping[str, object]) -> bool:
-    return any(
-        key in metadata
-        for key in (
-            "provider_file_id",
-            "provider_file_url",
-            "provider_uri",
-            "provider_reference",
-        )
-    )
+    return "provider_reference" in metadata
 
 
 def _requires_mime_rejection(

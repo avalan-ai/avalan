@@ -60,9 +60,13 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
             TaskInputFile(
                 logical_path="provider:file",
                 artifact_ref=_artifact_ref(size_bytes=4),
+                provider_reference=TaskProviderReference(
+                    kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    provider="test",
+                    reference="file-test",
+                ),
                 media_type="text/plain",
                 size_bytes=4,
-                metadata={"provider_file_id": "file-test"},
             ),
             profile=_profile(
                 FileDeliveryMode.PROVIDER_FILE_ID,
@@ -77,6 +81,49 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
         self.assertEqual(plan.decision.reference, "file-test")
         self.assertEqual(store.stat_count, 0)
         self.assertEqual(store.open_count, 0)
+
+    async def test_legacy_reference_metadata_is_not_executable(self) -> None:
+        legacy_plan = await plan_task_file_delivery(
+            _definition(artifact_max_bytes=None),
+            TaskInputFile(
+                logical_path="provider:file",
+                media_type="application/pdf",
+                metadata={"provider_file_id": "file-private"},
+            ),
+            profile=_profile(FileDeliveryMode.PROVIDER_FILE_ID),
+        )
+        metadata_plan = await plan_task_file_delivery(
+            _definition(artifact_max_bytes=None),
+            TaskInputFile(
+                logical_path="provider:file",
+                media_type="application/pdf",
+                metadata={
+                    "provider_reference": {
+                        "kind": "provider_file_id",
+                        "provider": "test",
+                        "reference": "file-private",
+                    }
+                },
+            ),
+            profile=_profile(FileDeliveryMode.PROVIDER_FILE_ID),
+        )
+
+        self.assertEqual(legacy_plan.decision.mode, FileDeliveryMode.REJECT)
+        self.assertIsNotNone(legacy_plan.decision.diagnostic)
+        assert legacy_plan.decision.diagnostic is not None
+        self.assertEqual(
+            legacy_plan.decision.diagnostic.code,
+            "task.file_delivery.rejected",
+        )
+        self.assertNotIn("file-private", str(legacy_plan.decision))
+        self.assertEqual(metadata_plan.decision.mode, FileDeliveryMode.REJECT)
+        self.assertIsNotNone(metadata_plan.decision.diagnostic)
+        assert metadata_plan.decision.diagnostic is not None
+        self.assertEqual(
+            metadata_plan.decision.diagnostic.code,
+            "task.file_delivery.rejected",
+        )
+        self.assertNotIn("file-private", str(metadata_plan.decision))
 
     async def test_typed_provider_reference_supplies_mime_type(self) -> None:
         plan = await plan_task_file_delivery(
@@ -135,7 +182,11 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
                 logical_path="provider:file",
                 artifact_ref=_artifact_ref(),
                 media_type="application/pdf",
-                metadata={"provider_file_id": "file-test"},
+                provider_reference=TaskProviderReference(
+                    kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    provider="test",
+                    reference="file-test",
+                ),
             ),
             profile=_profile(FileDeliveryMode.PROVIDER_FILE_ID),
             artifact_store=store,
@@ -535,7 +586,11 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
                 logical_path="provider:file",
                 media_type="application/pdf",
                 size_bytes=(100 * 1024 * 1024) + 1,
-                metadata={"provider_file_id": "file-test"},
+                provider_reference=TaskProviderReference(
+                    kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    provider="test",
+                    reference="file-test",
+                ),
             ),
             profile=_profile(FileDeliveryMode.PROVIDER_FILE_ID),
         )

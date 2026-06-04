@@ -43,6 +43,7 @@ from avalan.task import (
     TaskLimitsPolicy,
     TaskMetadata,
     TaskOutputContract,
+    TaskProviderReference,
     TaskProviderReferenceKind,
     TaskRetryPolicy,
     TaskRunState,
@@ -902,9 +903,13 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
                 input_value="summarize",
                 files=(
                     TaskInputFile(
-                        logical_path="provider:file",
+                        logical_path="provider:openai:provider_file_id",
                         media_type="application/pdf",
-                        metadata={"provider_file_id": "file-test"},
+                        provider_reference=_provider_reference(
+                            "openai",
+                            "file-test",
+                            media_type="application/pdf",
+                        ),
                     ),
                 ),
             )
@@ -958,6 +963,52 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(content[1].file["file_id"], "file-test")
         self.assertNotIn("tenant-a", str(content[1].file))
 
+    async def test_run_rejects_legacy_provider_reference_metadata(
+        self,
+    ) -> None:
+        for metadata in (
+            {"provider_file_id": "file-private"},
+            {
+                "provider_reference": {
+                    "kind": "provider_file_id",
+                    "provider": "openai",
+                    "reference": "file-private",
+                }
+            },
+        ):
+            with self.subTest(metadata=metadata):
+                loader = FakeLoader(response="accepted")
+                runner = AgentTaskTargetRunner(
+                    loader,
+                    uri="ai://env:KEY@openai/gpt-4o-mini",
+                )
+
+                with self.assertRaises(TaskValidationError) as error:
+                    await runner.run(
+                        self._context(
+                            self._definition(),
+                            "summarize",
+                            files=(
+                                TaskInputFile(
+                                    logical_path="provider:file",
+                                    media_type="application/pdf",
+                                    metadata=metadata,
+                                ),
+                            ),
+                        ),
+                    )
+
+                self.assertEqual(
+                    error.exception.issues[0].code,
+                    "input.invalid_file",
+                )
+                self.assertEqual(
+                    error.exception.issues[0].path,
+                    "input.files[0]",
+                )
+                self.assertNotIn("file-private", str(error.exception))
+                self.assertEqual(loader.inputs, [])
+
     async def test_run_rejects_expired_provider_reference(self) -> None:
         runner = AgentTaskTargetRunner(
             FakeLoader(),
@@ -1008,11 +1059,14 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
                 "summarize",
                 files=(
                     TaskInputFile(
-                        logical_path="provider:url",
+                        logical_path="provider:openai:hosted_url",
                         media_type="application/pdf",
-                        metadata={
-                            "provider_file_url": "https://example.test/file"
-                        },
+                        provider_reference=_provider_reference(
+                            "openai",
+                            "https://example.test/file",
+                            kind=TaskProviderReferenceKind.HOSTED_URL,
+                            media_type="application/pdf",
+                        ),
                     ),
                 ),
             )
@@ -1026,9 +1080,14 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
                 "summarize",
                 files=(
                     TaskInputFile(
-                        logical_path="provider:uri",
+                        logical_path="provider:google:object_store_uri",
                         media_type="application/pdf",
-                        metadata={"provider_uri": "gs://bucket/object"},
+                        provider_reference=_provider_reference(
+                            "google",
+                            "gs://bucket/object",
+                            kind=(TaskProviderReferenceKind.OBJECT_STORE_URI),
+                            media_type="application/pdf",
+                        ),
                     ),
                 ),
             )
@@ -1042,9 +1101,14 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
                 "summarize",
                 files=(
                     TaskInputFile(
-                        logical_path="provider:uri",
+                        logical_path="provider:bedrock:object_store_uri",
                         media_type="text/plain",
-                        metadata={"provider_uri": "s3://bucket/object"},
+                        provider_reference=_provider_reference(
+                            "bedrock",
+                            "s3://bucket/object",
+                            kind=(TaskProviderReferenceKind.OBJECT_STORE_URI),
+                            media_type="text/plain",
+                        ),
                     ),
                 ),
             )
@@ -1090,8 +1154,11 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
                 "summarize",
                 files=(
                     TaskInputFile(
-                        logical_path="provider:file",
-                        metadata={"provider_file_id": "file-test"},
+                        logical_path="provider:id_only:provider_file_id",
+                        provider_reference=_provider_reference(
+                            "id_only",
+                            "file-test",
+                        ),
                     ),
                 ),
             )
@@ -1732,9 +1799,16 @@ uri = "ai://local/model"
                     "summarize",
                     files=(
                         TaskInputFile(
-                            logical_path="provider:uri",
+                            logical_path="provider:bedrock:object_store_uri",
                             media_type="text/plain",
-                            metadata={"provider_uri": "gs://bucket/object"},
+                            provider_reference=_provider_reference(
+                                "bedrock",
+                                "gs://bucket/object",
+                                kind=(
+                                    TaskProviderReferenceKind.OBJECT_STORE_URI
+                                ),
+                                media_type="text/plain",
+                            ),
                         ),
                     ),
                 )
@@ -1931,12 +2005,18 @@ file_delivery_profile = "multimodal"
                     "summarize",
                     files=(
                         TaskInputFile(
-                            logical_path="provider:file",
-                            metadata={"provider_file_id": "file-test"},
+                            logical_path="provider:single:provider_file_id",
+                            provider_reference=_provider_reference(
+                                "single",
+                                "file-test",
+                            ),
                         ),
                         TaskInputFile(
-                            logical_path="provider:file-2",
-                            metadata={"provider_file_id": "file-test-2"},
+                            logical_path="provider:single:provider_file_id",
+                            provider_reference=_provider_reference(
+                                "single",
+                                "file-test-2",
+                            ),
                         ),
                     ),
                 )
@@ -2089,8 +2169,8 @@ file_delivery_profile = "multimodal"
             uri="ai://env:KEY@openai/gpt-4o-mini",
         )
         file = TaskInputFile(
-            logical_path="provider:file",
-            metadata={"provider_file_id": "file-test"},
+            logical_path="provider:openai:provider_file_id",
+            provider_reference=_provider_reference("openai", "file-test"),
         )
 
         await runner.run(
@@ -2174,8 +2254,11 @@ file_delivery_profile = "multimodal"
                 ["one", "two"],
                 files=(
                     TaskInputFile(
-                        logical_path="provider:file",
-                        metadata={"provider_file_id": "file-test"},
+                        logical_path="provider:openai:provider_file_id",
+                        provider_reference=_provider_reference(
+                            "openai",
+                            "file-test",
+                        ),
                     ),
                 ),
             )
@@ -2686,6 +2769,25 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             limits=limits or TaskLimitsPolicy(),
             retry=retry or TaskRetryPolicy(),
         )
+
+
+def _provider_reference(
+    provider: str,
+    reference: str,
+    *,
+    kind: TaskProviderReferenceKind = (
+        TaskProviderReferenceKind.PROVIDER_FILE_ID
+    ),
+    media_type: str | None = None,
+) -> TaskProviderReference:
+    descriptor = TaskFileDescriptor.provider_reference_descriptor(
+        reference,
+        kind=kind,
+        provider=provider,
+        mime_type=media_type,
+    )
+    assert descriptor.provider_reference is not None
+    return descriptor.provider_reference
 
 
 if __name__ == "__main__":

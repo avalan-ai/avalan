@@ -312,42 +312,6 @@ def plan_file_delivery(
         if decision is not None:
             return decision
 
-    provider_file_id = _metadata_string(
-        request.metadata,
-        "provider_file_id",
-    )
-    if provider_file_id is not None and profile.supports_delivery_mode(
-        FileDeliveryMode.PROVIDER_FILE_ID
-    ):
-        return FileDeliveryDecision(
-            mode=FileDeliveryMode.PROVIDER_FILE_ID,
-            reference=provider_file_id,
-        )
-
-    provider_url = _metadata_string(request.metadata, "provider_file_url")
-    if provider_url is not None and profile.supports_delivery_mode(
-        FileDeliveryMode.HOSTED_URL
-    ):
-        return FileDeliveryDecision(
-            mode=FileDeliveryMode.HOSTED_URL,
-            reference=provider_url,
-        )
-
-    provider_uri = _metadata_string(request.metadata, "provider_uri")
-    if provider_uri is not None:
-        if profile.supports_delivery_mode(
-            FileDeliveryMode.OBJECT_STORE_URI
-        ) and profile.allows_object_store_uri(provider_uri):
-            return FileDeliveryDecision(
-                mode=FileDeliveryMode.OBJECT_STORE_URI,
-                reference=provider_uri,
-            )
-        return _reject(
-            code="model.file_delivery.unsupported_object_store_uri",
-            message="Model file delivery does not accept this object URI.",
-            hint="Use an object URI scheme accepted by the target profile.",
-        )
-
     if request.has_artifact and _can_inline_bytes(profile, request):
         limit_diagnostic = _limit_diagnostic(
             request,
@@ -679,15 +643,7 @@ def _request_source_kind(request: FileDeliveryRequest) -> str | None:
 
 
 def _has_reference_metadata(metadata: Mapping[str, object]) -> bool:
-    return any(
-        key in metadata
-        for key in (
-            "provider_file_id",
-            "provider_file_url",
-            "provider_reference",
-            "provider_uri",
-        )
-    )
+    return "provider_reference" in metadata
 
 
 def _provider_reference(
