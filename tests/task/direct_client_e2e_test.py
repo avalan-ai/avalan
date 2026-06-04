@@ -550,6 +550,47 @@ class ProviderFakeResponse:
         return self.text
 
 
+class ProviderFakeClient:
+    def __init__(
+        self,
+        *,
+        reference_key: str,
+        reference: str,
+        mime_type: str,
+    ) -> None:
+        self.reference_key = reference_key
+        self.reference = reference
+        self.mime_type = mime_type
+        self.inputs: list[object] = []
+
+    async def __call__(self, input: object) -> ProviderFakeResponse:
+        self.inputs.append(input)
+        block = _only_file_block(input)
+        self._assert_generic_payload(block.file)
+        self._assert_provider_reference(block.file)
+        return ProviderFakeResponse()
+
+    def _assert_generic_payload(self, payload: Mapping[str, object]) -> None:
+        self._assert_omitted(payload, "input_file")
+        self._assert_omitted(payload, "document")
+        self._assert_omitted(payload, "inline_data")
+        self._assert_omitted(payload, "s3Location")
+
+    def _assert_provider_reference(
+        self,
+        payload: Mapping[str, object],
+    ) -> None:
+        assert payload[self.reference_key] == self.reference
+        assert payload["mime_type"] == self.mime_type
+
+    def _assert_omitted(
+        self,
+        payload: Mapping[str, object],
+        key: str,
+    ) -> None:
+        assert key not in payload
+
+
 class ProviderFakeEventManager:
     def __init__(self) -> None:
         self.listeners: list[Callable[[Event], Awaitable[None] | None]] = []
@@ -603,11 +644,17 @@ class ProviderFakeOrchestrator:
     async def __call__(self, input: object) -> ProviderFakeResponse:
         self._loader.inputs.append(input)
         await self.event_manager.emit_token()
+        if self._loader.provider_client is not None:
+            return await self._loader.provider_client(input)
         return ProviderFakeResponse()
 
 
 class ProviderFakeLoader:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        provider_client: ProviderFakeClient | None = None,
+    ) -> None:
+        self.provider_client = provider_client
         self.event_manager = ProviderFakeEventManager()
         self.paths: list[str] = []
         self.inputs: list[object] = []
@@ -719,7 +766,12 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
                     store = InMemoryTaskStore(
                         clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
                     )
-                    loader = ProviderFakeLoader()
+                    provider_client = ProviderFakeClient(
+                        reference_key=reference_key,
+                        reference=reference,
+                        mime_type=descriptor.mime_type or "text/plain",
+                    )
+                    loader = ProviderFakeLoader(provider_client)
                     client = TaskClient(
                         store,
                         target=AgentTaskTargetRunner(
@@ -751,6 +803,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
                 self.assertEqual(loader.entered, 1)
                 self.assertEqual(loader.exited, 1)
                 self.assertEqual(len(loader.inputs), 1)
+                self.assertEqual(provider_client.inputs, loader.inputs)
                 block = _only_file_block(loader.inputs[0])
                 self.assertEqual(block.file[reference_key], reference)
                 self.assertEqual(block.file["mime_type"], descriptor.mime_type)
@@ -1009,6 +1062,54 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(error_summary["code"], "input_contract.failed")
         self.assertNotIn("file-private", str(error_summary))
         self.assertNotIn("tenant-secret", str(inspection.as_dict()))
+
+    async def test_unsupported_provider_rejects_before_provider_client(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = TaskDefinitionLoader().load(
+                _write_provider_task_workspace(
+                    root,
+                    provider_uri="ai://env:KEY@unknown/model",
+                )
+            )
+            provider_client = ProviderFakeClient(
+                reference_key="file_id",
+                reference="file-private",
+                mime_type="application/pdf",
+            )
+            loader = ProviderFakeLoader(provider_client)
+            client = TaskClient(
+                InMemoryTaskStore(),
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "provider-unsupported-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            descriptor = TaskClient.provider_file_id(
+                "unknown",
+                "file-private",
+                mime_type="application/pdf",
+                owner_scope="tenant-secret",
+            )
+
+            validation = await client.validate(
+                definition,
+                input_value=descriptor,
+            )
+            with self.assertRaises(TaskValidationError) as error:
+                await client.run(definition, input_value=descriptor)
+
+        self.assertFalse(validation.valid)
+        self.assertEqual(validation.issues[0].code, "input.invalid_file")
+        self.assertEqual(validation.issues[0].path, "input.type")
+        self.assertEqual(loader.paths, [])
+        self.assertEqual(loader.inputs, [])
+        self.assertEqual(provider_client.inputs, [])
+        self.assertNotIn("file-private", str(error.exception))
+        self.assertNotIn("tenant-secret", str(error.exception))
 
     async def test_provider_reference_conversion_rejects_before_execution(
         self,
