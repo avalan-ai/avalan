@@ -52,6 +52,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from json import JSONDecodeError, dumps, loads
+from mimetypes import guess_extension
 from pathlib import Path
 from sys import maxsize
 from tomllib import TOMLDecodeError, load
@@ -674,9 +675,19 @@ def _message_file(
         payload["file_url"] = file_url
     if file_data is not None:
         payload["file_data"] = file_data
+        payload["filename"] = _message_file_name(media_type)
     if isinstance(media_type, str):
         payload["mime_type"] = media_type
     return payload
+
+
+def _message_file_name(media_type: object) -> str:
+    extension = (
+        guess_extension(media_type)
+        if isinstance(media_type, str)
+        else None
+    )
+    return f"task-file{extension or '.bin'}"
 
 
 def _message_with_content(

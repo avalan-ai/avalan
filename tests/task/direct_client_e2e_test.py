@@ -1608,6 +1608,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             b64decode(content[0].file["file_data"]),
             b"private inline bytes",
         )
+        self.assertEqual(content[0].file["filename"], "task-file.pdf")
         self.assertEqual(content[0].file["mime_type"], "application/pdf")
         self.assertEqual(content[1].file["file_id"], "file-private")
         inspection_value = str(inspection.as_dict())

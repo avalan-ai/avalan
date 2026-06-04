@@ -2130,6 +2130,7 @@ file_delivery_profile = "multimodal"
         self.assertEqual(content[0].text, "describe")
         self.assertEqual(content[1].type, "file")
         self.assertEqual(content[1].file["file_data"], "iVBORw==")
+        self.assertEqual(content[1].file["filename"], "task-file.png")
         self.assertEqual(content[1].file["mime_type"], "image/png")
 
     async def test_run_reads_inline_bytes_with_bounded_raw_limit(
@@ -3383,6 +3384,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         file_block = content[0]
         self.assertEqual(file_block.type, "file")
         self.assertEqual(file_block.file["file_data"], "cHJpdmF0ZSB0ZXh0")
+        self.assertEqual(file_block.file["filename"], "task-file.txt")
         self.assertEqual(file_block.file["mime_type"], "text/plain")
         self.assertNotIn("input.txt", str(message))
         self.assertEqual(records[0].artifact_id, "artifact-1")
