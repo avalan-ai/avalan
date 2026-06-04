@@ -154,11 +154,17 @@ _LOOP_HANDLES_SIGINT = False
 
 
 def _task_run_json_stdout(args: Namespace) -> bool:
-    return (
+    task_json = (
         getattr(args, "command", None) == "task"
         and getattr(args, "task_command", None) == "run"
         and bool(getattr(args, "task_run_json", False))
     )
+    flow_json = (
+        getattr(args, "command", None) == "flow"
+        and getattr(args, "flow_command", None) == "run"
+        and bool(getattr(args, "task_run_json", False))
+    )
+    return task_json or flow_json
 
 
 def _default_hf_cache_dir() -> str:
@@ -258,13 +264,16 @@ def _consume_task_input_field_args(
     namespace: Namespace,
     extras: list[str],
 ) -> bool:
-    if getattr(namespace, "command", None) != "task":
+    if getattr(namespace, "command", None) not in {"flow", "task"}:
         return False
-    if getattr(namespace, "task_command", None) not in {
-        "enqueue",
-        "run",
-        "validate",
-    }:
+    if getattr(namespace, "command", None) == "task":
+        if getattr(namespace, "task_command", None) not in {
+            "enqueue",
+            "run",
+            "validate",
+        }:
+            return False
+    elif getattr(namespace, "flow_command", None) != "run":
         return False
     fields: list[str] = []
     index = 0
@@ -479,6 +488,12 @@ async def deploy_run(*args: Any, **kwargs: Any) -> Any:
         _load_command("avalan.cli.commands.deploy", "deploy_run"),
     )
     return await command(*args, **kwargs)
+
+
+def flow_run(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_run")(
+        *args, **kwargs
+    )
 
 
 def task_validate(*args: Any, **kwargs: Any) -> Any:
@@ -1472,6 +1487,54 @@ class CLI:
             "flow",
             type=str,
             help="Flow to run",
+        )
+        flow_run_parser.add_argument(
+            "--input",
+            dest="task_input",
+            type=str,
+            default=None,
+            help="Flow input value.",
+        )
+        flow_run_parser.add_argument(
+            "--input-json",
+            dest="task_input_json",
+            type=str,
+            default=None,
+            help="Flow input JSON value or @file.",
+        )
+        flow_run_parser.add_argument(
+            "--file",
+            dest="task_files",
+            action="append",
+            default=None,
+            help="Attach a local flow input file as field=path.",
+        )
+        flow_run_parser.add_argument(
+            "--file-mime",
+            dest="task_file_mime_types",
+            action="append",
+            default=None,
+            help="Set a flow file MIME hint as field=mime/type.",
+        )
+        flow_run_parser.add_argument(
+            "--pdf",
+            dest="task_pdf",
+            type=str,
+            default=None,
+            help="Attach one top-level PDF file input.",
+        )
+        flow_run_parser.add_argument(
+            "--json",
+            dest="task_run_json",
+            action="store_true",
+            help="Print successful flow output as compact JSON.",
+        )
+        flow_run_parser.add_argument(
+            "--output",
+            dest="task_output_path",
+            type=str,
+            default=None,
+            help="Write successful flow output to a JSON file.",
         )
 
         # Task command
@@ -3505,6 +3568,18 @@ class CLI:
                 match subcommand:
                     case "run":
                         await deploy_run(args, self._logger)
+            case "flow":
+                subcommand = args.flow_command or "run"
+                match subcommand:
+                    case "run":
+                        if not flow_run(
+                            args,
+                            console,
+                            theme,
+                            hub,
+                            self._logger,
+                        ):
+                            raise SystemExit(1)
             case "task":
                 subcommand = args.task_command or "validate"
                 match subcommand:

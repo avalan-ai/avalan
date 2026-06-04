@@ -12,7 +12,11 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from avalan.cli import CommandAbortException
-from avalan.cli.__main__ import CLI, _task_run_json_stdout
+from avalan.cli.__main__ import (
+    CLI,
+    _consume_task_input_field_args,
+    _task_run_json_stdout,
+)
 
 
 def _collect_progs(parser: ArgumentParser) -> list[str]:
@@ -223,6 +227,69 @@ class CliTaskOptionTestCase(TestCase):
             self.assertEqual(args.command, "task")
             for name, value in expected.items():
                 self.assertEqual(getattr(args, name), value)
+
+    def test_flow_run_arguments(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "flow",
+                "run",
+                "flows/report.toml",
+                "--input-json",
+                '{"answer":"ok"}',
+                "--file",
+                "document=sample.pdf",
+                "--file-mime",
+                "document=application/pdf",
+                "--json",
+                "--output",
+                "result.json",
+            ]
+        )
+
+        self.assertEqual(args.command, "flow")
+        self.assertEqual(args.flow_command, "run")
+        self.assertEqual(args.flow, "flows/report.toml")
+        self.assertEqual(args.task_input_json, '{"answer":"ok"}')
+        self.assertEqual(args.task_files, ["document=sample.pdf"])
+        self.assertEqual(
+            args.task_file_mime_types,
+            ["document=application/pdf"],
+        )
+        self.assertTrue(args.task_run_json)
+        self.assertEqual(args.task_output_path, "result.json")
+
+    def test_flow_run_consumes_dynamic_input_fields(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "flow",
+                "run",
+                "flow.toml",
+                "--input-name",
+                "Ada",
+            ]
+        )
+
+        self.assertEqual(args.command, "flow")
+        self.assertEqual(args.flow_command, "run")
+        self.assertEqual(args.task_input_fields, ("name=Ada",))
+
+    def test_flow_non_run_does_not_consume_dynamic_input_fields(self) -> None:
+        namespace = Namespace(command="flow", flow_command="inspect")
+
+        self.assertFalse(
+            _consume_task_input_field_args(
+                namespace,
+                ["--input-name", "Ada"],
+            )
+        )
 
 
 class CliModelRunOptionTestCase(TestCase):
@@ -946,6 +1013,7 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
             ),
             ("task_run", "avalan.cli.commands.task", "task_run"),
             ("task_worker", "avalan.cli.commands.task", "task_worker"),
+            ("flow_run", "avalan.cli.commands.flow", "flow_run"),
         ]
         for wrapper_name, module_name, function_name in commands:
             command.reset_mock()
@@ -1044,6 +1112,9 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             deploy_run_mock = stack.enter_context(
                 patch("avalan.cli.__main__.deploy_run", AsyncMock())
             )
+            flow_run_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_run")
+            )
             task_artifacts_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_artifacts")
             )
@@ -1107,6 +1178,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("model", "search", model_search),
                 ("model", "uninstall", model_uninstall),
                 ("deploy", "run", deploy_run_mock),
+                ("flow", "run", flow_run_mock),
                 ("task", "artifacts", task_artifacts_mock),
                 ("task", "enqueue", task_enqueue_mock),
                 ("task", "events", task_events_mock),
@@ -1144,6 +1216,8 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                     args.model_command = subcmd
                 elif cmd == "deploy":
                     args.deploy_command = subcmd
+                elif cmd == "flow":
+                    args.flow_command = subcmd
                 elif cmd == "task":
                     if subcmd and subcmd.startswith("pgsql:"):
                         args.task_command = "pgsql"
@@ -1221,6 +1295,43 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             self.cli._logger,
         )
 
+    async def test_flow_run_failure_exits_nonzero(self):
+        args = Namespace(
+            command="flow",
+            flow_command="run",
+            verbose=None,
+            quiet=True,
+            login=False,
+            hf_token=None,
+            task_run_json=False,
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        console = MagicMock()
+        hub = MagicMock(domain="hf")
+        with (
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("avalan.cli.__main__.Confirm.ask", return_value=False),
+            patch("avalan.cli.__main__.find_spec", return_value=None),
+            patch("avalan.cli.__main__.logger_replace"),
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch(
+                "avalan.cli.__main__.flow_run",
+                return_value=False,
+            ) as flow_run_mock,
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                await self.cli._main(args, theme, console, hub)
+
+        self.assertEqual(exit_context.exception.code, 1)
+        flow_run_mock.assert_called_once_with(
+            args,
+            console,
+            theme,
+            hub,
+            self.cli._logger,
+        )
+
     def test_task_run_json_stdout_predicate(self):
         self.assertTrue(
             _task_run_json_stdout(
@@ -1245,6 +1356,15 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 Namespace(
                     command="task",
                     task_command="validate",
+                    task_run_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="run",
                     task_run_json=True,
                 )
             )

@@ -1,5 +1,7 @@
 from ...agent.loader import OrchestratorLoader
 from ...cli.theme import Theme
+from ...flow import Flow
+from ...flow.loader import FlowDefinitionLoader
 from ...pgsql import PsycopgAsyncDatabase, PsycopgPoolSettings
 from ...task import (
     REDACTED_MARKER,
@@ -30,6 +32,10 @@ from ...task import (
     TaskRunState,
     TaskStoreNotFoundError,
     TaskTargetContext,
+    TaskTargetRunner,
+    TaskTargetRunnerRegistry,
+    TaskTargetType,
+    TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
@@ -65,6 +71,7 @@ from ...task.targets.agent import (
     AgentOrchestratorLoader,
     AgentTaskTargetRunner,
 )
+from ...task.targets.flow import FlowTaskTargetRunner
 
 from argparse import Namespace
 from asyncio import run as asyncio_run
@@ -916,11 +923,20 @@ def _task_cli_client_context(
     input_value: object = None,
 ) -> _TaskCliClientContext:
     stack = AsyncExitStack()
-    target = _agent_task_target(
+    target: TaskTargetRunner = _agent_task_target(
         definition_path.parent,
         hub=hub,
         logger=logger,
         stack=stack,
+    )
+    target = TaskTargetRunnerRegistry(
+        target,
+        {
+            TaskTargetType.FLOW: FlowTaskTargetRunner(
+                ref_base=definition_path.parent,
+                flow_resolver=_task_flow_resolver(definition_path.parent),
+            )
+        },
     )
     artifact_store = _task_artifact_store()
     if (
@@ -1011,6 +1027,33 @@ def _agent_task_target(
         ),
         ref_base=ref_base,
     )
+
+
+def _task_flow_resolver(
+    ref_base: Path,
+) -> Callable[[TaskTargetContext], Flow]:
+    def resolve(context: TaskTargetContext) -> Flow:
+        flow_ref = context.definition.execution.ref
+        path = Path(flow_ref)
+        if not path.is_absolute():
+            path = ref_base / path
+        result = FlowDefinitionLoader().load_result(path)
+        if result.flow is None:
+            raise TaskValidationError(
+                tuple(
+                    TaskValidationIssue(
+                        code=issue.code,
+                        path=issue.path,
+                        message=issue.message,
+                        hint=issue.hint,
+                        category=TaskValidationCategory.UNSUPPORTED,
+                    )
+                    for issue in result.issues
+                )
+            )
+        return result.flow
+
+    return resolve
 
 
 def _task_pgsql_database(

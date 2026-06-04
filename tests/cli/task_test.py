@@ -22,8 +22,14 @@ from avalan.task import (
     SanitizedTaskEvent,
     TaskClientUnsupportedOperationError,
     TaskClientWaitTimeoutError,
+    TaskDefinition,
     TaskEventCategory,
+    TaskExecutionContext,
+    TaskExecutionTarget,
+    TaskInputContract,
     TaskKeyPurpose,
+    TaskMetadata,
+    TaskOutputContract,
     TaskRetentionAction,
     TaskRetentionStoreNotFoundError,
     TaskRunState,
@@ -2765,6 +2771,45 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertIsNotNone(target)
         self.assertIsNotNone(database)
 
+    def test_flow_resolver_loads_flow_and_reports_load_issues(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "constant"
+                entrypoint = "start"
+                output_node = "start"
+
+                [nodes.start]
+                type = "constant"
+                value = "ok"
+                """,
+                encoding="utf-8",
+            )
+            broken_path = root / "broken.toml"
+            broken_path.write_text("[flow]\nname = 'broken'", encoding="utf-8")
+            resolver = task_cmds._task_flow_resolver(root)
+
+            flow = resolver(
+                _flow_task_context(TaskExecutionTarget.flow("flow.toml"))
+            )
+            with self.assertRaises(TaskValidationError) as context:
+                resolver(
+                    _flow_task_context(TaskExecutionTarget.flow("broken.toml"))
+                )
+
+        self.assertIsNotNone(flow)
+        self.assertEqual(
+            context.exception.issues[0].category,
+            TaskValidationCategory.UNSUPPORTED,
+        )
+        self.assertEqual(
+            context.exception.issues[0].code,
+            "flow.missing_section",
+        )
+
     def test_low_level_helpers_cover_safe_branches(self) -> None:
         console = Console(record=True, width=160)
         task_cmds._print_task_command_error(
@@ -3336,6 +3381,25 @@ def _write_direct_object_definition(path: Path) -> Path:
         encoding="utf-8",
     )
     return definition
+
+
+def _flow_task_context(execution: TaskExecutionTarget) -> TaskTargetContext:
+    return TaskTargetContext(
+        definition=TaskDefinition(
+            task=TaskMetadata(name="flow", version="1"),
+            input=TaskInputContract.object(),
+            output=TaskOutputContract.json({}),
+            execution=execution,
+        ),
+        execution=TaskExecutionContext(
+            run_id="run-1",
+            attempt_id="attempt-1",
+            attempt_number=1,
+        ),
+        input_value={},
+        files=(),
+        metadata={},
+    )
 
 
 async def _raise_runtime_error() -> bool:

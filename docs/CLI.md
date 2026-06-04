@@ -1569,6 +1569,8 @@ plicate}]
                        [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                        [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                        [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
+                       [--input TASK_INPUT] [--input-json TASK_INPUT_JSON] [--file TASK_FILES]
+                       [--file-mime TASK_FILE_MIME_TYPES] [--pdf TASK_PDF] [--json] [--output TASK_OUTPUT_PATH]
                        flow
 
 Run a given flow
@@ -1615,6 +1617,16 @@ plicate}
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
+  --input TASK_INPUT   Flow input value.
+  --input-json TASK_INPUT_JSON
+                        Flow input JSON value or @file.
+  --file TASK_FILES    Attach a local flow input file as field=path.
+  --file-mime TASK_FILE_MIME_TYPES
+                        Set a flow file MIME hint as field=mime/type.
+  --pdf TASK_PDF       Attach one top-level PDF file input.
+  --json               Print successful flow output as compact JSON.
+  --output TASK_OUTPUT_PATH
+                        Write successful flow output to a JSON file.
 ```
 
 ## avalan task
