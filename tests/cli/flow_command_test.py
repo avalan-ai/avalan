@@ -898,7 +898,9 @@ def _flow_cli_extraction_output() -> dict[str, object]:
                 "vendor_name": "Northwind Office Supplies",
                 "vendor_address": "42 Market St, Denver, CO 80202",
                 "customer_name": "Contoso Research Lab",
-                "customer_address": "100 Example Ave, Suite 1, Denver, CO 80202",
+                "customer_address": (
+                    "100 Example Ave, Suite 1, Denver, CO 80202"
+                ),
                 "invoice_number": "INV-1001",
                 "invoice_date": "01/15/2026",
                 "due_date": "02/14/2026",

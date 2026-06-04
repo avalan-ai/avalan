@@ -7,6 +7,7 @@ from json import dumps
 from logging import getLogger
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from tomllib import load as load_toml
 from types import SimpleNamespace
 from typing import Any, BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
@@ -328,7 +329,9 @@ def _extraction_output() -> dict[str, object]:
                 "vendor_name": "Northwind Office Supplies",
                 "vendor_address": "42 Market St, Denver, CO 80202",
                 "customer_name": "Contoso Research Lab",
-                "customer_address": "100 Example Ave, Suite 1, Denver, CO 80202",
+                "customer_address": (
+                    "100 Example Ave, Suite 1, Denver, CO 80202"
+                ),
                 "invoice_number": "INV-1001",
                 "invoice_date": "01/15/2026",
                 "due_date": "02/14/2026",
@@ -344,6 +347,15 @@ def _extraction_output() -> dict[str, object]:
             }
         ]
     }
+
+
+def _fixture_agent_instructions(fixture: Path) -> str:
+    with (fixture / "agent.toml").open("rb") as file:
+        data = load_toml(file)
+    agent = cast(Mapping[str, object], data["agent"])
+    instructions = agent["instructions"]
+    assert isinstance(instructions, str)
+    return instructions
 
 
 class StaticHmacProvider:
@@ -872,6 +884,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             / "tasks"
             / "poc_extraction"
         )
+        instructions = _fixture_agent_instructions(fixture)
         pdf_bytes = (fixture / "sample.pdf").read_bytes()
         definition = TaskDefinitionLoader().load(fixture / "task.toml")
         output = _extraction_output()
@@ -961,7 +974,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         settings = cast(Any, settings_values[-1])
         agent_config = settings.agent_config
         self.assertIsInstance(agent_config, Mapping)
-        self.assertIn("instructions", agent_config)
+        self.assertEqual(agent_config["instructions"], instructions)
         self.assertNotIn("system", agent_config)
         self.assertNotIn("task", agent_config)
         self.assertEqual(settings.tools, [])
@@ -1006,6 +1019,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             "Analyze the attached synthetic invoice PDF and "
             "extract all data according to the extraction instructions.",
         )
+        self.assertNotIn(instructions, text_blocks[0].text)
         self.assertEqual(file_blocks[0].file["mime_type"], "application/pdf")
         self.assertEqual(
             b64decode(cast(str, file_blocks[0].file["file_data"])),
@@ -1028,6 +1042,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             / "tasks"
             / "poc_extraction"
         )
+        instructions = _fixture_agent_instructions(fixture)
         pdf_bytes = (fixture / "sample.pdf").read_bytes()
         direct_definition = TaskDefinitionLoader().load(fixture / "task.toml")
         flow_definition = TaskDefinitionLoader().load(
@@ -1163,7 +1178,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         for settings in settings_values:
             agent_config = settings.agent_config
             self.assertIsInstance(agent_config, Mapping)
-            self.assertIn("instructions", agent_config)
+            self.assertEqual(agent_config["instructions"], instructions)
             self.assertNotIn("system", agent_config)
             self.assertNotIn("task", agent_config)
             self.assertEqual(settings.tools, [])
@@ -1205,6 +1220,8 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             pdf_bytes,
         )
         self.assertEqual(flow_message, direct_message)
+        self.assertNotIn(instructions, str(direct_message))
+        self.assertNotIn(instructions, str(flow_message))
         for inspection in (direct_inspection, flow_inspection):
             inspection_value = str(inspection.as_dict())
             self.assertEqual(inspection.usage_totals.total_tokens, 42)
