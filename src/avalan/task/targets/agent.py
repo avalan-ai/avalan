@@ -26,7 +26,7 @@ from ..definition import (
     TaskOutputType,
     TaskTargetType,
 )
-from ..delivery import plan_task_file_delivery
+from ..delivery import TaskFileDeliveryPlan, plan_task_file_delivery
 from ..target import TaskTargetRunner, TaskValidationContext
 from ..text_strategy import (
     TextStrategyKind,
@@ -42,12 +42,22 @@ from ..validation import (
 from base64 import b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from json import dumps, loads
 from pathlib import Path
 from sys import maxsize
 from tomllib import TOMLDecodeError, load
 from typing import Protocol, cast
 from uuid import UUID
+
+from jinja2 import (
+    Environment as TemplateEnvironment,
+)
+from jinja2 import (
+    FileSystemLoader,
+    StrictUndefined,
+    TemplateError,
+)
 
 FileDeliveryProfileResolver = Callable[[str | None], FileDeliveryProfile]
 TokenCounter = Callable[[str], int]
@@ -76,6 +86,19 @@ class AgentOrchestratorLoader(Protocol):
         uri: str | None = None,
         tool_settings: object | None = None,
     ) -> AgentOrchestrator: ...
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _AgentPrompt:
+    user: str | None = None
+    user_template: str | None = None
+    templates_path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _AgentFileBlock:
+    content: MessageContent
+    metadata: Mapping[str, object]
 
 
 class AgentTaskTargetRunner(TaskTargetRunner):
@@ -142,7 +165,8 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         assert context.definition.execution.type == TaskTargetType.AGENT
         await context.check_cancelled()
         profile = self._agent_file_profile(context.definition)
-        agent_input = await _agent_input(context, profile)
+        prompt = self._agent_prompt(context.definition)
+        agent_input = await _agent_input(context, profile, prompt=prompt)
         agent_input, text_plan = _plan_local_text_delivery(
             agent_input,
             context=context,
@@ -200,15 +224,38 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         self,
         definition: TaskDefinition,
     ) -> Mapping[str, object] | None:
+        config = self._agent_config(definition)
+        if config is None:
+            return None
+        engine = config.get("engine")
+        return engine if isinstance(engine, Mapping) else None
+
+    def _agent_prompt(self, definition: TaskDefinition) -> _AgentPrompt:
+        config = self._agent_config(definition)
+        if config is None:
+            return _AgentPrompt()
+        agent = config.get("agent")
+        if not isinstance(agent, Mapping):
+            return _AgentPrompt()
+        user = agent.get("user")
+        user_template = agent.get("user_template")
+        return _AgentPrompt(
+            user=user if isinstance(user, str) else None,
+            user_template=(
+                user_template if isinstance(user_template, str) else None
+            ),
+            templates_path=self._agent_path(definition).parent,
+        )
+
+    def _agent_config(
+        self,
+        definition: TaskDefinition,
+    ) -> Mapping[str, object] | None:
         try:
             with self._agent_path(definition).open("rb") as file:
-                data = load(file)
+                return load(file)
         except (OSError, TOMLDecodeError):
             return None
-        engine = data.get("engine")
-        if not isinstance(engine, Mapping):
-            return None
-        return engine
 
     def _agent_local_file_delivery_profile(
         self,
@@ -275,24 +322,28 @@ async def _agent_event_listener(
 async def _agent_input(
     context: TaskTargetContext,
     profile: FileDeliveryProfile,
+    *,
+    prompt: _AgentPrompt | None = None,
 ) -> Input:
     value = _agent_input_value(context.input_value)
     if not context.files:
         return value
     if not profile.accepts_file_count(len(context.files)):
         raise _agent_file_error(path="input.files")
-    file_content: list[MessageContent] = []
+    file_blocks: list[_AgentFileBlock] = []
     for index, file in enumerate(context.files):
-        file_content.append(
+        file_blocks.append(
             await _agent_file_content(
                 file,
                 context=context,
                 profile=profile,
+                index=index,
                 path=f"input.files[{index}]",
             )
         )
+    file_content = tuple(block.content for block in file_blocks)
     if isinstance(value, Message):
-        return _message_with_content(value, tuple(file_content))
+        return _message_with_content(value, file_content)
     if isinstance(value, list) and all(
         isinstance(item, Message) for item in value
     ):
@@ -301,7 +352,12 @@ async def _agent_input(
             Message(role=MessageRole.USER, content=list(file_content)),
         ]
     content: list[MessageContent] = []
-    text = _file_prompt_text(context.definition, cast(str | list[str], value))
+    text = _file_prompt_text(
+        context.definition,
+        cast(str | list[str], value),
+        prompt=prompt,
+        files=tuple(block.metadata for block in file_blocks),
+    )
     if text is not None:
         content.append(MessageContentText(type="text", text=text))
     content.extend(file_content)
@@ -326,8 +382,12 @@ async def _agent_file_content(
     *,
     context: TaskTargetContext,
     profile: FileDeliveryProfile,
+    index: int,
     path: str,
-) -> MessageContent:
+) -> _AgentFileBlock:
+    assert isinstance(index, int)
+    assert not isinstance(index, bool)
+    assert index >= 0
     if (
         file.provider_reference is not None
         and file.provider_reference.is_expired()
@@ -340,21 +400,28 @@ async def _agent_file_content(
         artifact_store=context.artifact_store,
     )
     decision = plan.decision
+    metadata = _safe_file_template_metadata(file, index=index, plan=plan)
     match decision.mode:
         case FileDeliveryMode.PROVIDER_FILE_ID:
-            return MessageContentFile(
-                type="file",
-                file=_message_file(
-                    file, file_id=_decision_reference(decision)
+            return _AgentFileBlock(
+                content=MessageContentFile(
+                    type="file",
+                    file=_message_file(
+                        file, file_id=_decision_reference(decision)
+                    ),
                 ),
+                metadata=metadata,
             )
         case FileDeliveryMode.HOSTED_URL | FileDeliveryMode.OBJECT_STORE_URI:
-            return MessageContentFile(
-                type="file",
-                file=_message_file(
-                    file,
-                    file_url=_decision_reference(decision),
+            return _AgentFileBlock(
+                content=MessageContentFile(
+                    type="file",
+                    file=_message_file(
+                        file,
+                        file_url=_decision_reference(decision),
+                    ),
                 ),
+                metadata=metadata,
             )
         case FileDeliveryMode.INLINE_BYTES:
             data = await _artifact_bytes(
@@ -367,12 +434,15 @@ async def _agent_file_content(
                     profile=profile,
                 ),
             )
-            return MessageContentFile(
-                type="file",
-                file=_message_file(
-                    file,
-                    file_data=b64encode(data).decode("ascii"),
+            return _AgentFileBlock(
+                content=MessageContentFile(
+                    type="file",
+                    file=_message_file(
+                        file,
+                        file_data=b64encode(data).decode("ascii"),
+                    ),
                 ),
+                metadata=metadata,
             )
         case FileDeliveryMode.INLINE_TEXT:
             data = await _artifact_bytes(
@@ -389,7 +459,10 @@ async def _agent_file_content(
                 text = data.decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise _agent_file_error(path=path) from exc
-            return MessageContentText(type="text", text=text)
+            return _AgentFileBlock(
+                content=MessageContentText(type="text", text=text),
+                metadata=metadata,
+            )
         case (
             FileDeliveryMode.CONVERTED_ARTIFACT
             | FileDeliveryMode.RETRIEVAL_CONTEXT
@@ -400,7 +473,10 @@ async def _agent_file_content(
                 text = data.decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise _agent_file_error(path=path, decision=decision) from exc
-            return MessageContentText(type="text", text=text)
+            return _AgentFileBlock(
+                content=MessageContentText(type="text", text=text),
+                metadata=metadata,
+            )
         case _:
             raise _agent_file_error(path=path, decision=decision)
 
@@ -554,12 +630,120 @@ def _content_blocks(
 def _file_prompt_text(
     definition: TaskDefinition,
     value: str | list[str],
+    *,
+    prompt: _AgentPrompt | None = None,
+    files: tuple[Mapping[str, object], ...] = (),
 ) -> str | None:
-    if definition.input.type in {TaskInputType.FILE, TaskInputType.FILE_ARRAY}:
-        return None
+    input_text = None if _is_file_input(definition) else _input_text(value)
+    if prompt is None or (
+        prompt.user is None and prompt.user_template is None
+    ):
+        return input_text
+    render_vars = {
+        "files": [dict(file) for file in files],
+        "input": input_text or "",
+    }
+    rendered = _render_agent_prompt(prompt, render_vars)
+    if input_text and prompt.user and not _user_references_input(prompt.user):
+        return _prefix_text(rendered, input_text)
+    if input_text and prompt.user_template:
+        return _prefix_text(rendered, input_text)
+    return rendered or input_text
+
+
+def _is_file_input(definition: TaskDefinition) -> bool:
+    return definition.input.type in {
+        TaskInputType.FILE,
+        TaskInputType.FILE_ARRAY,
+    }
+
+
+def _input_text(value: str | list[str]) -> str:
     if isinstance(value, str):
         return value
     return "\n".join(value)
+
+
+def _render_agent_prompt(
+    prompt: _AgentPrompt,
+    render_vars: Mapping[str, object],
+) -> str:
+    try:
+        if prompt.user_template is not None:
+            environment = TemplateEnvironment(
+                loader=FileSystemLoader(str(prompt.templates_path or Path())),
+                trim_blocks=True,
+                lstrip_blocks=True,
+                undefined=StrictUndefined,
+            )
+            output = environment.get_template(prompt.user_template).render(
+                **render_vars
+            )
+        else:
+            environment = TemplateEnvironment(undefined=StrictUndefined)
+            output = environment.from_string(prompt.user or "").render(
+                **render_vars
+            )
+    except TemplateError as exc:
+        raise _agent_prompt_error() from exc
+    return "\n".join(line.strip() for line in output.splitlines())
+
+
+def _agent_prompt_error() -> TaskValidationError:
+    return TaskValidationError(
+        (
+            TaskValidationIssue(
+                code="input.invalid_prompt",
+                path="execution.ref",
+                message="Agent prompt could not be rendered.",
+                hint=(
+                    "Check the agent prompt template variables and template "
+                    "reference."
+                ),
+                category=TaskValidationCategory.VALUE,
+            ),
+        )
+    )
+
+
+def _safe_file_template_metadata(
+    file: TaskInputFile,
+    *,
+    index: int,
+    plan: TaskFileDeliveryPlan,
+) -> Mapping[str, object]:
+    value: dict[str, object] = {"index": index}
+    if file.media_type is not None:
+        value["mime_type"] = file.media_type
+    if plan.size_bucket is not None:
+        value["size_bucket"] = plan.size_bucket
+    if file.provider_reference is not None:
+        if file.provider_reference.mime_type is not None:
+            value.setdefault("mime_type", file.provider_reference.mime_type)
+        if file.provider_reference.size_bucket is not None:
+            value.setdefault(
+                "size_bucket", file.provider_reference.size_bucket
+            )
+        if file.provider_reference.identity_hmac is not None:
+            value["identity_hmac"] = file.provider_reference.identity_hmac
+    role = _safe_file_role(file)
+    if role is not None:
+        value["role"] = role
+    return value
+
+
+def _safe_file_role(file: TaskInputFile) -> str | None:
+    role = file.metadata.get("role")
+    return role if isinstance(role, str) and role.strip() else None
+
+
+def _prefix_text(prefix: str, content: str) -> str:
+    prefix = prefix.strip()
+    return f"{prefix}\n\n{content}" if prefix else content
+
+
+def _user_references_input(user: str) -> bool:
+    return "{{input" in user or "{{ input" in user
 
 
 def _plan_local_text_delivery(

@@ -35,6 +35,7 @@ from avalan.task import (
     TaskDefinition,
     TaskExecutionTarget,
     TaskFileConversionRequest,
+    TaskFileDeliveryPlan,
     TaskFileDescriptor,
     TaskInputContract,
     TaskInputFile,
@@ -962,6 +963,375 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
         content = cast(list[Any], cast(Message, loader.inputs[0]).content)
         self.assertEqual(content[1].file["file_id"], "file-test")
         self.assertNotIn("tenant-a", str(content[1].file))
+
+    async def test_run_prefixes_file_input_with_agent_user_prompt(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+system = "Keep system separate."
+user = "Extract {{ files[0].role }}."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader(response="accepted")
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            await runner.run(
+                self._context(
+                    self._definition(
+                        input_contract=TaskInputContract.file(
+                            mime_types=("application/pdf",),
+                        )
+                    ),
+                    "ignored prompt",
+                    files=(
+                        TaskInputFile(
+                            logical_path="/private/uploads/sentinel.pdf",
+                            media_type="application/pdf",
+                            size_bytes=512,
+                            metadata={
+                                "display_name": "sentinel.pdf",
+                                "role": "primary",
+                            },
+                            provider_reference=_provider_reference(
+                                "openai",
+                                "file-test",
+                                media_type="application/pdf",
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        message = cast(Message, loader.inputs[0])
+        content = cast(list[Any], message.content)
+        self.assertEqual(message.role, MessageRole.USER)
+        self.assertEqual(
+            content[0].text,
+            "Extract primary.",
+        )
+        self.assertEqual(content[1].file["file_id"], "file-test")
+        self.assertNotIn("Keep system separate", str(message))
+        self.assertNotIn("ignored prompt", str(message))
+        self.assertNotIn("sentinel.pdf", str(message))
+        self.assertNotIn("/private/uploads", str(message))
+
+    async def test_run_renders_file_array_user_template_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            template_path = root / "agents" / "user.md"
+            agent_path.parent.mkdir()
+            template_path.write_text(
+                "{% for file in files %}"
+                "{{ file.index }}:{{ file.mime_type }}:"
+                "{{ file.size_bucket }}:{{ file.identity_hmac }};"
+                "{% endfor %}",
+                encoding="utf-8",
+            )
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user_template = "user.md"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            first = TaskFileDescriptor.provider_reference_descriptor(
+                "file-first",
+                kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                provider="openai",
+                mime_type="application/pdf",
+                identity_hmac="hmac-first",
+            ).provider_reference
+            second = TaskFileDescriptor.provider_reference_descriptor(
+                "file-second",
+                kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                provider="openai",
+                mime_type="application/pdf",
+                identity_hmac="hmac-second",
+            ).provider_reference
+            assert first is not None
+            assert second is not None
+            loader = FakeLoader(response="accepted")
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            await runner.run(
+                self._context(
+                    self._definition(
+                        input_contract=TaskInputContract.file_array(
+                            mime_types=("application/pdf",),
+                        )
+                    ),
+                    "ignored prompt",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:openai:one",
+                            media_type="application/pdf",
+                            provider_reference=first,
+                            size_bytes=0,
+                        ),
+                        TaskInputFile(
+                            logical_path="provider:openai:two",
+                            media_type="application/pdf",
+                            provider_reference=second,
+                            size_bytes=2_048,
+                        ),
+                    ),
+                )
+            )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(
+            content[0].text,
+            "0:application/pdf:0B:hmac-first;"
+            "1:application/pdf:1KB-1MB:hmac-second;",
+        )
+        self.assertEqual(content[1].file["file_id"], "file-first")
+        self.assertEqual(content[2].file["file_id"], "file-second")
+        self.assertNotIn("provider:openai", str(loader.inputs[0]))
+
+    async def test_run_prefixes_text_input_before_file_blocks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user = "Review the attachment."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader(response="accepted")
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "include this detail",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:openai:provider_file_id",
+                            provider_reference=_provider_reference(
+                                "openai",
+                                "file-test",
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(
+            content[0].text,
+            "Review the attachment.\n\ninclude this detail",
+        )
+        self.assertEqual(content[1].file["file_id"], "file-test")
+
+    async def test_run_uses_agent_user_input_reference_once(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user = "Prompt: {{ input }}"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader(response="accepted")
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "include this detail",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:openai:provider_file_id",
+                            provider_reference=_provider_reference(
+                                "openai",
+                                "file-test",
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(content[0].text, "Prompt: include this detail")
+
+    async def test_run_prefixes_template_prompt_before_text_input(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            template_path = root / "agents" / "user.md"
+            agent_path.parent.mkdir()
+            template_path.write_text("Template {{ input }}", encoding="utf-8")
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user_template = "user.md"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader(response="accepted")
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    "include this detail",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:openai:provider_file_id",
+                            provider_reference=_provider_reference(
+                                "openai",
+                                "file-test",
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertEqual(
+            content[0].text,
+            "Template include this detail\n\ninclude this detail",
+        )
+
+    async def test_run_rejects_missing_prompt_template_variable_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user = "Extract {{ filename }}."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader()
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            with self.assertRaises(TaskValidationError) as error:
+                await runner.run(
+                    self._context(
+                        self._definition(
+                            input_contract=TaskInputContract.file(
+                                mime_types=("application/pdf",),
+                            )
+                        ),
+                        "ignored prompt",
+                        files=(
+                            TaskInputFile(
+                                logical_path="/private/uploads/sentinel.pdf",
+                                media_type="application/pdf",
+                                metadata={"display_name": "sentinel.pdf"},
+                                provider_reference=_provider_reference(
+                                    "openai",
+                                    "file-test",
+                                    media_type="application/pdf",
+                                ),
+                            ),
+                        ),
+                    )
+                )
+
+        self.assertEqual(
+            error.exception.issues[0].code, "input.invalid_prompt"
+        )
+        self.assertEqual(error.exception.issues[0].path, "execution.ref")
+        self.assertEqual(loader.inputs, [])
+        self.assertNotIn("sentinel.pdf", str(error.exception))
+        self.assertNotIn("/private/uploads", str(error.exception))
+
+    async def test_run_rejects_missing_user_template_safely(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user_template = "missing.md"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader()
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            with self.assertRaises(TaskValidationError) as error:
+                await runner.run(
+                    self._context(
+                        self._definition(
+                            input_contract=TaskInputContract.file(
+                                mime_types=("application/pdf",),
+                            )
+                        ),
+                        "ignored prompt",
+                        files=(
+                            TaskInputFile(
+                                logical_path="/private/uploads/sentinel.pdf",
+                                media_type="application/pdf",
+                                provider_reference=_provider_reference(
+                                    "openai",
+                                    "file-test",
+                                    media_type="application/pdf",
+                                ),
+                            ),
+                        ),
+                    )
+                )
+
+        self.assertEqual(
+            error.exception.issues[0].code, "input.invalid_prompt"
+        )
+        self.assertEqual(loader.inputs, [])
+        self.assertNotIn("missing.md", str(error.exception))
+        self.assertNotIn("sentinel.pdf", str(error.exception))
 
     async def test_run_rejects_legacy_provider_reference_metadata(
         self,
@@ -2142,6 +2512,46 @@ file_delivery_profile = "multimodal"
         )
         self.assertEqual(agent_module._estimated_token_count("one two"), 2)
 
+    def test_agent_prompt_and_file_metadata_helpers_cover_fallbacks(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                'agent = "invalid"\n[engine]\nuri = "ai://x"\n',
+                encoding="utf-8",
+            )
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
+
+            prompt = runner._agent_prompt(self._definition())
+
+        descriptor = TaskFileDescriptor.provider_reference_descriptor(
+            "file-test",
+            kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            provider="openai",
+            size_bucket="provider-bucket",
+        )
+        assert descriptor.provider_reference is not None
+        metadata = agent_module._safe_file_template_metadata(
+            TaskInputFile(
+                logical_path="provider:openai:file",
+                provider_reference=descriptor.provider_reference,
+            ),
+            index=0,
+            plan=TaskFileDeliveryPlan(
+                decision=FileDeliveryDecision(
+                    mode=FileDeliveryMode.PROVIDER_FILE_ID,
+                    reference="file-test",
+                )
+            ),
+        )
+
+        self.assertIsNone(prompt.user)
+        self.assertIsNone(prompt.user_template)
+        self.assertEqual(metadata["size_bucket"], "provider-bucket")
+
     async def test_run_appends_files_to_message_inputs(self) -> None:
         message_loader = FakeLoader(response="accepted")
         empty_message_loader = FakeLoader(response="accepted")
@@ -2475,6 +2885,66 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(file_block.file["mime_type"], "text/plain")
         self.assertNotIn("input.txt", str(message))
         self.assertEqual(records[0].artifact_id, "artifact-1")
+
+    async def test_direct_runner_composes_prompt_and_pdf_reference(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+system = "Use structured extraction."
+user = "Extract the attached {{ files[0].mime_type }}."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            task_store = InMemoryTaskStore()
+            loader = FakeLoader(response=FakeResponse("short summary"))
+            runner = DirectTaskRunner(
+                task_store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                execution_roots=(root,),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-pdf-reference-hash",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",),
+                    ),
+                    output=TaskOutputContract.text(),
+                ),
+                input_value=TaskFileDescriptor.provider_reference_descriptor(
+                    "file-pdf",
+                    kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                    provider="openai",
+                    mime_type="application/pdf",
+                    identity_hmac="hmac-pdf",
+                ),
+            )
+            records = await task_store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(records, ())
+        message = cast(Message, loader.inputs[0])
+        content = cast(list[Any], message.content)
+        self.assertEqual(len(content), 2)
+        self.assertEqual(
+            content[0].text,
+            "Extract the attached application/pdf.",
+        )
+        self.assertEqual(content[1].file["file_id"], "file-pdf")
+        self.assertEqual(content[1].file["mime_type"], "application/pdf")
+        self.assertNotIn("Use structured extraction", str(message))
+        self.assertNotIn("hmac-pdf", str(message))
 
     async def test_direct_file_task_runs_with_conversion_and_inspection(
         self,
