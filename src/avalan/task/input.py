@@ -269,6 +269,7 @@ class TaskFileDescriptor:
         role: str | None = None,
         mime_type: str | None = None,
         size_bytes: int | None = None,
+        sha256: str | None = None,
         size_bucket: str | None = None,
         identity_hmac: str | None = None,
         durable: bool = True,
@@ -292,6 +293,7 @@ class TaskFileDescriptor:
             role=role,
             mime_type=mime_type,
             size_bytes=size_bytes,
+            sha256=sha256,
             provider_reference=provider_reference,
             metadata=metadata or {},
         )

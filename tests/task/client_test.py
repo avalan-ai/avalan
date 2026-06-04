@@ -20,6 +20,7 @@ from avalan.task import (
     TaskClientValidationResult,
     TaskClientWaitTimeoutError,
     TaskDefinition,
+    TaskDefinitionLoader,
     TaskEventCategory,
     TaskExecutionRequest,
     TaskExecutionResult,
@@ -51,6 +52,7 @@ from avalan.task import (
     UsageSource,
     UsageTotals,
     read_artifact_stream_bytes,
+    spec_hash,
 )
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
@@ -498,6 +500,262 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 
         self.assertTrue(result.valid)
         result.raise_for_issues()
+
+    async def test_sdk_file_descriptor_helpers_match_loaded_contract(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "agents").mkdir()
+            (root / "agents" / "reviewer.toml").write_text(
+                """
+[agent]
+name = "Reviewer"
+task = "Review the uploaded file."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            task_path = root / "review.task.toml"
+            task_path.write_text(
+                """
+[task]
+name = "document_review"
+version = "1"
+
+[input]
+type = "file"
+file_conversions = ["text"]
+mime_types = ["application/pdf"]
+
+[output]
+type = "text"
+
+[execution]
+type = "agent"
+ref = "agents/reviewer.toml"
+""",
+                encoding="utf-8",
+            )
+            loaded_definition = TaskDefinitionLoader().load(task_path)
+            sdk_definition = TaskDefinition(
+                task=TaskMetadata(name="document_review", version="1"),
+                input=TaskInputContract.file(
+                    conversions=("text",),
+                    mime_types=("application/pdf",),
+                ),
+                output=TaskOutputContract.text(),
+                execution=TaskExecutionTarget.agent("agents/reviewer.toml"),
+            )
+            client = TaskClient(
+                InMemoryTaskStore(),
+                target=_noop_target,
+                hmac_provider=StaticHmacProvider(),
+            )
+            descriptor = TaskClient.local_file(
+                "report.pdf",
+                role="source",
+                mime_type="application/pdf",
+                size_bytes=2048,
+                sha256="a" * 64,
+                conversions=(
+                    TaskClient.file_conversion(
+                        "text",
+                        options={"encoding": "utf-8"},
+                    ),
+                ),
+                metadata={"source": "safe"},
+            )
+
+            validation = await client.validate(
+                sdk_definition,
+                input_value=descriptor,
+            )
+
+        self.assertEqual(
+            spec_hash(loaded_definition), spec_hash(sdk_definition)
+        )
+        self.assertTrue(validation.valid)
+        self.assertEqual(descriptor.reference, "report.pdf")
+        self.assertEqual(descriptor.role, "source")
+        self.assertEqual(descriptor.mime_type, "application/pdf")
+        self.assertEqual(descriptor.size_bytes, 2048)
+        self.assertEqual(descriptor.sha256, "a" * 64)
+        self.assertEqual(descriptor.conversions[0].name, "text")
+        self.assertEqual(
+            descriptor.conversions[0].options,
+            {"encoding": "utf-8"},
+        )
+
+    async def test_direct_provider_reference_runs_without_artifact_store(
+        self,
+    ) -> None:
+        seen_files: list[tuple[TaskInputFile, ...]] = []
+
+        async def target(context: TaskTargetContext) -> object:
+            seen_files.append(context.files)
+            return "accepted"
+
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=target,
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-provider-direct-hash",
+        )
+        descriptor = TaskClient.provider_file_id(
+            "openai",
+            "file-private",
+            role="source",
+            mime_type="application/pdf",
+            size_bytes=2048,
+            sha256="b" * 64,
+            size_bucket="1KB-1MB",
+            identity_hmac="hmac-value",
+            owner_scope="tenant-a",
+            metadata={"classification": "safe"},
+        )
+
+        result = await client.run(
+            _definition(
+                input_contract=TaskInputContract.file(
+                    mime_types=("application/pdf",)
+                )
+            ),
+            input_value=descriptor,
+        )
+        inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "accepted")
+        self.assertEqual(len(seen_files), 1)
+        file = seen_files[0][0]
+        self.assertIsNone(file.artifact_ref)
+        self.assertEqual(file.media_type, "application/pdf")
+        self.assertEqual(file.size_bytes, 2048)
+        self.assertIsNotNone(file.provider_reference)
+        assert file.provider_reference is not None
+        self.assertEqual(file.provider_reference.provider, "openai")
+        self.assertEqual(
+            file.provider_reference.kind,
+            TaskProviderReferenceKind.PROVIDER_FILE_ID,
+        )
+        self.assertEqual(file.provider_reference.reference, "file-private")
+        self.assertEqual(inspection.artifacts, ())
+        self.assertNotIn("file-private", str(inspection.as_dict()))
+        self.assertNotIn("tenant-a", str(inspection.as_dict()))
+
+    async def test_direct_provider_reference_conversion_is_rejected(
+        self,
+    ) -> None:
+        target_calls = 0
+
+        async def target(context: TaskTargetContext) -> object:
+            nonlocal target_calls
+            target_calls += 1
+            return "unused"
+
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=target,
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "client-provider-conversion-hash",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await client.run(
+                _definition(
+                    input_contract=TaskInputContract.file(
+                        conversions=("text",)
+                    )
+                ),
+                input_value={
+                    "source_kind": "provider_reference",
+                    "reference": "file-private",
+                    "provider_reference": {
+                        "kind": "provider_file_id",
+                        "provider": "openai",
+                        "reference": "file-private",
+                    },
+                    "conversions": [{"name": "text"}],
+                },
+            )
+
+        self.assertEqual(target_calls, 0)
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_file")
+        self.assertEqual(
+            error.exception.issues[0].path,
+            "input.conversions",
+        )
+        self.assertNotIn("file-private", str(error.exception))
+
+    async def test_sdk_file_helpers_cover_source_variants(self) -> None:
+        expires_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+        remote = TaskClient.remote_url_file(
+            "https://example.test/private.txt",
+            mime_type="text/plain",
+            conversions=(
+                "native",
+                {"name": "text", "options": {"mode": "safe"}},
+            ),
+        )
+        artifact = TaskClient.artifact_file(
+            "artifact-private",
+            role="context",
+            size_bytes=12,
+        )
+        inline = TaskClient.inline_file(
+            "cHJpdmF0ZQ==",
+            mime_type="text/plain",
+            sha256="c" * 64,
+        )
+        hosted = TaskClient.hosted_url(
+            "openai",
+            "https://example.test/private.pdf",
+            expires_at=expires_at,
+            durable=False,
+            mime_type="application/pdf",
+        )
+        object_uri = TaskClient.object_store_uri(
+            "google",
+            "gs://bucket/private.pdf",
+            identity_hmac="hmac-value",
+            size_bucket="1KB-1MB",
+        )
+
+        self.assertEqual(remote.source_kind.value, "remote_url")
+        self.assertEqual(remote.conversions[0].name, "native")
+        self.assertEqual(remote.conversions[1].options, {"mode": "safe"})
+        self.assertEqual(artifact.source_kind.value, "artifact")
+        self.assertEqual(artifact.role, "context")
+        self.assertEqual(inline.source_kind.value, "inline_bytes")
+        self.assertEqual(inline.sha256, "c" * 64)
+        self.assertIsNotNone(hosted.provider_reference)
+        assert hosted.provider_reference is not None
+        self.assertEqual(
+            hosted.provider_reference.kind,
+            TaskProviderReferenceKind.HOSTED_URL,
+        )
+        self.assertEqual(hosted.provider_reference.expires_at, expires_at)
+        self.assertFalse(hosted.provider_reference.durable)
+        self.assertIsNotNone(object_uri.provider_reference)
+        assert object_uri.provider_reference is not None
+        self.assertEqual(
+            object_uri.provider_reference.kind,
+            TaskProviderReferenceKind.OBJECT_STORE_URI,
+        )
+        self.assertEqual(object_uri.provider_reference.provider, "google")
+
+    async def test_sdk_file_helper_rejects_invalid_conversion_shape(
+        self,
+    ) -> None:
+        with self.assertRaises(AssertionError):
+            TaskClient.local_file(
+                "report.pdf",
+                conversions=({"options": {}},),
+            )
 
     async def test_queued_run_and_enqueue_return_stable_diagnostic(
         self,

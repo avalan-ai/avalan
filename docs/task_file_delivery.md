@@ -18,6 +18,38 @@ capabilities fail closed.
 | `map_reduce_context` | File content processed through bounded map-reduce steps. |
 | `reject` | No safe delivery path is available. |
 
+## Direct Input Descriptors
+
+Direct task runs accept local file paths, explicit JSON descriptors, and
+provider-native references. Descriptor hints are safe metadata used for
+validation and provider delivery planning; they do not cause raw bytes to be
+stored by themselves.
+
+```bash
+avalan task run tasks/review.task.toml --ephemeral \
+  --provider-file-id document=openai:file_abc123 \
+  --file-mime document=application/pdf \
+  --file-role document=source \
+  --file-size document=2048 \
+  --file-sha256 document=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+avalan task run tasks/review.task.toml --ephemeral \
+  --hosted-url document=openai:https://files.example.test/report.pdf
+
+avalan task run tasks/review.task.toml --ephemeral \
+  --object-store-uri document=google:gs://bucket/report.pdf
+
+avalan task run tasks/review.task.toml --ephemeral \
+  --file-descriptor 'document={"source_kind":"remote_url","reference":"https://example.test/report.txt","mime_type":"text/plain"}'
+```
+
+Use `--file-conversion field=name` or
+`--file-conversion field=name:{"option":"value"}` to request a conversion for a
+specific descriptor. The task definition's `input.file_conversions` value is an
+allow-list of conversion names a run may request; it is not an automatic
+conversion request. Provider-native references cannot request conversions,
+because the provider already owns the referenced file.
+
 ## Capability Matrix
 
 | Profile | Source kinds | Native modes | Text modes | Object-store schemes | MIME families |

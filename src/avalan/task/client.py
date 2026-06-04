@@ -16,6 +16,11 @@ from .converters import FileConverter
 from .definition import RunMode, TaskDefinition
 from .event import SanitizedTaskEvent
 from .idempotency import task_idempotency_identity
+from .input import (
+    TaskFileConversionRequest,
+    TaskFileDescriptor,
+    TaskProviderReferenceKind,
+)
 from .materialization import (
     TaskMaterializedFile,
     materialize_task_input_files,
@@ -203,6 +208,194 @@ class TaskClient:
         self._observability_sink = observability_sink
         self._clock = clock or _utc_now
         self._sleep = sleep or asyncio_sleep
+
+    @staticmethod
+    def file_conversion(
+        name: str,
+        *,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionRequest:
+        return TaskFileConversionRequest(name=name, options=options or {})
+
+    @staticmethod
+    def local_file(
+        reference: str,
+        *,
+        role: str | None = None,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        conversions: Iterable[
+            str | TaskFileConversionRequest | Mapping[str, object]
+        ] = (),
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskFileDescriptor:
+        return TaskFileDescriptor.local_path(
+            reference,
+            role=role,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            conversions=_file_conversion_requests(conversions),
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def remote_url_file(
+        url: str,
+        *,
+        role: str | None = None,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        conversions: Iterable[
+            str | TaskFileConversionRequest | Mapping[str, object]
+        ] = (),
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskFileDescriptor:
+        return TaskFileDescriptor.remote_url(
+            url,
+            role=role,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            conversions=_file_conversion_requests(conversions),
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def artifact_file(
+        artifact_id: str,
+        *,
+        role: str | None = None,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        conversions: Iterable[
+            str | TaskFileConversionRequest | Mapping[str, object]
+        ] = (),
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskFileDescriptor:
+        return TaskFileDescriptor.artifact(
+            artifact_id,
+            role=role,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            conversions=_file_conversion_requests(conversions),
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def inline_file(
+        encoded_bytes: str,
+        *,
+        role: str | None = None,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        conversions: Iterable[
+            str | TaskFileConversionRequest | Mapping[str, object]
+        ] = (),
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskFileDescriptor:
+        return TaskFileDescriptor.inline_bytes(
+            encoded_bytes,
+            role=role,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            conversions=_file_conversion_requests(conversions),
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def provider_file_id(
+        provider: str,
+        file_id: str,
+        *,
+        role: str | None = None,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        size_bucket: str | None = None,
+        identity_hmac: str | None = None,
+        owner_scope: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskFileDescriptor:
+        return _provider_reference_descriptor(
+            provider,
+            file_id,
+            TaskProviderReferenceKind.PROVIDER_FILE_ID,
+            role=role,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            size_bucket=size_bucket,
+            identity_hmac=identity_hmac,
+            owner_scope=owner_scope,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def hosted_url(
+        provider: str,
+        url: str,
+        *,
+        role: str | None = None,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        size_bucket: str | None = None,
+        identity_hmac: str | None = None,
+        owner_scope: str | None = None,
+        expires_at: datetime | None = None,
+        durable: bool = True,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskFileDescriptor:
+        return _provider_reference_descriptor(
+            provider,
+            url,
+            TaskProviderReferenceKind.HOSTED_URL,
+            role=role,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            size_bucket=size_bucket,
+            identity_hmac=identity_hmac,
+            owner_scope=owner_scope,
+            expires_at=expires_at,
+            durable=durable,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def object_store_uri(
+        provider: str,
+        uri: str,
+        *,
+        role: str | None = None,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+        sha256: str | None = None,
+        size_bucket: str | None = None,
+        identity_hmac: str | None = None,
+        owner_scope: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskFileDescriptor:
+        return _provider_reference_descriptor(
+            provider,
+            uri,
+            TaskProviderReferenceKind.OBJECT_STORE_URI,
+            role=role,
+            mime_type=mime_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            size_bucket=size_bucket,
+            identity_hmac=identity_hmac,
+            owner_scope=owner_scope,
+            metadata=metadata,
+        )
 
     async def validate(
         self,
@@ -645,6 +838,62 @@ def _unsupported_cancel_operation() -> TaskClientUnsupportedOperationError:
 
 def _default_definition_hash(definition: TaskDefinition) -> str:
     return spec_hash(definition)
+
+
+def _file_conversion_requests(
+    values: Iterable[str | TaskFileConversionRequest | Mapping[str, object]],
+) -> tuple[TaskFileConversionRequest, ...]:
+    return tuple(_file_conversion_request(value) for value in values)
+
+
+def _file_conversion_request(
+    value: str | TaskFileConversionRequest | Mapping[str, object],
+) -> TaskFileConversionRequest:
+    if isinstance(value, TaskFileConversionRequest):
+        return value
+    if isinstance(value, str):
+        return TaskFileConversionRequest(name=value)
+    name = value.get("name")
+    assert_non_empty_string(cast(str, name), "conversion.name")
+    options = value.get("options", {})
+    assert isinstance(options, Mapping), "conversion.options must be a mapping"
+    return TaskFileConversionRequest(
+        name=cast(str, name),
+        options=options,
+    )
+
+
+def _provider_reference_descriptor(
+    provider: str,
+    reference: str,
+    kind: TaskProviderReferenceKind,
+    *,
+    role: str | None = None,
+    mime_type: str | None = None,
+    size_bytes: int | None = None,
+    sha256: str | None = None,
+    size_bucket: str | None = None,
+    identity_hmac: str | None = None,
+    owner_scope: str | None = None,
+    expires_at: datetime | None = None,
+    durable: bool = True,
+    metadata: Mapping[str, object] | None = None,
+) -> TaskFileDescriptor:
+    return TaskFileDescriptor.provider_reference_descriptor(
+        reference,
+        kind=kind,
+        provider=provider,
+        role=role,
+        mime_type=mime_type,
+        size_bytes=size_bytes,
+        sha256=sha256,
+        size_bucket=size_bucket,
+        identity_hmac=identity_hmac,
+        owner_scope=owner_scope,
+        expires_at=expires_at,
+        durable=durable,
+        metadata=metadata,
+    )
 
 
 def _utc_now() -> datetime:

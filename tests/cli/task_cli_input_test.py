@@ -62,6 +62,57 @@ class CliTaskInputParserTestCase(TestCase):
             ["documents=report-a.pdf", "documents=report-b.pdf"],
         )
 
+    def test_parser_accepts_explicit_file_descriptor_options(self) -> None:
+        parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
+
+        args = parser.parse_args(
+            [
+                "task",
+                "run",
+                "tasks/document.task.toml",
+                "--provider-file-id",
+                "document=openai:file-private",
+                "--hosted-url",
+                "references=openai:https://example.test/private.pdf",
+                "--object-store-uri",
+                "references=google:gs://bucket/private.pdf",
+                "--file-mime",
+                "document=application/pdf",
+                "--file-role",
+                "document=source",
+                "--file-size",
+                "document=2048",
+                "--file-sha256",
+                "document=" + ("a" * 64),
+                "--file-conversion",
+                'document=text:{"encoding":"utf-8"}',
+            ]
+        )
+
+        self.assertEqual(
+            args.task_provider_file_ids,
+            ["document=openai:file-private"],
+        )
+        self.assertEqual(
+            args.task_hosted_urls,
+            ["references=openai:https://example.test/private.pdf"],
+        )
+        self.assertEqual(
+            args.task_object_store_uris,
+            ["references=google:gs://bucket/private.pdf"],
+        )
+        self.assertEqual(
+            args.task_file_mime_types,
+            ["document=application/pdf"],
+        )
+        self.assertEqual(args.task_file_roles, ["document=source"])
+        self.assertEqual(args.task_file_sizes, ["document=2048"])
+        self.assertEqual(args.task_file_sha256, ["document=" + ("a" * 64)])
+        self.assertEqual(
+            args.task_file_conversions,
+            ['document=text:{"encoding":"utf-8"}'],
+        )
+
     def test_parser_keeps_existing_model_input_file_behavior(self) -> None:
         parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
 
@@ -301,6 +352,155 @@ class CliTaskInputTestCase(TestCase):
         )
         self.assertEqual(validate_task_input(definition, parsed.value), ())
 
+    def test_file_input_applies_descriptor_hints_and_conversions(
+        self,
+    ) -> None:
+        definition = self._definition(
+            TaskInputContract.file(
+                conversions=("text",),
+                mime_types=("application/pdf",),
+            )
+        )
+        digest = "a" * 64
+
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=("document=report.pdf",),
+                task_file_descriptors=(),
+                task_provider_file_ids=(),
+                task_hosted_urls=(),
+                task_object_store_uris=(),
+                task_file_mime_types=("document=application/pdf",),
+                task_file_roles=("document=source",),
+                task_file_sizes=("document=1024",),
+                task_file_sha256=(f"document={digest}",),
+                task_file_conversions=('document=text:{"encoding":"utf-8"}',),
+            ),
+            definition,
+        )
+
+        self.assertEqual(
+            parsed.value,
+            {
+                "source_kind": "local_path",
+                "reference": "report.pdf",
+                "mime_type": "application/pdf",
+                "role": "source",
+                "size_bytes": 1024,
+                "sha256": digest,
+                "conversions": [
+                    {"name": "text", "options": {"encoding": "utf-8"}}
+                ],
+            },
+        )
+        self.assertEqual(validate_task_input(definition, parsed.value), ())
+
+    def test_provider_reference_file_inputs_build_valid_descriptors(
+        self,
+    ) -> None:
+        definition = self._definition(TaskInputContract.file_array())
+
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_input_fields=(),
+                task_files=(),
+                task_file_descriptors=(),
+                task_provider_file_ids=("document=openai:file-private",),
+                task_hosted_urls=(
+                    "url=openai:https://example.test/private.pdf",
+                ),
+                task_object_store_uris=(
+                    "object=google:gs://bucket/private.pdf",
+                ),
+                task_file_mime_types=("document=application/pdf",),
+                task_file_roles=(),
+                task_file_sizes=(),
+                task_file_sha256=(),
+                task_file_conversions=(),
+            ),
+            definition,
+        )
+
+        self.assertEqual(
+            parsed.value,
+            [
+                {
+                    "source_kind": "provider_reference",
+                    "reference": "file-private",
+                    "provider_reference": {
+                        "kind": "provider_file_id",
+                        "provider": "openai",
+                        "reference": "file-private",
+                    },
+                    "mime_type": "application/pdf",
+                },
+                {
+                    "source_kind": "provider_reference",
+                    "reference": "https://example.test/private.pdf",
+                    "provider_reference": {
+                        "kind": "hosted_url",
+                        "provider": "openai",
+                        "reference": "https://example.test/private.pdf",
+                    },
+                },
+                {
+                    "source_kind": "provider_reference",
+                    "reference": "gs://bucket/private.pdf",
+                    "provider_reference": {
+                        "kind": "object_store_uri",
+                        "provider": "google",
+                        "reference": "gs://bucket/private.pdf",
+                    },
+                },
+            ],
+        )
+        self.assertEqual(validate_task_input(definition, parsed.value), ())
+
+    def test_explicit_json_descriptor_merges_with_object_input(self) -> None:
+        definition = self._definition(self._object_contract())
+
+        parsed = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json='{"question":"What changed?"}',
+                task_input_fields=(),
+                task_files=(),
+                task_file_descriptors=(
+                    (
+                        'document={"source_kind":"remote_url",'
+                        '"reference":"https://example.test/file.txt",'
+                        '"mime_type":"text/plain"}'
+                    ),
+                ),
+                task_provider_file_ids=(),
+                task_hosted_urls=(),
+                task_object_store_uris=(),
+                task_file_mime_types=(),
+                task_file_roles=(),
+                task_file_sizes=(),
+                task_file_sha256=(),
+                task_file_conversions=(),
+            ),
+            definition,
+        )
+
+        self.assertEqual(
+            parsed.value,
+            {
+                "question": "What changed?",
+                "document": {
+                    "source_kind": "remote_url",
+                    "reference": "https://example.test/file.txt",
+                    "mime_type": "text/plain",
+                },
+            },
+        )
+
     def test_scalar_input_coercion_variants(self) -> None:
         cases = (
             (TaskInputContract.integer(), "7", 7),
@@ -386,6 +586,135 @@ class CliTaskInputTestCase(TestCase):
                     task_input_json=None,
                     task_input_fields=(),
                     task_files=("a=one.pdf", "b=two.pdf"),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    task_file_descriptors=("document",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    task_file_descriptors=("document=[]",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    task_provider_file_ids=("document=openai",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    task_file_mime_types=("document=application/pdf",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=("document=report.pdf",),
+                    task_file_descriptors=(),
+                    task_file_conversions=("document=:{}",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=("document=report.pdf",),
+                    task_file_descriptors=(),
+                    task_file_conversions=("document=text:[]",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=("document=report.pdf",),
+                    task_file_sizes=("document=abc",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=("document=report.pdf",),
+                    task_file_mime_types=(
+                        "document=application/pdf",
+                        "document=text/plain",
+                    ),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    task_file_descriptors=(
+                        (
+                            'document={"source_kind":"local_path",'
+                            '"reference":"report.pdf",'
+                            '"conversions":"text"}'
+                        ),
+                    ),
+                    task_file_conversions=("document=text",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    task_file_descriptors=(
+                        (
+                            'document={"source_kind":"local_path",'
+                            '"reference":"report.pdf",'
+                            '"mime_type":"application/pdf"}'
+                        ),
+                    ),
+                    task_file_mime_types=("document=text/plain",),
+                ),
+                self._definition(TaskInputContract.file()),
+            ),
+            (
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=("document=report.pdf",),
+                    task_file_roles=("document",),
                 ),
                 self._definition(TaskInputContract.file()),
             ),
@@ -586,6 +915,55 @@ class CliTaskInputTestCase(TestCase):
         self.assertIn(
             "Task input is invalid.", validation_console.export_text()
         )
+
+    def test_validate_rejects_provider_reference_conversion_safely(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            definition = Path(tmpdir) / "document.task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "document"
+                version = "1"
+
+                [input]
+                type = "file"
+                file_conversions = ["text"]
+
+                [output]
+                type = "text"
+
+                [execution]
+                type = "agent"
+                ref = "agents/document.toml"
+                """,
+                encoding="utf-8",
+            )
+
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = task_cmds.task_validate(
+                    Namespace(
+                        definition=str(definition),
+                        task_input=None,
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_files=(),
+                        task_provider_file_ids=(
+                            "document=openai:file-private",
+                        ),
+                        task_file_conversions=("document=text",),
+                    ),
+                    console,
+                    object(),
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task input is invalid.", output)
+        self.assertIn("input.invalid_file", output)
+        self.assertNotIn("file-private", output)
 
     def test_run_reports_input_validation_before_store_resolution(
         self,

@@ -96,6 +96,12 @@ class TaskCliInput:
     provided: bool = False
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _TaskCliFileSpec:
+    field: str
+    descriptor: Mapping[str, object]
+
+
 class TaskCliInputError(ValueError):
     code: str
     message: str
@@ -1300,12 +1306,14 @@ def task_cli_input(
     raw_input = getattr(args, "task_input", None)
     raw_json = getattr(args, "task_input_json", None)
     input_fields = _task_cli_input_fields(args)
-    task_files = _task_cli_file_fields(args)
+    task_files = _task_cli_file_specs(args)
+    file_options_provided = _task_cli_file_options_provided(args)
     provided = (
         raw_input is not None
         or raw_json is not None
         or bool(input_fields)
         or bool(task_files)
+        or file_options_provided
     )
     if not provided:
         return TaskCliInput()
@@ -1313,7 +1321,9 @@ def task_cli_input(
         raise _task_cli_input_error(
             "Pass either --input or --input-json, not both."
         )
-    if raw_input is not None and (input_fields or task_files):
+    if raw_input is not None and (
+        input_fields or task_files or file_options_provided
+    ):
         raise _task_cli_input_error(
             "Pass --input by itself or use field-addressed input flags."
         )
@@ -1326,7 +1336,7 @@ def task_cli_input(
 
     if raw_json is not None:
         json_value = _load_task_cli_json(raw_json)
-        if input_fields or task_files:
+        if input_fields or task_files or file_options_provided:
             if not isinstance(json_value, Mapping):
                 raise _task_cli_input_error(
                     "Field-addressed input requires a JSON object."
@@ -1342,10 +1352,7 @@ def task_cli_input(
             raise _task_cli_input_error(
                 "File input contracts only accept --file values."
             )
-        descriptors = tuple(
-            _task_cli_file_descriptor(reference)
-            for _field, reference in task_files
-        )
+        descriptors = tuple(spec.descriptor for spec in task_files)
         if definition.input.type == TaskInputType.FILE:
             if len(descriptors) != 1:
                 raise _task_cli_input_error(
@@ -1410,6 +1417,24 @@ def _task_cli_input_provided(args: Namespace) -> bool:
         or getattr(args, "task_input_json", None) is not None
         or bool(getattr(args, "task_input_fields", ()))
         or bool(getattr(args, "task_files", ()))
+        or _task_cli_file_options_provided(args)
+    )
+
+
+def _task_cli_file_options_provided(args: Namespace) -> bool:
+    return any(
+        bool(getattr(args, name, ()))
+        for name in (
+            "task_file_descriptors",
+            "task_provider_file_ids",
+            "task_hosted_urls",
+            "task_object_store_uris",
+            "task_file_mime_types",
+            "task_file_roles",
+            "task_file_sizes",
+            "task_file_sha256",
+            "task_file_conversions",
+        )
     )
 
 
@@ -1424,6 +1449,40 @@ def _task_cli_input_fields(args: Namespace) -> tuple[tuple[str, str], ...]:
             raise _task_cli_input_error("Task input field is invalid.")
         fields.append((field, raw_value))
     return tuple(fields)
+
+
+def _task_cli_file_specs(args: Namespace) -> tuple[_TaskCliFileSpec, ...]:
+    specs: list[_TaskCliFileSpec] = []
+    specs.extend(
+        _TaskCliFileSpec(
+            field=field,
+            descriptor=_task_cli_file_descriptor(reference),
+        )
+        for field, reference in _task_cli_file_fields(args)
+    )
+    specs.extend(_task_cli_descriptor_specs(args))
+    specs.extend(
+        _task_cli_provider_reference_specs(
+            args,
+            attr="task_provider_file_ids",
+            kind="provider_file_id",
+        )
+    )
+    specs.extend(
+        _task_cli_provider_reference_specs(
+            args,
+            attr="task_hosted_urls",
+            kind="hosted_url",
+        )
+    )
+    specs.extend(
+        _task_cli_provider_reference_specs(
+            args,
+            attr="task_object_store_uris",
+            kind="object_store_uri",
+        )
+    )
+    return _apply_task_cli_file_hints(tuple(specs), args)
 
 
 def _task_cli_file_fields(args: Namespace) -> tuple[tuple[str, str], ...]:
@@ -1441,6 +1500,72 @@ def _task_cli_file_fields(args: Namespace) -> tuple[tuple[str, str], ...]:
             raise _task_cli_input_error("Task file input is invalid.")
         fields.append((field, reference))
     return tuple(fields)
+
+
+def _task_cli_descriptor_specs(
+    args: Namespace,
+) -> tuple[_TaskCliFileSpec, ...]:
+    values = getattr(args, "task_file_descriptors", ()) or ()
+    assert isinstance(values, list | tuple)
+    specs: list[_TaskCliFileSpec] = []
+    for value in values:
+        assert isinstance(value, str)
+        field, separator, raw_descriptor = value.partition("=")
+        if (
+            separator != "="
+            or not _is_task_cli_field_path(field)
+            or not raw_descriptor.strip()
+        ):
+            raise _task_cli_input_error("Task file descriptor is invalid.")
+        descriptor = _load_task_cli_json(raw_descriptor)
+        if not isinstance(descriptor, Mapping):
+            raise _task_cli_input_error("Task file descriptor is invalid.")
+        specs.append(
+            _TaskCliFileSpec(
+                field=field,
+                descriptor=cast(
+                    Mapping[str, object],
+                    _mutable_json_object(descriptor),
+                ),
+            )
+        )
+    return tuple(specs)
+
+
+def _task_cli_provider_reference_specs(
+    args: Namespace,
+    *,
+    attr: str,
+    kind: str,
+) -> tuple[_TaskCliFileSpec, ...]:
+    values = getattr(args, attr, ()) or ()
+    assert isinstance(values, list | tuple)
+    specs: list[_TaskCliFileSpec] = []
+    for value in values:
+        assert isinstance(value, str)
+        field, separator, raw_reference = value.partition("=")
+        provider, provider_separator, reference = raw_reference.partition(":")
+        if (
+            separator != "="
+            or provider_separator != ":"
+            or not _is_task_cli_field_path(field)
+            or not provider.strip()
+            or not reference.strip()
+        ):
+            raise _task_cli_input_error(
+                "Task provider file reference is invalid."
+            )
+        specs.append(
+            _TaskCliFileSpec(
+                field=field,
+                descriptor=_task_cli_provider_reference_descriptor(
+                    kind=kind,
+                    provider=provider,
+                    reference=reference,
+                ),
+            )
+        )
+    return tuple(specs)
 
 
 def _parse_task_cli_scalar(
@@ -1562,13 +1687,13 @@ def _merge_task_cli_fields(
 
 def _merge_task_cli_files(
     value: dict[str, object],
-    fields: tuple[tuple[str, str], ...],
+    fields: tuple[_TaskCliFileSpec, ...],
 ) -> None:
-    for field, reference in fields:
+    for spec in fields:
         _set_task_cli_field(
             value,
-            field,
-            _task_cli_file_descriptor(reference),
+            spec.field,
+            spec.descriptor,
             append=True,
         )
 
@@ -1614,6 +1739,163 @@ def _task_cli_file_descriptor(reference: str) -> dict[str, object]:
     }
 
 
+def _task_cli_provider_reference_descriptor(
+    *,
+    kind: str,
+    provider: str,
+    reference: str,
+) -> dict[str, object]:
+    return {
+        "source_kind": "provider_reference",
+        "reference": reference,
+        "provider_reference": {
+            "kind": kind,
+            "provider": provider,
+            "reference": reference,
+        },
+    }
+
+
+def _apply_task_cli_file_hints(
+    specs: tuple[_TaskCliFileSpec, ...],
+    args: Namespace,
+) -> tuple[_TaskCliFileSpec, ...]:
+    hints = _task_cli_file_hints(args)
+    if not hints:
+        return specs
+    spec_fields = {spec.field for spec in specs}
+    if not spec_fields.issuperset(hints):
+        raise _task_cli_input_error(
+            "Task file options require a matching file descriptor."
+        )
+    hinted_specs: list[_TaskCliFileSpec] = []
+    for spec in specs:
+        descriptor = _mutable_json_object(spec.descriptor)
+        hint = hints.get(spec.field, {})
+        for key in ("mime_type", "role", "size_bytes", "sha256"):
+            if key not in hint:
+                continue
+            _set_task_cli_file_hint(descriptor, key, hint[key])
+        conversions = hint.get("conversions")
+        if conversions is not None:
+            existing = descriptor.get("conversions", ())
+            if not isinstance(existing, list | tuple):
+                raise _task_cli_input_error(
+                    "Task file descriptor conversions are invalid."
+                )
+            existing_values = cast(
+                list[object],
+                _plain_task_cli_value(existing),
+            )
+            descriptor["conversions"] = [
+                *existing_values,
+                *cast(list[object], conversions),
+            ]
+        hinted_specs.append(
+            _TaskCliFileSpec(field=spec.field, descriptor=descriptor)
+        )
+    return tuple(hinted_specs)
+
+
+def _task_cli_file_hints(
+    args: Namespace,
+) -> dict[str, dict[str, object]]:
+    hints: dict[str, dict[str, object]] = {}
+    for attr, key in (
+        ("task_file_mime_types", "mime_type"),
+        ("task_file_roles", "role"),
+        ("task_file_sha256", "sha256"),
+    ):
+        for field, value in _task_cli_field_assignments(
+            args,
+            attr=attr,
+            error_message="Task file option is invalid.",
+        ):
+            _set_task_cli_hint(hints, field, key, value)
+    for field, value in _task_cli_field_assignments(
+        args,
+        attr="task_file_sizes",
+        error_message="Task file size hint is invalid.",
+    ):
+        try:
+            parsed_size = int(value, 10)
+        except ValueError as exc:
+            raise _task_cli_input_error(
+                "Task file size hint is invalid."
+            ) from exc
+        _set_task_cli_hint(hints, field, "size_bytes", parsed_size)
+    for field, value in _task_cli_field_assignments(
+        args,
+        attr="task_file_conversions",
+        error_message="Task file conversion hint is invalid.",
+    ):
+        conversions = cast(
+            list[object],
+            hints.setdefault(field, {}).setdefault("conversions", []),
+        )
+        conversions.append(_task_cli_conversion_hint(value))
+    return hints
+
+
+def _task_cli_field_assignments(
+    args: Namespace,
+    *,
+    attr: str,
+    error_message: str,
+) -> tuple[tuple[str, str], ...]:
+    values = getattr(args, attr, ()) or ()
+    assert isinstance(values, list | tuple)
+    fields: list[tuple[str, str]] = []
+    for value in values:
+        assert isinstance(value, str)
+        field, separator, raw_value = value.partition("=")
+        if (
+            separator != "="
+            or not _is_task_cli_field_path(field)
+            or not raw_value.strip()
+        ):
+            raise _task_cli_input_error(error_message)
+        fields.append((field, raw_value))
+    return tuple(fields)
+
+
+def _set_task_cli_hint(
+    hints: dict[str, dict[str, object]],
+    field: str,
+    key: str,
+    value: object,
+) -> None:
+    field_hints = hints.setdefault(field, {})
+    if key in field_hints:
+        raise _task_cli_input_error("Task file option is duplicated.")
+    field_hints[key] = value
+
+
+def _set_task_cli_file_hint(
+    descriptor: dict[str, object],
+    key: str,
+    value: object,
+) -> None:
+    existing = descriptor.get(key)
+    if existing is not None and existing != value:
+        raise _task_cli_input_error("Task file descriptor option conflicts.")
+    descriptor[key] = value
+
+
+def _task_cli_conversion_hint(value: str) -> Mapping[str, object]:
+    name, separator, raw_options = value.partition(":")
+    if not name.strip():
+        raise _task_cli_input_error("Task file conversion hint is invalid.")
+    if separator != ":":
+        return {"name": name}
+    options = _parse_task_cli_json_value(raw_options)
+    if not isinstance(options, Mapping):
+        raise _task_cli_input_error(
+            "Task file conversion options are invalid."
+        )
+    return {"name": name, "options": _mutable_json_object(options)}
+
+
 def _is_task_cli_field_path(value: str) -> bool:
     return bool(
         fullmatch(
@@ -1627,7 +1909,10 @@ def _task_cli_input_error(message: str) -> TaskCliInputError:
     return TaskCliInputError(
         code="input.parse",
         message=message,
-        hint="Use --input, --input-json, --input-name, or --file name=path.",
+        hint=(
+            "Use --input, --input-json, --input-name, --file name=path, "
+            "or --file-descriptor name=json."
+        ),
     )
 
 
@@ -1704,9 +1989,13 @@ def _collect_task_cli_file_summaries(
 
 
 def _is_task_cli_file_descriptor(value: Mapping[str, object]) -> bool:
-    return value.get("source_kind") == "local_path" and isinstance(
-        value.get("reference"), str
-    )
+    return value.get("source_kind") in {
+        "artifact",
+        "inline_bytes",
+        "local_path",
+        "provider_reference",
+        "remote_url",
+    } and isinstance(value.get("reference"), str)
 
 
 def _format_task_cli_value(value: object) -> str:

@@ -1494,6 +1494,69 @@ class CLI:
             default=None,
             help="Attach a local task input file as field=path.",
         )
+        task_input_parser.add_argument(
+            "--file-descriptor",
+            dest="task_file_descriptors",
+            action="append",
+            default=None,
+            help="Attach an explicit task file descriptor as field=json.",
+        )
+        task_input_parser.add_argument(
+            "--provider-file-id",
+            dest="task_provider_file_ids",
+            action="append",
+            default=None,
+            help="Attach a provider file id as field=provider:reference.",
+        )
+        task_input_parser.add_argument(
+            "--hosted-url",
+            dest="task_hosted_urls",
+            action="append",
+            default=None,
+            help="Attach a provider-hosted URL as field=provider:url.",
+        )
+        task_input_parser.add_argument(
+            "--object-store-uri",
+            dest="task_object_store_uris",
+            action="append",
+            default=None,
+            help="Attach an object-store URI as field=provider:uri.",
+        )
+        task_input_parser.add_argument(
+            "--file-mime",
+            dest="task_file_mime_types",
+            action="append",
+            default=None,
+            help="Set a task file MIME hint as field=mime/type.",
+        )
+        task_input_parser.add_argument(
+            "--file-role",
+            dest="task_file_roles",
+            action="append",
+            default=None,
+            help="Set a task file role hint as field=role.",
+        )
+        task_input_parser.add_argument(
+            "--file-size",
+            dest="task_file_sizes",
+            action="append",
+            default=None,
+            help="Set a task file size hint as field=bytes.",
+        )
+        task_input_parser.add_argument(
+            "--file-sha256",
+            dest="task_file_sha256",
+            action="append",
+            default=None,
+            help="Set a task file SHA-256 digest hint as field=hex.",
+        )
+        task_input_parser.add_argument(
+            "--file-conversion",
+            dest="task_file_conversions",
+            action="append",
+            default=None,
+            help="Request a descriptor conversion as field=name[:json].",
+        )
         task_validate_parser = task_command_parsers.add_parser(
             name="validate",
             description="Validate an intelligence task definition",
