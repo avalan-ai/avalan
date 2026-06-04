@@ -125,13 +125,17 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
         converter = PdfImageFileConverter()
         request = TaskFileConversionRequest(name="pdf_image")
 
-        with self.assertRaises(TaskFileConversionDependencyError):
-            validate_conversion_request(
-                converter,
-                request,
-                source_media_type="application/pdf",
-                source_size_bytes=10,
-            )
+        with patch(
+            "avalan.task.converters.feature_available",
+            return_value=False,
+        ):
+            with self.assertRaises(TaskFileConversionDependencyError):
+                validate_conversion_request(
+                    converter,
+                    request,
+                    source_media_type="application/pdf",
+                    source_size_bytes=10,
+                )
 
         with patch(
             "avalan.task.converters.feature_available", return_value=True
@@ -204,15 +208,21 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private pdf", str(error.exception))
 
-    async def test_converter_runtime_failure_is_sanitized(self) -> None:
+    async def test_converter_missing_backend_dependency_is_sanitized(
+        self,
+    ) -> None:
         converter = PdfImageFileConverter()
 
-        with self.assertRaises(TaskFileConversionError) as error:
-            await converter.convert(
-                b"%PDF-private",
-                source_media_type="application/pdf",
-                options={"format": "png"},
-            )
+        with patch(
+            "avalan.task.converters.pdf_image.import_module",
+            side_effect=ImportError("private.pdf"),
+        ):
+            with self.assertRaises(TaskFileConversionError) as error:
+                await converter.convert(
+                    b"%PDF-private",
+                    source_media_type="application/pdf",
+                    options={"format": "png"},
+                )
 
         self.assertIsInstance(
             error.exception, TaskFileConversionDependencyError
@@ -221,7 +231,12 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
             cast(TaskFileConversionDependencyError, error.exception).feature,
             TaskFeature.PDF_IMAGE_CONVERSION,
         )
+        self.assertEqual(
+            str(error.exception),
+            "file conversion dependency is unavailable",
+        )
         self.assertNotIn("%PDF-private", str(error.exception))
+        self.assertNotIn("private.pdf", str(error.exception))
 
     async def test_converter_renders_pages_with_fake_backend(self) -> None:
         converter = PdfImageFileConverter()
@@ -460,22 +475,20 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         converter = PdfImageFileConverter()
+        module = FakePdfiumModule(page_count=1)
 
-        with self.assertRaises(TaskFileConversionError) as error:
-            await converter.convert(
+        with patch(
+            "avalan.task.converters.pdf_image.import_module",
+            return_value=module,
+        ):
+            result = await converter.convert(
                 b"%PDF-private",
                 source_media_type="Application/PDF",
                 options={"format": "png"},
             )
 
-        self.assertEqual(
-            str(error.exception),
-            "file conversion dependency is unavailable",
-        )
-        self.assertIsInstance(
-            error.exception, TaskFileConversionDependencyError
-        )
-        self.assertNotIn("%PDF-private", str(error.exception))
+        self.assertEqual(result.media_type, "image/png")
+        self.assertEqual(result.content, b"PNG:page-1")
 
     def test_page_collection_contract_preserves_order_and_metadata(
         self,
