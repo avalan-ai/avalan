@@ -135,7 +135,14 @@ uri = \"ai://local/model\"
             )
 
     def test_validate_agent_config_rejects_non_string_direct_prompts(self):
-        for key in ("system", "developer", "user", "user_template"):
+        for key in (
+            "system",
+            "developer",
+            "instructions",
+            "goal_instructions",
+            "user",
+            "user_template",
+        ):
             with self.subTest(key=key):
                 with self.assertRaises(AssertionError):
                     OrchestratorLoader.validate_agent_config(
@@ -150,7 +157,7 @@ uri = \"ai://local/model\"
 [agent]
 role = \"assistant\"
 task = \"do\"
-instructions = \"how\"
+goal_instructions = \"how\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -790,7 +797,7 @@ uri = \"ai://local/model\"
 type = \"json\"
 role = \"assistant\"
 task = \"do\"
-instructions = \"how\"
+goal_instructions = \"how\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -1100,7 +1107,7 @@ developer = \"dev\"
 user = \"prefix\"
 role = \"ignored\"
 task = \"ignored\"
-instructions = \"ignored\"
+instructions = \"provider\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -1111,7 +1118,7 @@ uri = \"ai://local/model\"
         self.assertEqual(kwargs["user"], "prefix")
         self.assertIsNone(kwargs["role"])
         self.assertIsNone(kwargs["task"])
-        self.assertIsNone(kwargs["instructions"])
+        self.assertEqual(kwargs["instructions"], "provider")
 
     async def test_agent_direct_prompt_invalid_type_rejected(self):
         config = """
@@ -1122,6 +1129,20 @@ system = 1
 uri = \"ai://local/model\"
 """
         with self.assertRaises(AssertionError):
+            await self._run_loader(config)
+
+    async def test_agent_goal_instructions_invalid_type_rejected(self):
+        config = """
+[agent]
+task = \"do\"
+goal_instructions = 1
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with self.assertRaisesRegex(
+            AssertionError, "agent.goal_instructions must be a string"
+        ):
             await self._run_loader(config)
 
     async def test_agent_role_task_only(self):
@@ -1144,7 +1165,7 @@ uri = \"ai://local/model\"
 [agent]
 role = \"assistant\"
 task = \"do\"
-instructions = \"how\"
+goal_instructions = \"how\"
 rules = [\"r1\", \"r2\"]
 
 [engine]
@@ -1153,9 +1174,40 @@ uri = \"ai://local/model\"
         kwargs = await self._run_loader(config)
         self.assertEqual(kwargs["role"], "assistant")
         self.assertEqual(kwargs["task"], "do")
-        self.assertEqual(kwargs["instructions"], "how")
+        self.assertEqual(kwargs["goal_instructions"], "how")
+        self.assertIsNone(kwargs["instructions"])
         self.assertEqual(kwargs["rules"], ["r1", "r2"])
         self.assertIsNone(kwargs["system"])
+
+    async def test_agent_rejects_old_goal_instructions_field(self):
+        config = """
+[agent]
+role = \"assistant\"
+task = \"do\"
+instructions = \"how\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with self.assertRaisesRegex(
+            AssertionError,
+            "agent.instructions is reserved.*agent.goal_instructions",
+        ):
+            await self._run_loader(config)
+
+    async def test_agent_rejects_goal_instructions_without_task(self):
+        config = """
+[agent]
+role = \"assistant\"
+goal_instructions = \"how\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with self.assertRaisesRegex(
+            AssertionError, "agent.goal_instructions requires agent.task"
+        ):
+            await self._run_loader(config)
 
     async def test_agent_user_only(self):
         config = """
@@ -1180,6 +1232,22 @@ uri = \"ai://local/model\"
         kwargs = await self._run_loader(config)
         self.assertEqual(kwargs["user_template"], "u.md")
         self.assertIsNone(kwargs.get("user"))
+
+    async def test_agent_provider_instructions_and_user_prompt(self):
+        config = """
+[agent]
+instructions = \"provider\"
+user = \"prefix {{input}}\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["instructions"], "provider")
+        self.assertEqual(kwargs["user"], "prefix {{input}}")
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertIsNone(kwargs["goal_instructions"])
 
 
 class LoadJsonOrchestratorVariantsTestCase(IsolatedAsyncioTestCase):
@@ -1274,7 +1342,7 @@ debug_source = \"{debug_path}\"
 [agent]
 role = \"assistant\"
 task = \"do\"
-instructions = \"ins\"
+goal_instructions = \"ins\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -1507,7 +1575,7 @@ effort = \"xhigh\"
 [agent]
 role = \"assistant\"
 task = \"do\"
-instructions = \"how\"
+goal_instructions = \"how\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -2408,7 +2476,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             agent_config={
                 "role": "assistant",
                 "task": "do",
-                "instructions": "how",
+                "goal_instructions": "how",
             },
             uri="ai://local/model",
             engine_config={},
@@ -2485,7 +2553,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         agent_config = {
             "role": "assistant",
             "task": "do",
-            "instructions": "how",
+            "goal_instructions": "how",
         }
 
         with patch("avalan.agent.loader.JsonOrchestrator") as orch_patch:

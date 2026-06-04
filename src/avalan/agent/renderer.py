@@ -147,15 +147,15 @@ class TemplateEngineAgent(EngineAgent):
             ),
         )
         template_vars.setdefault(
-            "instructions",
+            "goal_instructions",
             (
                 [
                     self._renderer.from_string(instruction, template_vars)
-                    for instruction in specification.goal.instructions
+                    for instruction in specification.goal.goal_instructions
                 ]
                 if specification.goal and template_vars
                 else (
-                    specification.goal.instructions
+                    specification.goal.goal_instructions
                     if specification.goal
                     else None
                 )

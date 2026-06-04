@@ -59,7 +59,8 @@ class JsonOrchestratorInitTestCase(TestCase):
             name="Agent",
             role="assistant",
             task="do",
-            instructions="something",
+            instructions="provider",
+            goal_instructions="something",
             rules=["a", "b"],
             template_id="tmpl",
             settings=settings,
@@ -73,8 +74,11 @@ class JsonOrchestratorInitTestCase(TestCase):
         self.assertIs(op.environment.settings, settings)
         self.assertIsInstance(op.specification, JsonSpecification)
         self.assertEqual(op.specification.role, Role(persona=["assistant"]))
+        self.assertEqual(op.specification.instructions, "provider")
         self.assertEqual(op.specification.goal.task, "do")
-        self.assertEqual(op.specification.goal.instructions, ["something"])
+        self.assertEqual(
+            op.specification.goal.goal_instructions, ["something"]
+        )
         self.assertEqual(op.specification.rules, ["a", "b"])
         self.assertEqual(op.specification.template_id, "tmpl")
         self.assertEqual(op.specification.template_vars, {"y": 2})
@@ -107,11 +111,13 @@ class JsonOrchestratorInitTestCase(TestCase):
             event_manager,
             ExampleOutput,
             name="Agent",
+            instructions="provider",
             system="sys",
             settings=settings,
         )
 
         op = orch.operations[0]
+        self.assertEqual(op.specification.instructions, "provider")
         self.assertEqual(op.specification.system_prompt, "sys")
         self.assertIsNone(op.specification.goal)
 
@@ -245,7 +251,7 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
             name="Agent",
             role="assistant",
             task="do",
-            instructions="something",
+            goal_instructions="something",
             rules=None,
             settings=settings,
         ) as orch:

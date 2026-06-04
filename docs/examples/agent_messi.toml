@@ -7,7 +7,7 @@ task = """
 Your task is to use your expertise in football to find answers to the user
 requests.
 """
-instructions = """
+goal_instructions = """
 When explaining topics, try to find football references and analogies to help
 with your explanations.
 """

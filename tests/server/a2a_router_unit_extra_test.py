@@ -133,6 +133,7 @@ def test_task_request_conversation_and_metadata() -> None:
 
     conversation = payload.conversation()
     assert conversation[0].role is MessageRole.SYSTEM
+    assert conversation[0].content == "Follow"
     assert conversation[-1].content == "Hello"
 
     metadata = _task_metadata(payload)
@@ -680,7 +681,9 @@ async def _run_message_and_artifact_result_branches() -> None:
 
 
 def test_agent_card_and_skills() -> None:
-    goal = SimpleNamespace(task="Solve", instructions=["Step 1", "Step 2"])
+    goal = SimpleNamespace(
+        task="Solve", goal_instructions=["Step 1", "Step 2"]
+    )
     spec = SimpleNamespace(
         system_prompt="System", developer_prompt="Developer", goal=goal
     )
@@ -708,6 +711,26 @@ def test_agent_card_and_skills() -> None:
 
     extensions = _capability_extensions(["instruction"], ["x", "y"])
     assert extensions[0]["uri"].endswith("instructions")
+
+
+def test_agent_card_ignores_legacy_goal_instruction_name() -> None:
+    goal = SimpleNamespace(task="Solve", instructions=["old"])
+    spec = SimpleNamespace(
+        system_prompt=None, developer_prompt=None, goal=goal
+    )
+    spec.input_type = SimpleNamespace(value="text")
+    spec.output_type = SimpleNamespace(value="text")
+    operation = SimpleNamespace(specification=spec)
+    orchestrator = SimpleNamespace(
+        id=uuid4(), name="Agent", operations=[operation], model_ids=set()
+    )
+
+    card = _build_agent_card(
+        orchestrator, None, None, "https://example.com/tasks"
+    )
+
+    assert "examples" not in card["skills"][0]
+    assert "extensions" not in card["capabilities"]
 
 
 def test_filter_helper_returns_same_payload() -> None:

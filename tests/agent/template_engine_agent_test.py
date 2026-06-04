@@ -80,7 +80,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
     def test_prepare_call_no_template_vars(self):
         spec = Specification(
             role="assistant",
-            goal=Goal(task="do", instructions=["instr"]),
+            goal=Goal(task="do", goal_instructions=["instr"]),
             rules=["rule"],
         )
         context = ModelCallContext(specification=spec, input="hi")
@@ -90,7 +90,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             name="Bob",
             roles=["assistant"],
             task=b"do",
-            instructions=[b"instr"],
+            goal_instructions=[b"instr"],
             rules=[b"rule"],
         )
         self.assertEqual(result["settings"], spec.settings)
@@ -99,7 +99,10 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
     def test_prepare_call_with_template_vars(self):
         spec = Specification(
             role=Role(persona=["role {{verb}}"]),
-            goal=Goal(task="do {{verb}}", instructions=["inst {{verb}}"]),
+            goal=Goal(
+                task="do {{verb}}",
+                goal_instructions=["inst {{verb}}"],
+            ),
             rules=["rule {{verb}}"],
             template_vars={"verb": "run"},
         )
@@ -110,7 +113,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             name="Bob",
             roles=[b"role run"],
             task=b"do run",
-            instructions=[b"inst run"],
+            goal_instructions=[b"inst run"],
             rules=[b"rule run"],
         )
         self.assertEqual(result["system_prompt"], expected_prompt)
@@ -118,7 +121,10 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
     def test_prepare_call_with_settings_template_vars(self):
         spec = Specification(
             role=Role(persona=["role {{verb}}"]),
-            goal=Goal(task="do {{verb}}", instructions=["inst {{verb}}"]),
+            goal=Goal(
+                task="do {{verb}}",
+                goal_instructions=["inst {{verb}}"],
+            ),
             rules=["rule {{verb}}"],
             settings=GenerationSettings(template_vars={"verb": "run"}),
         )
@@ -129,10 +135,38 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             name="Bob",
             roles=[b"role run"],
             task=b"do run",
-            instructions=[b"inst run"],
+            goal_instructions=[b"inst run"],
             rules=[b"rule run"],
         )
         self.assertEqual(result["system_prompt"], expected_prompt)
+
+    def test_prepare_call_keeps_provider_instructions_out_of_template(self):
+        spec = Specification(
+            role="assistant",
+            goal=Goal(task="do", goal_instructions=["goal"]),
+            instructions="provider-only",
+        )
+        context = ModelCallContext(specification=spec, input="hi")
+
+        result = self.agent._prepare_call(context)
+
+        self.assertEqual(spec.instructions, "provider-only")
+        self.assertIn("goal", result["system_prompt"])
+        self.assertNotIn("provider-only", result["system_prompt"])
+
+    def test_prepare_call_json_template_allows_missing_goal_instructions(self):
+        spec = Specification(
+            goal=None,
+            instructions="provider-only",
+            template_id="agent_json.md",
+            template_vars={"output_properties": []},
+        )
+        context = ModelCallContext(specification=spec, input="hi")
+
+        result = self.agent._prepare_call(context)
+
+        self.assertIn("using JSON", result["system_prompt"])
+        self.assertNotIn("provider-only", result["system_prompt"])
 
     def test_prepare_call_goal_none(self):
         spec = Specification(
@@ -148,7 +182,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
             name="Bob",
             roles=["assistant"],
             task=None,
-            instructions=None,
+            goal_instructions=None,
             rules=[],
         )
         self.assertEqual(result["system_prompt"], expected_prompt)
@@ -189,7 +223,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
     def test_prepare_call_template_developer_prompt(self) -> None:
         spec = Specification(
             role="assistant",
-            goal=Goal(task="task", instructions=["inst"]),
+            goal=Goal(task="task", goal_instructions=["inst"]),
             developer_prompt="dev",
             rules=[],
         )
@@ -205,7 +239,7 @@ class TemplateEngineAgentPrepareTestCase(TestCase):
     ) -> None:
         spec = Specification(
             role="assistant",
-            goal=Goal(task="task", instructions=["inst"]),
+            goal=Goal(task="task", goal_instructions=["inst"]),
             developer_prompt="spec-dev",
             rules=[],
         )
@@ -253,7 +287,7 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
 
         spec = Specification(
             role="assistant",
-            goal=Goal(task="do", instructions=["ins"]),
+            goal=Goal(task="do", goal_instructions=["ins"]),
             rules=["r"],
         )
 
@@ -262,7 +296,7 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
             name="Bob",
             roles=["assistant"],
             task=b"do",
-            instructions=[b"ins"],
+            goal_instructions=[b"ins"],
             rules=[b"r"],
         )
 

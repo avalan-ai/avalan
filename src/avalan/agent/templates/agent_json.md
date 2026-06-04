@@ -5,10 +5,12 @@
     using JSON.
 {% endblock %}
 
-{% block instructions %}
-    {% for instruction in instructions %}
-        {{ instruction }}
-    {% endfor %}
+{% block goal_instructions %}
+    {% if goal_instructions %}
+        {% for instruction in goal_instructions %}
+            {{ instruction }}
+        {% endfor %}
+    {% endif %}
 
     {% if output_properties %}
         The JSON document can have any of the following properties:

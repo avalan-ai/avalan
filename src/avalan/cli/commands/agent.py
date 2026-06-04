@@ -64,6 +64,7 @@ def get_orchestrator_settings(
     role: str | None = None,
     task: str | None = None,
     instructions: str | None = None,
+    goal_instructions: str | None = None,
     system: str | None = None,
     developer: str | None = None,
     user: str | None = None,
@@ -138,6 +139,11 @@ def get_orchestrator_settings(
                     instructions
                     if instructions is not None
                     else getattr(args, "instructions", None)
+                ),
+                "goal_instructions": (
+                    goal_instructions
+                    if goal_instructions is not None
+                    else getattr(args, "goal_instructions", None)
                 ),
                 "system": (
                     system
@@ -867,9 +873,9 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         is_quiet=args.quiet,
         tty_path=tty_path,
     )
-    instructions = args.instructions or get_input(
+    goal_instructions = getattr(args, "goal_instructions", None) or get_input(
         console,
-        _("Agent instructions") + " ",
+        _("Agent goal instructions") + " ",
         echo_stdin=not args.no_repl,
         is_quiet=args.quiet,
         tty_path=tty_path,
@@ -896,7 +902,8 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         name=name,
         role=role,
         task=task,
-        instructions=instructions,
+        instructions=getattr(args, "instructions", None),
+        goal_instructions=goal_instructions,
         engine_uri=engine_uri,
         memory_recent=memory_recent,
         memory_permanent_message=memory_permanent_message,

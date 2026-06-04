@@ -295,7 +295,7 @@ class AgentTaskTargetRunnerValidationTest(TestCase):
 [agent]
 name = "Valid"
 task = "Answer"
-instructions = "Be brief."
+goal_instructions = "Be brief."
 
 [engine]
 uri = "ai://env:KEY@openai/gpt-4o-mini"
@@ -2608,7 +2608,7 @@ file_delivery_profile = "multimodal"
 [agent]
 name = "Valid"
 task = "Answer"
-instructions = "Be brief."
+goal_instructions = "Be brief."
 
 [engine]
 uri = "ai://local/model"
@@ -3278,7 +3278,7 @@ file_delivery_profile = "multimodal"
 [agent]
 name = "Valid"
 task = "Answer"
-instructions = "Be brief."
+goal_instructions = "Be brief."
 
 [engine]
 uri = "ai://env:KEY@openai/gpt-4o-mini"
@@ -3339,7 +3339,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 [agent]
 name = "Valid"
 task = "Answer"
-instructions = "Be brief."
+goal_instructions = "Be brief."
 
 [engine]
 uri = "ai://env:KEY@openai/gpt-4o-mini"
@@ -3464,7 +3464,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 [agent]
 name = "Valid"
 task = "Answer"
-instructions = "Be brief."
+goal_instructions = "Be brief."
 
 [engine]
 uri = "ai://env:KEY@openai/gpt-4o-mini"
@@ -3671,7 +3671,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
 [agent]
 name = "Valid"
 task = "Answer"
-instructions = "Be brief."
+goal_instructions = "Be brief."
 
 [engine]
 uri = "ai://env:KEY@openai/gpt-4o-mini"

@@ -366,7 +366,7 @@ task = """
 Your task is to translate the given gettext template file,
 from the original {{source_language}} to {{destination_language}}.
 """
-instructions = """
+goal_instructions = """
 The text to translate is marked with `msgid`, and it's quoted.
 Your translation should be defined in `msgstr`.
 """

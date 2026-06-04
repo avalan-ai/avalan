@@ -3003,7 +3003,14 @@ class CLI:
         group.add_argument("--role", type=str, help="Agent role")
         group.add_argument("--task", type=str, help="Agent task")
         group.add_argument(
-            "--instructions", type=str, help="Agent instructions"
+            "--instructions",
+            type=str,
+            help="Provider instructions",
+        )
+        group.add_argument(
+            "--goal-instructions",
+            type=str,
+            help="Agent goal instructions",
         )
         group.add_argument("--system", type=str, help="System prompt")
         group.add_argument("--developer", type=str, help="Developer prompt")

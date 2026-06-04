@@ -76,7 +76,7 @@ class RendererPropertyTestCase(TestCase):
             name="Agent",
             role="assistant",
             task="do",
-            instructions="it",
+            goal_instructions="it",
             rules=None,
             settings=self.settings,
         )
@@ -93,7 +93,7 @@ class RendererPropertyTestCase(TestCase):
             DummyOutput,
             role="assistant",
             task="do",
-            instructions="it",
+            goal_instructions="it",
             settings=self.settings,
         )
         self.assertIsInstance(orch.renderer, Renderer)

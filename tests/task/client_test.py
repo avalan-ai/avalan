@@ -531,7 +531,7 @@ class TaskClientTest(IsolatedAsyncioTestCase):
 [agent]
 name = "Valid"
 task = "Answer"
-instructions = "Be brief."
+goal_instructions = "Be brief."
 
 [engine]
 uri = "ai://env:KEY@openai/gpt-4o-mini"

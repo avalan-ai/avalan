@@ -109,6 +109,7 @@ class JsonOrchestrator(Orchestrator):
         role: str | None = None,
         task: str | None = None,
         instructions: str | None = None,
+        goal_instructions: str | None = None,
         name: str | None = None,
         rules: list[str] | None = [],
         system: str | None = None,
@@ -125,6 +126,7 @@ class JsonOrchestrator(Orchestrator):
             specification = JsonSpecification(
                 output=output,
                 goal=None,
+                instructions=instructions,
                 rules=rules,
                 system_prompt=system,
                 developer_prompt=developer,
@@ -132,11 +134,15 @@ class JsonOrchestrator(Orchestrator):
                 template_vars=template_vars,
             )
         else:
-            assert task is not None and instructions is not None
             specification = JsonSpecification(
                 output=output,
                 role=role,
-                goal=Goal(task=task, instructions=[instructions]),
+                goal=(
+                    Goal(task=task, goal_instructions=[goal_instructions])
+                    if task and goal_instructions
+                    else None
+                ),
+                instructions=instructions,
                 rules=rules,
                 template_id=template_id or JsonOrchestrator.DEFAULT_FILE_NAME,
                 template_vars=template_vars,

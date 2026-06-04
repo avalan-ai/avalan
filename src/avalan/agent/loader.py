@@ -770,6 +770,10 @@ class OrchestratorLoader:
                 template_vars=settings.template_vars,
             )
         else:
+            has_direct_prompt = (
+                "system" in settings.agent_config
+                or "developer" in settings.agent_config
+            )
             agent = DefaultOrchestrator(
                 engine_uri,
                 self._logger,
@@ -781,22 +785,20 @@ class OrchestratorLoader:
                 name=settings.agent_config.get("name"),
                 role=(
                     None
-                    if "system" in settings.agent_config
-                    or "developer" in settings.agent_config
+                    if has_direct_prompt
                     else settings.agent_config.get("role")
                 ),
                 task=(
                     None
-                    if "system" in settings.agent_config
-                    or "developer" in settings.agent_config
+                    if has_direct_prompt
                     else settings.agent_config.get("task")
                 ),
-                instructions=(
+                goal_instructions=(
                     None
-                    if "system" in settings.agent_config
-                    or "developer" in settings.agent_config
-                    else settings.agent_config.get("instructions")
+                    if has_direct_prompt
+                    else settings.agent_config.get("goal_instructions")
                 ),
+                instructions=settings.agent_config.get("instructions"),
                 rules=settings.agent_config.get("rules"),
                 system=settings.agent_config.get("system"),
                 developer=settings.agent_config.get("developer"),
@@ -827,13 +829,14 @@ class OrchestratorLoader:
         template_vars: dict[str, Any] | None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
-        if "system" not in agent_config and "developer" not in agent_config:
-            assert (
-                "instructions" in agent_config
-            ), "No instructions defined in agent section of configuration"
+        if (
+            "system" not in agent_config
+            and "developer" not in agent_config
+            and "goal_instructions" in agent_config
+        ):
             assert (
                 "task" in agent_config
-            ), "No task defined in agent section of configuration"
+            ), "agent.goal_instructions requires agent.task"
 
         properties: list[Property] = []
         for property_name in config.get("json", []):
@@ -848,6 +851,9 @@ class OrchestratorLoader:
 
         assert properties, "No properties defined in configuration"
 
+        has_direct_prompt = (
+            "system" in agent_config or "developer" in agent_config
+        )
         agent = JsonOrchestrator(
             engine_uri,
             logger,
@@ -858,21 +864,14 @@ class OrchestratorLoader:
             properties,
             id=agent_id,
             name=agent_config["name"] if "name" in agent_config else None,
-            role=(
+            role=(None if has_direct_prompt else agent_config.get("role")),
+            task=(None if has_direct_prompt else agent_config.get("task")),
+            goal_instructions=(
                 None
-                if "system" in agent_config or "developer" in agent_config
-                else agent_config.get("role")
+                if has_direct_prompt
+                else agent_config.get("goal_instructions")
             ),
-            task=(
-                None
-                if "system" in agent_config or "developer" in agent_config
-                else agent_config.get("task")
-            ),
-            instructions=(
-                None
-                if "system" in agent_config or "developer" in agent_config
-                else agent_config.get("instructions")
-            ),
+            instructions=agent_config.get("instructions"),
             rules=agent_config.get("rules"),
             system=agent_config.get("system"),
             developer=agent_config.get("developer"),
@@ -989,7 +988,28 @@ class OrchestratorLoader:
         assert not (
             "user" in agent_config and "user_template" in agent_config
         ), "user and user_template are mutually exclusive"
-        for key in ("system", "developer", "user", "user_template"):
+        assert not (
+            "task" in agent_config
+            and "instructions" in agent_config
+            and "goal_instructions" not in agent_config
+            and "system" not in agent_config
+            and "developer" not in agent_config
+        ), (
+            "agent.instructions is reserved for provider instructions; "
+            "use agent.goal_instructions with agent.task for goal "
+            "instructions"
+        )
+        assert not (
+            "goal_instructions" in agent_config and "task" not in agent_config
+        ), "agent.goal_instructions requires agent.task"
+        for key in (
+            "system",
+            "developer",
+            "instructions",
+            "goal_instructions",
+            "user",
+            "user_template",
+        ):
             value = agent_config.get(key)
             assert value is None or isinstance(
                 value, str

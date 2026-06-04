@@ -283,8 +283,9 @@ plicate}]
                                    [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] --function
                                    {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms} --id ID
                                    [--limit LIMIT] --participant PARTICIPANT --session SESSION [--engine-uri ENGINE_URI]
-                                   [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS] [--system SYSTEM]
-                                   [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
+                                   [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS]
+                                   [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER]
+                                   [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
                                    [--no-memory-recent] [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                                    [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                                    [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
@@ -370,7 +371,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -457,8 +460,9 @@ plicate}]
                         [--skip-load-recent-messages] [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT] [--stats]
                         [--sync] [--tools-confirm] [--tool-format {json,react,bracket,openai,harmony}]
                         [--reasoning-tag {think,channel}] [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK]
-                        [--instructions INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER] [--user USER]
-                        [--user-template USER_TEMPLATE] [--memory-recent] [--no-memory-recent]
+                        [--instructions INSTRUCTIONS] [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM]
+                        [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
+                        [--no-memory-recent]
                         [--memory-permanent-message MEMORY_PERMANENT_MESSAGE] [--memory-permanent MEMORY_PERMANENT]
                         [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                         [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS] [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
@@ -575,7 +579,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -658,7 +664,8 @@ plicate}]
                           [--protocol PROTOCOL] [--reload] [--cors-origin CORS_ORIGIN] [--cors-origin-regex CORS_ORIGIN_REGEX]
                           [--cors-method CORS_METHOD] [--cors-header CORS_HEADER] [--cors-credentials]
                           [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS]
-                          [--system SYSTEM] [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE]
+                          [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER] [--user USER]
+                          [--user-template USER_TEMPLATE]
                           [--memory-recent] [--no-memory-recent] [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                           [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                           [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
@@ -761,7 +768,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -844,7 +853,8 @@ plicate}]
                           [--protocol PROTOCOL] [--reload] [--cors-origin CORS_ORIGIN] [--cors-origin-regex CORS_ORIGIN_REGEX]
                           [--cors-method CORS_METHOD] [--cors-header CORS_HEADER] [--cors-credentials]
                           [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS]
-                          [--system SYSTEM] [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE]
+                          [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER] [--user USER]
+                          [--user-template USER_TEMPLATE]
                           [--memory-recent] [--no-memory-recent] [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                           [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                           [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
@@ -947,7 +957,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -1024,8 +1036,9 @@ plicate}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                          [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--engine-uri ENGINE_URI]
-                         [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS] [--system SYSTEM]
-                         [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
+                         [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS]
+                         [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER] [--user USER]
+                         [--user-template USER_TEMPLATE] [--memory-recent]
                          [--no-memory-recent] [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                          [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                          [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS] [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
@@ -1084,7 +1097,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt

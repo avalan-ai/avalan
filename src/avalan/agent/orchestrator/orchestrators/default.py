@@ -35,8 +35,9 @@ class DefaultOrchestrator(Orchestrator):
         name: str | None,
         role: str | None,
         task: str | None,
-        instructions: str | None,
-        rules: list[str] | None,
+        instructions: str | None = None,
+        goal_instructions: str | None = None,
+        rules: list[str] | None = None,
         system: str | None = None,
         developer: str | None = None,
         user: str | None = None,
@@ -51,6 +52,7 @@ class DefaultOrchestrator(Orchestrator):
             specification = Specification(
                 role=None,
                 goal=None,
+                instructions=instructions,
                 system_prompt=system,
                 developer_prompt=developer,
                 rules=rules,
@@ -61,10 +63,11 @@ class DefaultOrchestrator(Orchestrator):
             specification = Specification(
                 role=cast(Role | None, role),
                 goal=(
-                    Goal(task=task, instructions=[instructions])
-                    if task and instructions
+                    Goal(task=task, goal_instructions=[goal_instructions])
+                    if task and goal_instructions
                     else None
                 ),
+                instructions=instructions,
                 rules=rules,
                 template_id=template_id or "agent.md",
                 template_vars=template_vars,

@@ -55,7 +55,8 @@ class DefaultOrchestratorInitTestCase(TestCase):
             name="Agent",
             role="assistant",
             task="do",
-            instructions="something",
+            instructions="provider",
+            goal_instructions="something",
             rules=["a", "b"],
             template_id="tmpl",
             settings=settings,
@@ -70,8 +71,11 @@ class DefaultOrchestratorInitTestCase(TestCase):
         self.assertIs(op.environment.engine_uri, engine_uri)
         self.assertIs(op.environment.settings, settings)
         self.assertEqual(op.specification.role, "assistant")
+        self.assertEqual(op.specification.instructions, "provider")
         self.assertEqual(op.specification.goal.task, "do")
-        self.assertEqual(op.specification.goal.instructions, ["something"])
+        self.assertEqual(
+            op.specification.goal.goal_instructions, ["something"]
+        )
         self.assertEqual(op.specification.rules, ["a", "b"])
         self.assertEqual(op.specification.template_id, "tmpl")
         self.assertEqual(op.specification.template_vars, {"y": 2})
@@ -102,12 +106,13 @@ class DefaultOrchestratorInitTestCase(TestCase):
             name="Agent",
             role=None,
             task=None,
-            instructions=None,
+            instructions="provider",
             rules=None,
             system="sys",
         )
 
         op = orch.operations[0]
+        self.assertEqual(op.specification.instructions, "provider")
         self.assertEqual(op.specification.system_prompt, "sys")
         self.assertIsNone(op.specification.role)
         self.assertIsNone(op.specification.goal)
@@ -138,7 +143,7 @@ class DefaultOrchestratorInitTestCase(TestCase):
             name="Agent",
             role="ignored",
             task="ignored",
-            instructions="ignored",
+            goal_instructions="ignored",
             rules=None,
             developer="dev",
         )
@@ -251,7 +256,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             name="Agent",
             role="assistant",
             task="do",
-            instructions="something",
+            goal_instructions="something",
             rules=None,
             settings=settings,
         ) as orch:
@@ -282,7 +287,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             context.specification,
             Specification(
                 role="assistant",
-                goal=Goal(task="do", instructions=["something"]),
+                goal=Goal(task="do", goal_instructions=["something"]),
                 rules=None,
                 input_type=InputType.TEXT,
                 output_type=OutputType.TEXT,
@@ -372,7 +377,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             name="Agent",
             role="assistant",
             task="do",
-            instructions="something",
+            goal_instructions="something",
             rules=None,
             user="hello {{input}} {{name}}",
             template_vars={"name": "Bob"},
@@ -436,7 +441,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
                 name="Agent",
                 role="assistant",
                 task="do",
-                instructions="something",
+                goal_instructions="something",
                 rules=None,
                 user_template="user.md",
                 template_vars={"name": "Ann"},
@@ -491,7 +496,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             name="Agent",
             role="assistant",
             task="do",
-            instructions="something",
+            goal_instructions="something",
             rules=None,
             user="Answer briefly.",
             settings=settings,
