@@ -342,21 +342,31 @@ async def _agent_input(
             )
         )
     file_content = tuple(block.content for block in file_blocks)
+    file_metadata = tuple(block.metadata for block in file_blocks)
     if isinstance(value, Message):
-        return _message_with_content(value, file_content)
+        return _message_with_content(
+            context.definition,
+            value,
+            file_content,
+            prompt=prompt,
+            files=file_metadata,
+        )
     if isinstance(value, list) and all(
         isinstance(item, Message) for item in value
     ):
-        return [
-            *cast(list[Message], value),
-            Message(role=MessageRole.USER, content=list(file_content)),
-        ]
+        return _messages_with_content(
+            context.definition,
+            cast(list[Message], value),
+            file_content,
+            prompt=prompt,
+            files=file_metadata,
+        )
     content: list[MessageContent] = []
     text = _file_prompt_text(
         context.definition,
         cast(str | list[str], value),
         prompt=prompt,
-        files=tuple(block.metadata for block in file_blocks),
+        files=file_metadata,
     )
     if text is not None:
         content.append(MessageContentText(type="text", text=text))
@@ -598,10 +608,30 @@ def _message_file(
 
 
 def _message_with_content(
+    definition: TaskDefinition,
     message: Message,
     file_content: tuple[MessageContent, ...],
+    *,
+    prompt: _AgentPrompt | None = None,
+    files: tuple[Mapping[str, object], ...] = (),
 ) -> Message:
     content = _content_blocks(message.content)
+    text = _message_prompt_text(message)
+    prompt_text = (
+        _file_prompt_text(
+            definition,
+            text or "",
+            prompt=prompt,
+            files=files,
+        )
+        if text is not None or _has_agent_prompt(prompt)
+        else None
+    )
+    content = _message_content_with_prompt(
+        definition,
+        content,
+        prompt_text=prompt_text,
+    )
     content.extend(file_content)
     return Message(
         role=message.role,
@@ -615,6 +645,43 @@ def _message_with_content(
     )
 
 
+def _messages_with_content(
+    definition: TaskDefinition,
+    messages: list[Message],
+    file_content: tuple[MessageContent, ...],
+    *,
+    prompt: _AgentPrompt | None = None,
+    files: tuple[Mapping[str, object], ...] = (),
+) -> list[Message]:
+    assert messages
+    last = messages[-1]
+    if (
+        not _has_agent_prompt(prompt)
+        and _message_prompt_text(last) is None
+        and not _content_blocks(last.content)
+    ):
+        return [
+            *messages,
+            Message(role=MessageRole.USER, content=list(file_content)),
+        ]
+    return [
+        *messages[:-1],
+        _message_with_content(
+            definition,
+            last,
+            file_content,
+            prompt=prompt,
+            files=files,
+        ),
+    ]
+
+
+def _has_agent_prompt(prompt: _AgentPrompt | None) -> bool:
+    return prompt is not None and (
+        prompt.user is not None or prompt.user_template is not None
+    )
+
+
 def _content_blocks(
     content: str | MessageContent | list[MessageContent] | None,
 ) -> list[MessageContent]:
@@ -625,6 +692,60 @@ def _content_blocks(
     if isinstance(content, list):
         return list(content)
     return [content]
+
+
+def _message_prompt_text(message: Message) -> str | None:
+    content = message.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, MessageContentText):
+        return content.text
+    if isinstance(content, list):
+        texts = tuple(
+            block.text
+            for block in content
+            if isinstance(block, MessageContentText)
+        )
+        return "\n".join(texts) if texts else None
+    return None
+
+
+def _message_content_with_prompt(
+    definition: TaskDefinition,
+    content: list[MessageContent],
+    *,
+    prompt_text: str | None,
+) -> list[MessageContent]:
+    if prompt_text is None:
+        return [
+            block
+            for block in content
+            if not _is_file_input(definition)
+            or not isinstance(block, MessageContentText)
+        ]
+
+    if _is_file_input(definition):
+        return [
+            MessageContentText(type="text", text=prompt_text),
+            *(
+                block
+                for block in content
+                if not isinstance(block, MessageContentText)
+            ),
+        ]
+
+    replacement = MessageContentText(type="text", text=prompt_text)
+    replaced = False
+    updated: list[MessageContent] = []
+    for block in content:
+        if isinstance(block, MessageContentText) and not replaced:
+            updated.append(replacement)
+            replaced = True
+        else:
+            updated.append(block)
+    if not replaced:
+        updated.insert(0, replacement)
+    return updated
 
 
 def _file_prompt_text(

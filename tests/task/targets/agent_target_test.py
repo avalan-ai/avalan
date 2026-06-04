@@ -1148,6 +1148,265 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         )
         self.assertEqual(content[1].file["file_id"], "file-test")
 
+    async def test_run_prefixes_message_text_before_file_blocks(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user = "Review the attachment."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader(response="accepted")
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    Message(
+                        role=MessageRole.USER,
+                        content=MessageContentText(
+                            type="text",
+                            text="include this detail",
+                        ),
+                    ),
+                    files=(
+                        TaskInputFile(
+                            logical_path="/private/uploads/sentinel.pdf",
+                            metadata={"display_name": "sentinel.pdf"},
+                            provider_reference=_provider_reference(
+                                "openai",
+                                "file-test",
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        message = cast(Message, loader.inputs[0])
+        content = cast(list[Any], message.content)
+        self.assertEqual(
+            content[0].text,
+            "Review the attachment.\n\ninclude this detail",
+        )
+        self.assertEqual(content[1].file["file_id"], "file-test")
+        self.assertNotIn("sentinel.pdf", str(message))
+        self.assertNotIn("/private/uploads", str(message))
+
+    async def test_run_prefixes_last_message_text_before_file_blocks(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user = "Use the final instruction."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader(response="accepted")
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+            messages = [
+                Message(role=MessageRole.USER, content="previous"),
+                Message(role=MessageRole.ASSISTANT, content="ok"),
+                Message(role=MessageRole.USER, content="final detail"),
+            ]
+
+            await runner.run(
+                self._context(
+                    self._definition(),
+                    messages,
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:openai:provider_file_id",
+                            provider_reference=_provider_reference(
+                                "openai",
+                                "file-test",
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+        captured = cast(list[Message], loader.inputs[0])
+        content = cast(list[Any], captured[2].content)
+        self.assertEqual(captured[0].content, "previous")
+        self.assertEqual(captured[1].content, "ok")
+        self.assertEqual(
+            content[0].text,
+            "Use the final instruction.\n\nfinal detail",
+        )
+        self.assertEqual(content[1].file["file_id"], "file-test")
+
+    async def test_run_rejects_message_prompt_template_variable_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user = "Extract {{ filename }}."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = FakeLoader()
+            runner = AgentTaskTargetRunner(loader, ref_base=root)
+
+            with self.assertRaises(TaskValidationError) as error:
+                await runner.run(
+                    self._context(
+                        self._definition(),
+                        Message(
+                            role=MessageRole.USER,
+                            content="private detail",
+                        ),
+                        files=(
+                            TaskInputFile(
+                                logical_path="/private/uploads/sentinel.pdf",
+                                metadata={"display_name": "sentinel.pdf"},
+                                provider_reference=_provider_reference(
+                                    "openai",
+                                    "file-test",
+                                ),
+                            ),
+                        ),
+                    )
+                )
+
+        self.assertEqual(
+            error.exception.issues[0].code, "input.invalid_prompt"
+        )
+        self.assertEqual(loader.inputs, [])
+        self.assertNotIn("private detail", str(error.exception))
+        self.assertNotIn("sentinel.pdf", str(error.exception))
+        self.assertNotIn("/private/uploads", str(error.exception))
+
+    async def test_run_preserves_mixed_message_content_with_prompt(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+user = "Review safely."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            file_loader = FakeLoader(response="accepted")
+            text_loader = FakeLoader(response="accepted")
+            insert_loader = FakeLoader(response="accepted")
+            file_runner = AgentTaskTargetRunner(file_loader, ref_base=root)
+            text_runner = AgentTaskTargetRunner(text_loader, ref_base=root)
+            insert_runner = AgentTaskTargetRunner(insert_loader, ref_base=root)
+            existing_file = MessageContentFile(
+                type="file",
+                file={"file_id": "existing-file"},
+            )
+            new_file = TaskInputFile(
+                logical_path="provider:openai:provider_file_id",
+                provider_reference=_provider_reference("openai", "file-test"),
+            )
+
+            await file_runner.run(
+                self._context(
+                    self._definition(
+                        input_contract=TaskInputContract.file(
+                            mime_types=("application/pdf",),
+                        )
+                    ),
+                    Message(
+                        role=MessageRole.USER,
+                        content=[
+                            MessageContentText(
+                                type="text",
+                                text="ignored input",
+                            ),
+                            existing_file,
+                        ],
+                    ),
+                    files=(new_file,),
+                )
+            )
+            await text_runner.run(
+                self._context(
+                    self._definition(),
+                    Message(
+                        role=MessageRole.USER,
+                        content=[
+                            MessageContentText(
+                                type="text",
+                                text="keep this",
+                            ),
+                            existing_file,
+                        ],
+                    ),
+                    files=(new_file,),
+                )
+            )
+            await insert_runner.run(
+                self._context(
+                    self._definition(),
+                    Message(
+                        role=MessageRole.USER,
+                        content=existing_file,
+                    ),
+                    files=(new_file,),
+                )
+            )
+
+        file_content = cast(
+            list[Any], cast(Message, file_loader.inputs[0]).content
+        )
+        text_content = cast(
+            list[Any], cast(Message, text_loader.inputs[0]).content
+        )
+        insert_content = cast(
+            list[Any], cast(Message, insert_loader.inputs[0]).content
+        )
+        self.assertEqual(file_content[0].text, "Review safely.")
+        self.assertEqual(file_content[1].file["file_id"], "existing-file")
+        self.assertEqual(file_content[2].file["file_id"], "file-test")
+        self.assertNotIn("ignored input", str(file_loader.inputs[0]))
+        self.assertEqual(
+            text_content[0].text,
+            "Review safely.\n\nkeep this",
+        )
+        self.assertEqual(text_content[1].file["file_id"], "existing-file")
+        self.assertEqual(text_content[2].file["file_id"], "file-test")
+        self.assertEqual(insert_content[0].text, "Review safely.")
+        self.assertEqual(insert_content[1].file["file_id"], "existing-file")
+        self.assertEqual(insert_content[2].file["file_id"], "file-test")
+
     async def test_run_uses_agent_user_input_reference_once(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
