@@ -150,6 +150,9 @@ async def build_task_executable_input_files(
     run: TaskRun | None = None,
     attempt: TaskAttempt | None = None,
     file_converters: Mapping[str, FileConverter] | None = None,
+    remote_url_policy: TaskRemoteUrlPolicy | None = None,
+    remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
+    remote_url_resolver: TaskRemoteUrlResolver | None = None,
     now: datetime | None = None,
 ) -> TaskExecutableInputFiles:
     assert isinstance(definition, TaskDefinition)
@@ -173,6 +176,9 @@ async def build_task_executable_input_files(
         roots=roots,
         artifact_store=artifact_store,
         hmac_provider=hmac_provider,
+        remote_url_policy=remote_url_policy,
+        remote_url_http_client=remote_url_http_client,
+        remote_url_resolver=remote_url_resolver,
         task_store=task_store,
         run_id=run.run_id if run is not None else None,
         attempt_id=attempt.attempt_id if attempt is not None else None,

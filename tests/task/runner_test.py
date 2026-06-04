@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
@@ -43,6 +44,8 @@ from avalan.task import (
     TaskOutputContract,
     TaskPrivacyPolicy,
     TaskProviderReferenceKind,
+    TaskRemoteUrlPolicy,
+    TaskRemoteUrlResponse,
     TaskRetryPolicy,
     TaskRun,
     TaskRunFinalizer,
@@ -88,6 +91,37 @@ class StaticHmacProvider:
             algorithm="hmac-sha256",
             secret=b"test-secret",
         )
+
+
+class FakeRemoteResolver:
+    def __init__(
+        self,
+        addresses: Mapping[str, tuple[str, ...]] | None = None,
+    ) -> None:
+        self.addresses = dict(addresses or {})
+        self.calls: list[str] = []
+
+    def resolve(self, hostname: str) -> tuple[str, ...]:
+        self.calls.append(hostname)
+        return self.addresses.get(hostname, ("8.8.8.8",))
+
+
+class FakeRemoteClient:
+    def __init__(
+        self,
+        responses: Mapping[str, TaskRemoteUrlResponse],
+    ) -> None:
+        self.responses = dict(responses)
+        self.calls: list[tuple[str, float]] = []
+
+    def open(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float,
+    ) -> TaskRemoteUrlResponse:
+        self.calls.append((url, timeout_seconds))
+        return self.responses[url]
 
 
 class RecordingTarget:
@@ -1198,6 +1232,115 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.files[0].logical_path, "explicit:file")
         self.assertEqual(result.files[1].logical_path, "artifact:artifact-1")
         self.assertEqual(len(result.materialized_files), 1)
+
+    async def test_shared_input_file_builder_materializes_remote_url(
+        self,
+    ) -> None:
+        url = "https://example.test/input.txt"
+        remote_client = FakeRemoteClient(
+            {
+                url: TaskRemoteUrlResponse(
+                    status_code=200,
+                    headers={
+                        "Content-Length": "11",
+                        "Content-Type": "text/plain",
+                    },
+                    stream=BytesIO(b"remote text"),
+                )
+            }
+        )
+        remote_resolver = FakeRemoteResolver()
+        with TemporaryDirectory() as artifacts:
+            store = InMemoryTaskStore()
+            definition_value = definition(
+                input_contract=TaskInputContract.file()
+            )
+            await store.register_definition(
+                definition_value,
+                definition_hash="shared-builder-remote",
+            )
+            run = await store.create_run(
+                TaskExecutionRequest(definition_id="shared-builder-remote")
+            )
+            attempt = await store.create_attempt(run.run_id)
+
+            result = await build_task_executable_input_files(
+                definition_value,
+                TaskFileDescriptor.remote_url(
+                    url,
+                    mime_type="text/plain",
+                    size_bytes=11,
+                ),
+                roots=(),
+                artifact_store=LocalArtifactStore(
+                    artifacts,
+                    raw_storage_allowed=True,
+                    id_factory=lambda: "artifact-remote",
+                ),
+                hmac_provider=self.hmac_provider,
+                task_store=store,
+                run=run,
+                attempt=attempt,
+                remote_url_policy=TaskRemoteUrlPolicy(
+                    enabled=True,
+                    max_bytes=64,
+                ),
+                remote_url_http_client=remote_client,
+                remote_url_resolver=remote_resolver,
+            )
+
+        self.assertEqual(remote_resolver.calls, ["example.test"])
+        self.assertEqual(remote_client.calls, [(url, 10.0)])
+        self.assertEqual(len(result.files), 1)
+        self.assertEqual(
+            result.files[0].logical_path,
+            "artifact:artifact-remote",
+        )
+        self.assertEqual(len(result.materialized_files), 1)
+        self.assertNotIn("remote text", str(result.materialized_files[0]))
+
+    async def test_shared_input_file_builder_rejects_remote_url_disabled(
+        self,
+    ) -> None:
+        url = "https://example.test/input.txt"
+        remote_client = FakeRemoteClient(
+            {
+                url: TaskRemoteUrlResponse(
+                    status_code=200,
+                    headers={
+                        "Content-Length": "11",
+                        "Content-Type": "text/plain",
+                    },
+                    stream=BytesIO(b"remote text"),
+                )
+            }
+        )
+        with TemporaryDirectory() as artifacts:
+            with self.assertRaises(TaskValidationError) as error:
+                await build_task_executable_input_files(
+                    definition(input_contract=TaskInputContract.file()),
+                    TaskFileDescriptor.remote_url(
+                        url,
+                        mime_type="text/plain",
+                        size_bytes=11,
+                    ),
+                    roots=(),
+                    artifact_store=LocalArtifactStore(
+                        artifacts,
+                        raw_storage_allowed=True,
+                    ),
+                    hmac_provider=self.hmac_provider,
+                    remote_url_http_client=remote_client,
+                    remote_url_resolver=FakeRemoteResolver(),
+                )
+
+        self.assertEqual(
+            [issue.code for issue in error.exception.issues],
+            ["feature.remote_url_file_inputs_disabled"],
+        )
+        self.assertEqual(remote_client.calls, [])
+        self.assertNotIn(url, str(error.exception))
+        self.assertNotIn("remote text", str(error.exception))
 
     async def test_shared_input_file_builder_rejects_bad_explicit_file(
         self,
