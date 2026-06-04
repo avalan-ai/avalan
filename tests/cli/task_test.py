@@ -2,6 +2,7 @@ from argparse import Namespace
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from rich.console import Console
 from avalan.cli.commands import task as task_cmds
 from avalan.task import (
     ArtifactStoreError,
+    CallableTaskTargetRunner,
     SanitizedTaskEvent,
     TaskClientUnsupportedOperationError,
     TaskClientWaitTimeoutError,
@@ -766,6 +768,383 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertEqual(client.input_value, "Ada Lovelace")
         self.assertIn("Task run completed (non-durable): run-1", output)
         self.assertIn('"privacy":"<redacted>"', output)
+
+    def test_run_json_prints_only_structured_output(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        client = _FakeTaskClient(
+            run_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-1",
+                    state=TaskRunState.SUCCEEDED,
+                    result=SimpleNamespace(output_summary={"ignored": True}),
+                ),
+                output={"b": 2, "a": [1]},
+            )
+        )
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                return_value=_FakeTaskClientContext(client),
+            ),
+        ):
+            definition = _write_direct_object_definition(Path(tmpdir))
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=True,
+                    task_output_path=None,
+                    task_pdf=None,
+                    quiet=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), '{"a":[1],"b":2}\n')
+
+    def test_run_json_and_output_write_same_structured_value(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        client = _FakeTaskClient(
+            run_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-1",
+                    state=TaskRunState.SUCCEEDED,
+                    result=SimpleNamespace(output_summary={"ignored": True}),
+                ),
+                output={"answer": "ok"},
+            )
+        )
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                return_value=_FakeTaskClientContext(client),
+            ),
+        ):
+            root = Path(tmpdir)
+            definition = _write_direct_object_definition(root)
+            output_path = root / "result.json"
+            output_path.write_text("old\n", encoding="utf-8")
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=True,
+                    task_output_path=str(output_path),
+                    task_pdf=None,
+                    quiet=True,
+                ),
+                console,
+                self.theme,
+            )
+            written = output_path.read_text(encoding="utf-8")
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
+        self.assertEqual(written, '{"answer":"ok"}\n')
+
+    def test_run_output_parent_failure_skips_client(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient()
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                return_value=_FakeTaskClientContext(client),
+            ),
+        ):
+            root = Path(tmpdir)
+            definition = _write_direct_object_definition(root)
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=False,
+                    task_output_path=str(root / "missing" / "result.json"),
+                    task_pdf=None,
+                    quiet=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIsNone(client.input_value)
+        self.assertIn("output.write", output)
+        self.assertNotIn("Ada Lovelace", output)
+
+    def test_run_returns_false_when_output_write_fails(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient(
+            run_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-1",
+                    state=TaskRunState.SUCCEEDED,
+                    result=SimpleNamespace(output_summary={"ignored": True}),
+                ),
+                output={"answer": "ok"},
+            )
+        )
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                return_value=_FakeTaskClientContext(client),
+            ),
+            patch.object(
+                task_cmds,
+                "_write_task_run_structured_output",
+                return_value=False,
+            ),
+        ):
+            definition = _write_direct_object_definition(Path(tmpdir))
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=False,
+                    task_output_path="result.json",
+                    task_pdf=None,
+                    quiet=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertEqual(client.input_value, "Ada Lovelace")
+
+    def test_run_json_failure_does_not_write_stdout(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        diagnostic_console = Console(record=True, width=160)
+        client = _FakeTaskClient(
+            run_result=SimpleNamespace(
+                run=SimpleNamespace(
+                    run_id="run-1",
+                    state=TaskRunState.FAILED,
+                    result=SimpleNamespace(
+                        output_summary=None,
+                        error={"code": "output_contract.failed"},
+                    ),
+                ),
+                output={"private": "partial"},
+            )
+        )
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds,
+                "_task_cli_client_context",
+                return_value=_FakeTaskClientContext(client),
+            ),
+            patch.object(
+                task_cmds,
+                "_task_diagnostic_console",
+                return_value=diagnostic_console,
+            ),
+        ):
+            definition = _write_direct_object_definition(Path(tmpdir))
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=True,
+                    task_output_path=None,
+                    task_pdf=None,
+                    quiet=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        diagnostics = diagnostic_console.export_text()
+        self.assertFalse(result)
+        self.assertEqual(stream.getvalue(), "")
+        self.assertIn("task.run_failed", diagnostics)
+        self.assertIn("output_contract.failed", diagnostics)
+        self.assertNotIn("partial", diagnostics)
+
+    def test_run_json_rejects_text_output_contract(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        diagnostic_console = Console(record=True, width=160)
+
+        with patch.object(
+            task_cmds,
+            "_task_diagnostic_console",
+            return_value=diagnostic_console,
+        ):
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(FIXTURE_ROOT / "minimal.task.toml"),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=True,
+                    task_output_path=None,
+                    task_pdf=None,
+                    quiet=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        self.assertFalse(result)
+        self.assertEqual(stream.getvalue(), "")
+        self.assertIn("output.unsupported", diagnostic_console.export_text())
+
+    def test_run_json_uses_real_ephemeral_client(self) -> None:
+        async def target(context: TaskTargetContext) -> object:
+            return {"answer": "ok", "input": context.input_value}
+
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds,
+                "_agent_task_target",
+                return_value=CallableTaskTargetRunner(target),
+            ),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            root = Path(tmpdir)
+            definition = _write_direct_object_definition(root)
+            output_path = root / "result.json"
+            result = task_cmds.task_run(
+                Namespace(
+                    definition=str(definition),
+                    task_input="Ada Lovelace",
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_files=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=True,
+                    task_output_path=str(output_path),
+                    task_pdf=None,
+                    quiet=False,
+                ),
+                console,
+                self.theme,
+            )
+            written = output_path.read_text(encoding="utf-8")
+
+        expected = '{"answer":"ok","input":"Ada Lovelace"}\n'
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), expected)
+        self.assertEqual(written, expected)
+
+    def test_structured_output_writer_reports_safe_failures(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        diagnostic_console = Console(record=True, width=160)
+
+        with patch.object(
+            task_cmds,
+            "_write_task_run_output_file",
+            return_value=False,
+        ):
+            self.assertFalse(
+                task_cmds._write_task_run_structured_output(
+                    Namespace(task_run_json=True, task_output_path="out.json"),
+                    console,
+                    diagnostic_console,
+                    {"answer": "ok"},
+                )
+            )
+
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_output_file_writer_reports_safe_failures(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            missing_parent = root / "missing" / "result.json"
+            self.assertFalse(
+                task_cmds._write_task_run_output_file(
+                    str(missing_parent),
+                    "{}\n",
+                    console,
+                )
+            )
+
+            with (
+                patch.object(
+                    task_cmds.Path,
+                    "replace",
+                    side_effect=OSError("private replace failure"),
+                ),
+                patch.object(
+                    task_cmds.Path,
+                    "unlink",
+                    side_effect=OSError("private cleanup failure"),
+                ),
+            ):
+                self.assertFalse(
+                    task_cmds._write_task_run_output_file(
+                        str(root / "result.json"),
+                        "{}\n",
+                        console,
+                    )
+                )
+
+        output = console.export_text()
+        self.assertIn("output.write", output)
+        self.assertNotIn("private", output)
 
     def test_run_without_result_skips_output_line(self) -> None:
         console = Console(record=True, width=160)
@@ -1863,6 +2242,48 @@ class CliTaskCommandShellTestCase(TestCase):
         assert inspection_context is not None
         self.assertIs(inspection_database, inspection_context.database)
 
+    def test_ephemeral_client_context_cleans_temporary_artifacts(self) -> None:
+        async def exercise() -> bool:
+            with TemporaryDirectory() as tmpdir:
+                definition_path = Path(tmpdir) / "task.toml"
+                definition_path.write_text("", encoding="utf-8")
+                with (
+                    patch.object(
+                        task_cmds,
+                        "_agent_task_target",
+                        return_value=object(),
+                    ),
+                    patch.object(
+                        task_cmds,
+                        "_task_artifact_store",
+                        return_value=None,
+                    ),
+                    patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+                ):
+                    context = task_cmds._task_cli_client_context(
+                        definition_path,
+                        dsn=None,
+                        schema=None,
+                        queue=False,
+                        ephemeral=True,
+                        hub=None,
+                        logger=None,
+                        input_value={
+                            "source_kind": "local_path",
+                            "reference": "sample.pdf",
+                        },
+                    )
+                async with context as client:
+                    artifact_store = client._artifact_store
+                    self.assertIsNotNone(artifact_store)
+                    assert artifact_store is not None
+                    artifact_root = artifact_store._root
+                    self.assertTrue(artifact_root.exists())
+                self.assertFalse(artifact_root.exists())
+            return True
+
+        self.assertTrue(task_cmds._run_awaitable(exercise()))
+
     def test_hmac_provider_uses_environment_key(self) -> None:
         with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
             provider = task_cmds._task_hmac_provider()
@@ -2017,6 +2438,26 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertEqual(
             task_cmds._task_command_metadata(ephemeral=True)["store_mode"],
             "ephemeral-memory",
+        )
+        self.assertTrue(
+            task_cmds._task_cli_contains_local_file(
+                {
+                    "nested": {
+                        "source_kind": "local_path",
+                        "reference": "sample.pdf",
+                    }
+                }
+            )
+        )
+        self.assertTrue(
+            task_cmds._task_cli_contains_local_file(
+                [{"source_kind": "local_path", "reference": "sample.pdf"}]
+            )
+        )
+        self.assertFalse(
+            task_cmds._task_cli_contains_local_file(
+                {"nested": {"source_kind": "remote_url", "reference": "url"}}
+            )
         )
         event_value = task_cmds._task_event_cli_value(
             SimpleNamespace(
@@ -2455,6 +2896,39 @@ def _write_queued_definition(path: Path) -> None:
         """,
         encoding="utf-8",
     )
+
+
+def _write_direct_object_definition(path: Path) -> Path:
+    definition = path / "direct_object.task.toml"
+    definition.write_text(
+        """
+        [task]
+        name = "direct_object"
+        version = "1"
+
+        [input]
+        type = "string"
+
+        [output]
+        type = "object"
+
+        [output.schema]
+        type = "object"
+        required = ["answer", "input"]
+
+        [output.schema.properties.answer]
+        type = "string"
+
+        [output.schema.properties.input]
+        type = "string"
+
+        [execution]
+        type = "agent"
+        ref = "agents/direct_object.toml"
+        """,
+        encoding="utf-8",
+    )
+    return definition
 
 
 async def _raise_runtime_error() -> bool:

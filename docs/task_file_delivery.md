@@ -41,6 +41,10 @@ avalan task run tasks/review.task.toml --ephemeral \
 
 avalan task run tasks/review.task.toml --ephemeral \
   --file-descriptor 'document={"source_kind":"remote_url","reference":"https://example.test/report.txt","mime_type":"text/plain"}'
+
+avalan task run tasks/review.task.toml --ephemeral \
+  --pdf docs/examples/playground/invoice.pdf \
+  --json
 ```
 
 Use `--file-conversion field=name` or

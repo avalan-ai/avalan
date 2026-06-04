@@ -1682,11 +1682,22 @@ avalan task run docs/examples/tasks/provider_reference_direct.task.toml \
   --ephemeral \
   --provider-file-id document=openai:file_abc123 \
   --file-mime document=application/pdf
+
+avalan task run docs/examples/tasks/structured_json.task.toml \
+  --ephemeral \
+  --input-json '{"question":"What changed?","priority":2}' \
+  --json \
+  --output result.json
 ```
 
 Use `--store-schema` or `AVALAN_TASK_STORE_SCHEMA` when the task schema is not
-on the default search path. Direct runs that materialize local bytes need
-`AVALAN_TASK_ARTIFACT_ROOT`.
+on the default search path. `--json` prints exactly one compact JSON document
+for successful `json`, `object`, and `array` outputs. `--output PATH` writes the
+same structured value atomically as compact JSON with a trailing newline.
+`--pdf PATH` is shorthand for one top-level PDF file input and is equivalent to
+`--file input=PATH --file-mime input=application/pdf`. Direct ephemeral runs
+that materialize local bytes use a temporary artifact root when
+`AVALAN_TASK_ARTIFACT_ROOT` is not configured.
 
 ### avalan task enqueue
 

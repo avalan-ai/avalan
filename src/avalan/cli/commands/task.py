@@ -21,10 +21,12 @@ from ...task import (
     TaskKeyMaterial,
     TaskKeyPurpose,
     TaskLoadIssue,
+    TaskOutputType,
     TaskRetentionAction,
     TaskRetentionError,
     TaskRetentionService,
     TaskRetentionStoreNotFoundError,
+    TaskRunResult,
     TaskRunState,
     TaskStoreNotFoundError,
     TaskTargetContext,
@@ -81,6 +83,7 @@ from os import environ, strerror
 from pathlib import Path
 from re import fullmatch
 from sys import exc_info
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import TracebackType
 from typing import Any, cast
 from uuid import uuid4
@@ -493,22 +496,34 @@ async def _task_run(
     hub: object | None,
     logger: Logger | None,
 ) -> bool:
-    loaded = _load_definition_for_execution(args, console)
+    diagnostic_console = _task_diagnostic_console(args, console)
+    loaded = _load_definition_for_execution(args, diagnostic_console)
     if loaded is None:
         return False
     definition_path, definition, task_input = loaded
     if definition.run.mode != RunMode.DIRECT:
         _print_task_command_error(
-            console,
+            diagnostic_console,
             "Task run requires a direct-mode definition.",
             "run.mode",
             "Use task enqueue for queued definitions.",
         )
         return False
+    structured_output = _task_run_structured_output_requested(args)
+    if structured_output and not _task_output_is_structured(definition):
+        _print_task_command_error(
+            diagnostic_console,
+            "Task run output is not structured.",
+            "output.unsupported",
+            "Use --json or --output with json, object, or array output tasks.",
+        )
+        return False
+    if not _validate_task_run_output_path(args, diagnostic_console):
+        return False
     dsn = _task_store_dsn(args)
     ephemeral = bool(getattr(args, "ephemeral", False))
     if dsn is None and not ephemeral:
-        _print_missing_store(console)
+        _print_missing_store(diagnostic_console)
         return False
     client_context = _task_cli_client_context(
         definition_path,
@@ -518,6 +533,7 @@ async def _task_run(
         ephemeral=ephemeral,
         hub=hub,
         logger=logger,
+        input_value=task_input.value,
     )
     try:
         async with client_context as client:
@@ -533,21 +549,25 @@ async def _task_run(
         TaskClientUnsupportedOperationError,
         TaskValidationError,
     ) as exc:
-        _print_task_execution_error(console, exc)
+        _print_task_execution_error(diagnostic_console, exc)
         return False
-    console.print(
-        (
-            "Task run completed (non-durable): "
-            if ephemeral
-            else "Task run completed: "
+    if result.run.state != TaskRunState.SUCCEEDED:
+        if not _task_run_json_output(args) and not _task_run_quiet(args):
+            _print_task_run_summary(console, result, ephemeral=ephemeral)
+        _print_task_run_failure(diagnostic_console, result)
+        return False
+    if structured_output:
+        output_written = _write_task_run_structured_output(
+            args,
+            console,
+            diagnostic_console,
+            result.output,
         )
-        + result.run.run_id,
-        markup=False,
-    )
-    console.print(f"state {result.run.state.value}", markup=False)
-    if result.run.result is not None:
-        _print_task_result(console, result.run.result.output_summary)
-    return result.run.state == TaskRunState.SUCCEEDED
+        if not output_written:
+            return False
+    if not _task_run_json_output(args) and not _task_run_quiet(args):
+        _print_task_run_summary(console, result, ephemeral=ephemeral)
+    return True
 
 
 async def _task_enqueue(
@@ -893,6 +913,7 @@ def _task_cli_client_context(
     ephemeral: bool,
     hub: object | None,
     logger: Logger | None,
+    input_value: object = None,
 ) -> _TaskCliClientContext:
     stack = AsyncExitStack()
     target = _agent_task_target(
@@ -902,6 +923,16 @@ def _task_cli_client_context(
         stack=stack,
     )
     artifact_store = _task_artifact_store()
+    if (
+        artifact_store is None
+        and ephemeral
+        and _task_cli_contains_local_file(input_value)
+    ):
+        artifact_root = stack.enter_context(TemporaryDirectory())
+        artifact_store = LocalArtifactStore(
+            artifact_root,
+            raw_storage_allowed=True,
+        )
     hmac_provider = _task_hmac_provider()
     if ephemeral:
         return _TaskCliClientContext(
@@ -1236,6 +1267,159 @@ def _print_task_result(
     console.print(f"output {_format_task_cli_value(value)}", markup=False)
 
 
+def _print_task_run_summary(
+    console: Console,
+    result: TaskRunResult,
+    *,
+    ephemeral: bool,
+) -> None:
+    run = result.run
+    console.print(
+        (
+            "Task run completed (non-durable): "
+            if ephemeral
+            else "Task run completed: "
+        )
+        + run.run_id,
+        markup=False,
+    )
+    console.print(f"state {run.state.value}", markup=False)
+    if run.result is not None:
+        _print_task_result(console, run.result.output_summary)
+
+
+def _print_task_run_failure(
+    console: Console,
+    result: TaskRunResult,
+) -> None:
+    run = result.run
+    console.print("Task run did not succeed.", markup=False)
+    console.print(f"error task.run_failed {run.state.value}", markup=False)
+    if run.result is not None and run.result.error is not None:
+        console.print(
+            f"failure {_format_task_cli_value(run.result.error)}",
+            markup=False,
+        )
+
+
+def _task_diagnostic_console(args: Namespace, console: Console) -> Console:
+    if not _task_run_json_output(args):
+        return console
+    return Console(stderr=True, highlight=False)
+
+
+def _task_run_json_output(args: Namespace) -> bool:
+    return bool(getattr(args, "task_run_json", False))
+
+
+def _task_run_output_path(args: Namespace) -> str | None:
+    value = getattr(args, "task_output_path", None)
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _task_run_quiet(args: Namespace) -> bool:
+    return bool(getattr(args, "quiet", False))
+
+
+def _task_run_structured_output_requested(args: Namespace) -> bool:
+    return (
+        _task_run_json_output(args) or _task_run_output_path(args) is not None
+    )
+
+
+def _task_output_is_structured(definition: TaskDefinition) -> bool:
+    return definition.output.type in {
+        TaskOutputType.JSON,
+        TaskOutputType.OBJECT,
+        TaskOutputType.ARRAY,
+    }
+
+
+def _write_task_run_structured_output(
+    args: Namespace,
+    console: Console,
+    diagnostic_console: Console,
+    value: object,
+) -> bool:
+    serialized = _format_task_cli_value(value) + "\n"
+    output_path = _task_run_output_path(args)
+    if output_path is not None and not _write_task_run_output_file(
+        output_path,
+        serialized,
+        diagnostic_console,
+    ):
+        return False
+    if _task_run_json_output(args):
+        console.file.write(serialized)
+        console.file.flush()
+    return True
+
+
+def _write_task_run_output_file(
+    value: str,
+    serialized: str,
+    console: Console,
+) -> bool:
+    path = Path(value)
+    parent = path.parent if path.parent != Path("") else Path(".")
+    if not parent.exists() or not parent.is_dir():
+        _print_task_command_error(
+            console,
+            "Task output file could not be written.",
+            "output.write",
+            "Create the parent directory before using --output.",
+        )
+        return False
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            delete=False,
+            dir=parent,
+            encoding="utf-8",
+        ) as file:
+            temp_path = Path(file.name)
+            file.write(serialized)
+            file.flush()
+        temp_path.replace(path)
+    except OSError:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        _print_task_command_error(
+            console,
+            "Task output file could not be written.",
+            "output.write",
+            "Use a writable output path.",
+        )
+        return False
+    return True
+
+
+def _validate_task_run_output_path(
+    args: Namespace,
+    console: Console,
+) -> bool:
+    output_path = _task_run_output_path(args)
+    if output_path is None:
+        return True
+    path = Path(output_path)
+    parent = path.parent if path.parent != Path("") else Path(".")
+    if parent.exists() and parent.is_dir():
+        return True
+    _print_task_command_error(
+        console,
+        "Task output file could not be written.",
+        "output.write",
+        "Create the parent directory before using --output.",
+    )
+    return False
+
+
 def _task_cli_after_sequence(args: Namespace) -> int | None:
     value = getattr(args, "after_sequence", None)
     if value is None:
@@ -1305,9 +1489,37 @@ def task_cli_input(
     assert isinstance(definition, TaskDefinition)
     raw_input = getattr(args, "task_input", None)
     raw_json = getattr(args, "task_input_json", None)
+    raw_pdf = getattr(args, "task_pdf", None)
     input_fields = _task_cli_input_fields(args)
-    task_files = _task_cli_file_specs(args)
     file_options_provided = _task_cli_file_options_provided(args)
+    if raw_input is not None and raw_json is not None:
+        raise _task_cli_input_error(
+            "Pass either --input or --input-json, not both."
+        )
+    if raw_pdf is not None:
+        if (
+            raw_input is not None
+            or raw_json is not None
+            or input_fields
+            or bool(getattr(args, "task_files", ()) or ())
+            or file_options_provided
+        ):
+            raise _task_cli_input_error(
+                "Pass --pdf by itself for single-file PDF input."
+            )
+        if definition.input.type != TaskInputType.FILE:
+            raise _task_cli_input_error(
+                "--pdf requires a single top-level file input."
+            )
+        return TaskCliInput(
+            value={
+                "source_kind": "local_path",
+                "reference": raw_pdf,
+                "mime_type": "application/pdf",
+            },
+            provided=True,
+        )
+    task_files = _task_cli_file_specs(args)
     provided = (
         raw_input is not None
         or raw_json is not None
@@ -1317,10 +1529,6 @@ def task_cli_input(
     )
     if not provided:
         return TaskCliInput()
-    if raw_input is not None and raw_json is not None:
-        raise _task_cli_input_error(
-            "Pass either --input or --input-json, not both."
-        )
     if raw_input is not None and (
         input_fields or task_files or file_options_provided
     ):
@@ -1415,6 +1623,7 @@ def _task_cli_input_provided(args: Namespace) -> bool:
     return (
         getattr(args, "task_input", None) is not None
         or getattr(args, "task_input_json", None) is not None
+        or getattr(args, "task_pdf", None) is not None
         or bool(getattr(args, "task_input_fields", ()))
         or bool(getattr(args, "task_files", ()))
         or _task_cli_file_options_provided(args)
@@ -1910,8 +2119,8 @@ def _task_cli_input_error(message: str) -> TaskCliInputError:
         code="input.parse",
         message=message,
         hint=(
-            "Use --input, --input-json, --input-name, --file name=path, "
-            "or --file-descriptor name=json."
+            "Use --input, --input-json, --pdf, --input-name, "
+            "--file name=path, or --file-descriptor name=json."
         ),
     )
 
@@ -2017,6 +2226,20 @@ def _plain_task_cli_value(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_plain_task_cli_value(item) for item in value]
     return value
+
+
+def _task_cli_contains_local_file(value: object) -> bool:
+    if isinstance(value, Mapping):
+        if value.get("source_kind") == "local_path" and isinstance(
+            value.get("reference"), str
+        ):
+            return True
+        return any(
+            _task_cli_contains_local_file(item) for item in value.values()
+        )
+    if isinstance(value, list | tuple):
+        return any(_task_cli_contains_local_file(item) for item in value)
+    return False
 
 
 def _print_issues(

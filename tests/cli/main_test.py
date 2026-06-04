@@ -12,7 +12,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from avalan.cli import CommandAbortException
-from avalan.cli.__main__ import CLI
+from avalan.cli.__main__ import CLI, _task_run_json_stdout
 
 
 def _collect_progs(parser: ArgumentParser) -> list[str]:
@@ -1183,6 +1183,72 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(exit_context.exception.code, 1)
         task_validate_mock.assert_called_once_with(args, console, theme)
+
+    async def test_task_run_failure_exits_nonzero(self):
+        args = Namespace(
+            command="task",
+            task_command="run",
+            verbose=None,
+            quiet=True,
+            login=False,
+            hf_token=None,
+            task_run_json=False,
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        console = MagicMock()
+        hub = MagicMock(domain="hf")
+        with (
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("avalan.cli.__main__.Confirm.ask", return_value=False),
+            patch("avalan.cli.__main__.find_spec", return_value=None),
+            patch("avalan.cli.__main__.logger_replace"),
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch(
+                "avalan.cli.__main__.task_run",
+                return_value=False,
+            ) as task_run_mock,
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                await self.cli._main(args, theme, console, hub)
+
+        self.assertEqual(exit_context.exception.code, 1)
+        task_run_mock.assert_called_once_with(
+            args,
+            console,
+            theme,
+            hub,
+            self.cli._logger,
+        )
+
+    def test_task_run_json_stdout_predicate(self):
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="task",
+                    task_command="run",
+                    task_run_json=True,
+                )
+            )
+        )
+        self.assertFalse(
+            _task_run_json_stdout(
+                Namespace(
+                    command="task",
+                    task_command="run",
+                    task_run_json=False,
+                )
+            )
+        )
+        self.assertFalse(
+            _task_run_json_stdout(
+                Namespace(
+                    command="task",
+                    task_command="validate",
+                    task_run_json=True,
+                )
+            )
+        )
 
 
 class CliMainLoginTestCase(IsolatedAsyncioTestCase):

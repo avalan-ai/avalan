@@ -86,6 +86,11 @@ class CliTaskInputParserTestCase(TestCase):
                 "document=" + ("a" * 64),
                 "--file-conversion",
                 'document=text:{"encoding":"utf-8"}',
+                "--json",
+                "--output",
+                "result.json",
+                "--pdf",
+                "input.pdf",
             ]
         )
 
@@ -112,6 +117,9 @@ class CliTaskInputParserTestCase(TestCase):
             args.task_file_conversions,
             ['document=text:{"encoding":"utf-8"}'],
         )
+        self.assertTrue(args.task_run_json)
+        self.assertEqual(args.task_output_path, "result.json")
+        self.assertEqual(args.task_pdf, "input.pdf")
 
     def test_parser_keeps_existing_model_input_file_behavior(self) -> None:
         parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
@@ -1150,6 +1158,93 @@ class CliTaskInputTestCase(TestCase):
 
         self.assertIn("<redacted>", fallback_console.export_text())
         self.assertNotIn("private input", fallback_console.export_text())
+
+    def test_pdf_input_sugar_builds_single_pdf_descriptor(self) -> None:
+        definition = self._definition(
+            TaskInputContract.file(mime_types=("application/pdf",))
+        )
+
+        task_input = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_pdf="sample.pdf",
+                task_input_fields=(),
+                task_files=(),
+            ),
+            definition,
+        )
+
+        self.assertTrue(task_input.provided)
+        self.assertEqual(
+            task_input.value,
+            {
+                "source_kind": "local_path",
+                "reference": "sample.pdf",
+                "mime_type": "application/pdf",
+            },
+        )
+
+    def test_pdf_input_sugar_rejects_conflicts_and_non_file_contracts(
+        self,
+    ) -> None:
+        file_definition = self._definition(TaskInputContract.file())
+        array_definition = self._definition(TaskInputContract.file_array())
+        object_definition = self._definition(self._object_contract())
+        cases = (
+            (
+                file_definition,
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_pdf="sample.pdf",
+                    task_input_fields=(),
+                    task_files=("input=other.pdf",),
+                ),
+                "Pass --pdf by itself",
+            ),
+            (
+                file_definition,
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_pdf="sample.pdf",
+                    task_input_fields=(),
+                    task_files=(),
+                    task_file_mime_types=("input=text/plain",),
+                ),
+                "Pass --pdf by itself",
+            ),
+            (
+                array_definition,
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_pdf="sample.pdf",
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                "single top-level file input",
+            ),
+            (
+                object_definition,
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_pdf="sample.pdf",
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                "single top-level file input",
+            ),
+        )
+
+        for definition, args, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaises(task_cmds.TaskCliInputError) as error:
+                    task_cmds.task_cli_input(args, definition)
+
+            self.assertIn(message, str(error.exception))
 
     def test_unsupported_input_type_is_rejected(self) -> None:
         definition = self._definition(TaskInputContract.string())

@@ -153,6 +153,14 @@ _INTERRUPT_DRAIN_TIMEOUT = 0.5
 _LOOP_HANDLES_SIGINT = False
 
 
+def _task_run_json_stdout(args: Namespace) -> bool:
+    return (
+        getattr(args, "command", None) == "task"
+        and getattr(args, "task_command", None) == "run"
+        and bool(getattr(args, "task_run_json", False))
+    )
+
+
 def _default_hf_cache_dir() -> str:
     return getenv("HF_HUB_CACHE") or "~/.cache/huggingface/hub"
 
@@ -1594,6 +1602,26 @@ class CLI:
             "--ephemeral",
             action="store_true",
             help="Use a non-durable in-memory store for this direct run.",
+        )
+        task_run_parser.add_argument(
+            "--json",
+            dest="task_run_json",
+            action="store_true",
+            help="Print successful structured task output as compact JSON.",
+        )
+        task_run_parser.add_argument(
+            "--output",
+            dest="task_output_path",
+            type=str,
+            default=None,
+            help="Write successful structured task output to a JSON file.",
+        )
+        task_run_parser.add_argument(
+            "--pdf",
+            dest="task_pdf",
+            type=str,
+            default=None,
+            help="Attach one top-level PDF file input.",
         )
         task_enqueue_parser = task_command_parsers.add_parser(
             name="enqueue",
@@ -3369,7 +3397,7 @@ class CLI:
                 hub.login()
                 user = hub.user()
 
-        if not args.quiet:
+        if not args.quiet and not _task_run_json_stdout(args):
             console.print(
                 theme.welcome(
                     self._site.geturl(),
@@ -3509,7 +3537,14 @@ class CLI:
                             case "status":
                                 task_pgsql_status(args, console, theme)
                     case "run":
-                        task_run(args, console, theme, hub, self._logger)
+                        if not task_run(
+                            args,
+                            console,
+                            theme,
+                            hub,
+                            self._logger,
+                        ):
+                            raise SystemExit(1)
                     case "worker":
                         task_worker(args, console, theme, hub, self._logger)
 

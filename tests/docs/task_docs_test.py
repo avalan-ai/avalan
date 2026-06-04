@@ -29,6 +29,11 @@ TASK_INPUT_FLAGS = (
     "--file-sha256",
     "--file-conversion",
 )
+TASK_RUN_FLAGS = (
+    "--json",
+    "--output",
+    "--pdf",
+)
 DELIVERY_MODE_PHRASES = {
     FileDeliveryMode.PROVIDER_FILE_ID: "provider file id",
     FileDeliveryMode.HOSTED_URL: "hosted url",
@@ -74,6 +79,10 @@ class TaskDocsTest(TestCase):
                 self.assertIn(flag, docs)
                 if flag != "--input-FIELD":
                     self.assertIn(flag, run_help)
+        for flag in TASK_RUN_FLAGS:
+            with self.subTest(flag=flag):
+                self.assertIn(flag, docs)
+                self.assertIn(flag, run_help)
 
     def test_file_delivery_matrix_matches_profile_vocabulary(self) -> None:
         docs = FILE_DELIVERY_DOC.read_text(encoding="utf-8")

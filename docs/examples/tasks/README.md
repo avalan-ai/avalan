@@ -62,6 +62,12 @@ poetry run avalan task run docs/examples/tasks/provider_reference_direct.task.to
 poetry run avalan task run docs/examples/tasks/provider_reference_direct.task.toml \
   --ephemeral \
   --object-store-uri document=google:gs://bucket/report.pdf
+
+poetry run avalan task run docs/examples/tasks/structured_json.task.toml \
+  --ephemeral \
+  --input-json '{"question":"What changed?","priority":2}' \
+  --json \
+  --output result.json
 ```
 
 Queue examples require PostgreSQL task storage, a migrated schema, HMAC keys,
