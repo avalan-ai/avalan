@@ -29,6 +29,7 @@ KNOWN_EVENT_TYPES = (
     "tool_error",
     "tool_result",
     "unknown",
+    "usage_observed",
 )
 
 

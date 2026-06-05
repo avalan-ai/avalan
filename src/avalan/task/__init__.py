@@ -129,6 +129,7 @@ from .error import classify_task_error as classify_task_error
 from .event import RawTaskEventListener as RawTaskEventListener
 from .event import SanitizedTaskEvent as SanitizedTaskEvent
 from .event import SanitizedTaskEventDraft as SanitizedTaskEventDraft
+from .event import SanitizedTaskUsageEvent as SanitizedTaskUsageEvent
 from .event import TaskEventCategory as TaskEventCategory
 from .event import TaskEventStore as TaskEventStore
 from .event import TaskEventValue as TaskEventValue

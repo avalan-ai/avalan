@@ -91,6 +91,29 @@ _EVENT_PREFIX_SAFE_FIELDS = (
     ("engine_", frozenset({"name"})),
     ("memory_", frozenset({"name"})),
 )
+_EVENT_PRIVATE_FIELDS = frozenset(
+    {
+        "cache_handle",
+        "cache_key",
+        "cached_prompt_prefix",
+        "developer_prompt",
+        "file_data",
+        "headers",
+        "image_url",
+        "instructions",
+        "prompt",
+        "prompt_cache_key",
+        "provider_body",
+        "provider_cache_handle",
+        "raw_instructions",
+        "raw_provider_body",
+        "request_body",
+        "response_body",
+        "response_metadata",
+        "system_prompt",
+        "user_prompt",
+    }
+)
 _POLICY_FIELD_ORDER = (
     "input",
     "prompt",
@@ -425,7 +448,7 @@ class PrivacySanitizer:
             )
         redacted: dict[str, PrivacySafeValue] = {"event_type": event_type}
         for key, item in payload.items():
-            if key in allowed_fields:
+            if key in allowed_fields and key not in _EVENT_PRIVATE_FIELDS:
                 redacted[key] = _safe_event_metadata_value(item)
         return redacted
 
@@ -631,7 +654,11 @@ def _safe_event_metadata_value(value: object) -> PrivacySafeValue:
     if isinstance(value, Mapping):
         safe: dict[str, PrivacySafeValue] = {}
         for key, item in value.items():
-            if isinstance(key, str) and key in _EVENT_COMMON_SAFE_FIELDS:
+            if (
+                isinstance(key, str)
+                and key in _EVENT_COMMON_SAFE_FIELDS
+                and key not in _EVENT_PRIVATE_FIELDS
+            ):
                 safe[key] = _safe_event_metadata_value(item)
         if safe:
             return safe

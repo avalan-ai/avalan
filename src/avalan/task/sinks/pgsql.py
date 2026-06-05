@@ -8,6 +8,7 @@ from ...types import (
 from ..event import (
     SanitizedTaskEvent,
     SanitizedTaskEventDraft,
+    SanitizedTaskUsageEvent,
     TaskEventCategory,
     TaskEventValue,
 )
@@ -121,7 +122,12 @@ class PgsqlInspectionSink(ObservabilitySink):
         )
 
     async def record_event(self, event: TaskObservedEvent) -> None:
-        assert isinstance(event, SanitizedTaskEvent | SanitizedTaskEventDraft)
+        assert isinstance(
+            event,
+            SanitizedTaskEvent
+            | SanitizedTaskEventDraft
+            | SanitizedTaskUsageEvent,
+        )
         try:
             if (
                 isinstance(event, SanitizedTaskEvent)
@@ -231,7 +237,7 @@ class PgsqlInspectionSink(ObservabilitySink):
         )
 
     def _event_run_id(self, event: TaskObservedEvent) -> str:
-        if isinstance(event, SanitizedTaskEvent):
+        if isinstance(event, SanitizedTaskEvent | SanitizedTaskUsageEvent):
             return event.run_id
         if self.run_id is None:
             raise ValueError("run_id is required for task event drafts")
@@ -246,6 +252,6 @@ def _event_attempt_id(
     event: TaskObservedEvent,
     default_attempt_id: str | None,
 ) -> str | None:
-    if isinstance(event, SanitizedTaskEvent):
+    if isinstance(event, SanitizedTaskEvent | SanitizedTaskUsageEvent):
         return event.attempt_id
     return default_attempt_id

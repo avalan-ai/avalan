@@ -7,10 +7,13 @@ from avalan.task import (
     PrometheusObservabilitySink,
     SanitizedTaskEvent,
     SanitizedTaskEventDraft,
+    SanitizedTaskUsageEvent,
     TaskEventCategory,
+    UsageProviderFamily,
     UsageSource,
     UsageTotals,
     record_observability_event,
+    record_observability_usage,
 )
 
 
@@ -124,7 +127,10 @@ class PrometheusObservabilitySinkTest(IsolatedAsyncioTestCase):
             totals=UsageTotals(
                 input_tokens=3,
                 cached_input_tokens=1,
+                cache_creation_input_tokens=2,
                 output_tokens=5,
+                reasoning_tokens=7,
+                total_tokens=18,
             ),
             metadata={
                 "provider_family": "anthropic",
@@ -170,9 +176,21 @@ class PrometheusObservabilitySinkTest(IsolatedAsyncioTestCase):
                     ("source", "exact"),
                 ): 1.0,
                 (
+                    ("counter", "cache_creation_input_tokens"),
+                    ("source", "exact"),
+                ): 2.0,
+                (
                     ("counter", "output_tokens"),
                     ("source", "exact"),
                 ): 5.0,
+                (
+                    ("counter", "reasoning_tokens"),
+                    ("source", "exact"),
+                ): 7.0,
+                (
+                    ("counter", "total_tokens"),
+                    ("source", "exact"),
+                ): 18.0,
             },
         )
         self.assertTrue(sink.health().healthy)
@@ -187,6 +205,87 @@ class PrometheusObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertNotIn("raw-model-private", exported)
         self.assertNotIn("private-user", exported)
         self.assertNotIn("private.txt", exported)
+
+    async def test_usage_event_is_counted_without_payload_labels(self) -> None:
+        factory = FakeCounterFactory()
+        sink = PrometheusObservabilitySink(counter_factory=factory)
+
+        await sink.record_event(
+            SanitizedTaskUsageEvent(
+                run_id="run-private",
+                attempt_id="attempt-private",
+                source=UsageSource.EXACT,
+                totals=UsageTotals(total_tokens=1),
+                metadata={
+                    "provider_family": UsageProviderFamily.ANTHROPIC,
+                    "cache_key": "private-cache",
+                },
+            )
+        )
+
+        self.assertEqual(
+            metric_samples(
+                factory,
+                "avalan_task_observability_events",
+            ),
+            {
+                (
+                    ("category", "usage"),
+                    ("event_type", "usage_observed"),
+                ): 1.0
+            },
+        )
+        exported = str(factory.counters)
+        self.assertNotIn("run-private", exported)
+        self.assertNotIn("attempt-private", exported)
+        self.assertNotIn("anthropic", exported)
+        self.assertNotIn("private-cache", exported)
+
+    async def test_usage_helper_records_event_and_skips_null_counters(
+        self,
+    ) -> None:
+        factory = FakeCounterFactory()
+        sink = PrometheusObservabilitySink(counter_factory=factory)
+
+        await record_observability_usage(
+            sink,
+            run_id="run-private",
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=0, total_tokens=0),
+            metadata={"provider_family": UsageProviderFamily.OPENAI},
+        )
+
+        self.assertEqual(
+            metric_samples(
+                factory,
+                "avalan_task_observability_events",
+            ),
+            {
+                (
+                    ("category", "usage"),
+                    ("event_type", "usage_observed"),
+                ): 1.0
+            },
+        )
+        self.assertEqual(
+            metric_samples(
+                factory,
+                "avalan_task_observability_usage_tokens",
+            ),
+            {
+                (
+                    ("counter", "input_tokens"),
+                    ("source", "exact"),
+                ): 0.0,
+                (
+                    ("counter", "total_tokens"),
+                    ("source", "exact"),
+                ): 0.0,
+            },
+        )
+        exported = str(factory.counters)
+        self.assertNotIn("run-private", exported)
+        self.assertNotIn("openai", exported)
 
     async def test_unknown_event_types_are_collapsed_to_low_cardinality_label(
         self,

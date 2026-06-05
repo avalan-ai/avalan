@@ -15,6 +15,7 @@ from pgsql_contract_test import (  # type: ignore[import-not-found]
 from avalan.task import (
     PgsqlInspectionSink,
     SanitizedTaskEventDraft,
+    SanitizedTaskUsageEvent,
     TaskDefinition,
     TaskEventCategory,
     TaskExecutionRequest,
@@ -235,7 +236,42 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             await self.store.list_usage(self.run.run_id), (stored,)
         )
+        events = await self.store.list_events(self.run.run_id)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].category, TaskEventCategory.USAGE)
+        self.assertEqual(events[0].payload["event_type"], "usage_observed")
+        self.assertNotIn("run-", str(events[0].payload))
         self.assertEqual(sink.health().usage_count, 1)
+        self.assertEqual(sink.health().event_count, 1)
+
+    async def test_usage_event_is_persisted_without_usage_duplication(
+        self,
+    ) -> None:
+        sink = PgsqlInspectionSink(store=self.store)
+        event = SanitizedTaskUsageEvent(
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=0, total_tokens=0),
+            metadata={
+                "provider_family": UsageProviderFamily.AZURE_OPENAI,
+                "cache_key": "private-cache-key",
+            },
+        )
+
+        await sink.record_event(event)
+
+        events = await self.store.list_events(self.run.run_id)
+        usage = await self.store.list_usage(self.run.run_id)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].attempt_id, self.attempt.attempt_id)
+        self.assertEqual(events[0].category, TaskEventCategory.USAGE)
+        self.assertEqual(events[0].payload["source"], "exact")
+        self.assertEqual(events[0].payload["provider_family"], "azure_openai")
+        self.assertEqual(events[0].payload["input_tokens"], 0)
+        self.assertEqual(events[0].payload["total_tokens"], 0)
+        self.assertEqual(usage, ())
+        self.assertNotIn("private-cache-key", str(events))
 
     async def test_recorded_usage_copy_keeps_stable_identity(self) -> None:
         stored = await self.store.append_usage(
@@ -352,7 +388,10 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(health.failure_count, 2)
         self.assertEqual(health.last_failure_code, "TaskStoreError")
         self.assertNotIn("private", str(health))
-        self.assertEqual(await self.store.list_events(self.run.run_id), ())
+        events = await self.store.list_events(self.run.run_id)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].category, TaskEventCategory.USAGE)
+        self.assertNotIn("private", str(events))
         self.assertEqual(await self.store.list_usage(self.run.run_id), ())
         self.assertEqual(
             await self.store.list_run_transitions(self.run.run_id), ()

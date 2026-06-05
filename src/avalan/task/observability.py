@@ -8,6 +8,7 @@ from ..types import (
 from .event import (
     SanitizedTaskEvent,
     SanitizedTaskEventDraft,
+    SanitizedTaskUsageEvent,
     TaskEventStore,
     sanitize_raw_task_event_closed,
 )
@@ -18,7 +19,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, TypeAlias
 
-TaskObservedEvent: TypeAlias = SanitizedTaskEvent | SanitizedTaskEventDraft
+TaskObservedEvent: TypeAlias = (
+    SanitizedTaskEvent | SanitizedTaskEventDraft | SanitizedTaskUsageEvent
+)
 TaskSanitizedEventObserver: TypeAlias = Callable[
     [TaskObservedEvent],
     Awaitable[None] | None,
@@ -209,6 +212,17 @@ async def record_observability_usage(
 ) -> None:
     if sink is None:
         return
+    usage_event = SanitizedTaskUsageEvent(
+        run_id=run_id,
+        attempt_id=attempt_id,
+        source=source,
+        totals=totals,
+        metadata=metadata,
+    )
+    try:
+        await sink.record_event(usage_event)
+    except Exception:
+        pass
     try:
         if record is not None:
             record_usage_record = getattr(sink, "record_usage_record", None)

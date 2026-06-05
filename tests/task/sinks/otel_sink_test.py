@@ -8,10 +8,13 @@ from avalan.task import (
     OpenTelemetryObservabilitySink,
     SanitizedTaskEvent,
     SanitizedTaskEventDraft,
+    SanitizedTaskUsageEvent,
     TaskEventCategory,
+    UsageProviderFamily,
     UsageSource,
     UsageTotals,
     record_observability_event,
+    record_observability_usage,
 )
 
 
@@ -168,7 +171,10 @@ class OpenTelemetryObservabilitySinkTest(IsolatedAsyncioTestCase):
             totals=UsageTotals(
                 input_tokens=3,
                 cached_input_tokens=1,
+                cache_creation_input_tokens=2,
                 output_tokens=5,
+                reasoning_tokens=7,
+                total_tokens=18,
             ),
             metadata={
                 "provider_family": "google",
@@ -188,7 +194,10 @@ class OpenTelemetryObservabilitySinkTest(IsolatedAsyncioTestCase):
                     {
                         "task.usage.input_tokens": 3,
                         "task.usage.cached_input_tokens": 1,
+                        "task.usage.cache_creation_input_tokens": 2,
                         "task.usage.output_tokens": 5,
+                        "task.usage.reasoning_tokens": 7,
+                        "task.usage.total_tokens": 18,
                     },
                 )
             ],
@@ -221,10 +230,31 @@ class OpenTelemetryObservabilitySinkTest(IsolatedAsyncioTestCase):
                     },
                 ),
                 (
+                    2,
+                    {
+                        "task.usage.source": "exact",
+                        "task.usage.counter": "cache_creation_input_tokens",
+                    },
+                ),
+                (
                     5,
                     {
                         "task.usage.source": "exact",
                         "task.usage.counter": "output_tokens",
+                    },
+                ),
+                (
+                    7,
+                    {
+                        "task.usage.source": "exact",
+                        "task.usage.counter": "reasoning_tokens",
+                    },
+                ),
+                (
+                    18,
+                    {
+                        "task.usage.source": "exact",
+                        "task.usage.counter": "total_tokens",
                     },
                 ),
             ],
@@ -237,6 +267,108 @@ class OpenTelemetryObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertNotIn("ephemeral", exported)
         self.assertNotIn("private-user", exported)
         self.assertNotIn("private.txt", exported)
+
+    async def test_usage_event_span_uses_low_cardinality_attributes(
+        self,
+    ) -> None:
+        tracer = FakeTracer()
+        meter = FakeMeter()
+        sink = OpenTelemetryObservabilitySink(
+            tracer=tracer,
+            meter=meter,
+        )
+
+        await sink.record_event(
+            SanitizedTaskUsageEvent(
+                run_id="run-private",
+                attempt_id="attempt-private",
+                source=UsageSource.EXACT,
+                totals=UsageTotals(total_tokens=1),
+                metadata={
+                    "provider_family": UsageProviderFamily.GOOGLE,
+                    "headers": {"status": "private-header"},
+                },
+            )
+        )
+
+        self.assertEqual(
+            tracer.spans,
+            [
+                (
+                    "avalan.task.event",
+                    {
+                        "task.event.category": "usage",
+                        "task.event.type": "usage_observed",
+                    },
+                )
+            ],
+        )
+        exported = f"{tracer.spans}{meter.counters}"
+        self.assertNotIn("run-private", exported)
+        self.assertNotIn("attempt-private", exported)
+        self.assertNotIn("google", exported)
+        self.assertNotIn("private-header", exported)
+
+    async def test_usage_helper_records_event_and_skips_null_counters(
+        self,
+    ) -> None:
+        tracer = FakeTracer()
+        meter = FakeMeter()
+        sink = OpenTelemetryObservabilitySink(
+            tracer=tracer,
+            meter=meter,
+        )
+
+        await record_observability_usage(
+            sink,
+            run_id="run-private",
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=0, total_tokens=0),
+            metadata={"provider_family": UsageProviderFamily.OPENAI},
+        )
+
+        self.assertEqual(
+            tracer.spans[0],
+            (
+                "avalan.task.event",
+                {
+                    "task.event.category": "usage",
+                    "task.event.type": "usage_observed",
+                },
+            ),
+        )
+        self.assertEqual(
+            tracer.spans[1],
+            (
+                "avalan.task.usage",
+                {
+                    "task.usage.input_tokens": 0,
+                    "task.usage.total_tokens": 0,
+                },
+            ),
+        )
+        self.assertEqual(
+            counter_samples(meter, "avalan.task.observability.usage_tokens"),
+            [
+                (
+                    0,
+                    {
+                        "task.usage.source": "exact",
+                        "task.usage.counter": "input_tokens",
+                    },
+                ),
+                (
+                    0,
+                    {
+                        "task.usage.source": "exact",
+                        "task.usage.counter": "total_tokens",
+                    },
+                ),
+            ],
+        )
+        exported = f"{tracer.spans}{meter.counters}"
+        self.assertNotIn("run-private", exported)
+        self.assertNotIn("openai", exported)
 
     async def test_unknown_event_types_are_collapsed(self) -> None:
         tracer = FakeTracer()

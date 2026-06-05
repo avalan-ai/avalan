@@ -2,6 +2,7 @@ from ...types import assert_non_empty_string
 from ..event import (
     SanitizedTaskEvent,
     SanitizedTaskEventDraft,
+    SanitizedTaskUsageEvent,
 )
 from ..feature_gate import TaskFeature, feature_diagnostic
 from ..observability import (
@@ -133,7 +134,12 @@ class OpenTelemetryObservabilitySink(ObservabilitySink):
         )
 
     async def record_event(self, event: TaskObservedEvent) -> None:
-        assert isinstance(event, SanitizedTaskEvent | SanitizedTaskEventDraft)
+        assert isinstance(
+            event,
+            SanitizedTaskEvent
+            | SanitizedTaskEventDraft
+            | SanitizedTaskUsageEvent,
+        )
         attributes = _event_attributes(event, self.known_event_types)
         assert self.tracer is not None
         try:

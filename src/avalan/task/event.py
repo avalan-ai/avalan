@@ -6,9 +6,16 @@ from ..types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
 from .privacy import REDACTED_MARKER, PrivacySanitizer
+from .usage import (
+    USAGE_COUNTER_NAMES,
+    TaskUsageMetadata,
+    UsageSource,
+    UsageTotals,
+    freeze_usage_metadata,
+)
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from math import isfinite
@@ -37,6 +44,8 @@ _ENGINE_EVENT_TYPES = frozenset(
         "stream_end",
     }
 )
+_USAGE_OBSERVED_EVENT_TYPE = "usage_observed"
+_USAGE_EVENT_TYPES = frozenset({_USAGE_OBSERVED_EVENT_TYPE})
 
 
 class TaskEventCategory(StrEnum):
@@ -45,6 +54,7 @@ class TaskEventCategory(StrEnum):
     MODEL = "model"
     ENGINE = "engine"
     MEMORY = "memory"
+    USAGE = "usage"
     UNKNOWN = "unknown"
 
 
@@ -90,6 +100,37 @@ class SanitizedTaskEvent:
             self,
             "payload",
             freeze_task_event_value(self.payload),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SanitizedTaskUsageEvent:
+    run_id: str
+    source: UsageSource
+    totals: UsageTotals
+    attempt_id: str | None = None
+    metadata: Mapping[str, object] | None = None
+    event_type: str = _USAGE_OBSERVED_EVENT_TYPE
+    category: TaskEventCategory = TaskEventCategory.USAGE
+    payload: TaskEventValue = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.run_id, "run_id")
+        if self.attempt_id is not None:
+            _assert_non_empty_string(self.attempt_id, "attempt_id")
+        assert isinstance(self.source, UsageSource)
+        assert isinstance(self.totals, UsageTotals)
+        assert self.totals.has_observations
+        assert self.event_type == _USAGE_OBSERVED_EVENT_TYPE
+        assert self.category == TaskEventCategory.USAGE
+        metadata = freeze_usage_metadata(self.metadata)
+        object.__setattr__(self, "metadata", metadata)
+        object.__setattr__(
+            self,
+            "payload",
+            freeze_task_event_value(
+                _usage_event_payload(self.source, self.totals, metadata)
+            ),
         )
 
 
@@ -174,6 +215,8 @@ def task_event_category(event_type: str) -> TaskEventCategory:
         return TaskEventCategory.MODEL
     if event_type.startswith("memory_"):
         return TaskEventCategory.MEMORY
+    if event_type in _USAGE_EVENT_TYPES:
+        return TaskEventCategory.USAGE
     if event_type in _ENGINE_EVENT_TYPES or event_type.startswith("engine_"):
         return TaskEventCategory.ENGINE
     return TaskEventCategory.UNKNOWN
@@ -243,3 +286,22 @@ def _is_safe_event_type(value: str) -> bool:
     if not value[0].isalpha():
         return False
     return all(character.isalnum() or character == "_" for character in value)
+
+
+def _usage_event_payload(
+    source: UsageSource,
+    totals: UsageTotals,
+    metadata: TaskUsageMetadata,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "event_type": _USAGE_OBSERVED_EVENT_TYPE,
+        "source": source.value,
+    }
+    provider_family = metadata.get("provider_family")
+    if isinstance(provider_family, str):
+        payload["provider_family"] = provider_family
+    for counter_name in USAGE_COUNTER_NAMES:
+        value = getattr(totals, counter_name)
+        if value is not None:
+            payload[counter_name] = value
+    return payload

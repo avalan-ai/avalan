@@ -8,6 +8,7 @@ from avalan.task import (
     PrivacySanitizer,
     RawTaskEventListener,
     SanitizedTaskEvent,
+    SanitizedTaskUsageEvent,
     TaskDefinition,
     TaskEventCategory,
     TaskExecutionRequest,
@@ -16,6 +17,9 @@ from avalan.task import (
     TaskMetadata,
     TaskOutputContract,
     TaskStoreNotFoundError,
+    UsageProviderFamily,
+    UsageSource,
+    UsageTotals,
     freeze_task_event_value,
     sanitize_raw_task_event,
     task_event_category,
@@ -231,10 +235,110 @@ class SanitizedTaskEventTest(TestCase):
             task_event_category("start"),
             TaskEventCategory.ENGINE,
         )
+        self.assertEqual(
+            task_event_category("usage_observed"),
+            TaskEventCategory.USAGE,
+        )
         with self.assertRaises(AssertionError):
             task_event_category("../secret")
         with self.assertRaises(AssertionError):
             task_event_category("")
+
+    def test_usage_event_payload_is_categorical_and_numeric_only(
+        self,
+    ) -> None:
+        event = SanitizedTaskUsageEvent(
+            run_id="run-private",
+            attempt_id="attempt-private",
+            source=UsageSource.EXACT,
+            totals=UsageTotals(
+                input_tokens=3,
+                cached_input_tokens=0,
+                cache_creation_input_tokens=2,
+                output_tokens=5,
+                reasoning_tokens=7,
+                total_tokens=17,
+            ),
+            metadata={
+                "provider_family": UsageProviderFamily.AZURE_OPENAI,
+                "cache_key": "private-cache-key",
+                "headers": {"status": "private-header"},
+                "raw_model_id": "provider/model-private",
+            },
+        )
+
+        payload = cast(dict[str, object], event.payload)
+        self.assertEqual(event.category, TaskEventCategory.USAGE)
+        self.assertEqual(payload["event_type"], "usage_observed")
+        self.assertEqual(payload["source"], "exact")
+        self.assertEqual(payload["provider_family"], "azure_openai")
+        self.assertEqual(payload["input_tokens"], 3)
+        self.assertEqual(payload["cached_input_tokens"], 0)
+        self.assertEqual(payload["cache_creation_input_tokens"], 2)
+        self.assertEqual(payload["output_tokens"], 5)
+        self.assertEqual(payload["reasoning_tokens"], 7)
+        self.assertEqual(payload["total_tokens"], 17)
+        self.assertNotIn("run-private", str(payload))
+        self.assertNotIn("attempt-private", str(payload))
+        self.assertNotIn("private-cache-key", str(payload))
+        self.assertNotIn("private-header", str(payload))
+        self.assertNotIn("provider/model-private", str(payload))
+
+    def test_usage_event_rejects_empty_observations(self) -> None:
+        with self.assertRaises(AssertionError):
+            SanitizedTaskUsageEvent(
+                run_id="run-1",
+                source=UsageSource.UNAVAILABLE,
+                totals=UsageTotals(),
+            )
+
+    def test_event_redaction_denylist_overrides_custom_allowlists(
+        self,
+    ) -> None:
+        sanitizer = PrivacySanitizer(
+            event_allowlists={
+                "model_execute_after": (
+                    "cache_key",
+                    "prompt_cache_key",
+                    "cache_handle",
+                    "cached_prompt_prefix",
+                    "provider_cache_handle",
+                    "response_metadata",
+                    "headers",
+                    "file_data",
+                    "image_url",
+                    "instructions",
+                    "raw_provider_body",
+                    "status",
+                )
+            }
+        )
+        draft = sanitize_raw_task_event(
+            Event(
+                type=EventType.MODEL_EXECUTE_AFTER,
+                payload={
+                    "cache_key": "private-cache-key",
+                    "prompt_cache_key": "private-prompt-cache-key",
+                    "cache_handle": "private-cache-handle",
+                    "cached_prompt_prefix": "private-prefix",
+                    "provider_cache_handle": "private-provider-cache",
+                    "response_metadata": {"status": "private-response"},
+                    "headers": {"status": "private-header"},
+                    "file_data": "private-file-bytes",
+                    "image_url": "private-image-url",
+                    "instructions": "private instructions",
+                    "raw_provider_body": "private body",
+                    "status": "ok",
+                },
+            ),
+            sanitizer,
+        )
+
+        payload = cast(dict[str, object], draft.payload)
+        self.assertEqual(payload["status"], "ok")
+        self.assertNotIn("private", str(payload))
+        self.assertNotIn("cache_key", payload)
+        self.assertNotIn("headers", payload)
 
     def test_non_event_objects_reduce_to_unknown_empty_payload(self) -> None:
         draft = sanitize_raw_task_event(object(), PrivacySanitizer())

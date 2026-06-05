@@ -2,6 +2,7 @@ from ...types import assert_non_empty_string
 from ..event import (
     SanitizedTaskEvent,
     SanitizedTaskEventDraft,
+    SanitizedTaskUsageEvent,
 )
 from ..feature_gate import TaskFeature, feature_diagnostic
 from ..observability import (
@@ -112,7 +113,12 @@ class PrometheusObservabilitySink(ObservabilitySink):
         )
 
     async def record_event(self, event: TaskObservedEvent) -> None:
-        assert isinstance(event, SanitizedTaskEvent | SanitizedTaskEventDraft)
+        assert isinstance(
+            event,
+            SanitizedTaskEvent
+            | SanitizedTaskEventDraft
+            | SanitizedTaskUsageEvent,
+        )
         try:
             self._event_counter.labels(
                 category=event.category.value,

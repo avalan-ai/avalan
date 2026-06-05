@@ -14,6 +14,7 @@ from avalan.task import (
     ObservabilitySinkHealth,
     ObservabilitySinkType,
     SanitizedTaskEventDraft,
+    SanitizedTaskUsageEvent,
     TaskDefinition,
     TaskDirectTarget,
     TaskEventCategory,
@@ -29,6 +30,7 @@ from avalan.task import (
     TaskPrivacyPolicy,
     TaskRunState,
     TaskTargetContext,
+    UsageProviderFamily,
     UsageRecord,
     UsageSource,
     UsageTotals,
@@ -222,6 +224,43 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
             totals=UsageTotals(total_tokens=1),
         )
 
+    async def test_usage_helper_fans_out_sanitized_usage_event(self) -> None:
+        sink = RecordingSink()
+
+        await record_observability_usage(
+            sink,
+            run_id="run-private",
+            attempt_id="attempt-private",
+            source=UsageSource.EXACT,
+            totals=UsageTotals(
+                input_tokens=3,
+                cached_input_tokens=0,
+                output_tokens=5,
+                total_tokens=8,
+            ),
+            metadata={
+                "provider_family": UsageProviderFamily.OPENAI,
+                "cache_key": "private-cache-key",
+                "headers": {"status": "private-header"},
+                "raw_model_id": "provider/model-private",
+            },
+        )
+
+        self.assertEqual(len(sink.events), 1)
+        self.assertIsInstance(sink.events[0], SanitizedTaskUsageEvent)
+        event = cast(SanitizedTaskUsageEvent, sink.events[0])
+        payload = cast(dict[str, object], event.payload)
+        self.assertEqual(event.category, TaskEventCategory.USAGE)
+        self.assertEqual(payload["source"], "exact")
+        self.assertEqual(payload["provider_family"], "openai")
+        self.assertEqual(payload["cached_input_tokens"], 0)
+        self.assertNotIn("run-private", str(payload))
+        self.assertNotIn("attempt-private", str(payload))
+        self.assertNotIn("private-cache-key", str(payload))
+        self.assertNotIn("private-header", str(payload))
+        self.assertNotIn("provider/model-private", str(payload))
+        self.assertEqual(len(sink.usages), 1)
+
     async def test_usage_helper_prefers_record_hook(self) -> None:
         store = InMemoryTaskStore()
         await store.register_definition(
@@ -248,6 +287,8 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(sink.records, [record])
         self.assertEqual(sink.usages, [])
+        self.assertEqual(len(sink.events), 1)
+        self.assertEqual(sink.events[0].category, TaskEventCategory.USAGE)
 
     async def test_runner_success_survives_sink_failures(self) -> None:
         store = InMemoryTaskStore()
@@ -267,9 +308,9 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
-        self.assertEqual(len(recording.events), 1)
+        self.assertEqual(len(recording.events), 2)
         self.assertEqual(len(recording.usages), 1)
-        self.assertEqual(sink.health().failure_count, 2)
+        self.assertEqual(sink.health().failure_count, 3)
         self.assertEqual(len(await store.list_usage(result.run.run_id)), 1)
         self.assertNotIn("private query", str(recording.events))
         self.assertNotIn("private result", str(recording.events))
@@ -298,6 +339,10 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(await store.list_usage(result.run.run_id), ())
         self.assertEqual(len(recording.usages), 1)
+        self.assertEqual(
+            [event.category for event in recording.events],
+            [TaskEventCategory.TOOL, TaskEventCategory.USAGE],
+        )
         self.assertNotIn("private usage store failure", str(result.run))
 
     async def test_noop_observability_policy_does_not_emit_to_sink(
