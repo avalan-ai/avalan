@@ -2,6 +2,7 @@ from io import BytesIO
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.model import (
+    FileDeliveryDecision,
     FileDeliveryLimit,
     FileDeliveryMode,
     FileDeliveryProfile,
@@ -54,6 +55,18 @@ class RecordingArtifactStore:
 
 
 class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
+    def test_delivery_plan_rejects_invalid_metadata(self) -> None:
+        decision = FileDeliveryDecision(
+            mode=FileDeliveryMode.INLINE_TEXT,
+        )
+
+        with self.assertRaises(AssertionError):
+            TaskFileDeliveryPlan(decision=decision, size_bytes=-1)
+        with self.assertRaises(AssertionError):
+            TaskFileDeliveryPlan(decision=decision, size_bytes=True)
+        with self.assertRaises(AssertionError):
+            TaskFileDeliveryPlan(decision=decision, size_bucket=" ")
+
     async def test_provider_reference_wins_over_artifact_inline(self) -> None:
         store = RecordingArtifactStore()
         plan = await plan_task_file_delivery(

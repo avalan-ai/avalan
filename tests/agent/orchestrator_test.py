@@ -368,6 +368,22 @@ class OrchestratorUserTransformationOptionsTestCase(unittest.TestCase):
         messages = orchestrator._input_messages(specification, [msg])
         self.assertEqual(messages[0].content, "hello moon Bob")
 
+    def test_user_reference_detection_is_whitespace_aware(self) -> None:
+        self.assertTrue(Orchestrator._user_references_input("{{input}}"))
+        self.assertTrue(Orchestrator._user_references_input("{{ input }}"))
+        self.assertTrue(Orchestrator._user_references_input("{{\n input }}"))
+        self.assertTrue(
+            Orchestrator._user_references_input("{{ input|trim }}")
+        )
+
+    def test_user_reference_detection_rejects_other_variables(self) -> None:
+        self.assertFalse(
+            Orchestrator._user_references_input("{{input_value}}")
+        )
+        self.assertFalse(
+            Orchestrator._user_references_input("{{ user_input }}")
+        )
+
 
 class OrchestratorUserPrefixOptionsTestCase(unittest.TestCase):
     def _create_orchestrator(self):

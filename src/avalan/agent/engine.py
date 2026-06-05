@@ -208,11 +208,11 @@ class EngineAgent(ABC):
         self,
         context: ModelCallContext,
         input: Input,
-        *args: object,
-        settings: GenerationSettings | None = None,
         instructions: str | None = None,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
+        *args: object,
+        settings: GenerationSettings | None = None,
         skip_special_tokens: bool = True,
         **kwargs: Any,
     ) -> TextGenerationResponse:

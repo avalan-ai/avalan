@@ -14,6 +14,7 @@ from .....entities import (
     ToolCallResult,
     ToolCallToken,
 )
+from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
@@ -174,7 +175,7 @@ class AnthropicStream(TextGenerationVendorStream):
 
         super().__init__(
             cast(AsyncIterator[str | ToolCallToken], generator()),
-            provider_family="anthropic",
+            provider_family=ProviderFamily.ANTHROPIC,
         )
 
     async def __anext__(self) -> str | ToolCallToken:
@@ -246,7 +247,7 @@ class AnthropicClient(TextGenerationVendor):
                 TextGenerationVendorStream,
                 TextGenerationSingleStream(
                     content,
-                    provider_family="anthropic",
+                    provider_family=ProviderFamily.ANTHROPIC,
                     usage=getattr(response, "usage", None),
                 ),
             )

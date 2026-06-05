@@ -141,21 +141,13 @@ class TransformerModel(Engine, ABC):
             f"Model {self._model} can't be executed "
             + "without a tokenizer loaded first"
         )
-        if instructions is not None:
-            inputs = self._tokenize_input(
-                input,
-                instructions=instructions,
-                system_prompt=system_prompt,
-                developer_prompt=developer_prompt,
-                context=None,
-            )
-        else:
-            inputs = self._tokenize_input(
-                input,
-                system_prompt=system_prompt,
-                developer_prompt=developer_prompt,
-                context=None,
-            )
+        inputs = self._tokenize_input(
+            input,
+            system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
+            context=None,
+            instructions=instructions,
+        )
         if not isinstance(inputs, (dict, _batch_encoding_type())):
             return 0
 

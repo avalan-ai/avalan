@@ -279,25 +279,15 @@ class TextGenerationModel(BaseNLPModel):
                 else self._tokenizer.eos_token_id
             ),
         )
-        if instructions is not None:
-            inputs = self._tokenize_input(
-                input,
-                instructions=instructions,
-                system_prompt=system_prompt,
-                developer_prompt=developer_prompt,
-                context=None,
-                tool=tool,
-                chat_template_settings=asdict(settings.chat_settings),
-            )
-        else:
-            inputs = self._tokenize_input(
-                input,
-                system_prompt,
-                developer_prompt,
-                context=None,
-                tool=tool,
-                chat_template_settings=asdict(settings.chat_settings),
-            )
+        inputs = self._tokenize_input(
+            input,
+            system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
+            context=None,
+            tool=tool,
+            chat_template_settings=asdict(settings.chat_settings),
+            instructions=instructions,
+        )
         return TextGenerationResponse(
             output_fn,
             inputs=inputs,

@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from datetime import datetime
 from typing import TypeAlias
 
 JsonScalar: TypeAlias = None | bool | int | float | str
@@ -64,6 +65,12 @@ def assert_optional_non_negative_int(
     assert_non_negative_int(value, field_name)
 
 
+def assert_string_tuple(value: object, field_name: str) -> None:
+    assert isinstance(value, tuple), f"{field_name} must be a tuple"
+    for item in value:
+        assert_non_empty_string(item, field_name)
+
+
 def assert_counter(value: object | None, field_name: str) -> None:
     assert_optional_non_negative_int(value, field_name)
 
@@ -81,6 +88,18 @@ def assert_optional_non_negative_number(
     if value is None:
         return
     assert_non_negative_number(value, field_name)
+
+
+def coerce_datetime(value: object, field_name: str = "datetime") -> datetime:
+    if isinstance(value, datetime):
+        return value
+    assert isinstance(value, str), f"{field_name} must be a datetime string"
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise AssertionError(
+            f"{field_name} must be an ISO datetime string"
+        ) from error
 
 
 def _int_value(value: object, field_name: str) -> int:

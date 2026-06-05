@@ -17,6 +17,7 @@ from .message import (
     TemplateMessageContent,
     TemplateMessageRole,
 )
+from .provider import ProviderFamily, provider_family_value
 from .stream import TextGenerationStream
 
 from abc import ABC
@@ -160,11 +161,11 @@ class TextGenerationVendorStream(TextGenerationStream):
         self,
         generator: AsyncIterator[Token | TokenDetail | str],
         *,
-        provider_family: str | None = None,
+        provider_family: ProviderFamily | str | None = None,
         usage: object | None = None,
     ) -> None:
         self._generator = generator
-        self._provider_family = provider_family
+        self._provider_family = provider_family_value(provider_family)
         self._usage = usage
 
     @property

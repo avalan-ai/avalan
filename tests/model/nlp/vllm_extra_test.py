@@ -140,12 +140,13 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
             prompt = model._prompt("hello", "sys")
         tok.assert_called_once_with(
             "hello",
-            "sys",
-            None,
+            system_prompt="sys",
+            developer_prompt=None,
             context=None,
             tensor_format="pt",
             tool=None,
             chat_template_settings=None,
+            instructions=None,
         )
         model._tokenizer.decode.assert_called_once_with(
             [1, 2], skip_special_tokens=False

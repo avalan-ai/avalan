@@ -180,7 +180,11 @@ class TextGenerationModelMethodsTestCase(TestCase):
             count = self.model.input_token_count("hi")
 
         tok.assert_called_once_with(
-            "hi", system_prompt=None, developer_prompt=None, context=None
+            "hi",
+            system_prompt=None,
+            developer_prompt=None,
+            context=None,
+            instructions=None,
         )
         self.assertEqual(count, 3)
 

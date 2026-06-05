@@ -1,4 +1,18 @@
-from ...types import assert_non_empty_string as _assert_non_empty_string
+from ...types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ...types import (
+    assert_non_negative_int as _assert_non_negative_int,
+)
+from ...types import (
+    assert_optional_non_negative_int as _assert_optional_non_negative_int,
+)
+from ...types import (
+    assert_optional_positive_int as _assert_optional_positive_int,
+)
+from ...types import (
+    assert_positive_int as _assert_positive_int,
+)
 from ..artifact import (
     DEFAULT_ARTIFACT_STREAM_CHUNK_SIZE,
     ArtifactStoreError,
@@ -652,36 +666,6 @@ def _assert_artifact_id(value: str) -> None:
         r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",
         value,
     ), "artifact_id must be a stable token"
-
-
-def _assert_positive_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value > 0, f"{field_name} must be positive"
-
-
-def _assert_non_negative_int(value: int, field_name: str) -> None:
-    assert isinstance(value, int), f"{field_name} must be an integer"
-    assert not isinstance(value, bool), f"{field_name} must be an integer"
-    assert value >= 0, f"{field_name} must not be negative"
-
-
-def _assert_optional_positive_int(
-    value: int | None,
-    field_name: str,
-) -> None:
-    if value is None:
-        return
-    _assert_positive_int(value, field_name)
-
-
-def _assert_optional_non_negative_int(
-    value: int | None,
-    field_name: str,
-) -> None:
-    if value is None:
-        return
-    _assert_non_negative_int(value, field_name)
 
 
 def _assert_sha256(value: str) -> None:

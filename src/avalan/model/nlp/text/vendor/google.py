@@ -6,6 +6,7 @@ from .....entities import (
     Token,
     TokenDetail,
 )
+from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from ....message import TemplateMessageRole
@@ -39,7 +40,7 @@ class GoogleStream(TextGenerationVendorStream):
                     yield text
             self._usage = terminal_usage
 
-        super().__init__(generator(), provider_family="google")
+        super().__init__(generator(), provider_family=ProviderFamily.GOOGLE)
 
 
 class GoogleClient(TextGenerationVendor):
@@ -82,7 +83,7 @@ class GoogleClient(TextGenerationVendor):
 
             return TextGenerationSingleStream(
                 response.text or "",
-                provider_family="google",
+                provider_family=ProviderFamily.GOOGLE,
                 usage=GoogleClient._field(response, "usage_metadata")
                 or GoogleClient._field(response, "usageMetadata"),
             )

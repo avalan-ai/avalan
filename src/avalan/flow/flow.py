@@ -145,6 +145,7 @@ class Flow:
         reachable = self._collect_reachable(start_nodes)
         while queue:
             node = queue.popleft()
+            self._assert_unprocessed_queue_node(node, processed, reachable)
             processed.add(node.name)
             inputs = buffers[node.name]
             if incoming_counts[node.name] > 0 and not inputs:
@@ -222,6 +223,7 @@ class Flow:
         while queue:
             await _check_cancelled(cancellation_checker)
             node = queue.popleft()
+            self._assert_unprocessed_queue_node(node, processed, reachable)
             processed.add(node.name)
             inputs = buffers[node.name]
             if incoming_counts[node.name] > 0 and not inputs:
@@ -319,6 +321,15 @@ class Flow:
         for node in start_nodes:
             dfs(node.name)
         return cycle_nodes
+
+    @staticmethod
+    def _assert_unprocessed_queue_node(
+        node: Node,
+        processed: set[str],
+        reachable: set[str],
+    ) -> None:
+        if node.name in processed or len(processed) >= len(reachable):
+            raise ValueError("Flow traversal revisited node: " + node.name)
 
 
 async def _check_cancelled(

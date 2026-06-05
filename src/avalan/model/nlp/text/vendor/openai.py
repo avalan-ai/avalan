@@ -11,6 +11,7 @@ from .....entities import (
     ToolCallResult,
     ToolCallToken,
 )
+from .....model.provider import ProviderFamily, provider_string_option
 from .....model.response.text import TextGenerationResponse
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
@@ -44,7 +45,7 @@ class OpenAIStream(TextGenerationVendorStream):
         self,
         stream: AsyncIterator[Any],
         *,
-        provider_family: str = "openai",
+        provider_family: ProviderFamily | str = ProviderFamily.OPENAI,
     ) -> None:
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_calls: dict[str, dict[str, str | list[str] | None]] = {}
@@ -269,8 +270,12 @@ class OpenAIClient(TextGenerationVendor):
         )
 
     @property
-    def _usage_provider_family(self) -> str:
-        return "azure_openai" if self._is_azure else "openai"
+    def _usage_provider_family(self) -> ProviderFamily:
+        return (
+            ProviderFamily.AZURE_OPENAI
+            if self._is_azure
+            else ProviderFamily.OPENAI
+        )
 
     def _template_messages(
         self,
@@ -676,16 +681,17 @@ class OpenAIModel(TextGenerationVendorModel):
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.base_url or self._settings.access_token
-        if self._settings.azure_api_version is not None:
-            return OpenAIClient(
-                base_url=self._settings.base_url,
-                api_key=self._settings.access_token,
-                azure_api_version=self._settings.azure_api_version,
-            )
-        return OpenAIClient(
-            base_url=self._settings.base_url,
-            api_key=self._settings.access_token,
+        azure_api_version = provider_string_option(
+            self._settings.provider_options,
+            "azure_api_version",
         )
+        client_kwargs: dict[str, str | None] = {
+            "api_key": self._settings.access_token,
+            "base_url": self._settings.base_url,
+        }
+        if azure_api_version is not None:
+            client_kwargs["azure_api_version"] = azure_api_version
+        return OpenAIClient(**client_kwargs)
 
     async def __call__(
         self,

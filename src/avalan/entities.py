@@ -247,8 +247,8 @@ class EngineSettings:
     subfolder: str | None = None
     tokenizer_subfolder: str | None = None
     access_token: str | None = None
-    azure_api_version: str | None = None
     base_url: str | None = None
+    provider_options: dict[str, object] | None = None
     revision: str | None = None
     quantization: QuantizationSettings | None = None
     weight_type: WeightType = "auto"

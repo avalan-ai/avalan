@@ -35,11 +35,12 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
 
         tokenize_mock.assert_called_once_with(
             "hi",
-            None,
-            None,
+            system_prompt=None,
+            developer_prompt=None,
             context=None,
             tool=None,
             chat_template_settings=asdict(settings.chat_settings),
+            instructions=None,
         )
         self.assertIs(response._output_fn, string_output)
         self.assertEqual(

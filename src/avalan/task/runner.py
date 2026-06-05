@@ -92,7 +92,7 @@ from .validation import (
     validate_task_output,
 )
 
-from asyncio import CancelledError, wait_for
+from asyncio import CancelledError, gather, wait_for
 from asyncio import sleep as asyncio_sleep
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -1234,24 +1234,28 @@ class DirectTaskRunner:
         attempt: TaskAttempt,
         sanitizer: PrivacySanitizer,
     ) -> None:
-        for artifact in _output_artifacts_from_output(definition, output):
-            safe_artifact = _sanitize_output_artifact(
-                artifact,
-                sanitizer,
+        safe_artifacts = tuple(
+            _sanitize_output_artifact(artifact, sanitizer)
+            for artifact in _output_artifacts_from_output(definition, output)
+        )
+        await gather(
+            *(
+                self._store.append_artifact(
+                    run.run_id,
+                    ref=safe_artifact.ref,
+                    purpose=TaskArtifactPurpose.OUTPUT,
+                    state=safe_artifact.state,
+                    attempt_id=attempt.attempt_id,
+                    provenance=safe_artifact.provenance,
+                    retention=_output_artifact_retention(
+                        definition,
+                        safe_artifact,
+                    ),
+                    metadata=safe_artifact.metadata,
+                )
+                for safe_artifact in safe_artifacts
             )
-            await self._store.append_artifact(
-                run.run_id,
-                ref=safe_artifact.ref,
-                purpose=TaskArtifactPurpose.OUTPUT,
-                state=safe_artifact.state,
-                attempt_id=attempt.attempt_id,
-                provenance=safe_artifact.provenance,
-                retention=_output_artifact_retention(
-                    definition,
-                    safe_artifact,
-                ),
-                metadata=safe_artifact.metadata,
-            )
+        )
 
     async def _input_files_from_materialized(
         self,

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from unittest import TestCase, main
 
 from avalan.types import (
@@ -12,6 +13,8 @@ from avalan.types import (
     assert_optional_positive_number,
     assert_positive_int,
     assert_positive_number,
+    assert_string_tuple,
+    coerce_datetime,
 )
 
 
@@ -94,6 +97,35 @@ class TypesTest(TestCase):
 
     def test_assert_counter_accepts_none(self) -> None:
         assert_counter(None, "field")
+
+    def test_assert_string_tuple_accepts_strings(self) -> None:
+        assert_string_tuple(("one", "two"), "field")
+
+    def test_assert_string_tuple_rejects_non_tuple(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_string_tuple(["one"], "field")
+
+    def test_assert_string_tuple_rejects_blank_string(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_string_tuple((" ",), "field")
+
+    def test_coerce_datetime_accepts_datetime(self) -> None:
+        value = datetime(2026, 1, 2, tzinfo=UTC)
+        self.assertIs(coerce_datetime(value), value)
+
+    def test_coerce_datetime_accepts_z_suffix(self) -> None:
+        self.assertEqual(
+            coerce_datetime("2026-01-02T03:04:05Z"),
+            datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+        )
+
+    def test_coerce_datetime_rejects_non_string(self) -> None:
+        with self.assertRaises(AssertionError):
+            coerce_datetime(123)
+
+    def test_coerce_datetime_rejects_invalid_string(self) -> None:
+        with self.assertRaises(AssertionError):
+            coerce_datetime("not a date")
 
 
 if __name__ == "__main__":

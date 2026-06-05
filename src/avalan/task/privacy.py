@@ -500,7 +500,7 @@ def decrypt_encrypted_privacy_value(
         raise PrivacySanitizationError("encrypted privacy value is invalid")
     context = _encrypted_metadata(metadata)
     try:
-        ciphertext_bytes = b64decode(ciphertext.encode("ascii"), validate=True)
+        ciphertext_bytes = b64decode(ciphertext, validate=True)
     except ValueError as error:
         raise PrivacySanitizationError(
             "encrypted privacy value is invalid"

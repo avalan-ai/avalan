@@ -534,10 +534,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 auto_load_model=False,
                 auto_load_tokenizer=False,
                 access_token="token",
-                azure_api_version="2025-04-01-preview",
                 base_url=(
                     "https://tenant.openai.azure.com/openai/deployments/d"
                 ),
+                provider_options={
+                    "azure_api_version": "2025-04-01-preview",
+                },
             )
             model = self.mod.OpenAIModel("deployment", settings)
             loaded = model._load_model()
@@ -548,6 +550,19 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             azure_api_version="2025-04-01-preview",
         )
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_model_rejects_invalid_provider_api_version(self):
+        settings = TransformerEngineSettings(
+            auto_load_model=False,
+            auto_load_tokenizer=False,
+            access_token="token",
+            base_url="https://tenant.openai.azure.com/openai/deployments/d",
+            provider_options={"azure_api_version": 20250401},
+        )
+        model = self.mod.OpenAIModel("deployment", settings)
+
+        with self.assertRaises(AssertionError):
+            model._load_model()
 
     async def test_stream_event_types(self):
         events = [

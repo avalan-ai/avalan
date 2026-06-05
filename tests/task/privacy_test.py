@@ -295,6 +295,12 @@ class PrivacyTest(TestCase):
             },
             {
                 "privacy": ENCRYPTED_MARKER,
+                "ciphertext": "\u2603",
+                "key_id": "enc",
+                "algorithm": "test-aead",
+            },
+            {
+                "privacy": ENCRYPTED_MARKER,
                 "ciphertext": "ZW5jcnlwdGVkOnByaXZhdGU=",
                 "key_id": "",
                 "algorithm": "test-aead",

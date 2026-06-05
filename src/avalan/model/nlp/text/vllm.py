@@ -120,27 +120,16 @@ class VllmModel(TextGenerationModel):
         *,
         instructions: str | None = None,
     ) -> str:
-        if instructions is not None:
-            inputs = super()._tokenize_input(
-                input,
-                system_prompt,
-                developer_prompt,
-                context=None,
-                tensor_format="pt",
-                tool=tool,
-                instructions=instructions,
-                chat_template_settings=chat_template_settings,
-            )
-        else:
-            inputs = super()._tokenize_input(
-                input,
-                system_prompt,
-                developer_prompt,
-                context=None,
-                tensor_format="pt",
-                tool=tool,
-                chat_template_settings=chat_template_settings,
-            )
+        inputs = super()._tokenize_input(
+            input,
+            system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
+            context=None,
+            tensor_format="pt",
+            tool=tool,
+            chat_template_settings=chat_template_settings,
+            instructions=instructions,
+        )
         tokenizer = self._tokenizer
         assert tokenizer is not None
         input_ids = cast(dict[str, Any], inputs)["input_ids"]

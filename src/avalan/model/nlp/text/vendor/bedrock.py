@@ -13,6 +13,7 @@ from .....entities import (
     ToolCallResult,
     ToolCallToken,
 )
+from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
@@ -228,7 +229,7 @@ class BedrockStream(TextGenerationVendorStream):
             if terminal_usage is not None:
                 self._usage = terminal_usage
 
-        super().__init__(generator(), provider_family="bedrock")
+        super().__init__(generator(), provider_family=ProviderFamily.BEDROCK)
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
@@ -319,7 +320,7 @@ class BedrockClient(TextGenerationVendor):
             )
             return TextGenerationSingleStream(
                 self._response_text(response),
-                provider_family="bedrock",
+                provider_family=ProviderFamily.BEDROCK,
                 usage=usage,
             )
         except Exception as error:

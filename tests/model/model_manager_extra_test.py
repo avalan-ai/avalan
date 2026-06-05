@@ -138,7 +138,7 @@ class ModelManagerExtraTestCase(TestCase):
         args = get_mock.call_args.args[1]
         self.assertEqual(args["backend"], Backend.MLXLM)
 
-    def test_get_engine_settings_uses_azure_api_version_from_uri(self):
+    def test_get_engine_settings_uses_provider_options_from_uri(self):
         manager = ModelManager(self.hub, self.logger)
         uri = EngineUri(
             host="openai",
@@ -152,9 +152,12 @@ class ModelManagerExtraTestCase(TestCase):
 
         settings = manager.get_engine_settings(uri, {})
 
-        self.assertEqual(settings.azure_api_version, "2025-04-01-preview")
+        self.assertEqual(
+            settings.provider_options,
+            {"azure_api_version": "2025-04-01-preview"},
+        )
 
-    def test_get_engine_settings_rejects_invalid_azure_api_version(self):
+    def test_get_engine_settings_merges_generic_provider_options(self):
         manager = ModelManager(self.hub, self.logger)
         uri = EngineUri(
             host="openai",
@@ -163,11 +166,18 @@ class ModelManagerExtraTestCase(TestCase):
             password=None,
             vendor="openai",
             model_id="deployment",
-            params={"azure_api_version": 20250401},
+            params={"provider_timeout": 30},
         )
 
-        with self.assertRaises(AssertionError):
-            manager.get_engine_settings(uri, {})
+        settings = manager.get_engine_settings(
+            uri,
+            {"provider_options": {"timeout": 60, "region": "eastus"}},
+        )
+
+        self.assertEqual(
+            settings.provider_options,
+            {"timeout": 60, "region": "eastus"},
+        )
 
     def test_backend_ds4_value(self):
         self.assertEqual(Backend("ds4"), Backend.DS4)

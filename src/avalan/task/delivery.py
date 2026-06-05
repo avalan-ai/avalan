@@ -5,6 +5,12 @@ from ..model.file_delivery import (
     FileDeliveryProfile,
     FileDeliveryRequest,
 )
+from ..types import (
+    assert_non_empty_string as _assert_non_empty_string,
+)
+from ..types import (
+    assert_optional_non_negative_int as _assert_optional_non_negative_int,
+)
 from .artifact import ArtifactStore, ArtifactStoreError, TaskArtifactStat
 from .context import TaskInputFile
 from .definition import TaskDefinition
@@ -22,10 +28,7 @@ class TaskFileDeliveryPlan:
 
     def __post_init__(self) -> None:
         assert isinstance(self.decision, FileDeliveryDecision)
-        if self.size_bytes is not None:
-            assert isinstance(self.size_bytes, int)
-            assert not isinstance(self.size_bytes, bool)
-            assert self.size_bytes >= 0
+        _assert_optional_non_negative_int(self.size_bytes, "size_bytes")
         if self.size_bucket is not None:
             _assert_non_empty_string(self.size_bucket, "size_bucket")
 
@@ -554,8 +557,3 @@ def _size_bucket(size_bytes: int | None) -> str | None:
         if size_bytes <= upper_bound:
             return label
     return "100MB+"
-
-
-def _assert_non_empty_string(value: str, field_name: str) -> None:
-    assert isinstance(value, str), f"{field_name} must be a string"
-    assert value, f"{field_name} must not be empty"

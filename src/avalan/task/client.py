@@ -92,6 +92,7 @@ from .validation import (
     validate_task_input,
 )
 
+from asyncio import gather
 from asyncio import sleep as asyncio_sleep
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -993,9 +994,10 @@ class TaskClient:
         self,
         files: tuple[TaskMaterializedFile, ...],
     ) -> None:
-        for file in files:
-            assert self._artifact_store is not None
-            await self._artifact_store.delete(file.ref)
+        assert self._artifact_store is not None
+        await gather(
+            *(self._artifact_store.delete(file.ref) for file in files)
+        )
 
     def _explicit_queue_artifacts(
         self,

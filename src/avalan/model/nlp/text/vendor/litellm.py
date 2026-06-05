@@ -1,4 +1,5 @@
 from .....entities import GenerationSettings, Message, Token, TokenDetail
+from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -29,7 +30,10 @@ class LiteLLMStream(TextGenerationVendorStream):
                     yield text
             self._usage = terminal_usage
 
-        super().__init__(generator(), provider_family="openai_compatible")
+        super().__init__(
+            generator(),
+            provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+        )
 
 
 class LiteLLMClient(TextGenerationVendor):
@@ -70,7 +74,7 @@ class LiteLLMClient(TextGenerationVendor):
 
         return TextGenerationSingleStream(
             LiteLLMClient._message_text(result) or "",
-            provider_family="openai_compatible",
+            provider_family=ProviderFamily.OPENAI_COMPATIBLE,
             usage=LiteLLMClient._field(result, "usage"),
         )
 

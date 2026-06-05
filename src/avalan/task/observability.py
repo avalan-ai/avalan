@@ -24,6 +24,7 @@ from .usage import (
     usage_observation_entries_from_response,
 )
 
+from asyncio import gather
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, TypeAlias
@@ -102,11 +103,9 @@ class FanoutObservabilitySink(ObservabilitySink):
 
     async def record_event(self, event: TaskObservedEvent) -> None:
         self._event_count += 1
-        for sink in self.sinks:
-            try:
-                await sink.record_event(event)
-            except Exception as error:
-                self._record_failure(error)
+        await gather(
+            *(self._record_sink_event(sink, event) for sink in self.sinks)
+        )
 
     async def record_usage(
         self,
@@ -118,17 +117,19 @@ class FanoutObservabilitySink(ObservabilitySink):
         metadata: Mapping[str, object] | None = None,
     ) -> None:
         self._usage_count += 1
-        for sink in self.sinks:
-            try:
-                await sink.record_usage(
+        await gather(
+            *(
+                self._record_sink_usage(
+                    sink,
                     run_id=run_id,
                     attempt_id=attempt_id,
                     source=source,
                     totals=totals,
                     metadata=metadata,
                 )
-            except Exception as error:
-                self._record_failure(error)
+                for sink in self.sinks
+            )
+        )
 
     def health(self) -> ObservabilitySinkHealth:
         return ObservabilitySinkHealth(
@@ -143,6 +144,37 @@ class FanoutObservabilitySink(ObservabilitySink):
     def _record_failure(self, error: Exception) -> None:
         self._failure_count += 1
         self._last_failure_code = type(error).__name__
+
+    async def _record_sink_event(
+        self,
+        sink: ObservabilitySink,
+        event: TaskObservedEvent,
+    ) -> None:
+        try:
+            await sink.record_event(event)
+        except Exception as error:
+            self._record_failure(error)
+
+    async def _record_sink_usage(
+        self,
+        sink: ObservabilitySink,
+        *,
+        run_id: str,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None,
+        metadata: Mapping[str, object] | None,
+    ) -> None:
+        try:
+            await sink.record_usage(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                source=source,
+                totals=totals,
+                metadata=metadata,
+            )
+        except Exception as error:
+            self._record_failure(error)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -189,11 +221,13 @@ class TaskEventPipeline:
                 )
             except Exception:
                 observed = draft
-        await _notify_observer(self.metrics_observer, observed)
-        await _notify_observer(self.trace_observer, observed)
-        await record_observability_event(
-            self.observability_sink,
-            observed,
+        await gather(
+            _notify_observer(self.metrics_observer, observed),
+            _notify_observer(self.trace_observer, observed),
+            record_observability_event(
+                self.observability_sink,
+                observed,
+            ),
         )
 
 
@@ -265,6 +299,7 @@ async def record_response_usage(
         run_id=run_id,
         attempt_id=attempt_id,
     )
+    record_tasks = []
     for entry in entries:
         usage_id = stable_usage_id_for_response(
             entry.response,
@@ -274,15 +309,18 @@ async def record_response_usage(
         )
         if usage_id in recorded_usage_ids:
             continue
-        await _record_response_usage_observation(
-            sink,
-            store=store,
-            run_id=run_id,
-            attempt_id=attempt_id,
-            usage_id=usage_id,
-            observation=entry.observation,
-        )
         recorded_usage_ids.add(usage_id)
+        record_tasks.append(
+            _record_response_usage_observation(
+                sink,
+                store=store,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                usage_id=usage_id,
+                observation=entry.observation,
+            )
+        )
+    await gather(*record_tasks)
 
 
 async def _recorded_usage_ids(

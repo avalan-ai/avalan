@@ -24,13 +24,16 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from importlib import import_module
 from importlib.util import find_spec
 from inspect import isawaitable
 from io import BytesIO
 from json import dumps, loads
 from re import fullmatch
 from typing import BinaryIO, Protocol, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+_UUID_MODULE = import_module("uuid")
 
 
 class PgsqlArtifactCipher(Protocol):
@@ -539,6 +542,9 @@ def _read_chunk_size(max_bytes: int) -> int:
 
 
 def _uuid_id() -> str:
+    uuid7 = getattr(_UUID_MODULE, "uuid7", None)
+    if callable(uuid7):
+        return cast(UUID, uuid7()).hex
     return uuid4().hex
 
 

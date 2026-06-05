@@ -1,3 +1,4 @@
+from ..model.provider import ProviderFamily
 from ..types import (
     JsonValue,
 )
@@ -8,6 +9,7 @@ from ..types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
 
+from asyncio import gather
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -30,17 +32,7 @@ class UsageSource(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-class UsageProviderFamily(StrEnum):
-    ANTHROPIC = "anthropic"
-    AZURE_OPENAI = "azure_openai"
-    BEDROCK = "bedrock"
-    GOOGLE = "google"
-    HUGGING_FACE = "hugging_face"
-    LOCAL = "local"
-    OLLAMA = "ollama"
-    OPENAI = "openai"
-    OPENAI_COMPATIBLE = "openai_compatible"
-    OTHER = "other"
+UsageProviderFamily: TypeAlias = ProviderFamily
 
 
 class UsageCounterPresence(StrEnum):
@@ -424,26 +416,30 @@ def attach_response_usage_recorder(
             return
         recorded = True
         entries = usage_observation_entries_from_response(response)
-        for entry in entries:
-            await store.append_usage(
-                run_id,
-                attempt_id=attempt_id,
-                usage_id=_usage_record_id(
-                    entry.response,
-                    run_id=run_id,
+        await gather(
+            *(
+                store.append_usage(
+                    run_id,
                     attempt_id=attempt_id,
-                    sequence=entry.sequence,
-                    usage_id=usage_id,
-                    observation_count=len(entries),
-                ),
-                source=source or entry.observation.source,
-                totals=entry.observation.totals,
-                metadata=(
-                    metadata
-                    if metadata is not None
-                    else entry.observation.metadata
-                ),
+                    usage_id=_usage_record_id(
+                        entry.response,
+                        run_id=run_id,
+                        attempt_id=attempt_id,
+                        sequence=entry.sequence,
+                        usage_id=usage_id,
+                        observation_count=len(entries),
+                    ),
+                    source=source or entry.observation.source,
+                    totals=entry.observation.totals,
+                    metadata=(
+                        metadata
+                        if metadata is not None
+                        else entry.observation.metadata
+                    ),
+                )
+                for entry in entries
             )
+        )
 
     cast(UsageCallbackResponse, response).add_done_callback(record_usage)
     return True

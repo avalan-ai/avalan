@@ -6,6 +6,7 @@ from .....entities import (
     TransformerEngineSettings,
 )
 from .....model.nlp.text.generation import TextGenerationModel
+from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -26,7 +27,7 @@ class OllamaStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[dict[str, Any]]) -> None:
         super().__init__(
             cast(AsyncIterator[Token | TokenDetail | str], stream),
-            provider_family="ollama",
+            provider_family=ProviderFamily.OLLAMA,
         )
 
     async def __anext__(self) -> Token | TokenDetail | str:
@@ -80,7 +81,7 @@ class OllamaClient(TextGenerationVendor):
             content = response["message"]["content"]
             return TextGenerationSingleStream(
                 content if isinstance(content, str) else str(content),
-                provider_family="ollama",
+                provider_family=ProviderFamily.OLLAMA,
             )
 
 

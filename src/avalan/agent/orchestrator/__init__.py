@@ -37,9 +37,12 @@ from dataclasses import asdict
 from inspect import isawaitable
 from json import dumps
 from logging import Logger
+from re import compile as compile_regex
 from time import perf_counter
 from typing import Any, cast
 from uuid import UUID, uuid4
+
+_INPUT_TEMPLATE_REFERENCE_PATTERN = compile_regex(r"{{\s*input\b")
 
 
 class Orchestrator:
@@ -463,7 +466,7 @@ class Orchestrator:
 
     @staticmethod
     def _user_references_input(user: str) -> bool:
-        return "{{input" in user or "{{ input" in user
+        return bool(_INPUT_TEMPLATE_REFERENCE_PATTERN.search(user))
 
     @staticmethod
     def _replace_last_message_input(

@@ -1,3 +1,4 @@
+from ..types import coerce_datetime
 from .artifact import (
     ArtifactStore,
     ArtifactStoreError,
@@ -40,6 +41,7 @@ from .validation import (
     validate_task_input,
 )
 
+from asyncio import gather
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -280,12 +282,12 @@ async def materialize_task_input_files(
         if entry.descriptor.source_kind
         in {TaskFileSourceKind.LOCAL_PATH, TaskFileSourceKind.REMOTE_URL}
     )
-    materialized: list[TaskMaterializedFile] = []
+    materialization_tasks = []
     for entry in materializable_entries:
         match entry.descriptor.source_kind:
             case TaskFileSourceKind.LOCAL_PATH:
-                materialized.append(
-                    await _materialize_validated_file(
+                materialization_tasks.append(
+                    _materialize_validated_file(
                         definition,
                         validated_by_path[entry.path],
                         artifact_store=artifact_store,
@@ -296,8 +298,8 @@ async def materialize_task_input_files(
                     )
                 )
             case TaskFileSourceKind.REMOTE_URL:
-                materialized.append(
-                    await _materialize_remote_url_file(
+                materialization_tasks.append(
+                    _materialize_remote_url_file(
                         definition,
                         entry,
                         artifact_store=artifact_store,
@@ -310,7 +312,7 @@ async def materialize_task_input_files(
                         attempt_id=attempt_id,
                     )
                 )
-    return tuple(materialized)
+    return tuple(await gather(*materialization_tasks))
 
 
 def task_file_descriptors_from_input(
@@ -598,9 +600,7 @@ def _coerce_provider_reference(
     assert raw_reference == reference
     raw_expires_at = value.get("expires_at")
     expires_at = (
-        _coerce_datetime(raw_expires_at)
-        if raw_expires_at is not None
-        else None
+        coerce_datetime(raw_expires_at) if raw_expires_at is not None else None
     )
     durable = value.get("durable", True)
     assert isinstance(durable, bool)
@@ -1685,10 +1685,3 @@ def _mapping_or_empty(value: object) -> Mapping[str, object]:
         return {}
     assert isinstance(value, Mapping)
     return value
-
-
-def _coerce_datetime(value: object) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    assert isinstance(value, str)
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))

@@ -4,6 +4,7 @@ from .....entities import (
     Token,
     TokenDetail,
 )
+from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -34,7 +35,10 @@ class HuggingfaceStream(TextGenerationVendorStream):
                     yield text
             self._usage = terminal_usage
 
-        super().__init__(generator(), provider_family="hugging_face")
+        super().__init__(
+            generator(),
+            provider_family=ProviderFamily.HUGGING_FACE,
+        )
 
 
 class HuggingfaceClient(TextGenerationVendor):
@@ -80,7 +84,7 @@ class HuggingfaceClient(TextGenerationVendor):
         content = HuggingfaceClient._message_text(non_stream_response)
         return TextGenerationSingleStream(
             content or "",
-            provider_family="hugging_face",
+            provider_family=ProviderFamily.HUGGING_FACE,
             usage=HuggingfaceClient._field(non_stream_response, "usage"),
         )
 

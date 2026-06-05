@@ -263,27 +263,16 @@ class MlxLmModel(TextGenerationModel):
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         settings = settings or GenerationSettings()
-        if instructions is not None:
-            inputs = super()._tokenize_input(
-                input,
-                system_prompt,
-                developer_prompt,
-                context=None,
-                tensor_format=tensor_format,
-                tool=tool,
-                instructions=instructions,
-                chat_template_settings=asdict(settings.chat_settings),
-            )
-        else:
-            inputs = super()._tokenize_input(
-                input,
-                system_prompt,
-                developer_prompt,
-                context=None,
-                tensor_format=tensor_format,
-                tool=tool,
-                chat_template_settings=asdict(settings.chat_settings),
-            )
+        inputs = super()._tokenize_input(
+            input,
+            system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
+            context=None,
+            tensor_format=tensor_format,
+            tool=tool,
+            chat_template_settings=asdict(settings.chat_settings),
+            instructions=instructions,
+        )
         generation_settings = replace(settings, do_sample=False)
         output_fn = (
             self._stream_generator

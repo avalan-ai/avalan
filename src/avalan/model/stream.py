@@ -2,6 +2,7 @@ from ..entities import (
     Token,
     TokenDetail,
 )
+from .provider import ProviderFamily, provider_family_value
 
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
@@ -35,11 +36,11 @@ class TextGenerationSingleStream(TextGenerationStream):
         self,
         content: str | Token | TokenDetail,
         *,
-        provider_family: str | None = None,
+        provider_family: ProviderFamily | str | None = None,
         usage: object | None = None,
     ) -> None:
         self._content = content
-        self._provider_family = provider_family
+        self._provider_family = provider_family_value(provider_family)
         self._usage = usage
 
     @property

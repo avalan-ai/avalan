@@ -6,7 +6,8 @@ from json import loads
 from os import environ
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
-from uuid import uuid4
+from unittest.mock import patch
+from uuid import UUID, uuid4
 
 from pytest import importorskip
 
@@ -30,6 +31,7 @@ from avalan.task.artifacts import (
     PgsqlArtifactByteStoragePolicy,
     PgsqlArtifactStore,
 )
+from avalan.task.artifacts import pgsql as pgsql_artifacts
 from avalan.task.stores import PgsqlTaskMigrationSettings, task_pgsql_upgrade
 
 
@@ -80,6 +82,42 @@ class TamperingCipher(ReversibleCipher):
         context: Mapping[str, str] | None = None,
     ) -> bytes:
         return b"tampered"
+
+
+class Uuid7Module:
+    def uuid7(self) -> UUID:
+        return UUID("018f8a92-6400-7000-8000-000000000001")
+
+
+class UuidWithoutUuid7Module:
+    pass
+
+
+class PgsqlArtifactIdTest(IsolatedAsyncioTestCase):
+    def test_uuid_id_prefers_uuid7_when_available(self) -> None:
+        with patch.object(pgsql_artifacts, "_UUID_MODULE", Uuid7Module()):
+            self.assertEqual(
+                pgsql_artifacts._uuid_id(),
+                "018f8a92640070008000000000000001",
+            )
+
+    def test_uuid_id_falls_back_to_uuid4(self) -> None:
+        with (
+            patch.object(
+                pgsql_artifacts,
+                "_UUID_MODULE",
+                UuidWithoutUuid7Module(),
+            ),
+            patch.object(
+                pgsql_artifacts,
+                "uuid4",
+                return_value=UUID("00000000-0000-4000-8000-000000000001"),
+            ),
+        ):
+            self.assertEqual(
+                pgsql_artifacts._uuid_id(),
+                "00000000000040008000000000000001",
+            )
 
 
 class RecordingReader:
