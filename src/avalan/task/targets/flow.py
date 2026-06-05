@@ -27,7 +27,7 @@ from ..definition import (
     TaskTargetType,
 )
 from ..feature_gate import TaskFeature, feature_available, feature_diagnostic
-from ..input import TaskFileConversionRequest
+from ..input import TaskFileConversionRequest, TaskFileDescriptor
 from ..privacy import (
     DROPPED_MARKER,
     ENCRYPTED_MARKER,
@@ -1038,6 +1038,9 @@ def _task_input_value(context: TaskTargetContext) -> object:
     value = context.input_value
     if context.definition.run.mode != RunMode.QUEUE:
         return value
+    queued_file_value = _queued_file_input_value(context)
+    if queued_file_value is not None:
+        return queued_file_value
     if not isinstance(value, Mapping):
         return value
     if _is_stored_privacy_envelope(value):
@@ -1062,6 +1065,56 @@ def _task_input_value(context: TaskTargetContext) -> object:
             )
         )
     return value
+
+
+def _queued_file_input_value(context: TaskTargetContext) -> object | None:
+    input_type = context.definition.input.type
+    if input_type == TaskInputType.FILE:
+        if len(context.files) != 1:
+            return None
+        return _queued_file_descriptor(context.files[0])
+    if input_type == TaskInputType.FILE_ARRAY:
+        descriptors: list[TaskFileDescriptor] = []
+        for file in context.files:
+            descriptor = _queued_file_descriptor(file)
+            if descriptor is None:
+                return None
+            descriptors.append(descriptor)
+        return descriptors
+    return None
+
+
+def _queued_file_descriptor(
+    file: TaskInputFile,
+) -> TaskFileDescriptor | None:
+    if file.artifact_ref is not None:
+        ref = file.artifact_ref
+        return TaskFileDescriptor.artifact(
+            ref.artifact_id,
+            mime_type=file.media_type or ref.media_type,
+            size_bytes=(
+                file.size_bytes
+                if file.size_bytes is not None
+                else ref.size_bytes
+            ),
+            sha256=ref.sha256,
+        )
+    if file.provider_reference is not None:
+        provider_ref = file.provider_reference
+        return TaskFileDescriptor.provider_reference_descriptor(
+            provider_ref.reference,
+            kind=provider_ref.kind,
+            provider=provider_ref.provider,
+            owner_scope=provider_ref.owner_scope,
+            expires_at=provider_ref.expires_at,
+            mime_type=file.media_type or provider_ref.mime_type,
+            size_bytes=file.size_bytes,
+            size_bucket=provider_ref.size_bucket,
+            identity_hmac=provider_ref.identity_hmac,
+            durable=provider_ref.durable,
+            metadata=provider_ref.metadata,
+        )
+    return None
 
 
 def _is_stored_privacy_envelope(value: Mapping[object, object]) -> bool:

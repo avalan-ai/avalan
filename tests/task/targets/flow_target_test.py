@@ -1723,6 +1723,132 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"name": "ready", "limit": 2})
 
+    async def test_run_accepts_queued_file_array_from_durable_refs(
+        self,
+    ) -> None:
+        def inspect(inputs: Mapping[str, object]) -> dict[str, object]:
+            descriptors = cast(
+                list[TaskFileDescriptor],
+                inputs[FLOW_TASK_INPUT_KEY],
+            )
+            return {
+                "references": [
+                    descriptor.reference for descriptor in descriptors
+                ],
+                "source_kinds": [
+                    descriptor.source_kind.value for descriptor in descriptors
+                ],
+                "mime_types": [
+                    descriptor.mime_type for descriptor in descriptors
+                ],
+            }
+
+        flow = Flow()
+        flow.add_node(Node("A", func=inspect))
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        artifact_file = TaskInputFile(
+            logical_path="artifact:source-1",
+            artifact_ref=TaskArtifactRef(
+                artifact_id="source-1",
+                store="local",
+                storage_key="so/source-1",
+                media_type="application/pdf",
+                size_bytes=10,
+                sha256="0" * 64,
+            ),
+            media_type="application/pdf",
+            size_bytes=10,
+        )
+        provider_file = TaskInputFile(
+            logical_path="provider:file-123",
+            provider_reference=TaskProviderReference(
+                kind=TaskProviderReferenceKind.PROVIDER_FILE_ID,
+                provider="openai",
+                reference="file-123",
+                owner_scope="private-owner",
+                mime_type="application/pdf",
+                size_bucket="private-bucket",
+                identity_hmac="safe-hmac",
+            ),
+            media_type="application/pdf",
+            size_bytes=20,
+        )
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.file_array(
+                        mime_types=("application/pdf",),
+                    ),
+                    output_contract=self._object_output_contract(),
+                    run=TaskRunPolicy.queued("default"),
+                ),
+                input_value={
+                    "privacy": ENCRYPTED_MARKER,
+                    "raw": "private prompt",
+                },
+                files=(artifact_file, provider_file),
+            )
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "references": ["source-1", "file-123"],
+                "source_kinds": ["artifact", "provider_reference"],
+                "mime_types": ["application/pdf", "application/pdf"],
+            },
+        )
+
+    async def test_run_rejects_queued_file_inputs_without_refs_safely(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: "unused output"))
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+
+        cases = (
+            (
+                "missing_single_file",
+                TaskInputContract.file(mime_types=("application/pdf",)),
+                (),
+            ),
+            (
+                "volatile_file_array",
+                TaskInputContract.file_array(mime_types=("application/pdf",)),
+                (
+                    TaskInputFile(
+                        logical_path="private/report.pdf",
+                        media_type="application/pdf",
+                        size_bytes=10,
+                    ),
+                ),
+            ),
+        )
+        for name, input_contract, files in cases:
+            with self.subTest(name=name):
+                with self.assertRaises(TaskValidationError) as error:
+                    await runner.run(
+                        self._context(
+                            definition=self._context_definition(
+                                input_contract=input_contract,
+                                run=TaskRunPolicy.queued("default"),
+                            ),
+                            input_value={
+                                "privacy": ENCRYPTED_MARKER,
+                                "raw": "private prompt",
+                            },
+                            files=files,
+                        )
+                    )
+
+                self.assertEqual(
+                    error.exception.issues[0].code,
+                    "execution.unsupported_flow",
+                )
+                self.assertNotIn("private prompt", str(error.exception))
+                self.assertNotIn("private/report.pdf", str(error.exception))
+
     async def test_run_rejects_unavailable_queued_input_safely(self) -> None:
         flow = Flow()
         flow.add_node(Node("A", func=lambda _: "unused output"))

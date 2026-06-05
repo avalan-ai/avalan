@@ -16,6 +16,8 @@ from avalan.entities import (
     MessageContentText,
 )
 from avalan.event import Event, EventType
+from avalan.flow import FlowNodeDefinition
+from avalan.flow.flow import Flow
 from avalan.task import (
     ENCRYPTED_MARKER,
     HASHED_MARKER,
@@ -31,6 +33,8 @@ from avalan.task import (
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
+    TaskFileConversionPageCollection,
+    TaskFileConversionPageResult,
     TaskFileConversionRequest,
     TaskFileConversionResult,
     TaskFileConverterCapability,
@@ -68,7 +72,11 @@ from avalan.task import (
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.stores import InMemoryTaskStore
-from avalan.task.targets import AgentTaskTargetRunner
+from avalan.task.targets import (
+    AgentTaskTargetRunner,
+    FlowTaskTargetRunner,
+    task_flow_node_registry,
+)
 
 
 class MatrixClock:
@@ -149,6 +157,50 @@ class PrefixConverter:
             content=prefix.encode() + content,
             media_type="text/plain",
             metadata={"privacy": HASHED_MARKER},
+        )
+
+
+class MatrixPdfImageConverter:
+    name = "pdf_image"
+    version = "matrix"
+    capability = TaskFileConverterCapability(
+        source_mime_types=("application/pdf",),
+        output_mime_types=("image/png",),
+        supports_streaming=False,
+        max_input_bytes=1024,
+        max_output_bytes=1024,
+        max_pages=4,
+        max_pixels=100_000,
+    )
+
+    def __init__(
+        self,
+        pages: tuple[TaskFileConversionPageResult, ...],
+    ) -> None:
+        self.pages = pages
+        self.calls: list[tuple[bytes, str | None, Mapping[str, object]]] = []
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        raise AssertionError("pdf_image must use page conversion")
+
+    async def convert_pages(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionPageCollection:
+        self.calls.append((content, source_media_type, dict(options or {})))
+        return TaskFileConversionPageCollection(
+            pages=self.pages,
+            metadata={"renderer": "matrix-private-renderer"},
         )
 
 
@@ -1233,6 +1285,283 @@ class FullE2EMatrixTest(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_queued_flow_image_conversion_matrix_is_sanitized(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            (workspace.root / "agents" / "image_provider.toml").write_text(
+                """
+[agent]
+name = "Image provider"
+task = "Review rendered pages."
+instructions = "matrix private provider instructions"
+goal_instructions = "matrix private goal instructions"
+user = "matrix private image user prompt"
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            loader = MatrixAgentLoader(
+                responses=(MatrixResponse('{"status":"ready","count":2}'),)
+            )
+            agent_target = workspace.agent_target(loader)
+            converter = MatrixPdfImageConverter(
+                (
+                    TaskFileConversionPageResult(
+                        page_index=1,
+                        page_count=2,
+                        content=b"matrix private first image",
+                        media_type="image/png",
+                        width_pixels=32,
+                        height_pixels=16,
+                        metadata={
+                            "filename": "matrix-private-page-1.png",
+                            "pdf_title": "matrix private pdf title",
+                        },
+                    ),
+                    TaskFileConversionPageResult(
+                        page_index=2,
+                        page_count=2,
+                        content=b"matrix private second image",
+                        media_type="image/png",
+                        width_pixels=32,
+                        height_pixels=16,
+                        metadata={"data_url": "data:image/png;base64,private"},
+                    ),
+                )
+            )
+
+            def resolve(context: TaskTargetContext) -> Flow:
+                registry = task_flow_node_registry(
+                    context,
+                    agent_runner=agent_target,
+                    execution_roots=(workspace.root,),
+                )
+                flow = Flow()
+                flow.add_node(
+                    registry.build(
+                        FlowNodeDefinition(
+                            name="render",
+                            type="file_convert",
+                            input="pdf",
+                            output="files",
+                            config={
+                                "converter": "pdf_image",
+                                "format": "png",
+                                "max_pages": 2,
+                                "pages": "1..2",
+                            },
+                        )
+                    )
+                )
+                flow.add_node(
+                    registry.build(
+                        FlowNodeDefinition(
+                            name="extract",
+                            type="agent",
+                            ref="agents/image_provider.toml",
+                            config={
+                                "files_input": "render.files",
+                                "file_policy": "replace",
+                            },
+                        )
+                    )
+                )
+                flow.add_connection("render", "extract")
+                return flow
+
+            flow_target = FlowTaskTargetRunner(flow_resolver=resolve)
+            client = workspace.queued_client(
+                flow_target,
+                file_converters={"pdf_image": converter},
+            )
+            worker = workspace.worker(
+                flow_target,
+                file_converters={"pdf_image": converter},
+            )
+            definition_value = _queued_definition(
+                name="queued_flow_image_matrix",
+                input_contract=TaskInputContract.file(
+                    mime_types=("application/pdf",),
+                ),
+                output_contract=TaskOutputContract.object(
+                    {
+                        "type": "object",
+                        "required": ["status", "count"],
+                        "additionalProperties": False,
+                        "properties": {
+                            "status": {"type": "string"},
+                            "count": {"type": "integer"},
+                        },
+                    }
+                ),
+                execution=TaskExecutionTarget.flow("flows/image.toml"),
+            )
+
+            submission = await client.enqueue(
+                definition_value,
+                input_value=TaskClient.local_file(
+                    "uploads/document.pdf",
+                    mime_type="application/pdf",
+                    metadata={"filename": "matrix-private-document.pdf"},
+                ),
+                idempotency_key="matrix-private-flow-window",
+                owner_scope="matrix-private-flow-owner",
+            )
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+            inspection = await client.inspect(submission.run.run_id)
+            artifacts = await workspace.store.list_artifacts(
+                submission.run.run_id
+            )
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(
+            processed.completion.run.state, TaskRunState.SUCCEEDED
+        )
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            output.output_summary, {"status": "ready", "count": 2}
+        )
+        self.assertEqual(len(loader.inputs), 1)
+        message = loader.inputs[0]
+        assert isinstance(message, Message)
+        content = cast(list[Any], message.content)
+        text_blocks = [
+            block for block in content if isinstance(block, MessageContentText)
+        ]
+        file_blocks = [
+            block for block in content if isinstance(block, MessageContentFile)
+        ]
+        image_blocks = [
+            block
+            for block in content
+            if isinstance(block, MessageContentImage)
+        ]
+        self.assertEqual(
+            [block.text for block in text_blocks],
+            ["matrix private image user prompt"],
+        )
+        self.assertEqual(file_blocks, [])
+        self.assertEqual(len(image_blocks), 2)
+        self.assertEqual(
+            [
+                b64decode(cast(str, block.image_url["data"]))
+                for block in image_blocks
+            ],
+            [
+                b"matrix private first image",
+                b"matrix private second image",
+            ],
+        )
+        self.assertEqual(
+            [block.image_url["mime_type"] for block in image_blocks],
+            ["image/png", "image/png"],
+        )
+        self.assertEqual(len(converter.calls), 1)
+        self.assertEqual(converter.calls[0][0], b"matrix private pdf body")
+        self.assertEqual(
+            [artifact.purpose for artifact in artifacts],
+            [
+                TaskArtifactPurpose.INPUT,
+                TaskArtifactPurpose.CONVERTED,
+                TaskArtifactPurpose.CONVERTED,
+            ],
+        )
+        queue_payload = cast(
+            Mapping[str, object],
+            inspection.as_dict()["run"],
+        )["input_payload"]
+        self.assertEqual(queue_payload, {"privacy": ENCRYPTED_MARKER})
+        _assert_no_sentinels(
+            (
+                inspection.as_dict(),
+                output.as_dict(),
+                _cli_snapshot(inspection.as_dict()),
+                tuple(artifact.summary() for artifact in artifacts),
+            ),
+            (
+                "matrix private provider instructions",
+                "matrix private goal instructions",
+                "matrix private image user prompt",
+                "matrix-private-document.pdf",
+                "matrix private pdf body",
+                "matrix private first image",
+                "matrix private second image",
+                "matrix-private-page-1.png",
+                "matrix private pdf title",
+                "data:image/png;base64,private",
+                "matrix-private-renderer",
+                "matrix-private-flow-window",
+                "matrix-private-flow-owner",
+                "matrix-private-token",
+                "file-private",
+                "token_id",
+            ),
+        )
+
+    async def test_queued_flow_file_conversion_requires_artifact_store(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            flow_target = FlowTaskTargetRunner(flow_resolver=lambda _: Flow())
+            client = TaskClient(
+                workspace.store,
+                target=flow_target,
+                queue=cast(TaskQueue, workspace.queue),
+                hmac_provider=workspace.hmac_provider,
+                encryption_provider=workspace.encryption_provider,
+                raw_storage_allowed=True,
+                file_converters={
+                    "pdf_image": MatrixPdfImageConverter(
+                        (
+                            TaskFileConversionPageResult(
+                                page_index=1,
+                                page_count=1,
+                                content=b"matrix private fallback image",
+                                media_type="image/png",
+                                width_pixels=32,
+                                height_pixels=16,
+                            ),
+                        )
+                    )
+                },
+                execution_roots=(workspace.root,),
+                definition_hash=lambda task: f"matrix-{task.task.name}",
+                clock=lambda: workspace.clock.now,
+                sleep=workspace.clock.sleep,
+            )
+
+            with self.assertRaises(TaskValidationError) as error:
+                await client.enqueue(
+                    _queued_definition(
+                        name="queued_flow_image_no_store",
+                        input_contract=TaskInputContract.file(
+                            mime_types=("application/pdf",),
+                        ),
+                        execution=TaskExecutionTarget.flow("flows/image.toml"),
+                    ),
+                    input_value=TaskClient.local_file(
+                        "uploads/document.pdf",
+                        mime_type="application/pdf",
+                        metadata={"filename": "matrix-private-document.pdf"},
+                    ),
+                    idempotency_key="matrix-private-no-store-window",
+                    owner_scope="matrix-private-no-store-owner",
+                )
+
+        self.assertEqual(workspace.queue.items, {})
+        rendered = str(error.exception)
+        self.assertIn("artifact", rendered)
+        self.assertNotIn("matrix-private-document.pdf", rendered)
+        self.assertNotIn("matrix private pdf body", rendered)
+        self.assertNotIn("matrix private fallback image", rendered)
+        self.assertNotIn("matrix-private-no-store-window", rendered)
+        self.assertNotIn("matrix-private-no-store-owner", rendered)
+
     async def test_negative_matrix_failures_keep_private_values_out(
         self,
     ) -> None:
@@ -1405,12 +1734,13 @@ def _queued_definition(
     *,
     name: str,
     input_contract: TaskInputContract | None = None,
+    output_contract: TaskOutputContract | None = None,
     execution: TaskExecutionTarget | None = None,
 ) -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name=name, version="1"),
         input=input_contract or TaskInputContract.string(),
-        output=TaskOutputContract.text(),
+        output=output_contract or TaskOutputContract.text(),
         execution=execution
         or TaskExecutionTarget.agent("agents/provider.toml"),
         run=TaskRunPolicy.queued("default"),
