@@ -1153,6 +1153,50 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(await self.store.list_usage(result.run.run_id), ())
 
+    async def test_returned_wrapper_malformed_usage_records_estimated_counts(
+        self,
+    ) -> None:
+        target = RecordingTarget(
+            UsageTextOutput(
+                "short summary",
+                usage_responses=(
+                    SimpleNamespace(
+                        input_token_count=7,
+                        output_token_count=4,
+                        provider_family="openai",
+                        usage={
+                            "input_tokens": "private prompt",
+                            "output_tokens": -1,
+                            "total_tokens": True,
+                            "raw_response_body": "private provider body",
+                        },
+                    ),
+                ),
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-returned-wrapper-estimated",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+        totals = await self.store.usage_totals(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.ESTIMATED)
+        self.assertEqual(records[0].totals.input_tokens, 7)
+        self.assertEqual(records[0].totals.output_tokens, 4)
+        self.assertIsNone(records[0].totals.total_tokens)
+        self.assertEqual(records[0].metadata, {"provider_family": "openai"})
+        self.assertEqual(totals.input_tokens, 7)
+        self.assertEqual(totals.output_tokens, 4)
+        self.assertNotIn("private provider body", str(records))
+        self.assertNotIn("private prompt", str(records))
+
     async def test_returned_output_usage_survives_output_contract_failure(
         self,
     ) -> None:

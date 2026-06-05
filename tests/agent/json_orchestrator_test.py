@@ -413,7 +413,9 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         )
 
     @patch("avalan.agent.orchestrator.TemplateEngineAgent")
-    async def test_json_return_drops_malformed_usage(self, Agent) -> None:
+    async def test_json_return_uses_estimated_counts_for_malformed_usage(
+        self, Agent
+    ) -> None:
         engine_uri = EngineUri(
             host=None,
             port=None,
@@ -471,5 +473,14 @@ class JsonOrchestratorExecutionTestCase(IsolatedAsyncioTestCase):
         ) as orch:
             result = await orch("hi")
 
+        observations = usage_observations_from_response(result)
         self.assertEqual(result, '{"value": "ok"}')
-        self.assertEqual(usage_observations_from_response(result), ())
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].source, UsageSource.ESTIMATED)
+        self.assertEqual(observations[0].totals.input_tokens, 0)
+        self.assertEqual(observations[0].totals.output_tokens, 15)
+        self.assertIsNone(observations[0].totals.total_tokens)
+        self.assertEqual(observations[0].metadata, {})
+        rendered = str(observations)
+        self.assertNotIn("private prompt", rendered)
+        self.assertNotIn("private-provider", rendered)

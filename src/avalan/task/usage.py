@@ -677,13 +677,13 @@ def _child_usage_observation_entries(
         if usage is not None:
             if isinstance(usage, list | tuple):
                 seen.add(usage_response_id)
-                entries.extend(
-                    _usage_observation_entries_from_usage_items(
-                        usage,
-                        response=usage_response,
-                    )
+                usage_entries = _usage_observation_entries_from_usage_items(
+                    usage,
+                    response=usage_response,
                 )
-                continue
+                if usage_entries:
+                    entries.extend(usage_entries)
+                    continue
             totals = _usage_totals_from_value(
                 usage,
                 _PROVIDER_COUNTER_PATHS,
@@ -711,21 +711,22 @@ def _child_usage_observation_entries(
             )
             if child_entries:
                 entries.extend(child_entries)
-            continue
-
-        child_entries = _child_usage_observation_entries(
-            usage_response,
-            seen=seen,
-        )
-        if child_entries:
-            entries.extend(child_entries)
-            continue
+                continue
+        else:
+            child_entries = _child_usage_observation_entries(
+                usage_response,
+                seen=seen,
+            )
+            if child_entries:
+                entries.extend(child_entries)
+                continue
 
         totals = _usage_totals_from_value(
             usage_response,
             _RESPONSE_COUNTER_PATHS,
         )
         if totals is not None:
+            seen.add(usage_response_id)
             entries.append(
                 UsageObservationEntry(
                     response=usage_response,

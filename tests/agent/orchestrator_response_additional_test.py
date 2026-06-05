@@ -268,13 +268,28 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         await response.to_str()
         observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
 
-        self.assertEqual(len(observations), 1)
-        self.assertEqual(observations[0].source, UsageSource.EXACT)
+        self.assertEqual(len(observations), 2)
+        self.assertEqual(observations[0].source, UsageSource.ESTIMATED)
         self.assertEqual(observations[0].totals.input_tokens, 0)
-        self.assertEqual(observations[0].totals.output_tokens, 0)
-        self.assertEqual(observations[0].totals.total_tokens, 0)
+        self.assertEqual(observations[0].totals.output_tokens, 4)
+        self.assertIsNone(observations[0].totals.total_tokens)
         self.assertEqual(observations[0].metadata, {})
+        self.assertEqual(observations[1].source, UsageSource.EXACT)
+        self.assertEqual(observations[1].totals.input_tokens, 0)
+        self.assertEqual(observations[1].totals.output_tokens, 0)
+        self.assertEqual(observations[1].totals.total_tokens, 0)
+        self.assertEqual(observations[1].metadata, {})
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.source, UsageSource.ESTIMATED)
+        self.assertEqual(aggregate.totals.input_tokens, 0)
+        self.assertEqual(aggregate.totals.output_tokens, 4)
+        self.assertEqual(aggregate.totals.total_tokens, 0)
+        rendered = str(observations) + str(aggregate)
+        self.assertNotIn("private prompt", rendered)
+        self.assertNotIn("private-provider", rendered)
 
     async def test_react_uses_explicit_output(self):
         engine = _DummyEngine()

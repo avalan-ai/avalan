@@ -1293,6 +1293,66 @@ class UsageTotalsTest(TestCase):
         self.assertNotIn("private prompt token text", str(observations))
         self.assertNotIn("private-provider", str(observations))
 
+    def test_malformed_child_usage_falls_back_to_estimated_counts(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            SimpleNamespace(
+                input_token_count=7,
+                output_token_count=3,
+                provider_family="openai",
+                usage={
+                    "input_tokens": "private prompt token text",
+                    "output_tokens": -1,
+                    "total_tokens": True,
+                    "raw_response_body": "private provider body",
+                },
+            ),
+            SimpleNamespace(
+                input_token_count=5,
+                output_token_count=2,
+                provider_family="openai",
+                usage=(
+                    {
+                        "input_tokens": "private nested prompt text",
+                        "total_tokens": False,
+                    },
+                ),
+            ),
+        )
+
+        observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
+
+        self.assertEqual(len(observations), 2)
+        self.assertTrue(
+            all(
+                observation.source == UsageSource.ESTIMATED
+                for observation in observations
+            )
+        )
+        self.assertEqual(observations[0].totals.input_tokens, 7)
+        self.assertEqual(observations[0].totals.output_tokens, 3)
+        self.assertEqual(observations[1].totals.input_tokens, 5)
+        self.assertEqual(observations[1].totals.output_tokens, 2)
+        self.assertEqual(
+            observations[0].metadata,
+            {"provider_family": UsageProviderFamily.OPENAI.value},
+        )
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.source, UsageSource.ESTIMATED)
+        self.assertEqual(aggregate.totals.input_tokens, 12)
+        self.assertEqual(aggregate.totals.output_tokens, 5)
+        self.assertEqual(
+            aggregate.metadata["provider_family"],
+            UsageProviderFamily.OPENAI.value,
+        )
+        rendered = str(observations) + str(aggregate)
+        self.assertNotIn("private prompt token text", rendered)
+        self.assertNotIn("private provider body", rendered)
+        self.assertNotIn("private nested prompt text", rendered)
+
     def test_nested_usage_responses_are_flattened_per_call(self) -> None:
         nested = MultiCallUsageResponse(
             SimpleNamespace(
