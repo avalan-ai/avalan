@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
+from json import dumps
 from math import isfinite
 from re import fullmatch
 from types import MappingProxyType
@@ -505,6 +506,9 @@ def _usage_call_key(response: object) -> str:
     explicit = _explicit_usage_call_key(response)
     if explicit is not None:
         return _hashed_call_key("explicit", explicit)
+    fingerprint = _usage_observations_fingerprint(response)
+    if fingerprint is not None:
+        return _hashed_call_key("observations", fingerprint)
     return f"object:{id(response)}"
 
 
@@ -524,6 +528,37 @@ def _explicit_usage_call_key(response: object) -> str | None:
 def _hashed_call_key(prefix: str, value: str) -> str:
     digest = sha256(value.encode("utf-8")).hexdigest()
     return f"{prefix}:{digest}"
+
+
+def _usage_observations_fingerprint(response: object) -> str | None:
+    observations = usage_observations_from_response(response)
+    if not observations:
+        return None
+    if any(
+        observation.source != UsageSource.EXACT for observation in observations
+    ):
+        return None
+    return dumps(
+        [
+            _usage_observation_fingerprint(observation)
+            for observation in observations
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _usage_observation_fingerprint(
+    observation: UsageObservation,
+) -> Mapping[str, object]:
+    return {
+        "metadata": dict(observation.metadata),
+        "source": observation.source.value,
+        "totals": {
+            name: _counter_value(observation.totals, name)
+            for name in USAGE_COUNTER_NAMES
+        },
+    }
 
 
 def _counter_value(totals: UsageTotals, field_name: str) -> int | None:

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 
@@ -158,6 +159,28 @@ class DuplicateUsageObservingTarget(UsageObservingTarget):
         self.contexts.append(context)
         await context.observe_usage(self.response)
         await context.observe_usage(self.response)
+        return "short summary"
+
+
+class ReplayedProviderUsageObservingTarget:
+    def __init__(self) -> None:
+        self.contexts: list[TaskTargetContext] = []
+
+    async def __call__(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        for response_id in ("private-response-one", "private-response-two"):
+            await context.observe_usage(
+                SimpleNamespace(
+                    provider_family="openai",
+                    usage={
+                        "input_tokens": 4,
+                        "cached_input_tokens": 1,
+                        "output_tokens": 6,
+                        "total_tokens": 10,
+                        "raw_response_id": response_id,
+                    },
+                )
+            )
         return "short summary"
 
 
@@ -793,6 +816,34 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.output_tokens, 5)
         self.assertEqual(len(sink.usage_totals), 1)
         self.assertEqual(sink.usage_event_count, 1)
+
+    async def test_observe_usage_deduplicates_replayed_provider_usage(
+        self,
+    ) -> None:
+        sink = RecordingUsageSink()
+        target = ReplayedProviderUsageObservingTarget()
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-replayed-provider",
+            observability_sink=sink,
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.input_tokens, 4)
+        self.assertEqual(records[0].totals.cached_input_tokens, 1)
+        self.assertEqual(records[0].totals.output_tokens, 6)
+        self.assertEqual(records[0].totals.total_tokens, 10)
+        self.assertEqual(records[0].metadata, {"provider_family": "openai"})
+        self.assertEqual(len(sink.usage_totals), 1)
+        self.assertEqual(sink.usage_event_count, 1)
+        self.assertNotIn("private-response", str(records[0]))
 
     async def test_observe_usage_drops_malformed_nested_provider_call(
         self,

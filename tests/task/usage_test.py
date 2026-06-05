@@ -1160,6 +1160,104 @@ class UsageTotalsTest(TestCase):
                 sequence=0,
             )
 
+    def test_stable_usage_id_for_response_fingerprints_exact_usage(
+        self,
+    ) -> None:
+        first = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8,
+                "raw_response_id": "private-response-one",
+            },
+        )
+        replayed = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8,
+                "raw_response_id": "private-response-two",
+            },
+        )
+        different = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 3,
+                "output_tokens": 6,
+                "total_tokens": 9,
+                "raw_response_id": "private-response-three",
+            },
+        )
+        malformed = SimpleNamespace(usage={"input_tokens": "private prompt"})
+
+        usage_id = stable_usage_id_for_response(
+            first,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        replayed_usage_id = stable_usage_id_for_response(
+            replayed,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        different_usage_id = stable_usage_id_for_response(
+            different,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        malformed_usage_id = stable_usage_id_for_response(
+            malformed,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        same_malformed_usage_id = stable_usage_id_for_response(
+            malformed,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+
+        self.assertEqual(usage_id, replayed_usage_id)
+        self.assertNotEqual(usage_id, different_usage_id)
+        self.assertEqual(malformed_usage_id, same_malformed_usage_id)
+        self.assertNotEqual(usage_id, malformed_usage_id)
+        self.assertNotIn("private-response-one", usage_id)
+        self.assertNotIn("private-response-two", usage_id)
+
+    def test_stable_usage_id_for_response_keeps_estimated_calls_distinct(
+        self,
+    ) -> None:
+        first = SimpleNamespace(input_token_count=3, output_token_count=5)
+        second = SimpleNamespace(input_token_count=3, output_token_count=5)
+
+        first_usage_id = stable_usage_id_for_response(
+            first,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        second_usage_id = stable_usage_id_for_response(
+            second,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        same_first_usage_id = stable_usage_id_for_response(
+            first,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+
+        self.assertNotEqual(first_usage_id, second_usage_id)
+        self.assertEqual(first_usage_id, same_first_usage_id)
+
 
 class UsageStoreTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
