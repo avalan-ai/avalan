@@ -9,7 +9,7 @@
   <a href="https://pypi.org/project/avalan/"><img src="https://img.shields.io/github/v/release/avalan-ai/avalan?label=Release" alt="Release" /></a>
   <a href="https://github.com/avalan-ai/avalan/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/avalan.svg" alt="License" /></a>
   <a href="https://discord.gg/8Eh9TNvk"><img src="https://img.shields.io/badge/discord-community-blue" alt="Discord Community" /></a>
-  <a href="https://deepwiki.com/avalan-ai/avalan"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://codewiki.google/github.com/avalan-ai/avalan"><img src="https://img.shields.io/badge/Google-Code%20Wiki-4285F4?logo=google&amp;logoColor=white" alt="Google Code Wiki" /></a>
 </p>
 
 Avalan is a Python SDK and CLI for building and running AI workflows and agents across local and hosted models.
@@ -2156,7 +2156,7 @@ brew install cmake pkg-config protobuf sentencepiece
 ## Community & Support
 
 - Join the [Avalan Discord](https://discord.gg/8Eh9TNvk) to ask questions, share workflows, and follow release announcements.
-- Browse community answers or ask DeepWiki follow-up questions from the README badge at the top of this page.
+- Browse generated documentation or ask follow-up questions in [Google Code Wiki](https://codewiki.google/github.com/avalan-ai/avalan).
 - For commercial support, email [avalan@avalan.ai](mailto:avalan@avalan.ai).
 
 ## Contributing
