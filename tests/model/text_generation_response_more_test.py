@@ -1,4 +1,5 @@
 from logging import getLogger
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
 
 from torch import tensor
@@ -43,6 +44,37 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         # calling again should not trigger callback again
         await resp.to_str()
         self.assertEqual(called, 1)
+
+    async def test_done_callbacks_are_appended_and_run_once(self) -> None:
+        async def gen():
+            yield "ok"
+
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        calls: list[str] = []
+
+        async def async_callback() -> None:
+            calls.append("async")
+
+        def sync_callback() -> None:
+            calls.append("sync")
+
+        resp.add_done_callback(async_callback)
+        resp.add_done_callback(sync_callback)
+        with self.assertRaises(AssertionError):
+            resp.add_done_callback(cast(Any, None))
+
+        self.assertEqual(await resp.to_str(), "ok")
+        self.assertEqual(calls, ["async", "sync"])
+
+        await resp.to_str()
+        self.assertEqual(calls, ["async", "sync"])
 
     async def test_input_token_count_accepts_tensor_inputs(self) -> None:
         settings = GenerationSettings()

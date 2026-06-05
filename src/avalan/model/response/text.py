@@ -43,7 +43,9 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     _output_token_count: int = 0
     _output: AsyncIterator[Token | TokenDetail | str] | None = None
     _buffer: StringIO = StringIO()
-    _on_consumed: Callable[[], Awaitable[None] | None] | None = None
+    _on_consumed_callbacks: (
+        list[Callable[[], Awaitable[None] | None]] | None
+    ) = None
     _consumed: bool = False
     _reasoning_parser: ReasoningParser | None = None
     _parser_queue: Queue[Token | TokenDetail | str] | None = None
@@ -68,6 +70,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         self._generation_settings = generation_settings
         self._output_token_count = 0
         self._buffer = StringIO()
+        self._on_consumed_callbacks = []
         if generation_settings and generation_settings.reasoning.enabled:
             self._parser_queue = Queue()
             self._reasoning_parser = ReasoningParser(
@@ -154,7 +157,9 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     def add_done_callback(
         self, callback: Callable[[], Awaitable[None] | None]
     ) -> None:
-        self._on_consumed = callback
+        assert callable(callback)
+        assert self._on_consumed_callbacks is not None
+        self._on_consumed_callbacks.append(callback)
 
     @property
     def input_token_count(self) -> int:
@@ -200,8 +205,9 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         if self._consumed:
             return
         self._consumed = True
-        if self._on_consumed:
-            result = self._on_consumed()
+        callbacks = tuple(self._on_consumed_callbacks or ())
+        for callback in callbacks:
+            result = callback()
             if iscoroutine(result):
                 await result
 
