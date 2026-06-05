@@ -554,17 +554,14 @@ def _explicit_usage_call_key(response: object) -> str | None:
         "usage_key",
         "usage_id",
     ):
-        if isinstance(response, Mapping):
-            value = response.get(attribute)
-        else:
-            value = getattr(response, attribute, None)
+        value = _value_at_path(response, (attribute,))
         if isinstance(value, str) and value.strip():
             return value
     return None
 
 
 def _local_usage_call_key(response: object) -> str:
-    value = getattr(response, _LOCAL_USAGE_CALL_KEY_ATTRIBUTE, None)
+    value = _value_at_path(response, (_LOCAL_USAGE_CALL_KEY_ATTRIBUTE,))
     if isinstance(value, str) and value.strip():
         return value
 
@@ -658,11 +655,14 @@ def _child_usage_observation_entries(
     if response_id in seen:
         return ()
     seen.add(response_id)
-    usage_responses = getattr(response, "usage_responses", None)
+    usage_responses = _value_at_path(response, ("usage_responses",))
     if usage_responses is None:
         return ()
     if callable(usage_responses):
-        usage_responses = usage_responses()
+        try:
+            usage_responses = usage_responses()
+        except Exception:
+            return ()
     if not isinstance(usage_responses, list | tuple):
         return ()
 
@@ -1033,10 +1033,13 @@ def _counter_from_value(value: object) -> int | None:
 def _value_at_path(value: object, path: CounterPath) -> object | None:
     current = value
     for item in path:
-        if isinstance(current, Mapping):
-            current = current.get(item)
-        else:
-            current = getattr(current, item, None)
+        try:
+            if isinstance(current, Mapping):
+                current = current.get(item)
+            else:
+                current = getattr(current, item, None)
+        except Exception:
+            return None
         if current is None:
             return None
     return current

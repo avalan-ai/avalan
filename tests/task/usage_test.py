@@ -147,6 +147,39 @@ class CallableUsageResponses:
         return self._responses
 
 
+class RaisingUsageProperties:
+    @property
+    def usage_responses(self) -> object:
+        raise RuntimeError("private usage responses failure")
+
+    @property
+    def usage(self) -> object:
+        raise RuntimeError("private usage failure")
+
+    @property
+    def usage_metadata(self) -> object:
+        raise RuntimeError("private usage metadata failure")
+
+    @property
+    def usageMetadata(self) -> object:
+        raise RuntimeError("private camel usage metadata failure")
+
+    @property
+    def input_token_count(self) -> int:
+        raise RuntimeError("private input counter failure")
+
+
+class RaisingUsageResponsesCallable:
+    def usage_responses(self) -> object:
+        raise RuntimeError("private usage responses callable failure")
+
+
+class RaisingStoredUsageKey:
+    @property
+    def _avalan_usage_call_key(self) -> object:
+        raise RuntimeError("private stored usage key failure")
+
+
 def definition() -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name="summarize", version="1"),
@@ -1020,6 +1053,37 @@ class UsageTotalsTest(TestCase):
         response = CallableUsageResponses("private invalid shape")
 
         self.assertEqual(usage_observations_from_response(response), ())
+
+    def test_raising_usage_accessors_are_ignored_safely(self) -> None:
+        properties = RaisingUsageProperties()
+        callable_response = RaisingUsageResponsesCallable()
+
+        self.assertIsNone(usage_observation_from_response(properties))
+        self.assertEqual(usage_observations_from_response(properties), ())
+        self.assertEqual(
+            usage_observations_from_response(callable_response),
+            (),
+        )
+
+    def test_raising_stored_usage_key_falls_back_safely(self) -> None:
+        response = RaisingStoredUsageKey()
+
+        usage_id = stable_usage_id_for_response(
+            response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        same_usage_id = stable_usage_id_for_response(
+            response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+
+        self.assertEqual(usage_id, same_usage_id)
+        self.assertTrue(usage_id.startswith("usage-"))
+        self.assertNotIn("private stored usage key failure", usage_id)
 
     def test_usage_responses_skip_self_references(self) -> None:
         response = MultiCallUsageResponse()

@@ -268,6 +268,20 @@ class CountingUsageResponse:
     output_token_count = 5
 
 
+class RaisingUsageResponse:
+    @property
+    def usage_responses(self) -> object:
+        raise RuntimeError("private usage responses failure")
+
+    @property
+    def usage(self) -> object:
+        raise RuntimeError("private usage failure")
+
+    @property
+    def input_token_count(self) -> int:
+        raise RuntimeError("private usage counter failure")
+
+
 class RecordingUsageSink:
     def __init__(self) -> None:
         self.events: list[object] = []
@@ -801,6 +815,26 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             target.contexts[0].execution.run_id, result.run.run_id
         )
         self.assertEqual(await self.store.list_usage(result.run.run_id), ())
+
+    async def test_observe_usage_ignores_raising_response_safely(self) -> None:
+        sink = RecordingUsageSink()
+        target = UsageObservingTarget(RaisingUsageResponse())
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-raising-response",
+            observability_sink=sink,
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "short summary")
+        self.assertEqual(await self.store.list_usage(result.run.run_id), ())
+        self.assertEqual(sink.usage_totals, [])
+        self.assertEqual(sink.usage_event_count, 0)
+        self.assertNotIn("private usage", str(result.run))
 
     async def test_observe_usage_records_each_provider_call(self) -> None:
         target = UsageObservingTarget(
