@@ -1,0 +1,22 @@
+{
+  "provider_family": "azure_openai",
+  "usage": {
+    "input_tokens": 19,
+    "input_tokens_details": {
+      "cached_tokens": 7
+    },
+    "output_tokens": 23,
+    "output_tokens_details": {
+      "reasoning_tokens": 5
+    },
+    "total_tokens": 42,
+    "model": "private-deployment-name",
+    "response_id": "private-response-id",
+    "cache_key": "private-cache-key",
+    "headers": {
+      "authorization": "Bearer private-api-key"
+    },
+    "file_data": "data:application/pdf;base64,private",
+    "image_url": "data:image/png;base64,private"
+  }
+}

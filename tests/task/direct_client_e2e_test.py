@@ -1,9 +1,10 @@
 from base64 import b64decode
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from json import dumps
+from json import load as load_json
 from logging import getLogger
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -27,8 +28,14 @@ from avalan.flow import Flow, FlowDefinitionLoader
 from avalan.model.response.text import TextGenerationResponse
 from avalan.task import (
     HASHED_MARKER,
+    FanoutObservabilitySink,
+    ObservabilitySink,
+    ObservabilitySinkHealth,
+    OpenTelemetryObservabilitySink,
     PrivacyAction,
+    PrometheusObservabilitySink,
     RetryBackoff,
+    SanitizedTaskUsageEvent,
     TaskArtifactPolicy,
     TaskArtifactPurpose,
     TaskArtifactState,
@@ -36,6 +43,7 @@ from avalan.task import (
     TaskClient,
     TaskDefinition,
     TaskDefinitionLoader,
+    TaskEventCategory,
     TaskExecutionTarget,
     TaskFileConversionPageCollection,
     TaskFileConversionPageResult,
@@ -51,6 +59,7 @@ from avalan.task import (
     TaskLimitsPolicy,
     TaskMetadata,
     TaskObservabilityPolicy,
+    TaskObservedEvent,
     TaskOutputContract,
     TaskOutputType,
     TaskRetryPolicy,
@@ -63,6 +72,7 @@ from avalan.task import (
     TaskValidationIssue,
     UsageProviderFamily,
     UsageSource,
+    UsageTotals,
     canonical_schema_json,
     pdf_image_converter_capability,
     spec_hash,
@@ -358,6 +368,71 @@ def _extraction_output() -> dict[str, object]:
             }
         ]
     }
+
+
+def _extraction_usage_fixture() -> Mapping[str, object]:
+    fixture = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "poc_extraction"
+        / "azure_responses_usage.json"
+    )
+    with fixture.open("r", encoding="utf-8") as file:
+        value = load_json(file)
+    assert isinstance(value, Mapping)
+    return value
+
+
+def _extraction_usage_payload() -> Mapping[str, object]:
+    usage = _extraction_usage_fixture()["usage"]
+    assert isinstance(usage, Mapping)
+    return usage
+
+
+def _extraction_provider_family() -> str:
+    provider_family = _extraction_usage_fixture()["provider_family"]
+    assert isinstance(provider_family, str)
+    return provider_family
+
+
+def _assert_extraction_usage(
+    case: IsolatedAsyncioTestCase,
+    usage: tuple[object, ...],
+    totals: UsageTotals,
+) -> None:
+    case.assertEqual(len(usage), 1)
+    record = usage[0]
+    source = getattr(record, "source")
+    record_totals = getattr(record, "totals")
+    metadata = getattr(record, "metadata")
+    case.assertEqual(source, UsageSource.EXACT)
+    case.assertEqual(record_totals.input_tokens, 19)
+    case.assertEqual(record_totals.cached_input_tokens, 7)
+    case.assertIsNone(record_totals.cache_creation_input_tokens)
+    case.assertEqual(record_totals.output_tokens, 23)
+    case.assertEqual(record_totals.reasoning_tokens, 5)
+    case.assertEqual(record_totals.total_tokens, 42)
+    case.assertEqual(
+        metadata,
+        {"provider_family": UsageProviderFamily.AZURE_OPENAI.value},
+    )
+    case.assertEqual(totals.input_tokens, 19)
+    case.assertEqual(totals.cached_input_tokens, 7)
+    case.assertIsNone(totals.cache_creation_input_tokens)
+    case.assertEqual(totals.output_tokens, 23)
+    case.assertEqual(totals.reasoning_tokens, 5)
+    case.assertEqual(totals.total_tokens, 42)
+
+
+def _private_usage_sentinels() -> tuple[str, ...]:
+    return (
+        "private-deployment-name",
+        "private-response-id",
+        "private-cache-key",
+        "private-api-key",
+        "data:application/pdf;base64,private",
+        "data:image/png;base64,private",
+    )
 
 
 def _fixture_agent_instructions(fixture: Path) -> str:
@@ -924,6 +999,14 @@ class ExtractionFakeResponse:
     def __init__(self, output: Mapping[str, object]) -> None:
         self.output = output
 
+    @property
+    def provider_family(self) -> str:
+        return _extraction_provider_family()
+
+    @property
+    def usage(self) -> Mapping[str, object]:
+        return _extraction_usage_payload()
+
     async def to_json(self) -> str:
         return dumps(self.output, sort_keys=True, separators=(",", ":"))
 
@@ -1078,6 +1161,158 @@ class ExtractionFailureLoader:
         return self.orchestrator
 
 
+@dataclass(slots=True)
+class ExtractionRecordingSink(ObservabilitySink):
+    events: list[TaskObservedEvent] = field(default_factory=list)
+    usages: list[tuple[str, str | None, UsageSource, UsageTotals]] = field(
+        default_factory=list
+    )
+
+    async def record_event(self, event: TaskObservedEvent) -> None:
+        self.events.append(event)
+
+    async def record_usage(
+        self,
+        *,
+        run_id: str,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        _ = metadata
+        self.usages.append((run_id, attempt_id, source, totals))
+
+    def health(self) -> ObservabilitySinkHealth:
+        return ObservabilitySinkHealth(
+            name="extraction-recording",
+            event_count=len(self.events),
+            usage_count=len(self.usages),
+        )
+
+
+@dataclass(slots=True)
+class ExtractionCounterChild:
+    counter: "ExtractionCounter"
+    label_values: tuple[tuple[str, str], ...]
+
+    def inc(self, amount: float = 1.0) -> None:
+        self.counter.samples[self.label_values] = (
+            self.counter.samples.get(self.label_values, 0.0) + amount
+        )
+
+
+@dataclass(slots=True)
+class ExtractionCounter:
+    name: str
+    labelnames: tuple[str, ...]
+    samples: dict[tuple[tuple[str, str], ...], float] = field(
+        default_factory=dict
+    )
+
+    def labels(self, **labels: str) -> ExtractionCounterChild:
+        assert tuple(labels) == self.labelnames
+        return ExtractionCounterChild(
+            counter=self,
+            label_values=tuple(sorted(labels.items())),
+        )
+
+
+@dataclass(slots=True)
+class ExtractionCounterFactory:
+    counters: dict[str, ExtractionCounter] = field(default_factory=dict)
+
+    def __call__(
+        self,
+        name: str,
+        documentation: str,
+        *,
+        labelnames: tuple[str, ...] = (),
+        registry: object | None = None,
+    ) -> ExtractionCounter:
+        _ = registry
+        assert documentation
+        counter = ExtractionCounter(name=name, labelnames=labelnames)
+        self.counters[name] = counter
+        return counter
+
+
+@dataclass(slots=True)
+class ExtractionSpanContext:
+    tracer: "ExtractionTracer"
+    name: str
+    attributes: Mapping[str, object] | None
+
+    def __enter__(self) -> object:
+        self.tracer.spans.append((self.name, dict(self.attributes or {})))
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        _ = exc_type, exc, traceback
+        return None
+
+
+@dataclass(slots=True)
+class ExtractionTracer:
+    spans: list[tuple[str, dict[str, object]]] = field(default_factory=list)
+
+    def start_as_current_span(
+        self,
+        name: str,
+        *,
+        attributes: Mapping[str, object] | None = None,
+    ) -> ExtractionSpanContext:
+        return ExtractionSpanContext(
+            tracer=self,
+            name=name,
+            attributes=attributes,
+        )
+
+
+@dataclass(slots=True)
+class ExtractionMetricCounter:
+    samples: list[tuple[int | float, dict[str, object]]] = field(
+        default_factory=list
+    )
+
+    def add(
+        self,
+        amount: int | float,
+        attributes: Mapping[str, object] | None = None,
+    ) -> None:
+        self.samples.append((amount, dict(attributes or {})))
+
+
+@dataclass(slots=True)
+class ExtractionMeter:
+    counters: dict[str, ExtractionMetricCounter] = field(default_factory=dict)
+
+    def create_counter(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        unit: str = "1",
+    ) -> ExtractionMetricCounter:
+        assert description
+        assert unit
+        counter = ExtractionMetricCounter()
+        self.counters[name] = counter
+        return counter
+
+
+def _prometheus_samples(
+    factory: ExtractionCounterFactory,
+    metric_name: str,
+) -> dict[tuple[tuple[str, str], ...], float]:
+    return factory.counters[metric_name].samples
+
+
 class DirectClientE2ETest(IsolatedAsyncioTestCase):
     async def test_poc_extraction_fixture_sends_prompt_pdf_and_schema(
         self,
@@ -1095,6 +1330,22 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         output = _extraction_output()
         orchestrator = ExtractionFakeOrchestrator(output)
         settings_values: list[Any] = []
+        recording_sink = ExtractionRecordingSink()
+        prometheus_factory = ExtractionCounterFactory()
+        tracer = ExtractionTracer()
+        meter = ExtractionMeter()
+        sink = FanoutObservabilitySink(
+            sinks=(
+                recording_sink,
+                PrometheusObservabilitySink(
+                    counter_factory=prometheus_factory,
+                ),
+                OpenTelemetryObservabilitySink(
+                    tracer=tracer,
+                    meter=meter,
+                ),
+            )
+        )
 
         async def from_settings(
             loader: OrchestratorLoader,
@@ -1149,6 +1400,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
                         hmac_provider=StaticHmacProvider(),
                         execution_roots=(fixture,),
                         definition_hash=lambda task: "extraction-fixture-e2e",
+                        observability_sink=sink,
                         clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
                     )
                     descriptor = TaskClient.local_file(
@@ -1231,11 +1483,78 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             pdf_bytes,
         )
         self.assertEqual(len(inspection.events), 1)
-        self.assertEqual(inspection.usage_totals.total_tokens, 42)
+        _assert_extraction_usage(
+            self,
+            cast(tuple[object, ...], inspection.usage),
+            inspection.usage_totals,
+        )
+        self.assertEqual(
+            [event.category for event in recording_sink.events],
+            [TaskEventCategory.TOKEN, TaskEventCategory.USAGE],
+        )
+        usage_events = [
+            event
+            for event in recording_sink.events
+            if isinstance(event, SanitizedTaskUsageEvent)
+        ]
+        self.assertEqual(len(usage_events), 1)
+        usage_payload = usage_events[0].payload
+        assert isinstance(usage_payload, Mapping)
+        self.assertEqual(usage_payload["source"], "exact")
+        self.assertEqual(usage_payload["provider_family"], "azure_openai")
+        self.assertEqual(usage_payload["cached_input_tokens"], 7)
+        self.assertEqual(
+            _prometheus_samples(
+                prometheus_factory,
+                "avalan_task_observability_usage_tokens",
+            ),
+            {
+                (
+                    ("counter", "input_tokens"),
+                    ("source", "exact"),
+                ): 19.0,
+                (
+                    ("counter", "cached_input_tokens"),
+                    ("source", "exact"),
+                ): 7.0,
+                (
+                    ("counter", "output_tokens"),
+                    ("source", "exact"),
+                ): 23.0,
+                (
+                    ("counter", "reasoning_tokens"),
+                    ("source", "exact"),
+                ): 5.0,
+                (
+                    ("counter", "total_tokens"),
+                    ("source", "exact"),
+                ): 42.0,
+            },
+        )
+        self.assertIn(
+            (
+                7,
+                {
+                    "task.usage.source": "exact",
+                    "task.usage.counter": "cached_input_tokens",
+                },
+            ),
+            meter.counters["avalan.task.observability.usage_tokens"].samples,
+        )
         inspection_value = str(inspection.as_dict())
+        observability_value = (
+            f"{recording_sink.events}"
+            f"{recording_sink.usages}"
+            f"{prometheus_factory.counters}"
+            f"{tracer.spans}"
+            f"{meter.counters}"
+        )
         self.assertNotIn("sample.pdf", inspection_value)
         self.assertNotIn("private-provider-token", inspection_value)
         self.assertNotIn("file_data", inspection_value)
+        for sentinel in _private_usage_sentinels():
+            self.assertNotIn(sentinel, inspection_value)
+            self.assertNotIn(sentinel, observability_value)
 
     async def test_poc_extraction_flow_matches_direct_provider_payload(
         self,
@@ -1429,11 +1748,17 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn(instructions, str(flow_message))
         for inspection in (direct_inspection, flow_inspection):
             inspection_value = str(inspection.as_dict())
-            self.assertEqual(inspection.usage_totals.total_tokens, 42)
+            _assert_extraction_usage(
+                self,
+                cast(tuple[object, ...], inspection.usage),
+                inspection.usage_totals,
+            )
             self.assertNotIn("Analyze the attached", inspection_value)
             self.assertNotIn("sample.pdf", inspection_value)
             self.assertNotIn("file_data", inspection_value)
             self.assertNotIn("private-provider-token", inspection_value)
+            for sentinel in _private_usage_sentinels():
+                self.assertNotIn(sentinel, inspection_value)
 
     async def test_poc_extraction_image_flow_matches_native_contract(
         self,
@@ -1599,6 +1924,9 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
                         image_definition,
                         input_value=image_descriptor,
                     )
+                    direct_inspection = await direct_client.inspect(
+                        direct_result.run.run_id
+                    )
                     image_artifacts = await image_store.list_artifacts(
                         image_result.run.run_id
                     )
@@ -1647,6 +1975,8 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             orchestrator.inputs[0],
             pdf_bytes,
         )
+        self.assertEqual(len(_file_blocks(orchestrator.inputs[0])), 1)
+        self.assertEqual(_image_blocks(orchestrator.inputs[0]), ())
         image_message = orchestrator.inputs[1]
         self.assertEqual(
             direct_message["text"],
@@ -1693,6 +2023,12 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             ],
             [1, 2],
         )
+        for inspection in (direct_inspection, image_inspection):
+            _assert_extraction_usage(
+                self,
+                cast(tuple[object, ...], inspection.usage),
+                inspection.usage_totals,
+            )
         inspection_value = str(image_inspection.as_dict())
         self.assertNotIn(instructions, str(image_message))
         self.assertNotIn(instructions, inspection_value)
@@ -1702,6 +2038,8 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("file_data", inspection_value)
         self.assertNotIn("page one", inspection_value)
         self.assertNotIn("private-provider-token", inspection_value)
+        for sentinel in _private_usage_sentinels():
+            self.assertNotIn(sentinel, inspection_value)
 
     async def test_poc_extraction_failures_are_classified_and_sanitized(
         self,

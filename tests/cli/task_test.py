@@ -5,6 +5,7 @@ from contextlib import AsyncExitStack, contextmanager
 from datetime import UTC, datetime
 from io import StringIO
 from json import dumps
+from json import load as load_json
 from os import chdir
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,6 +27,7 @@ from avalan.task import (
     ArtifactStoreError,
     CallableTaskTargetRunner,
     SanitizedTaskEvent,
+    TaskClient,
     TaskClientUnsupportedOperationError,
     TaskClientWaitTimeoutError,
     TaskDefinition,
@@ -48,6 +50,7 @@ from avalan.task import (
     canonical_schema_json,
 )
 from avalan.task import client as task_client_module
+from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.converters import (
     TaskFileConversionError,
     TaskFileConversionPageCollection,
@@ -56,12 +59,39 @@ from avalan.task.converters import (
     TaskFileConverterCapability,
 )
 from avalan.task.converters.pdf_image import pdf_image_converter_capability
+from avalan.task.stores import InMemoryTaskStore
+from avalan.task.targets import AgentTaskTargetRunner
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "task" / "fixtures"
 TASK_HMAC_ENV = {
     "AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1",
     "AVALAN_TASK_HMAC_KEY_B64": "dGFzay1obWFjLXRlc3Qta2V5",
 }
+
+
+def _extraction_cli_usage_fixture() -> Mapping[str, object]:
+    fixture = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "poc_extraction"
+        / "azure_responses_usage.json"
+    )
+    with fixture.open("r", encoding="utf-8") as file:
+        value = load_json(file)
+    assert isinstance(value, Mapping)
+    return value
+
+
+def _extraction_cli_usage_payload() -> Mapping[str, object]:
+    usage = _extraction_cli_usage_fixture()["usage"]
+    assert isinstance(usage, Mapping)
+    return usage
+
+
+def _extraction_cli_provider_family() -> str:
+    provider_family = _extraction_cli_usage_fixture()["provider_family"]
+    assert isinstance(provider_family, str)
+    return provider_family
 
 
 class _FakeTaskClient:
@@ -318,6 +348,14 @@ class _ExtractionCliResponse:
     def __init__(self, output: Mapping[str, object]) -> None:
         self.output = output
 
+    @property
+    def provider_family(self) -> str:
+        return _extraction_cli_provider_family()
+
+    @property
+    def usage(self) -> Mapping[str, object]:
+        return _extraction_cli_usage_payload()
+
     async def to_json(self) -> str:
         return dumps(self.output, sort_keys=True, separators=(",", ":"))
 
@@ -346,6 +384,25 @@ class _ExtractionCliOrchestrator:
     async def __call__(self, input: object) -> _ExtractionCliResponse:
         self.inputs.append(input)
         return _ExtractionCliResponse(self.output)
+
+
+class _ExtractionCliLoader:
+    def __init__(self, orchestrator: _ExtractionCliOrchestrator) -> None:
+        self.orchestrator = orchestrator
+        self.paths: list[str] = []
+
+    async def from_file(
+        self,
+        path: str,
+        *,
+        agent_id: object | None,
+        disable_memory: bool = False,
+        uri: str | None = None,
+        tool_settings: object | None = None,
+    ) -> _ExtractionCliOrchestrator:
+        _ = agent_id, disable_memory, uri, tool_settings
+        self.paths.append(path)
+        return self.orchestrator
 
 
 class _CliPdfPageConverter:
@@ -2124,6 +2181,176 @@ class CliTaskCommandShellTestCase(TestCase):
             [block.image_url["mime_type"] for block in image_blocks],
             ["image/png", "image/png"],
         )
+
+    def test_run_poc_extraction_fixture_can_be_inspected_durably(
+        self,
+    ) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        output = _extraction_cli_output()
+        store = InMemoryTaskStore(
+            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+        )
+        orchestrator = _ExtractionCliOrchestrator(output)
+        loader = _ExtractionCliLoader(orchestrator)
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            _working_directory(fixture),
+        ):
+            artifact_store = LocalArtifactStore(
+                Path(tmpdir) / "artifacts",
+                raw_storage_allowed=True,
+            )
+            client = TaskClient(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=fixture),
+                artifact_store=artifact_store,
+                hmac_provider=task_cmds._task_hmac_provider(),
+                execution_roots=(fixture,),
+                input_roots=(fixture,),
+                definition_hash=lambda task: f"cli-{task.task.name}",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            def client_context(
+                definition_path: Path,
+                *,
+                dsn: str | None,
+                schema: str | None,
+                queue: bool,
+                ephemeral: bool,
+                hub: object | None,
+                logger: object | None,
+                input_value: object = None,
+            ) -> task_cmds._TaskCliClientContext:
+                _ = (
+                    definition_path,
+                    dsn,
+                    schema,
+                    queue,
+                    ephemeral,
+                    hub,
+                    logger,
+                    input_value,
+                )
+                return task_cmds._TaskCliClientContext(client)
+
+            def inspection_context(
+                args: Namespace,
+                console: Console,
+            ) -> task_cmds._TaskCliClientContext:
+                _ = args, console
+                return task_cmds._TaskCliClientContext(client)
+
+            run_console = Console(record=True, width=200)
+            with (
+                patch.object(
+                    task_cmds,
+                    "_task_cli_client_context",
+                    side_effect=client_context,
+                ),
+                patch.object(
+                    task_cmds,
+                    "_task_cli_inspection_client_context",
+                    side_effect=inspection_context,
+                ),
+            ):
+                run_result = task_cmds.task_run(
+                    Namespace(
+                        definition="task.toml",
+                        task_input=None,
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_file_descriptors=(),
+                        task_provider_file_ids=(),
+                        task_hosted_urls=(),
+                        task_object_store_uris=(),
+                        task_file_roles=(),
+                        task_file_sizes=(),
+                        task_file_sha256=(),
+                        task_file_conversions=(),
+                        store_dsn="memory://task-test",
+                        store_schema=None,
+                        ephemeral=False,
+                        task_run_json=False,
+                        task_output_path=None,
+                        task_pdf="sample.pdf",
+                        task_files=(),
+                        task_file_mime_types=(),
+                        quiet=False,
+                    ),
+                    run_console,
+                    self.theme,
+                )
+                run_id = next(iter(store._runs))
+                inspect_console = Console(record=True, width=240)
+                inspect_result = task_cmds.task_inspect(
+                    Namespace(
+                        run_id=run_id,
+                        store_dsn="memory://task-test",
+                        store_schema=None,
+                        after_sequence=None,
+                    ),
+                    inspect_console,
+                    self.theme,
+                )
+                usage_console = Console(record=True, width=240)
+                usage_result = task_cmds.task_usage(
+                    Namespace(
+                        run_id=run_id,
+                        store_dsn="memory://task-test",
+                        store_schema=None,
+                        attempt_id=None,
+                        source="exact",
+                    ),
+                    usage_console,
+                    self.theme,
+                )
+                estimated_console = Console(record=True, width=240)
+                estimated_result = task_cmds.task_usage(
+                    Namespace(
+                        run_id=run_id,
+                        store_dsn="memory://task-test",
+                        store_schema=None,
+                        attempt_id=None,
+                        source="estimated",
+                    ),
+                    estimated_console,
+                    self.theme,
+                )
+
+        estimated_output = estimated_console.export_text()
+        rendered = (
+            run_console.export_text()
+            + inspect_console.export_text()
+            + usage_console.export_text()
+            + estimated_output
+        )
+        self.assertTrue(run_result)
+        self.assertTrue(inspect_result)
+        self.assertTrue(usage_result)
+        self.assertTrue(estimated_result)
+        self.assertEqual(len(orchestrator.inputs), 1)
+        self.assertIn("Task run completed:", rendered)
+        self.assertIn('"source":"exact"', rendered)
+        self.assertIn('"cached_input_tokens":7', rendered)
+        self.assertIn('"reasoning_tokens":5', rendered)
+        self.assertIn('"provider_family":"azure_openai"', rendered)
+        self.assertIn('"usage":[]', estimated_output)
+        self.assertIn('"total_tokens":null', estimated_output)
+        self.assertNotIn("sample.pdf", rendered)
+        self.assertNotIn("file_data", rendered)
+        self.assertNotIn("private-deployment-name", rendered)
+        self.assertNotIn("private-response-id", rendered)
+        self.assertNotIn("private-cache-key", rendered)
+        self.assertNotIn("private-api-key", rendered)
 
     def test_structured_output_writer_reports_safe_failures(self) -> None:
         stream = StringIO()
