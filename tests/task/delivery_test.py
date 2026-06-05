@@ -331,6 +331,34 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private", str(plan.decision))
 
+    async def test_inline_image_requires_estimate_without_limit(
+        self,
+    ) -> None:
+        plan = await plan_task_file_delivery(
+            _definition(),
+            TaskInputFile(
+                logical_path="artifact:page",
+                artifact_ref=_artifact_ref(size_bytes=4),
+                media_type="image/png",
+                size_bytes=4,
+                metadata={"pixels": "private"},
+            ),
+            profile=_profile(
+                FileDeliveryMode.INLINE_IMAGE,
+                FileDeliveryMode.INLINE_TEXT,
+                accepted_mime_types=("image/*",),
+            ),
+            artifact_store=RecordingArtifactStore(),
+        )
+
+        self.assertEqual(plan.decision.mode, FileDeliveryMode.REJECT)
+        self.assertEqual(
+            plan.decision.diagnostic.code,
+            "model.file_delivery.unknown_vision_tokens",
+        )
+        self.assertIn("vision_tokens", plan.decision.diagnostic.hint)
+        self.assertNotIn("private", str(plan.decision))
+
     async def test_unknown_inline_byte_size_rejects_with_limit_name(
         self,
     ) -> None:

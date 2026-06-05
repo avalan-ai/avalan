@@ -629,9 +629,14 @@ def _can_inline_text(
     profile: FileDeliveryProfile,
     request: FileDeliveryRequest,
 ) -> bool:
-    return profile.supports_delivery_mode(
-        FileDeliveryMode.INLINE_TEXT
-    ) and profile.accepts_mime_type(request.mime_type)
+    return (
+        profile.supports_delivery_mode(FileDeliveryMode.INLINE_TEXT)
+        and not (
+            _is_image_mime_type(request.mime_type)
+            and profile.supports_image_blocks()
+        )
+        and profile.accepts_mime_type(request.mime_type)
+    )
 
 
 def _is_image_mime_type(mime_type: str | None) -> bool:
@@ -671,8 +676,7 @@ def _vision_token_diagnostic(
     profile: FileDeliveryProfile,
 ) -> FileDeliveryDecision | None:
     limit = profile.vision_token_limit
-    if limit is None or limit.max_tokens is None:
-        return None
+    limit_name = limit.name if limit is not None else "vision_tokens"
     estimate = _metadata_positive_int(request.metadata, "vision_tokens")
     if estimate is None:
         width = _metadata_positive_int(request.metadata, "width_pixels")
@@ -684,16 +688,18 @@ def _vision_token_diagnostic(
             code="model.file_delivery.unknown_vision_tokens",
             message="Model image delivery requires a vision token estimate.",
             hint=(
-                f"Provide image dimensions or a {limit.name} estimate before "
+                f"Provide image dimensions or a {limit_name} estimate before "
                 "dispatch."
             ),
         )
+    if limit is None or limit.max_tokens is None:
+        return None
     if estimate <= limit.max_tokens:
         return None
     return _reject(
         code="model.file_delivery.vision_limit_exceeded",
         message="Model image delivery would exceed the vision token limit.",
-        hint=f"Use a delivery mode within the {limit.name} limit.",
+        hint=f"Use a delivery mode within the {limit_name} limit.",
     )
 
 

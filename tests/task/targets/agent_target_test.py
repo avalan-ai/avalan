@@ -2120,6 +2120,12 @@ file_delivery_profile = "multimodal"
                             artifact_ref=artifact_ref,
                             media_type="image/png",
                             size_bytes=4,
+                            metadata={
+                                "dimensions": {
+                                    "width_pixels": 10,
+                                    "height_pixels": 10,
+                                }
+                            },
                         ),
                     ),
                     artifact_store=FakeArtifactStore(b"\x89PNG"),
@@ -2209,6 +2215,10 @@ file_delivery_profile = "multimodal"
                         metadata={
                             "file_policy": "append",
                             "display_name": "private-source.pdf",
+                            "dimensions": {
+                                "width_pixels": 10,
+                                "height_pixels": 10,
+                            },
                         },
                     ),
                 ),

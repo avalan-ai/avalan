@@ -302,6 +302,7 @@ def test_plan_delivery_selects_inline_bytes_and_text() -> None:
             mime_type="image/png",
             size_bytes=12,
             has_artifact=True,
+            metadata={"width_pixels": 512, "height_pixels": 512},
         )
     )
     multimodal_text_decision = multimodal.plan_delivery(
@@ -769,6 +770,25 @@ def test_plan_delivery_rejects_image_vision_limit_safely() -> None:
     assert "private" not in str(rejected)
 
 
+def test_plan_delivery_accepts_estimated_image_without_vision_limit() -> None:
+    profile = FileDeliveryProfile(
+        name="vision_unlimited",
+        delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+        accepted_mime_types=("image/*",),
+    )
+
+    decision = profile.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="image/png",
+            size_bytes=1,
+            has_artifact=True,
+            metadata={"width_pixels": 512, "height_pixels": 512},
+        )
+    )
+
+    assert decision.mode == FileDeliveryMode.INLINE_IMAGE
+
+
 @pytest.mark.parametrize(
     "metadata",
     [
@@ -809,6 +829,37 @@ def test_plan_delivery_rejects_images_without_vision_estimate(
         decision.diagnostic.code == "model.file_delivery.unknown_vision_tokens"
     )
     assert "private" not in str(decision)
+
+
+def test_plan_delivery_rejects_image_without_vision_limit_or_estimate() -> (
+    None
+):
+    profile = FileDeliveryProfile(
+        name="vision_unlimited",
+        delivery_modes=frozenset(
+            {
+                FileDeliveryMode.INLINE_IMAGE,
+                FileDeliveryMode.INLINE_TEXT,
+            }
+        ),
+        accepted_mime_types=("image/*",),
+    )
+
+    decision = profile.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="image/png",
+            size_bytes=1,
+            has_artifact=True,
+        )
+    )
+
+    assert decision.mode == FileDeliveryMode.REJECT
+    assert decision.diagnostic is not None
+    assert (
+        decision.diagnostic.code == "model.file_delivery.unknown_vision_tokens"
+    )
+    assert "vision_tokens" in decision.diagnostic.hint
+    assert decision.needs_artifact_read is False
 
 
 def test_plan_delivery_rejects_image_without_mime_type() -> None:

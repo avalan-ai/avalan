@@ -1073,6 +1073,12 @@ class FullE2EMatrixTest(IsolatedAsyncioTestCase):
                         artifact_ref=image_ref,
                         media_type="image/png",
                         size_bytes=image_ref.size_bytes,
+                        metadata={
+                            "dimensions": {
+                                "width_pixels": 32,
+                                "height_pixels": 16,
+                            }
+                        },
                     ),
                 ),
             )

@@ -424,6 +424,9 @@ def _can_inline_text(
     return (
         file.artifact_ref is not None
         and profile.supports_delivery_mode(FileDeliveryMode.INLINE_TEXT)
+        and not (
+            _is_image_mime_type(mime_type) and profile.supports_image_blocks()
+        )
         and profile.accepts_mime_type(mime_type)
     )
 
