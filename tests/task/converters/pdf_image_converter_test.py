@@ -157,6 +157,7 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
         converter = PdfImageFileConverter()
         bad_options: tuple[Mapping[str, object], ...] = (
             {"format": "gif"},
+            {"format": ["png"]},
             {"format": "png", "quality": 80},
             {"format": "jpeg", "quality": 0},
             {"format": "jpeg", "quality": 101},
@@ -297,6 +298,33 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             module.document.pages[0].image.saves, (("PNG", None),)
         )
+        self.assertEqual(module.document.pages[1].image.saves, ())
+
+    async def test_converter_single_output_uses_first_selected_page(
+        self,
+    ) -> None:
+        converter = PdfImageFileConverter()
+        module = FakePdfiumModule(page_count=3)
+
+        with patch(
+            "avalan.task.converters.pdf_image.import_module",
+            return_value=module,
+        ):
+            result = await converter.convert(
+                b"%PDF-private",
+                source_media_type="application/pdf",
+                options={"format": "png", "pages": {"start": 2, "end": 3}},
+            )
+
+        self.assertEqual(result.media_type, "image/png")
+        self.assertEqual(result.content, b"PNG:page-2")
+        self.assertEqual(result.metadata["page_number"], 2)
+        self.assertEqual(module.document.pages[0].image.saves, ())
+        self.assertEqual(
+            module.document.pages[1].image.saves,
+            (("PNG", None),),
+        )
+        self.assertEqual(module.document.pages[2].image.saves, ())
 
     async def test_converter_rejects_backend_page_bounds_safely(self) -> None:
         converter = PdfImageFileConverter()
@@ -471,6 +499,37 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
                         )
                 self.assertEqual(str(error.exception), expected)
                 self.assertNotIn("%PDF-private", str(error.exception))
+
+    async def test_converter_rejects_pixel_limit_before_encoding(
+        self,
+    ) -> None:
+        converter = PdfImageFileConverter()
+        module = FakePdfiumModule(
+            page_count=1,
+            image_size=(40_000_001, 1),
+        )
+
+        with patch(
+            "avalan.task.converters.pdf_image.import_module",
+            return_value=module,
+        ):
+            with self.assertRaises(TaskFileConversionError) as error:
+                await converter.convert_pages(
+                    b"%PDF-private",
+                    source_media_type="application/pdf",
+                    options={"format": "png"},
+                )
+
+        image = module.document.pages[0].image
+        self.assertEqual(
+            str(error.exception),
+            "PDF image output page exceeds the pixel limit",
+        )
+        self.assertEqual(image.saves, ())
+        self.assertTrue(image.closed)
+        self.assertTrue(module.document.pages[0].closed)
+        self.assertTrue(module.document.closed)
+        self.assertNotIn("%PDF-private", str(error.exception))
 
     async def test_converter_rejects_default_page_count_limit(self) -> None:
         converter = PdfImageFileConverter()

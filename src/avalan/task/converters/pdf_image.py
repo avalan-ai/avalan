@@ -97,10 +97,15 @@ class PdfImageFileConverter:
         source_media_type: str | None = None,
         options: Mapping[str, object] | None = None,
     ) -> TaskFileConversionResult:
+        if source_media_type is not None:
+            _assert_non_empty_string(source_media_type, "source_media_type")
+            _validate_source_media_type(source_media_type, self._capability)
+        safe_options = options or {}
+        _validate_options(safe_options, self._capability)
         pages = await self.convert_pages(
             content,
             source_media_type=source_media_type,
-            options=options,
+            options=_single_page_options(safe_options),
         )
         assert pages.pages
         page = pages.pages[0]
@@ -159,8 +164,8 @@ def _validate_options(
 def _output_format(value: object) -> str:
     if value is None:
         return "png"
-    if value in {"png", "jpeg"}:
-        return str(value)
+    if isinstance(value, str) and value in {"png", "jpeg"}:
+        return value
     raise TaskFileConversionError("PDF image output format is not supported")
 
 
@@ -304,6 +309,19 @@ def _selected_pages(value: object, page_count: int) -> tuple[int, int]:
     return start, end
 
 
+def _single_page_options(
+    options: Mapping[str, object],
+) -> Mapping[str, object]:
+    single_options = dict(options)
+    pages = options.get("pages")
+    if isinstance(pages, Mapping):
+        start = pages.get("start", 1)
+    else:
+        start = 1
+    single_options["pages"] = {"start": start, "end": start}
+    return single_options
+
+
 def _selected_dpi(value: object) -> int:
     if value is None:
         return 144
@@ -332,12 +350,20 @@ def _render_pdf_page(
     try:
         image = page.render(scale=dpi / 72).to_pil()
         try:
+            width_pixels, height_pixels = _image_dimensions(image)
+            pixels = width_pixels * height_pixels
+            if (
+                capability.max_pixels is not None
+                and pixels > capability.max_pixels
+            ):
+                raise TaskFileConversionError(
+                    "PDF image output page exceeds the pixel limit"
+                )
             content = _encode_image(
                 image,
                 output_format=output_format,
                 quality=quality,
             )
-            width_pixels, height_pixels = _image_dimensions(image)
         finally:
             close_image = getattr(image, "close", None)
             if callable(close_image):
@@ -346,11 +372,6 @@ def _render_pdf_page(
         close_page = getattr(page, "close", None)
         if callable(close_page):
             close_page()
-    pixels = width_pixels * height_pixels
-    if capability.max_pixels is not None and pixels > capability.max_pixels:
-        raise TaskFileConversionError(
-            "PDF image output page exceeds the pixel limit"
-        )
     if (
         capability.max_output_bytes is not None
         and len(content) > capability.max_output_bytes
