@@ -551,7 +551,7 @@ def _weak_usage_call_key(response: object) -> str | None:
 
 
 def _local_usage_call_key_for_untracked_object(response: object) -> str:
-    key = f"local:{next(_LOCAL_USAGE_CALL_KEY_COUNTER)}"
+    key = f"local:id:{id(response)}"
     try:
         _LOCAL_USAGE_CALL_KEYS[response] = key
     except TypeError:

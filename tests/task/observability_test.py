@@ -329,6 +329,68 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(sink.usages), 1)
         self.assertEqual(len(sink.events), 1)
 
+    async def test_response_usage_helper_deduplicates_mapping_replay(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        await store.register_definition(
+            definition(),
+            definition_hash="hash-mapping-usage-replay",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-mapping-usage-replay")
+        )
+        response = {
+            "provider_family": "openai",
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8,
+                "raw_response_id": "private-response-id",
+            },
+        }
+        equivalent_response = {
+            "provider_family": "openai",
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8,
+                "raw_response_id": "private-response-id",
+            },
+        }
+        sink = RecordingSink()
+
+        await record_response_usage(
+            sink,
+            store=store,
+            response=response,
+            run_id=run.run_id,
+        )
+        await record_response_usage(
+            sink,
+            store=store,
+            response=response,
+            run_id=run.run_id,
+        )
+        await record_response_usage(
+            sink,
+            store=store,
+            response=equivalent_response,
+            run_id=run.run_id,
+        )
+
+        records = await store.list_usage(run.run_id)
+        self.assertEqual(len(records), 2)
+        self.assertNotEqual(records[0].usage_id, records[1].usage_id)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.input_tokens, 3)
+        self.assertEqual(records[0].totals.output_tokens, 5)
+        self.assertEqual(records[0].totals.total_tokens, 8)
+        self.assertEqual(len(sink.usages), 2)
+        self.assertEqual(len(sink.events), 2)
+        self.assertNotIn("private-response-id", str(records))
+        self.assertNotIn("private-response-id", str(sink.events))
+
     async def test_runner_success_survives_sink_failures(self) -> None:
         store = InMemoryTaskStore()
         recording = RecordingSink()

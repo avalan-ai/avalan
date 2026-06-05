@@ -1422,6 +1422,48 @@ class UsageTotalsTest(TestCase):
         self.assertTrue(usage_id.startswith("usage-"))
         self.assertNotIn("private", usage_id)
 
+    def test_stable_usage_id_for_response_deduplicates_untracked_replay(
+        self,
+    ) -> None:
+        response = {
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "raw_response_id": "private-response-id",
+            }
+        }
+        other_response = {
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "raw_response_id": "private-response-id",
+            }
+        }
+
+        usage_id = stable_usage_id_for_response(
+            response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        replayed_usage_id = stable_usage_id_for_response(
+            response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        other_usage_id = stable_usage_id_for_response(
+            other_response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+
+        self.assertEqual(usage_id, replayed_usage_id)
+        self.assertNotEqual(usage_id, other_usage_id)
+        self.assertTrue(usage_id.startswith("usage-"))
+        self.assertNotIn("private-response-id", usage_id)
+
 
 class UsageStoreTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
