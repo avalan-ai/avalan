@@ -326,6 +326,26 @@ class TaskExamplesTest(TestCase):
         self.assertNotIn("LA_Checkmate", combined)
         self.assertNotIn("/".join(("specs", "poc")), combined)
 
+    def test_poc_extraction_docs_record_live_smoke_skip_criteria(
+        self,
+    ) -> None:
+        readme = (EXAMPLE_ROOT / "poc_extraction" / "README.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("outside the default CI path", readme)
+        self.assertIn("skipped unless", readme)
+        self.assertIn("sanitized non-customer PDF", readme)
+        self.assertIn("AZURE_OPENAI_API_KEY", readme)
+        self.assertIn("intended deployment", readme)
+        self.assertIn("Azure OpenAI", readme)
+        self.assertIn("non-empty `line_items` array", readme)
+        self.assertIn("network access, live services", readme)
+        self.assertNotIn("Pulumi", readme)
+        self.assertNotIn("staging", readme.lower())
+        self.assertNotIn("LA_Checkmate", readme)
+        self.assertNotIn("/".join(("specs", "poc")), readme)
+
 
 def _issue_codes(issues: Iterable[object]) -> set[str]:
     return {getattr(issue, "code") for issue in issues}
