@@ -2051,10 +2051,9 @@ example in the Quickstart.
 Add hardware or backend extras when needed:
 
 - `mlx` or `apple` – Apple Silicon acceleration via MLX / MLX-LM.
-- `nvidia` – Linux + NVIDIA bundle for quantization support and vLLM
-  (vLLM on Python 3.11 through 3.13 while upstream `cuda-tile` is capped).
-- `vllm` – the vLLM runtime without the full NVIDIA bundle
-  (Python 3.11 through 3.13 while upstream `cuda-tile` is capped).
+- `nvidia` – Linux + NVIDIA quantization support.
+- `vllm` – reserved for the vLLM backend; install `vllm` separately until
+  its dependency chain no longer requires vulnerable `diskcache` releases.
 - `quantization` – 4-bit and 8-bit model loading.
 - `ds4` – native DS4 inference for DS4-supported DeepSeek V4 Flash GGUFs
   through [pyds4](https://github.com/avalan-ai/pyds4). Production targets are
@@ -2146,12 +2145,13 @@ brew install cmake pkg-config protobuf sentencepiece
   workflows.
 
 > [!NOTE]
-> The `vllm` extra, the vLLM runtime in the `nvidia` extra, and
-> `markitdown` document conversion in the `memory` extra are currently
-> limited to Python 3.11 through 3.13 by upstream dependencies. The pinned
-> `torchvision` release used by the `vision` extra also excludes Python
-> 3.14.1, and the `memory` extra omits `psycopg-binary` on Python 3.14 until
-> compatible wheels are published.
+> The `vllm` extra is intentionally empty while vLLM depends on vulnerable
+> `diskcache` releases without an upstream fix. Install vLLM separately if you
+> accept that dependency. `markitdown` document conversion in the `memory`
+> extra is currently limited to Python 3.11 through 3.13 by upstream
+> dependencies. The pinned `torchvision` release used by the `vision` extra
+> also excludes Python 3.14.1, and the `memory` extra omits `psycopg-binary`
+> on Python 3.14 until compatible wheels are published.
 
 ## Community & Support
 
