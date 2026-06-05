@@ -168,6 +168,27 @@ class ReplayedProviderUsageObservingTarget:
 
     async def __call__(self, context: TaskTargetContext) -> object:
         self.contexts.append(context)
+        response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 4,
+                "cached_input_tokens": 1,
+                "output_tokens": 6,
+                "total_tokens": 10,
+                "raw_response_id": "private-response",
+            },
+        )
+        await context.observe_usage(response)
+        await context.observe_usage(response)
+        return "short summary"
+
+
+class DistinctProviderUsageObservingTarget:
+    def __init__(self) -> None:
+        self.contexts: list[TaskTargetContext] = []
+
+    async def __call__(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
         for response_id in ("private-response-one", "private-response-two"):
             await context.observe_usage(
                 SimpleNamespace(
@@ -844,6 +865,41 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(sink.usage_totals), 1)
         self.assertEqual(sink.usage_event_count, 1)
         self.assertNotIn("private-response", str(records[0]))
+
+    async def test_observe_usage_counts_distinct_matching_provider_calls(
+        self,
+    ) -> None:
+        sink = RecordingUsageSink()
+        target = DistinctProviderUsageObservingTarget()
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-distinct-provider",
+            observability_sink=sink,
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+        totals = await self.store.usage_totals(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record.sequence for record in records], [1, 2])
+        self.assertEqual(
+            [record.source for record in records],
+            [
+                UsageSource.EXACT,
+                UsageSource.EXACT,
+            ],
+        )
+        self.assertEqual(totals.input_tokens, 8)
+        self.assertEqual(totals.cached_input_tokens, 2)
+        self.assertEqual(totals.output_tokens, 12)
+        self.assertEqual(totals.total_tokens, 20)
+        self.assertEqual(len(sink.usage_totals), 2)
+        self.assertEqual(sink.usage_event_count, 2)
+        self.assertNotIn("private-response", str(records))
 
     async def test_observe_usage_drops_malformed_nested_provider_call(
         self,

@@ -13,11 +13,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
-from json import dumps
+from itertools import count
 from math import isfinite
 from re import fullmatch
 from types import MappingProxyType
 from typing import Protocol, TypeAlias, cast
+from weakref import WeakKeyDictionary
 
 TaskUsageValue: TypeAlias = JsonValue
 TaskUsageMetadata: TypeAlias = Mapping[str, TaskUsageValue]
@@ -63,6 +64,9 @@ USAGE_METADATA_KEYS = (
     "cache_read_ephemeral_5m_input_tokens",
     "cache_read_ephemeral_1h_input_tokens",
 )
+_LOCAL_USAGE_CALL_KEY_ATTRIBUTE = "_avalan_usage_call_key"
+_LOCAL_USAGE_CALL_KEY_COUNTER = count(1)
+_LOCAL_USAGE_CALL_KEYS: WeakKeyDictionary[object, str] = WeakKeyDictionary()
 
 
 def _empty_metadata() -> TaskUsageMetadata:
@@ -506,10 +510,7 @@ def _usage_call_key(response: object) -> str:
     explicit = _explicit_usage_call_key(response)
     if explicit is not None:
         return _hashed_call_key("explicit", explicit)
-    fingerprint = _usage_observations_fingerprint(response)
-    if fingerprint is not None:
-        return _hashed_call_key("observations", fingerprint)
-    return f"object:{id(response)}"
+    return _local_usage_call_key(response)
 
 
 def _explicit_usage_call_key(response: object) -> str | None:
@@ -525,40 +526,42 @@ def _explicit_usage_call_key(response: object) -> str | None:
     return None
 
 
+def _local_usage_call_key(response: object) -> str:
+    value = getattr(response, _LOCAL_USAGE_CALL_KEY_ATTRIBUTE, None)
+    if isinstance(value, str) and value.strip():
+        return value
+
+    key = _weak_usage_call_key(response)
+    if key is not None:
+        return key
+
+    key = f"local:{next(_LOCAL_USAGE_CALL_KEY_COUNTER)}"
+    try:
+        setattr(response, _LOCAL_USAGE_CALL_KEY_ATTRIBUTE, key)
+    except (AttributeError, TypeError):
+        return _local_usage_call_key_for_untracked_object(response)
+    return key
+
+
+def _weak_usage_call_key(response: object) -> str | None:
+    try:
+        return _LOCAL_USAGE_CALL_KEYS.get(response)
+    except TypeError:
+        return None
+
+
+def _local_usage_call_key_for_untracked_object(response: object) -> str:
+    key = f"local:{next(_LOCAL_USAGE_CALL_KEY_COUNTER)}"
+    try:
+        _LOCAL_USAGE_CALL_KEYS[response] = key
+    except TypeError:
+        return key
+    return key
+
+
 def _hashed_call_key(prefix: str, value: str) -> str:
     digest = sha256(value.encode("utf-8")).hexdigest()
     return f"{prefix}:{digest}"
-
-
-def _usage_observations_fingerprint(response: object) -> str | None:
-    observations = usage_observations_from_response(response)
-    if not observations:
-        return None
-    if any(
-        observation.source != UsageSource.EXACT for observation in observations
-    ):
-        return None
-    return dumps(
-        [
-            _usage_observation_fingerprint(observation)
-            for observation in observations
-        ],
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _usage_observation_fingerprint(
-    observation: UsageObservation,
-) -> Mapping[str, object]:
-    return {
-        "metadata": dict(observation.metadata),
-        "source": observation.source.value,
-        "totals": {
-            name: _counter_value(observation.totals, name)
-            for name in USAGE_COUNTER_NAMES
-        },
-    }
 
 
 def _counter_value(totals: UsageTotals, field_name: str) -> int | None:
