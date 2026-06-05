@@ -791,27 +791,29 @@ class UsageTotalsTest(TestCase):
         self.assertEqual(observation.source, UsageSource.ESTIMATED)
         self.assertIsNone(observation.totals.total_tokens)
 
-    def test_direct_response_source_marker_is_respected(self) -> None:
-        exact_enum = usage_observation_from_response(
+    def test_direct_response_source_marker_does_not_make_counts_exact(
+        self,
+    ) -> None:
+        marked_enum = usage_observation_from_response(
             SimpleNamespace(
                 input_token_count=1, usage_source=UsageSource.EXACT
             )
         )
-        exact_string = usage_observation_from_response(
+        marked_string = usage_observation_from_response(
             SimpleNamespace(input_token_count=1, usage_source="exact")
         )
         invalid_string = usage_observation_from_response(
             SimpleNamespace(input_token_count=1, usage_source="unknown")
         )
 
-        self.assertIsNotNone(exact_enum)
-        self.assertIsNotNone(exact_string)
+        self.assertIsNotNone(marked_enum)
+        self.assertIsNotNone(marked_string)
         self.assertIsNotNone(invalid_string)
-        assert exact_enum is not None
-        assert exact_string is not None
+        assert marked_enum is not None
+        assert marked_string is not None
         assert invalid_string is not None
-        self.assertEqual(exact_enum.source, UsageSource.EXACT)
-        self.assertEqual(exact_string.source, UsageSource.EXACT)
+        self.assertEqual(marked_enum.source, UsageSource.ESTIMATED)
+        self.assertEqual(marked_string.source, UsageSource.ESTIMATED)
         self.assertEqual(invalid_string.source, UsageSource.ESTIMATED)
 
     def test_invalid_response_counters_are_unavailable(self) -> None:

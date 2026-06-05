@@ -246,7 +246,7 @@ def usage_observation_from_response(
     if totals is None:
         return None
     return UsageObservation(
-        source=_usage_source_from_response(response),
+        source=UsageSource.ESTIMATED,
         totals=totals,
         metadata=metadata,
     )
@@ -862,18 +862,6 @@ def _counter_from_value(value: object) -> int | None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         return None
     return value
-
-
-def _usage_source_from_response(response: object) -> UsageSource:
-    source = _value_at_path(response, ("usage_source",))
-    if isinstance(source, UsageSource):
-        return source
-    if isinstance(source, str):
-        try:
-            return UsageSource(source)
-        except ValueError:
-            return UsageSource.ESTIMATED
-    return UsageSource.ESTIMATED
 
 
 def _value_at_path(value: object, path: CounterPath) -> object | None:
