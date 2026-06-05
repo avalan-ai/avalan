@@ -65,6 +65,22 @@ expiry, attempt counts, artifact byte retention deadlines, and usage counters
 are indexed as columns rather than extracted from JSONB during queue, worker,
 retention, or inspection paths.
 
+Task usage records expose `input_tokens`, `cached_input_tokens`,
+`cache_creation_input_tokens`, `output_tokens`, `reasoning_tokens`, and
+`total_tokens`. Exact records come only from provider-returned usage metadata.
+Estimated records come from Avalan or local counters. Missing or malformed
+provider counters remain unavailable and are stored as `NULL`; reported zero is
+preserved as zero. Avalan does not derive provider totals, cache counters, or
+reasoning counters from other fields.
+
+`usage_totals` represents billable run burn across all recorded attempts.
+Stores may receive a stable usage id for a provider call; repeated observations
+with the same id return the existing record instead of incrementing counters.
+Distinct provider calls must use distinct ids. Usage metadata is allowlisted to
+low-cardinality `provider_family` values and drops raw provider objects, model
+ids, deployment names, endpoints, headers, request ids, response ids, cache
+handles, filenames, paths, and unknown nested fields.
+
 Task events use a single `task_events` table with a unique `(run_id,
 sequence)` constraint and indexes for incremental run and attempt inspection.
 This layout is the default profile for deployments that keep retained task

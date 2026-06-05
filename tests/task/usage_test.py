@@ -6,6 +6,8 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 import avalan.task.usage as usage_module
 from avalan.task import (
+    USAGE_COUNTER_NAMES,
+    USAGE_METADATA_KEYS,
     TaskAttempt,
     TaskAttemptState,
     TaskDefinition,
@@ -14,13 +16,16 @@ from avalan.task import (
     TaskInputContract,
     TaskMetadata,
     TaskOutputContract,
+    TaskStoreConflictError,
     TaskStoreNotFoundError,
+    UsageProviderFamily,
     UsageRecord,
     UsageSource,
     UsageTotals,
     attach_response_usage_recorder,
     freeze_usage_metadata,
     freeze_usage_value,
+    stable_usage_id,
     usage_observation_from_response,
     usage_totals_from_response,
 )
@@ -45,6 +50,14 @@ class SequenceIds:
         value = f"id-{self._next}"
         self._next = self._next + 1
         return value
+
+
+class FixedIds:
+    def __init__(self, *values: str) -> None:
+        self._values = iter(values)
+
+    def __call__(self) -> str:
+        return next(self._values)
 
 
 class FakeConsumedResponse:
@@ -79,6 +92,7 @@ class FakeProviderResponse(FakeConsumedResponse):
         super().__init__()
         self.usage = SimpleNamespace(
             input_tokens=3,
+            provider_family=UsageProviderFamily.OPENAI,
             input_tokens_details=SimpleNamespace(cached_tokens=1),
             cache_creation_input_tokens=2,
             output_tokens=4,
@@ -103,6 +117,20 @@ def definition() -> TaskDefinition:
 
 
 class UsageTotalsTest(TestCase):
+    def test_usage_counter_and_metadata_contracts_are_stable(self) -> None:
+        self.assertEqual(
+            USAGE_COUNTER_NAMES,
+            (
+                "input_tokens",
+                "cached_input_tokens",
+                "cache_creation_input_tokens",
+                "output_tokens",
+                "reasoning_tokens",
+                "total_tokens",
+            ),
+        )
+        self.assertEqual(USAGE_METADATA_KEYS, ("provider_family",))
+
     def test_response_usage_preserves_unavailable_counters_as_none(
         self,
     ) -> None:
@@ -138,6 +166,10 @@ class UsageTotalsTest(TestCase):
         self.assertIsNotNone(observation)
         assert observation is not None
         self.assertEqual(observation.source, UsageSource.EXACT)
+        self.assertEqual(
+            observation.metadata["provider_family"],
+            UsageProviderFamily.OPENAI.value,
+        )
         self.assertEqual(
             observation.totals,
             UsageTotals(
@@ -196,12 +228,15 @@ class UsageTotalsTest(TestCase):
             source=UsageSource.UNAVAILABLE,
             totals=UsageTotals(),
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
-            metadata={"labels": ["safe"]},
+            metadata={"provider_family": UsageProviderFamily.LOCAL},
         )
 
         self.assertFalse(record.totals.has_observations)
         self.assertIsInstance(record.metadata, MappingProxyType)
-        self.assertEqual(record.metadata["labels"], ("safe",))
+        self.assertEqual(
+            record.metadata["provider_family"],
+            UsageProviderFamily.LOCAL.value,
+        )
         with self.assertRaises(TypeError):
             cast(dict[str, object], record.metadata)["raw"] = "leak"
         with self.assertRaises(AssertionError):
@@ -221,12 +256,34 @@ class UsageTotalsTest(TestCase):
 
     def test_usage_metadata_rejects_unsafe_values(self) -> None:
         empty = freeze_usage_metadata(None)
+        metadata = freeze_usage_metadata(
+            {
+                "provider_family": "azure_openai",
+                "raw_model_id": "private-deployment",
+                "headers": {"authorization": "private-token"},
+                "request_id": "private-response-id",
+                "unknown": object(),
+            }
+        )
+        invalid_metadata = freeze_usage_metadata(
+            {"provider_family": "private-provider-name"}
+        )
         frozen = freeze_usage_value({"counts": [1, 2]})
         finite_float = freeze_usage_value(1.5)
 
         self.assertEqual(empty, {})
+        self.assertEqual(
+            metadata,
+            {"provider_family": UsageProviderFamily.AZURE_OPENAI.value},
+        )
+        self.assertEqual(invalid_metadata, {})
+        self.assertIsNone(freeze_usage_value(None))
+        self.assertTrue(freeze_usage_value(True))
+        self.assertEqual(freeze_usage_value("safe"), "safe")
         self.assertEqual(cast(Mapping[str, object], frozen)["counts"], (1, 2))
         self.assertEqual(finite_float, 1.5)
+        with self.assertRaises(AssertionError):
+            freeze_usage_metadata(cast(Mapping[str, object], []))
         with self.assertRaises(AssertionError):
             freeze_usage_value({"raw": object()})
         with self.assertRaises(AssertionError):
@@ -240,6 +297,36 @@ class UsageTotalsTest(TestCase):
                 UsageTotals(),
                 "unknown",
             )
+
+    def test_stable_usage_id_hashes_call_key(self) -> None:
+        usage_id = stable_usage_id(
+            run_id="run-1",
+            attempt_id="attempt-1",
+            call_key="private-provider-response-id",
+        )
+        same_usage_id = stable_usage_id(
+            run_id="run-1",
+            attempt_id="attempt-1",
+            call_key="private-provider-response-id",
+        )
+        other_call_usage_id = stable_usage_id(
+            run_id="run-1",
+            attempt_id="attempt-1",
+            call_key="other-call",
+        )
+        other_attempt_usage_id = stable_usage_id(
+            run_id="run-1",
+            attempt_id="attempt-2",
+            call_key="private-provider-response-id",
+        )
+
+        self.assertEqual(usage_id, same_usage_id)
+        self.assertNotEqual(usage_id, other_call_usage_id)
+        self.assertNotEqual(usage_id, other_attempt_usage_id)
+        self.assertTrue(usage_id.startswith("usage-"))
+        self.assertNotIn("private-provider-response-id", usage_id)
+        with self.assertRaises(AssertionError):
+            stable_usage_id(run_id="run-1", attempt_id=None, call_key="")
 
 
 class UsageStoreTest(IsolatedAsyncioTestCase):
@@ -266,7 +353,7 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
             store=self.store,
             run_id=self.run.run_id,
             attempt_id=self.attempt.attempt_id,
-            metadata={"model": "test"},
+            metadata={"provider_family": UsageProviderFamily.LOCAL},
         )
 
         self.assertTrue(attached)
@@ -283,7 +370,10 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.input_tokens, 3)
         self.assertEqual(records[0].totals.output_tokens, 4)
         self.assertIsNone(records[0].totals.total_tokens)
-        self.assertEqual(records[0].metadata["model"], "test")
+        self.assertEqual(
+            records[0].metadata["provider_family"],
+            UsageProviderFamily.LOCAL.value,
+        )
 
     async def test_usage_records_are_filtered_and_aggregated(self) -> None:
         other_attempt = await self._failed_attempt_then_new_attempt()
@@ -337,6 +427,110 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.cached_input_tokens, 1)
         self.assertEqual(records[0].totals.reasoning_tokens, 5)
         self.assertEqual(records[0].totals.total_tokens, 99)
+        self.assertEqual(
+            records[0].metadata["provider_family"],
+            UsageProviderFamily.OPENAI.value,
+        )
+
+    async def test_stable_usage_id_prevents_duplicate_records(self) -> None:
+        usage_id = stable_usage_id(
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            call_key="model-call-1",
+        )
+
+        first = await self.store.append_usage(
+            self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            usage_id=usage_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1),
+        )
+        duplicate = await self.store.append_usage(
+            self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            usage_id=usage_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=99, total_tokens=99),
+        )
+        distinct = await self.store.append_usage(
+            self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            usage_id=stable_usage_id(
+                run_id=self.run.run_id,
+                attempt_id=self.attempt.attempt_id,
+                call_key="model-call-2",
+            ),
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=2),
+        )
+
+        records = await self.store.list_usage(self.run.run_id)
+        totals = await self.store.usage_totals(self.run.run_id)
+
+        self.assertEqual(first, duplicate)
+        self.assertNotEqual(first.usage_id, distinct.usage_id)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0].sequence, 1)
+        self.assertEqual(records[1].sequence, 2)
+        self.assertEqual(totals.input_tokens, 3)
+        self.assertIsNone(totals.total_tokens)
+
+    async def test_stable_usage_id_conflict_rejects_other_run(
+        self,
+    ) -> None:
+        usage_id = stable_usage_id(
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            call_key="model-call-1",
+        )
+        other_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-a")
+        )
+
+        await self.store.append_usage(
+            self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+            usage_id=usage_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1),
+        )
+
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.append_usage(
+                other_run.run_id,
+                usage_id=usage_id,
+                source=UsageSource.EXACT,
+                totals=UsageTotals(input_tokens=1),
+            )
+
+    async def test_generated_usage_id_collision_is_rejected(self) -> None:
+        store = InMemoryTaskStore(
+            clock=SequenceClock(),
+            id_factory=FixedIds("run-1", "attempt-1", "usage-1", "usage-1"),
+        )
+        await store.register_definition(
+            definition(),
+            definition_hash="hash-generated-collision",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-generated-collision")
+        )
+        attempt = await store.create_attempt(run.run_id)
+        await store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1),
+        )
+
+        with self.assertRaises(TaskStoreConflictError):
+            await store.append_usage(
+                run.run_id,
+                attempt_id=attempt.attempt_id,
+                source=UsageSource.EXACT,
+                totals=UsageTotals(input_tokens=2),
+            )
 
     async def test_callback_is_not_attached_without_response_support(
         self,

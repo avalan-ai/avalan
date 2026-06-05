@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from hashlib import sha256
 from math import isfinite
 from types import MappingProxyType
 from typing import Protocol, TypeAlias, cast
@@ -24,6 +25,30 @@ class UsageSource(StrEnum):
     EXACT = "exact"
     ESTIMATED = "estimated"
     UNAVAILABLE = "unavailable"
+
+
+class UsageProviderFamily(StrEnum):
+    ANTHROPIC = "anthropic"
+    AZURE_OPENAI = "azure_openai"
+    BEDROCK = "bedrock"
+    GOOGLE = "google"
+    HUGGING_FACE = "hugging_face"
+    LOCAL = "local"
+    OLLAMA = "ollama"
+    OPENAI = "openai"
+    OPENAI_COMPATIBLE = "openai_compatible"
+    OTHER = "other"
+
+
+USAGE_COUNTER_NAMES = (
+    "input_tokens",
+    "cached_input_tokens",
+    "cache_creation_input_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+    "total_tokens",
+)
+USAGE_METADATA_KEYS = ("provider_family",)
 
 
 def _empty_metadata() -> TaskUsageMetadata:
@@ -69,10 +94,16 @@ class UsageTotals:
 class UsageObservation:
     source: UsageSource
     totals: UsageTotals
+    metadata: TaskUsageMetadata = field(default_factory=_empty_metadata)
 
     def __post_init__(self) -> None:
         assert isinstance(self.source, UsageSource)
         assert isinstance(self.totals, UsageTotals)
+        object.__setattr__(
+            self,
+            "metadata",
+            freeze_usage_metadata(self.metadata),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -126,6 +157,7 @@ class TaskUsageStore(Protocol):
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord: ...
 
@@ -136,7 +168,10 @@ def freeze_usage_metadata(
     if value is None:
         return _empty_metadata()
     assert isinstance(value, Mapping), "metadata must be a mapping"
-    return cast(TaskUsageMetadata, freeze_usage_value(value))
+    provider_family = _provider_family_value(value.get("provider_family"))
+    if provider_family is None:
+        return _empty_metadata()
+    return MappingProxyType({"provider_family": provider_family.value})
 
 
 def freeze_usage_value(value: object) -> TaskUsageValue:
@@ -163,10 +198,15 @@ def usage_observation_from_response(
     response: object,
 ) -> UsageObservation | None:
     usage = _usage_container(response)
+    metadata = _usage_metadata_from_response(response, usage)
     if usage is not None:
         totals = _usage_totals_from_value(usage, _PROVIDER_COUNTER_PATHS)
         if totals is not None:
-            return UsageObservation(source=UsageSource.EXACT, totals=totals)
+            return UsageObservation(
+                source=UsageSource.EXACT,
+                totals=totals,
+                metadata=metadata,
+            )
 
     totals = _usage_totals_from_value(response, _RESPONSE_COUNTER_PATHS)
     if totals is None:
@@ -174,6 +214,7 @@ def usage_observation_from_response(
     return UsageObservation(
         source=_usage_source_from_response(response),
         totals=totals,
+        metadata=metadata,
     )
 
 
@@ -188,6 +229,7 @@ def attach_response_usage_recorder(
     store: TaskUsageStore,
     run_id: str,
     attempt_id: str | None = None,
+    usage_id: str | None = None,
     source: UsageSource | None = None,
     metadata: Mapping[str, object] | None = None,
 ) -> bool:
@@ -207,9 +249,12 @@ def attach_response_usage_recorder(
         await store.append_usage(
             run_id,
             attempt_id=attempt_id,
+            usage_id=usage_id,
             source=source or observation.source,
             totals=observation.totals,
-            metadata=metadata,
+            metadata=(
+                metadata if metadata is not None else observation.metadata
+            ),
         )
 
     cast(UsageCallbackResponse, response).add_done_callback(record_usage)
@@ -228,6 +273,24 @@ def aggregate_usage_totals(records: tuple[UsageRecord, ...]) -> UsageTotals:
         reasoning_tokens=_sum_counter(records, "reasoning_tokens"),
         total_tokens=_sum_counter(records, "total_tokens"),
     )
+
+
+def stable_usage_id(
+    *,
+    run_id: str,
+    attempt_id: str | None,
+    call_key: str,
+) -> str:
+    _assert_non_empty_string(run_id, "run_id")
+    if attempt_id is not None:
+        _assert_non_empty_string(attempt_id, "attempt_id")
+    _assert_non_empty_string(call_key, "call_key")
+    digest = sha256()
+    for value in (run_id, attempt_id or "", call_key):
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return f"usage-{digest.hexdigest()}"
 
 
 def _sum_counter(
@@ -263,6 +326,17 @@ def _counter_value(totals: UsageTotals, field_name: str) -> int | None:
             return totals.total_tokens
         case _:
             raise AssertionError("unknown usage counter")
+
+
+def _provider_family_value(value: object) -> UsageProviderFamily | None:
+    if isinstance(value, UsageProviderFamily):
+        return value
+    if isinstance(value, str):
+        try:
+            return UsageProviderFamily(value)
+        except ValueError:
+            return None
+    return None
 
 
 CounterPath = tuple[str, ...]
@@ -328,6 +402,21 @@ def _usage_container(response: object) -> object | None:
         if value is not None:
             return value
     return None
+
+
+def _usage_metadata_from_response(
+    response: object,
+    usage: object | None,
+) -> TaskUsageMetadata:
+    for value in (response, usage):
+        if value is None:
+            continue
+        provider_family = _provider_family_value(
+            _value_at_path(value, ("provider_family",))
+        )
+        if provider_family is not None:
+            return freeze_usage_metadata({"provider_family": provider_family})
+    return _empty_metadata()
 
 
 def _usage_totals_from_value(

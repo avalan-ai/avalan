@@ -292,23 +292,21 @@ class PrometheusObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(health.last_failure_code, "RuntimeError")
         self.assertNotIn("private", str(health))
 
-    async def test_unsafe_usage_metadata_failure_is_counted(self) -> None:
+    async def test_unsafe_usage_metadata_is_dropped(self) -> None:
         factory = FakeCounterFactory()
         sink = PrometheusObservabilitySink(counter_factory=factory)
 
-        with self.assertRaises(AssertionError):
-            await sink.record_usage(
-                run_id="run-private",
-                source=UsageSource.EXACT,
-                totals=UsageTotals(total_tokens=1),
-                metadata={"private": object()},
-            )
+        await sink.record_usage(
+            run_id="run-private",
+            source=UsageSource.EXACT,
+            totals=UsageTotals(total_tokens=1),
+            metadata={"private": object()},
+        )
 
         health = sink.health()
-        self.assertFalse(health.healthy)
-        self.assertEqual(health.usage_count, 0)
-        self.assertEqual(health.failure_count, 1)
-        self.assertEqual(health.last_failure_code, "AssertionError")
+        self.assertTrue(health.healthy)
+        self.assertEqual(health.usage_count, 1)
+        self.assertEqual(health.failure_count, 0)
         self.assertNotIn("private", str(health))
 
     async def test_record_helper_isolates_sink_failures(self) -> None:

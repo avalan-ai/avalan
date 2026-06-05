@@ -24,8 +24,10 @@ from avalan.task import (
     TaskIdempotencyIdentity,
     TaskRunState,
     TaskStoreConflictError,
+    UsageProviderFamily,
     UsageSource,
     UsageTotals,
+    stable_usage_id,
 )
 from avalan.task.stores import PgsqlTaskStore
 
@@ -233,6 +235,8 @@ class FakeCursor:
             )
         elif 'INSERT INTO "task_usage_records"' in query:
             self.row = self._insert_usage(params)
+        elif 'FROM "task_usage_records" WHERE "usage_id"' in query:
+            self.row = self.database.usage.get(cast(str, params[0]))
         elif 'FROM "task_usage_records"' in query:
             self.rows = self._filtered(
                 self.database.usage,
@@ -866,7 +870,7 @@ class PgsqlStoreContractTest(
                 reasoning_tokens=7,
                 total_tokens=8,
             ),
-            metadata={"provider": "test"},
+            metadata={"provider_family": UsageProviderFamily.OPENAI},
         )
         second_usage = await self.store.append_usage(
             run.run_id,
@@ -877,7 +881,7 @@ class PgsqlStoreContractTest(
                 output_tokens=2,
                 total_tokens=6,
             ),
-            metadata={"provider": "second"},
+            metadata={"provider_family": UsageProviderFamily.OPENAI},
         )
         identity = TaskIdempotencyIdentity(
             identity_key="identity-1",
@@ -935,7 +939,10 @@ class PgsqlStoreContractTest(
         )
         self.assertEqual(len(locked_run_queries), 3)
         self.assertEqual(len(sequence_queries), 3)
-        self.assertEqual(usage.metadata["provider"], "test")
+        self.assertEqual(
+            usage.metadata["provider_family"],
+            UsageProviderFamily.OPENAI.value,
+        )
         usage_row = self.database.usage[usage.usage_id]
         self.assertEqual(usage_row["cache_creation_input_tokens"], 2)
         self.assertEqual(usage_row["reasoning_tokens"], 7)
@@ -1066,6 +1073,79 @@ class PgsqlStoreContractTest(
             await self.store.usage_totals(run.run_id),
             UsageTotals(input_tokens=1, cached_input_tokens=3),
         )
+
+    async def test_stable_usage_id_deduplicates_records(self) -> None:
+        run = await self._created_run()
+        attempt = await self.store.create_attempt(run.run_id)
+        usage_id = stable_usage_id(
+            run_id=run.run_id,
+            attempt_id=attempt.attempt_id,
+            call_key="model-call-1",
+        )
+
+        first = await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            usage_id=usage_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1),
+        )
+        duplicate = await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            usage_id=usage_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=99, total_tokens=99),
+        )
+        distinct = await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            usage_id=stable_usage_id(
+                run_id=run.run_id,
+                attempt_id=attempt.attempt_id,
+                call_key="model-call-2",
+            ),
+            source=UsageSource.EXACT,
+            totals=UsageTotals(output_tokens=3),
+        )
+
+        self.assertEqual(first, duplicate)
+        self.assertNotEqual(first.usage_id, distinct.usage_id)
+        self.assertEqual(
+            set(self.database.usage), {usage_id, distinct.usage_id}
+        )
+        self.assertEqual(
+            await self.store.usage_totals(run.run_id),
+            UsageTotals(input_tokens=1, output_tokens=3),
+        )
+
+    async def test_stable_usage_id_rejects_other_run_collision(self) -> None:
+        run = await self._created_run()
+        attempt = await self.store.create_attempt(run.run_id)
+        other_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id=run.definition_id)
+        )
+        usage_id = stable_usage_id(
+            run_id=run.run_id,
+            attempt_id=attempt.attempt_id,
+            call_key="model-call-1",
+        )
+
+        await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            usage_id=usage_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1),
+        )
+
+        with self.assertRaises(TaskStoreConflictError):
+            await self.store.append_usage(
+                other_run.run_id,
+                usage_id=usage_id,
+                source=UsageSource.EXACT,
+                totals=UsageTotals(input_tokens=1),
+            )
 
 
 def _identity(

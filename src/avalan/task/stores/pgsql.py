@@ -81,6 +81,7 @@ from ..usage import (
     UsageSource,
     UsageTotals,
     aggregate_usage_totals,
+    freeze_usage_metadata,
 )
 
 from asyncio import CancelledError
@@ -816,6 +817,7 @@ class PgsqlTaskStore:
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord:
         _assert_non_empty_string(run_id, "run_id")
@@ -823,6 +825,8 @@ class PgsqlTaskStore:
         assert isinstance(totals, UsageTotals)
         if attempt_id is not None:
             _assert_non_empty_string(attempt_id, "attempt_id")
+        if usage_id is not None:
+            _assert_non_empty_string(usage_id, "usage_id")
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
             await _lock_run_or_raise(unit, run_id)
@@ -832,6 +836,8 @@ class PgsqlTaskStore:
                     raise TaskStoreNotFoundError(
                         "task attempt was not found for run"
                     )
+            record_id = usage_id or self._new_id()
+            usage_metadata = freeze_usage_metadata(metadata)
             await unit.cursor.execute(
                 _SELECT_NEXT_USAGE_SEQUENCE_SQL, (run_id,)
             )
@@ -841,7 +847,7 @@ class PgsqlTaskStore:
             await unit.cursor.execute(
                 _INSERT_USAGE_SQL,
                 (
-                    self._new_id(),
+                    record_id,
                     run_id,
                     attempt_id,
                     sequence,
@@ -852,12 +858,25 @@ class PgsqlTaskStore:
                     totals.cached_input_tokens,
                     totals.cache_creation_input_tokens,
                     totals.reasoning_tokens,
-                    _json(metadata or {}),
+                    _json(usage_metadata),
                     now,
                 ),
             )
             row = await unit.cursor.fetchone()
             if row is None:
+                if usage_id is not None:
+                    await unit.cursor.execute(
+                        _SELECT_USAGE_BY_ID_SQL,
+                        (usage_id,),
+                    )
+                    row = await unit.cursor.fetchone()
+                    if row is not None:
+                        record = _usage_from_row(row)
+                        if (
+                            record.run_id == run_id
+                            and record.attempt_id == attempt_id
+                        ):
+                            return record
                 raise TaskStoreConflictError(
                     "task usage could not be recorded"
                 )
@@ -1611,6 +1630,9 @@ SELECT * FROM "task_usage_records"
 WHERE "run_id" = %s
   AND (%s::text IS NULL OR "attempt_id" = %s::text)
 ORDER BY "sequence", "created_at", "usage_id"
+"""
+_SELECT_USAGE_BY_ID_SQL = """
+SELECT * FROM "task_usage_records" WHERE "usage_id" = %s
 """
 _INSERT_ARTIFACT_SQL = """
 INSERT INTO "task_artifacts" (

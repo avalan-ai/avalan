@@ -22,6 +22,7 @@ from avalan.task import (
     TaskInputContract,
     TaskMetadata,
     TaskOutputContract,
+    UsageProviderFamily,
     UsageSource,
     UsageTotals,
     record_observability_event,
@@ -84,7 +85,7 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
                 reasoning_tokens=7,
                 total_tokens=8,
             ),
-            metadata={"provider": "test"},
+            metadata={"provider_family": UsageProviderFamily.OPENAI},
         )
 
         events = await sink.events(
@@ -101,7 +102,10 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(events[0].payload["status"], "ok")
         self.assertEqual(len(usage), 1)
         self.assertEqual(usage[0].source, UsageSource.EXACT)
-        self.assertEqual(usage[0].metadata["provider"], "test")
+        self.assertEqual(
+            usage[0].metadata["provider_family"],
+            UsageProviderFamily.OPENAI.value,
+        )
         self.assertEqual(
             await sink.totals(self.run.run_id),
             UsageTotals(
@@ -214,7 +218,7 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
             attempt_id=self.attempt.attempt_id,
             source=UsageSource.EXACT,
             totals=UsageTotals(total_tokens=9),
-            metadata={"provider": "test"},
+            metadata={"provider_family": UsageProviderFamily.OPENAI},
         )
         sink = PgsqlInspectionSink(store=self.store)
 
@@ -233,13 +237,13 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(sink.health().usage_count, 1)
 
-    async def test_recorded_usage_can_be_copied_when_requested(self) -> None:
+    async def test_recorded_usage_copy_keeps_stable_identity(self) -> None:
         stored = await self.store.append_usage(
             self.run.run_id,
             attempt_id=self.attempt.attempt_id,
             source=UsageSource.EXACT,
             totals=UsageTotals(total_tokens=9),
-            metadata={"provider": "test"},
+            metadata={"provider_family": UsageProviderFamily.OPENAI},
         )
         sink = PgsqlInspectionSink(
             store=self.store,
@@ -257,9 +261,7 @@ class PgsqlInspectionSinkTest(IsolatedAsyncioTestCase):
         )
 
         usage = await self.store.list_usage(self.run.run_id)
-        self.assertEqual(len(usage), 2)
-        self.assertEqual(usage[0], stored)
-        self.assertEqual(usage[1].sequence, 2)
+        self.assertEqual(usage, (stored,))
 
     async def test_recorded_usage_copy_failures_are_counted(self) -> None:
         stored = await self.store.append_usage(

@@ -1206,6 +1206,7 @@ class DirectTaskRunner:
                 attempt_id=attempt.attempt_id,
                 source=observation.source,
                 totals=observation.totals,
+                metadata=observation.metadata,
             )
         except Exception:
             pass
@@ -1215,6 +1216,7 @@ class DirectTaskRunner:
             attempt_id=attempt.attempt_id,
             source=observation.source,
             totals=observation.totals,
+            metadata=observation.metadata,
             record=usage_record,
         )
 

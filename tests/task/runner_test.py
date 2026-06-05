@@ -334,6 +334,7 @@ class FailingUsageStore(InMemoryTaskStore):
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord:
         raise RuntimeError("private usage store failure")

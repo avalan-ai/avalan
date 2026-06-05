@@ -50,6 +50,7 @@ class PgsqlInspectionStore(Protocol):
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord: ...
 
@@ -171,6 +172,7 @@ class PgsqlInspectionSink(ObservabilitySink):
             await self.store.append_usage(
                 record.run_id,
                 attempt_id=record.attempt_id,
+                usage_id=record.usage_id,
                 source=record.source,
                 totals=record.totals,
                 metadata=record.metadata,

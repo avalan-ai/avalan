@@ -48,6 +48,7 @@ from ..usage import (
     UsageSource,
     UsageTotals,
     aggregate_usage_totals,
+    freeze_usage_metadata,
 )
 
 from asyncio import Lock
@@ -74,6 +75,7 @@ class InMemoryTaskStore:
         self._attempt_transitions: dict[str, list[TaskAttemptTransition]] = {}
         self._events_by_run_id: dict[str, list[SanitizedTaskEvent]] = {}
         self._usage_by_run_id: dict[str, list[UsageRecord]] = {}
+        self._usage_by_id: dict[str, UsageRecord] = {}
         self._artifacts: dict[str, TaskArtifactRecord] = {}
         self._artifact_ids_by_run_id: dict[str, list[str]] = {}
         self._idempotency_by_key: dict[str, TaskIdempotencyReservation] = {}
@@ -449,6 +451,7 @@ class InMemoryTaskStore:
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord:
         _assert_non_empty_string(run_id, "run_id")
@@ -456,6 +459,8 @@ class InMemoryTaskStore:
         assert isinstance(totals, UsageTotals)
         if attempt_id is not None:
             _assert_non_empty_string(attempt_id, "attempt_id")
+        if usage_id is not None:
+            _assert_non_empty_string(usage_id, "usage_id")
         async with self._lock:
             self._run_or_raise(run_id)
             if attempt_id is not None:
@@ -464,17 +469,34 @@ class InMemoryTaskStore:
                     raise TaskStoreNotFoundError(
                         "task attempt was not found for run"
                     )
+            if usage_id is not None:
+                existing = self._usage_by_id.get(usage_id)
+                if existing is not None:
+                    if (
+                        existing.run_id != run_id
+                        or existing.attempt_id != attempt_id
+                    ):
+                        raise TaskStoreConflictError(
+                            "task usage id is already recorded"
+                        )
+                    return existing
+            record_id = usage_id or self._new_id()
+            if record_id in self._usage_by_id:
+                raise TaskStoreConflictError(
+                    "task usage id is already recorded"
+                )
             record = UsageRecord(
-                usage_id=self._new_id(),
+                usage_id=record_id,
                 run_id=run_id,
                 attempt_id=attempt_id,
                 sequence=len(self._usage_by_run_id[run_id]) + 1,
                 source=source,
                 totals=totals,
                 created_at=self._now(),
-                metadata=freeze_snapshot_metadata(metadata),
+                metadata=freeze_usage_metadata(metadata),
             )
             self._usage_by_run_id[run_id].append(record)
+            self._usage_by_id[record.usage_id] = record
             return record
 
     async def list_usage(

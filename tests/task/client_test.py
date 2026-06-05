@@ -2473,7 +2473,7 @@ ref = "agents/reviewer.toml"
             attempt_id=attempt.attempt_id,
             source=UsageSource.EXACT,
             totals=UsageTotals(input_tokens=1),
-            metadata={"provider": "safe"},
+            metadata={"provider_family": "openai"},
         )
         await store.transition_attempt(
             attempt.attempt_id,
@@ -2515,7 +2515,7 @@ ref = "agents/reviewer.toml"
         self.assertIn("worker-1", claimed_snapshot)
         self.assertIn("input-1", rendered)
         self.assertIn("attempt.failed", rendered)
-        self.assertIn("provider", rendered)
+        self.assertIn("provider_family", rendered)
         self.assertNotIn(claimed.claim.claim_token, claimed_snapshot)
         self.assertNotIn(claimed.claim.claim_token, rendered)
 
