@@ -38,6 +38,7 @@ from avalan.task.converters import (
     TaskFileConversionDependencyError,
     UnavailableFileConverter,
 )
+from avalan.task.converters import pdf_image as pdf_image_module
 from avalan.task.converters.registry import default_file_converters
 from avalan.task.stores import InMemoryTaskStore
 
@@ -313,6 +314,84 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             str(error.exception), "PDF image page range exceeds document"
+        )
+        self.assertNotIn("%PDF-private", str(error.exception))
+
+    def test_selected_page_bounds_reject_inverted_runtime_range(self) -> None:
+        with self.assertRaises(TaskFileConversionError) as error:
+            pdf_image_module._selected_pages(  # type: ignore[attr-defined]
+                {"start": 3, "end": 2},
+                4,
+            )
+
+        self.assertEqual(
+            str(error.exception), "PDF image page range is invalid"
+        )
+
+    async def test_converter_open_page_range_renders_remaining_pages(
+        self,
+    ) -> None:
+        converter = PdfImageFileConverter()
+        module = FakePdfiumModule(page_count=4)
+
+        with patch(
+            "avalan.task.converters.pdf_image.import_module",
+            return_value=module,
+        ):
+            pages = await converter.convert_pages(
+                b"%PDF-private",
+                source_media_type="application/pdf",
+                options={"format": "png", "pages": {"start": 2}},
+            )
+
+        self.assertEqual([page.page_index for page in pages.pages], [2, 3, 4])
+        self.assertEqual([page.page_count for page in pages.pages], [4, 4, 4])
+        self.assertEqual(module.document.pages[0].image.saves, ())
+        self.assertEqual(
+            module.document.pages[1].image.saves,
+            (("PNG", None),),
+        )
+        self.assertEqual(
+            module.document.pages[3].image.saves,
+            (("PNG", None),),
+        )
+
+    async def test_converter_open_page_range_enforces_page_limit(
+        self,
+    ) -> None:
+        converter = PdfImageFileConverter()
+        capability = pdf_image_converter_capability()
+        converter._capability = TaskFileConverterCapability(
+            source_mime_types=capability.source_mime_types,
+            output_mime_types=capability.output_mime_types,
+            supports_streaming=capability.supports_streaming,
+            max_input_bytes=capability.max_input_bytes,
+            max_output_bytes=capability.max_output_bytes,
+            max_pages=2,
+            min_dpi=capability.min_dpi,
+            max_dpi=capability.max_dpi,
+            min_quality=capability.min_quality,
+            max_quality=capability.max_quality,
+            max_pixels=capability.max_pixels,
+            estimated_memory_bytes=capability.estimated_memory_bytes,
+            timeout_seconds=capability.timeout_seconds,
+            options_schema=capability.options_schema,
+            dependency_gates=capability.dependency_gates,
+        )
+
+        with patch(
+            "avalan.task.converters.pdf_image.import_module",
+            return_value=FakePdfiumModule(page_count=4),
+        ):
+            with self.assertRaises(TaskFileConversionError) as error:
+                await converter.convert_pages(
+                    b"%PDF-private",
+                    source_media_type="application/pdf",
+                    options={"format": "png", "pages": {"start": 2}},
+                )
+
+        self.assertEqual(
+            str(error.exception), "PDF image page range exceeds limit"
         )
         self.assertNotIn("%PDF-private", str(error.exception))
 

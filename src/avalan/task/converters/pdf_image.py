@@ -291,8 +291,15 @@ def _selected_pages(value: object, page_count: int) -> tuple[int, int]:
         return 1, page_count
     assert isinstance(value, Mapping)
     start = _page_bound(value.get("start"), default=1)
-    end = _page_bound(value.get("end"), default=start)
-    if end > page_count:
+    end_value = value.get("end")
+    end = (
+        page_count
+        if end_value is None
+        else _page_bound(end_value, default=start)
+    )
+    if start > end:
+        raise TaskFileConversionError("PDF image page range is invalid")
+    if start > page_count or end > page_count:
         raise TaskFileConversionError("PDF image page range exceeds document")
     return start, end
 

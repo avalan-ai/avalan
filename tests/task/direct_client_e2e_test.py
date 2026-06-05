@@ -1095,10 +1095,26 @@ class ExtractionPdfImageConverter:
         source_media_type: str | None = None,
         options: Mapping[str, object] | None = None,
     ) -> TaskFileConversionPageCollection:
-        self.calls.append((content, source_media_type, dict(options or {})))
+        safe_options = dict(options or {})
+        self.calls.append((content, source_media_type, safe_options))
+        pages = self._selected_pages(safe_options.get("pages"))
         return TaskFileConversionPageCollection(
-            pages=self._pages,
+            pages=pages,
             metadata={"backend": "fake"},
+        )
+
+    def _selected_pages(
+        self,
+        value: object,
+    ) -> tuple[TaskFileConversionPageResult, ...]:
+        if not isinstance(value, Mapping):
+            return self._pages
+        start = value.get("start", 1)
+        end = value.get("end", len(self._pages))
+        assert isinstance(start, int)
+        assert isinstance(end, int)
+        return tuple(
+            page for page in self._pages if start <= page.page_index <= end
         )
 
 
