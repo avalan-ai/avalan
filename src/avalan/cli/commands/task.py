@@ -1019,6 +1019,7 @@ def _task_cli_client_context(
                 artifact_store=artifact_store,
                 hmac_provider=hmac_provider,
                 execution_roots=(definition_path.parent,),
+                input_roots=(Path.cwd(),),
             ),
             stack=stack,
         )
@@ -1034,6 +1035,7 @@ def _task_cli_client_context(
             artifact_store=artifact_store,
             hmac_provider=hmac_provider,
             execution_roots=(definition_path.parent,),
+            input_roots=(Path.cwd(),),
         ),
         database=database,
         stack=stack,

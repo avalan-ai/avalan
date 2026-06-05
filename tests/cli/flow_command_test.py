@@ -1,9 +1,11 @@
 from argparse import Namespace
 from asyncio import run as asyncio_run
 from base64 import b64decode
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from io import StringIO
 from json import dumps
+from os import chdir
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -15,7 +17,12 @@ from rich.console import Console
 
 from avalan.cli.commands import flow as flow_cmds
 from avalan.cli.commands import task as task_cmds
-from avalan.entities import Message, MessageContentFile, MessageContentText
+from avalan.entities import (
+    Message,
+    MessageContentFile,
+    MessageContentImage,
+    MessageContentText,
+)
 from avalan.flow import (
     FlowDefinition,
     FlowInputDefinition,
@@ -31,6 +38,15 @@ from avalan.task import (
     TaskOutputType,
     TaskValidationCategory,
 )
+from avalan.task import client as task_client_module
+from avalan.task.converters import (
+    TaskFileConversionError,
+    TaskFileConversionPageCollection,
+    TaskFileConversionPageResult,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
+)
+from avalan.task.converters.pdf_image import pdf_image_converter_capability
 
 TASK_HMAC_ENV = {
     "AVALAN_TASK_HMAC_KEY_ID": "flow-cli-test-v1",
@@ -399,6 +415,90 @@ class FlowRunCommandTestCase(TestCase):
             pdf_bytes,
         )
 
+    def test_flow_run_image_flow_uses_task_context(self) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        output = _flow_cli_extraction_output()
+        expected = dumps(output, sort_keys=True, separators=(",", ":")) + "\n"
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        orchestrator = _FlowCliAgentOrchestrator(output)
+        converter = _FlowCliPdfPageConverter(
+            (
+                _flow_cli_page_result(1, 2, b"page one"),
+                _flow_cli_page_result(2, 2, b"page two"),
+            )
+        )
+
+        async def from_settings(
+            loader: object,
+            settings: object,
+            *,
+            tool_settings: object | None = None,
+            tool_format: object | None = None,
+        ) -> _FlowCliAgentOrchestrator:
+            _ = loader, settings, tool_settings, tool_format
+            return orchestrator
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds.OrchestratorLoader,
+                "from_settings",
+                new=from_settings,
+            ),
+            patch.object(
+                task_client_module,
+                "_file_converters",
+                side_effect=lambda converters: {"pdf_image": converter},
+            ),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            _working_directory(fixture),
+        ):
+            output_path = Path(tmpdir) / "image.json"
+            result = flow_cmds.flow_run(
+                _args(
+                    flow="image_flow.toml",
+                    task_pdf="sample.pdf",
+                    task_run_json=True,
+                    task_output_path=str(output_path),
+                ),
+                console,
+                self.theme,
+            )
+            written = output_path.read_text(encoding="utf-8")
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), expected)
+        self.assertEqual(written, expected)
+        self.assertEqual(len(converter.calls), 1)
+        self.assertEqual(converter.calls[0][1], "application/pdf")
+        self.assertEqual(len(orchestrator.inputs), 1)
+        message = orchestrator.inputs[0]
+        self.assertIsInstance(message, Message)
+        content = cast(list[Any], cast(Message, message).content)
+        image_blocks = [
+            block
+            for block in content
+            if isinstance(block, MessageContentImage)
+        ]
+        file_blocks = [
+            block for block in content if isinstance(block, MessageContentFile)
+        ]
+        self.assertEqual(file_blocks, [])
+        self.assertEqual(
+            [
+                b64decode(cast(str, block.image_url["data"]))
+                for block in image_blocks
+            ],
+            [b"page one", b"page two"],
+        )
+
     def test_flow_run_reports_bad_output_schema_ref_safely(self) -> None:
         console = Console(record=True, width=160)
 
@@ -720,7 +820,7 @@ class FlowRunCommandTestCase(TestCase):
 
     def test_flow_metadata_helpers_cover_guard_paths(self) -> None:
         definition = _flow_definition(output_definition=None)
-        node = flow_cmds._flow_agent_metadata_node(
+        node = flow_cmds._flow_task_context_metadata_node(
             FlowNodeDefinition(name="agent", type="agent", ref="agent.toml")
         )
 
@@ -874,6 +974,92 @@ class _FlowCliAgentOrchestrator:
     async def __call__(self, input: object) -> _FlowCliAgentResponse:
         self.inputs.append(input)
         return _FlowCliAgentResponse(self.output)
+
+
+class _FlowCliPdfPageConverter:
+    name = "pdf_image"
+    version = "fake"
+
+    def __init__(
+        self,
+        pages: tuple[TaskFileConversionPageResult, ...],
+    ) -> None:
+        base = pdf_image_converter_capability()
+        self.calls: list[tuple[bytes, str | None, Mapping[str, object]]] = []
+        self._pages = pages
+        self._capability = TaskFileConverterCapability(
+            source_mime_types=base.source_mime_types,
+            output_mime_types=base.output_mime_types,
+            supports_streaming=base.supports_streaming,
+            max_input_bytes=base.max_input_bytes,
+            max_output_bytes=base.max_output_bytes,
+            max_pages=base.max_pages,
+            min_dpi=base.min_dpi,
+            max_dpi=base.max_dpi,
+            min_quality=base.min_quality,
+            max_quality=base.max_quality,
+            max_pixels=base.max_pixels,
+            estimated_memory_bytes=base.estimated_memory_bytes,
+            timeout_seconds=base.timeout_seconds,
+            options_schema=base.options_schema,
+        )
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return self._capability
+
+    def validate_options(self, options: Mapping[str, object]) -> None:
+        if options.get("format") == "gif":
+            raise TaskFileConversionError("private invalid format")
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        raise AssertionError("page converter must use convert_pages")
+
+    async def convert_pages(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionPageCollection:
+        self.calls.append((content, source_media_type, dict(options or {})))
+        return TaskFileConversionPageCollection(
+            pages=self._pages,
+            metadata={"backend": "fake"},
+        )
+
+
+def _flow_cli_page_result(
+    page_index: int,
+    page_count: int,
+    content: bytes,
+) -> TaskFileConversionPageResult:
+    return TaskFileConversionPageResult(
+        page_index=page_index,
+        page_count=page_count,
+        content=content,
+        media_type="image/png",
+        width_pixels=10,
+        height_pixels=10,
+        metadata={"page": page_index},
+    )
+
+
+@contextmanager
+def _working_directory(path: Path) -> Iterator[None]:
+    previous = Path.cwd()
+    chdir(path)
+    try:
+        yield
+    finally:
+        chdir(previous)
 
 
 class _FailingFlowClientContext:

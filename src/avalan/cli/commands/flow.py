@@ -408,13 +408,14 @@ def _flow_schema_issue() -> TaskValidationIssue:
 
 def _flow_metadata_loader() -> FlowDefinitionLoader:
     registry = default_flow_node_registry()
-    registry.register("agent", _flow_agent_metadata_node)
+    for node_type in ("agent", "file_convert", "pdf_to_images"):
+        registry.register(node_type, _flow_task_context_metadata_node)
     return FlowDefinitionLoader(registry)
 
 
-def _flow_agent_metadata_node(definition: FlowNodeDefinition) -> Node:
+def _flow_task_context_metadata_node(definition: FlowNodeDefinition) -> Node:
     async def run(_: dict[str, object]) -> object:
-        raise RuntimeError("Flow agent nodes require task execution context.")
+        raise RuntimeError("Flow node requires task execution context.")
 
     return Node(definition.name, func=run)
 

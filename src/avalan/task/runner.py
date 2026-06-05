@@ -661,6 +661,7 @@ class DirectTaskRunner:
         finalizer: TaskRunFinalizer | None = None,
         definition_hash: Callable[[TaskDefinition], str] | None = None,
         execution_roots: Iterable[str | Path] = (),
+        input_roots: Iterable[str | Path] | None = None,
         remote_url_policy: TaskRemoteUrlPolicy | None = None,
         remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
         remote_url_resolver: TaskRemoteUrlResolver | None = None,
@@ -680,6 +681,11 @@ class DirectTaskRunner:
         self._finalizer = finalizer or TaskRunFinalizer()
         self._definition_hash = definition_hash or spec_hash
         self._execution_roots = tuple(execution_roots)
+        self._input_roots = (
+            tuple(input_roots)
+            if input_roots is not None
+            else self._execution_roots
+        )
         self._remote_url_policy = remote_url_policy
         self._remote_url_http_client = remote_url_http_client
         self._remote_url_resolver = remote_url_resolver
@@ -1291,7 +1297,7 @@ class DirectTaskRunner:
         materialized_files = await materialize_task_input_files(
             definition,
             input_value,
-            roots=self._execution_roots,
+            roots=self._input_roots,
             artifact_store=self._artifact_store,
             hmac_provider=self._hmac_provider,
             remote_url_policy=self._remote_url_policy,

@@ -208,6 +208,7 @@ class TaskClient:
         file_converters: Mapping[str, FileConverter] | None = None,
         definition_hash: Callable[[TaskDefinition], str] | None = None,
         execution_roots: Iterable[str | Path] = (),
+        input_roots: Iterable[str | Path] | None = None,
         remote_url_policy: TaskRemoteUrlPolicy | None = None,
         remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
         remote_url_resolver: TaskRemoteUrlResolver | None = None,
@@ -227,6 +228,11 @@ class TaskClient:
         self._file_converters = _file_converters(file_converters)
         self._definition_hash = definition_hash
         self._execution_roots = tuple(execution_roots)
+        self._input_roots = (
+            tuple(input_roots)
+            if input_roots is not None
+            else self._execution_roots
+        )
         self._remote_url_policy = remote_url_policy
         self._remote_url_http_client = remote_url_http_client
         self._remote_url_resolver = remote_url_resolver
@@ -540,7 +546,7 @@ class TaskClient:
         materialized_files = await materialize_task_input_files(
             definition,
             input_value,
-            roots=self._execution_roots,
+            roots=self._input_roots,
             artifact_store=self._artifact_store,
             hmac_provider=self._hmac_provider,
             remote_url_policy=self._remote_url_policy,
@@ -766,6 +772,7 @@ class TaskClient:
             observability_sink=self._observability_sink,
             clock=self._clock,
             sleep=self._sleep,
+            input_roots=self._input_roots,
         )
 
     def _definition_hash_value(self, definition: TaskDefinition) -> str:

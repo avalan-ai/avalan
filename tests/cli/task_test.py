@@ -1,10 +1,11 @@
 from argparse import Namespace
 from base64 import b64decode
-from collections.abc import Callable, Mapping
-from contextlib import AsyncExitStack
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AsyncExitStack, contextmanager
 from datetime import UTC, datetime
 from io import StringIO
 from json import dumps
+from os import chdir
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -15,7 +16,12 @@ from unittest.mock import MagicMock, patch
 from rich.console import Console
 
 from avalan.cli.commands import task as task_cmds
-from avalan.entities import Message, MessageContentFile, MessageContentText
+from avalan.entities import (
+    Message,
+    MessageContentFile,
+    MessageContentImage,
+    MessageContentText,
+)
 from avalan.task import (
     ArtifactStoreError,
     CallableTaskTargetRunner,
@@ -40,6 +46,15 @@ from avalan.task import (
     TaskValidationIssue,
     canonical_schema_json,
 )
+from avalan.task import client as task_client_module
+from avalan.task.converters import (
+    TaskFileConversionError,
+    TaskFileConversionPageCollection,
+    TaskFileConversionPageResult,
+    TaskFileConversionResult,
+    TaskFileConverterCapability,
+)
+from avalan.task.converters.pdf_image import pdf_image_converter_capability
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "task" / "fixtures"
 TASK_HMAC_ENV = {
@@ -313,6 +328,66 @@ class _ExtractionCliOrchestrator:
         return _ExtractionCliResponse(self.output)
 
 
+class _CliPdfPageConverter:
+    name = "pdf_image"
+    version = "fake"
+
+    def __init__(
+        self,
+        pages: tuple[TaskFileConversionPageResult, ...],
+    ) -> None:
+        base = pdf_image_converter_capability()
+        self.calls: list[tuple[bytes, str | None, Mapping[str, object]]] = []
+        self._pages = pages
+        self._capability = TaskFileConverterCapability(
+            source_mime_types=base.source_mime_types,
+            output_mime_types=base.output_mime_types,
+            supports_streaming=base.supports_streaming,
+            max_input_bytes=base.max_input_bytes,
+            max_output_bytes=base.max_output_bytes,
+            max_pages=base.max_pages,
+            min_dpi=base.min_dpi,
+            max_dpi=base.max_dpi,
+            min_quality=base.min_quality,
+            max_quality=base.max_quality,
+            max_pixels=base.max_pixels,
+            estimated_memory_bytes=base.estimated_memory_bytes,
+            timeout_seconds=base.timeout_seconds,
+            options_schema=base.options_schema,
+        )
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return self._capability
+
+    def validate_options(self, options: Mapping[str, object]) -> None:
+        if options.get("format") == "gif":
+            raise TaskFileConversionError("private invalid format")
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        raise AssertionError("page converter must use convert_pages")
+
+    async def convert_pages(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionPageCollection:
+        self.calls.append((content, source_media_type, dict(options or {})))
+        return TaskFileConversionPageCollection(
+            pages=self._pages,
+            metadata={"backend": "fake"},
+        )
+
+
 def _extraction_cli_output() -> dict[str, object]:
     return {
         "line_items": [
@@ -339,6 +414,32 @@ def _extraction_cli_output() -> dict[str, object]:
             }
         ]
     }
+
+
+def _cli_page_result(
+    page_index: int,
+    page_count: int,
+    content: bytes,
+) -> TaskFileConversionPageResult:
+    return TaskFileConversionPageResult(
+        page_index=page_index,
+        page_count=page_count,
+        content=content,
+        media_type="image/png",
+        width_pixels=10,
+        height_pixels=10,
+        metadata={"page": page_index},
+    )
+
+
+@contextmanager
+def _working_directory(path: Path) -> Iterator[None]:
+    previous = Path.cwd()
+    chdir(path)
+    try:
+        yield
+    finally:
+        chdir(previous)
 
 
 class CliTaskValidateTestCase(TestCase):
@@ -1492,36 +1593,49 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertEqual(written, expected)
 
     def test_run_poc_extraction_fixture_reaches_fake_provider(self) -> None:
-        fixture = (
-            Path(__file__).parents[2]
-            / "docs"
-            / "examples"
-            / "tasks"
-            / "poc_extraction"
-        )
+        repo_root = Path(__file__).parents[2]
+        fixture = repo_root / "docs" / "examples" / "tasks" / "poc_extraction"
         pdf_bytes = (fixture / "sample.pdf").read_bytes()
         output = _extraction_cli_output()
         expected = dumps(output, sort_keys=True, separators=(",", ":")) + "\n"
         cases = (
             (
-                "pdf",
+                "repo_root_pdf",
+                repo_root,
+                "docs/examples/tasks/poc_extraction/task.toml",
                 {
-                    "task_pdf": "./sample.pdf",
+                    "task_pdf": (
+                        "docs/examples/tasks/poc_extraction/sample.pdf"
+                    ),
                     "task_files": (),
                     "task_file_mime_types": (),
                 },
             ),
             (
-                "file",
+                "repo_root_file",
+                repo_root,
+                "docs/examples/tasks/poc_extraction/task.toml",
                 {
                     "task_pdf": None,
-                    "task_files": ("input=./sample.pdf",),
+                    "task_files": (
+                        "input=docs/examples/tasks/poc_extraction/sample.pdf",
+                    ),
                     "task_file_mime_types": ("input=application/pdf",),
+                },
+            ),
+            (
+                "example_directory_pdf",
+                fixture,
+                "task.toml",
+                {
+                    "task_pdf": "sample.pdf",
+                    "task_files": (),
+                    "task_file_mime_types": (),
                 },
             ),
         )
 
-        for name, input_args in cases:
+        for name, cwd, definition, input_args in cases:
             with self.subTest(command=name):
                 stream = StringIO()
                 console = Console(file=stream, width=160)
@@ -1566,31 +1680,32 @@ class CliTaskCommandShellTestCase(TestCase):
                     patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
                 ):
                     output_path = Path(tmpdir) / "extraction.json"
-                    result = task_cmds.task_run(
-                        Namespace(
-                            definition=str(fixture / "task.toml"),
-                            task_input=None,
-                            task_input_json=None,
-                            task_input_fields=(),
-                            task_file_descriptors=(),
-                            task_provider_file_ids=(),
-                            task_hosted_urls=(),
-                            task_object_store_uris=(),
-                            task_file_roles=(),
-                            task_file_sizes=(),
-                            task_file_sha256=(),
-                            task_file_conversions=(),
-                            store_dsn=None,
-                            store_schema=None,
-                            ephemeral=True,
-                            task_run_json=True,
-                            task_output_path=str(output_path),
-                            quiet=True,
-                            **input_args,
-                        ),
-                        console,
-                        self.theme,
-                    )
+                    with _working_directory(cwd):
+                        result = task_cmds.task_run(
+                            Namespace(
+                                definition=definition,
+                                task_input=None,
+                                task_input_json=None,
+                                task_input_fields=(),
+                                task_file_descriptors=(),
+                                task_provider_file_ids=(),
+                                task_hosted_urls=(),
+                                task_object_store_uris=(),
+                                task_file_roles=(),
+                                task_file_sizes=(),
+                                task_file_sha256=(),
+                                task_file_conversions=(),
+                                store_dsn=None,
+                                store_schema=None,
+                                ephemeral=True,
+                                task_run_json=True,
+                                task_output_path=str(output_path),
+                                quiet=True,
+                                **input_args,
+                            ),
+                            console,
+                            self.theme,
+                        )
                     written = output_path.read_text(encoding="utf-8")
 
                 self.assertTrue(result)
@@ -1652,6 +1767,203 @@ class CliTaskCommandShellTestCase(TestCase):
                     b64decode(cast(str, file_blocks[0].file["file_data"])),
                     pdf_bytes,
                 )
+
+    def test_run_file_and_output_paths_use_caller_cwd(self) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        pdf_bytes = b"%PDF-cwd-private\n"
+        output = _extraction_cli_output()
+        expected = dumps(output, sort_keys=True, separators=(",", ":")) + "\n"
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        orchestrator = _ExtractionCliOrchestrator(output)
+
+        async def from_settings(
+            loader: object,
+            settings: object,
+            *,
+            tool_settings: object | None = None,
+            tool_format: object | None = None,
+        ) -> _ExtractionCliOrchestrator:
+            _ = loader, settings, tool_settings, tool_format
+            return orchestrator
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds.OrchestratorLoader,
+                "from_settings",
+                new=from_settings,
+            ),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            cwd = Path(tmpdir)
+            (cwd / "sample.pdf").write_bytes(pdf_bytes)
+            (cwd / "agent.toml").write_text("[agent\n", encoding="utf-8")
+            with _working_directory(cwd):
+                result = task_cmds.task_run(
+                    Namespace(
+                        definition=str(fixture / "task.toml"),
+                        task_input=None,
+                        task_input_json=None,
+                        task_input_fields=(),
+                        task_file_descriptors=(),
+                        task_provider_file_ids=(),
+                        task_hosted_urls=(),
+                        task_object_store_uris=(),
+                        task_file_roles=(),
+                        task_file_sizes=(),
+                        task_file_sha256=(),
+                        task_file_conversions=(),
+                        store_dsn=None,
+                        store_schema=None,
+                        ephemeral=True,
+                        task_run_json=True,
+                        task_output_path="extraction.json",
+                        task_pdf="sample.pdf",
+                        task_files=(),
+                        task_file_mime_types=(),
+                        quiet=True,
+                    ),
+                    console,
+                    self.theme,
+                )
+                written = (cwd / "extraction.json").read_text(encoding="utf-8")
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), expected)
+        self.assertEqual(written, expected)
+        self.assertEqual(len(orchestrator.inputs), 1)
+        message = orchestrator.inputs[0]
+        self.assertIsInstance(message, Message)
+        content = cast(list[Any], cast(Message, message).content)
+        file_blocks = [
+            block for block in content if isinstance(block, MessageContentFile)
+        ]
+        self.assertEqual(len(file_blocks), 1)
+        self.assertEqual(
+            b64decode(cast(str, file_blocks[0].file["file_data"])),
+            pdf_bytes,
+        )
+
+    def test_run_image_flow_fixture_replaces_pdf_with_images(self) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        output = _extraction_cli_output()
+        expected = dumps(output, sort_keys=True, separators=(",", ":")) + "\n"
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        orchestrator = _ExtractionCliOrchestrator(output)
+        converter = _CliPdfPageConverter(
+            (
+                _cli_page_result(1, 2, b"page one"),
+                _cli_page_result(2, 2, b"page two"),
+            )
+        )
+
+        async def from_settings(
+            loader: object,
+            settings: object,
+            *,
+            tool_settings: object | None = None,
+            tool_format: object | None = None,
+        ) -> _ExtractionCliOrchestrator:
+            _ = loader, settings, tool_settings, tool_format
+            return orchestrator
+
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(
+                task_cmds.OrchestratorLoader,
+                "from_settings",
+                new=from_settings,
+            ),
+            patch.object(
+                task_client_module,
+                "_file_converters",
+                side_effect=lambda converters: {"pdf_image": converter},
+            ),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            _working_directory(fixture),
+        ):
+            output_path = Path(tmpdir) / "image.json"
+            result = task_cmds.task_run(
+                Namespace(
+                    definition="image_flow_task.toml",
+                    task_input=None,
+                    task_input_json=None,
+                    task_input_fields=(),
+                    task_file_descriptors=(),
+                    task_provider_file_ids=(),
+                    task_hosted_urls=(),
+                    task_object_store_uris=(),
+                    task_file_roles=(),
+                    task_file_sizes=(),
+                    task_file_sha256=(),
+                    task_file_conversions=(),
+                    store_dsn=None,
+                    store_schema=None,
+                    ephemeral=True,
+                    task_run_json=True,
+                    task_output_path=str(output_path),
+                    task_pdf="sample.pdf",
+                    task_files=(),
+                    task_file_mime_types=(),
+                    quiet=True,
+                ),
+                console,
+                self.theme,
+            )
+            written = output_path.read_text(encoding="utf-8")
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), expected)
+        self.assertEqual(written, expected)
+        self.assertEqual(len(converter.calls), 1)
+        self.assertEqual(converter.calls[0][1], "application/pdf")
+        self.assertEqual(
+            converter.calls[0][2],
+            {"dpi": 144, "format": "png", "pages": {"start": 1}},
+        )
+        self.assertEqual(len(orchestrator.inputs), 1)
+        message = orchestrator.inputs[0]
+        self.assertIsInstance(message, Message)
+        content = cast(list[Any], cast(Message, message).content)
+        text_blocks = [
+            block for block in content if isinstance(block, MessageContentText)
+        ]
+        image_blocks = [
+            block
+            for block in content
+            if isinstance(block, MessageContentImage)
+        ]
+        file_blocks = [
+            block for block in content if isinstance(block, MessageContentFile)
+        ]
+        self.assertEqual(len(text_blocks), 1)
+        self.assertEqual(len(image_blocks), 2)
+        self.assertEqual(file_blocks, [])
+        self.assertEqual(
+            [
+                b64decode(cast(str, block.image_url["data"]))
+                for block in image_blocks
+            ],
+            [b"page one", b"page two"],
+        )
+        self.assertEqual(
+            [block.image_url["mime_type"] for block in image_blocks],
+            ["image/png", "image/png"],
+        )
 
     def test_structured_output_writer_reports_safe_failures(self) -> None:
         stream = StringIO()
