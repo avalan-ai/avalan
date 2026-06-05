@@ -160,6 +160,17 @@ class DuplicateUsageObservingTarget(UsageObservingTarget):
         return "short summary"
 
 
+class EmptyThenReturnedUsageTarget:
+    def __init__(self, output: object) -> None:
+        self.output = output
+        self.contexts: list[TaskTargetContext] = []
+
+    async def __call__(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        await context.observe_usage(object())
+        return self.output
+
+
 class CountingUsageResponse:
     input_token_count = 3
     output_token_count = 5
@@ -168,6 +179,31 @@ class CountingUsageResponse:
 class MultiCallUsageResponse:
     def __init__(self, *responses: object) -> None:
         self.usage_responses = responses
+
+
+class UsageTextOutput(str):
+    _usage: object | None
+    _usage_responses: tuple[object, ...]
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        usage: object | None = None,
+        usage_responses: tuple[object, ...] = (),
+    ) -> "UsageTextOutput":
+        output = str.__new__(cls, value)
+        output._usage = usage
+        output._usage_responses = usage_responses
+        return output
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
+
+    @property
+    def usage_responses(self) -> tuple[object, ...]:
+        return self._usage_responses
 
 
 class ArtifactOutputTarget:
@@ -748,6 +784,144 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.input_tokens, 0)
         self.assertEqual(records[0].totals.output_tokens, 0)
         self.assertEqual(records[0].totals.total_tokens, 0)
+
+    async def test_returned_output_usage_is_recorded_without_observer_call(
+        self,
+    ) -> None:
+        target = RecordingTarget(
+            UsageTextOutput(
+                "short summary",
+                usage={
+                    "input_tokens": 9,
+                    "cached_input_tokens": 4,
+                    "output_tokens": 6,
+                    "reasoning_tokens": 2,
+                    "total_tokens": 15,
+                    "provider_family": "openai",
+                },
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-returned-output-usage",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+        totals = await self.store.usage_totals(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "short summary")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.input_tokens, 9)
+        self.assertEqual(records[0].totals.cached_input_tokens, 4)
+        self.assertEqual(records[0].totals.output_tokens, 6)
+        self.assertEqual(records[0].totals.reasoning_tokens, 2)
+        self.assertEqual(records[0].totals.total_tokens, 15)
+        self.assertEqual(records[0].metadata, {"provider_family": "openai"})
+        self.assertEqual(totals.total_tokens, 15)
+
+    async def test_empty_observation_does_not_hide_returned_output_usage(
+        self,
+    ) -> None:
+        target = EmptyThenReturnedUsageTarget(
+            UsageTextOutput(
+                "short summary",
+                usage={
+                    "input_tokens": 6,
+                    "output_tokens": 4,
+                    "total_tokens": 10,
+                },
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-empty-then-returned-usage",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].totals.input_tokens, 6)
+        self.assertEqual(records[0].totals.output_tokens, 4)
+        self.assertEqual(records[0].totals.total_tokens, 10)
+
+    async def test_malformed_returned_output_usage_is_ignored(self) -> None:
+        target = RecordingTarget(
+            UsageTextOutput(
+                "short summary",
+                usage={
+                    "input_tokens": "private prompt",
+                    "output_tokens": -1,
+                    "total_tokens": True,
+                    "raw_response_body": "private provider body",
+                },
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-returned-output-bad-usage",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(await self.store.list_usage(result.run.run_id), ())
+
+    async def test_returned_output_usage_survives_output_contract_failure(
+        self,
+    ) -> None:
+        target = RecordingTarget(
+            UsageTextOutput(
+                "private invalid output",
+                usage={
+                    "input_tokens": 2,
+                    "cache_creation_input_tokens": 1,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                    "provider_family": "openai",
+                    "raw_response_id": "private-response-id",
+                },
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-returned-output-failed",
+        )
+
+        result = await runner.run(
+            definition(
+                output_contract=TaskOutputContract.object(
+                    schema={"type": "object"}
+                )
+            ),
+            input_value="private prompt",
+        )
+        records = await self.store.list_usage(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(result.output, None)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.input_tokens, 2)
+        self.assertEqual(records[0].totals.cache_creation_input_tokens, 1)
+        self.assertEqual(records[0].totals.total_tokens, 5)
+        self.assertNotIn("raw_response_id", records[0].metadata)
+        self.assertNotIn(
+            "private invalid output",
+            str(result.run.result.error if result.run.result else {}),
+        )
 
     async def test_usage_store_failure_does_not_fail_run(self) -> None:
         store = FailingUsageStore()

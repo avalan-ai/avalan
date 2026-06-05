@@ -104,6 +104,31 @@ class MultiCallUsageResponse:
         self.usage_responses = responses
 
 
+class UsageTextOutput(str):
+    _usage: object | None
+    _usage_responses: tuple[object, ...]
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        usage: object | None = None,
+        usage_responses: tuple[object, ...] = (),
+    ) -> "UsageTextOutput":
+        output = str.__new__(cls, value)
+        output._usage = usage
+        output._usage_responses = usage_responses
+        return output
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
+
+    @property
+    def usage_responses(self) -> tuple[object, ...]:
+        return self._usage_responses
+
+
 class WaitingTarget(FakeTarget):
     def __init__(self) -> None:
         super().__init__("done")
@@ -1096,6 +1121,43 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.input_tokens, 3)
         self.assertEqual(records[0].totals.output_tokens, 5)
 
+    async def test_process_once_records_returned_output_usage(self) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(
+                UsageTextOutput(
+                    "safe output",
+                    usage={
+                        "input_tokens": 7,
+                        "cached_input_tokens": 2,
+                        "output_tokens": 4,
+                        "reasoning_tokens": 1,
+                        "total_tokens": 11,
+                        "provider_family": "openai",
+                    },
+                )
+            ),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+        records = await self.store.list_usage(self.run.run_id)
+        totals = await self.store.usage_totals(self.run.run_id)
+
+        self.assertIsNotNone(result.completion)
+        self.assertEqual(result.output, "safe output")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.input_tokens, 7)
+        self.assertEqual(records[0].totals.cached_input_tokens, 2)
+        self.assertEqual(records[0].totals.output_tokens, 4)
+        self.assertEqual(records[0].totals.reasoning_tokens, 1)
+        self.assertEqual(records[0].totals.total_tokens, 11)
+        self.assertEqual(records[0].metadata, {"provider_family": "openai"})
+        self.assertEqual(totals.total_tokens, 11)
+
     async def test_process_once_turns_output_validation_into_failure(
         self,
     ) -> None:
@@ -1125,6 +1187,55 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             self.queue.completed.run.result.error["code"],
             "output_contract.failed",
+        )
+
+    async def test_process_once_records_usage_before_output_failure(
+        self,
+    ) -> None:
+        await self._use_definition(
+            _definition(
+                output_contract=TaskOutputContract.object(
+                    schema={"type": "object"}
+                ),
+                retry=TaskRetryPolicy(max_attempts=1),
+            )
+        )
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(
+                UsageTextOutput(
+                    "private invalid output",
+                    usage={
+                        "input_tokens": 2,
+                        "cache_creation_input_tokens": 1,
+                        "output_tokens": 3,
+                        "total_tokens": 5,
+                        "provider_family": "openai",
+                        "raw_response_id": "private-response-id",
+                    },
+                )
+            ),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+
+        result = await worker.process_once()
+        records = await self.store.list_usage(self.run.run_id)
+
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(self.queue.completed)
+        assert self.queue.completed is not None
+        self.assertEqual(self.queue.completed.run.state, TaskRunState.FAILED)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.input_tokens, 2)
+        self.assertEqual(records[0].totals.cache_creation_input_tokens, 1)
+        self.assertEqual(records[0].totals.total_tokens, 5)
+        self.assertNotIn("raw_response_id", records[0].metadata)
+        self.assertNotIn(
+            "private invalid output",
+            str(self.queue.completed.run.result),
         )
 
     async def test_process_once_classifies_structured_output_failures(

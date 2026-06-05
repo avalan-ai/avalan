@@ -452,6 +452,50 @@ class TextSummaryTarget(TaskTargetRunner):
         return "public summary"
 
 
+class UsageTextOutput(str):
+    _usage: object | None
+    _usage_responses: tuple[object, ...]
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        usage: object | None = None,
+        usage_responses: tuple[object, ...] = (),
+    ) -> "UsageTextOutput":
+        output = str.__new__(cls, value)
+        output._usage = usage
+        output._usage_responses = usage_responses
+        return output
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
+
+    @property
+    def usage_responses(self) -> tuple[object, ...]:
+        return self._usage_responses
+
+
+class ReturnedUsageTextSummaryTarget(TextSummaryTarget):
+    async def run(self, context: TaskTargetContext) -> object:
+        self.input_values.append(context.input_value)
+        self.metadata_values.append(context.metadata)
+        await context.check_cancelled()
+        return UsageTextOutput(
+            "public summary",
+            usage={
+                "input_tokens": 9,
+                "cached_input_tokens": 4,
+                "output_tokens": 6,
+                "reasoning_tokens": 2,
+                "total_tokens": 15,
+                "provider_family": "openai",
+                "raw_response_id": "private-response-id",
+            },
+        )
+
+
 class ReviewingTarget(TaskTargetRunner):
     def __init__(self) -> None:
         self.definition_refs: list[str] = []
@@ -2510,6 +2554,63 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(sdk_inspection.run.state, TaskRunState.SUCCEEDED)
         self.assertNotIn("private text prompt", str(toml_inspection.as_dict()))
         self.assertNotIn("private text prompt", str(sdk_inspection.as_dict()))
+
+    async def test_returned_usage_output_reaches_direct_inspection(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            definition = replace(
+                TaskDefinitionLoader().load(_write_text_task_workspace(root)),
+                observability=TaskObservabilityPolicy(
+                    metrics=True,
+                    trace=False,
+                    capture_events=False,
+                ),
+            )
+            store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            target = ReturnedUsageTextSummaryTarget()
+            client = TaskClient(
+                store,
+                target=target,
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda task: "direct-returned-usage-e2e",
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            result = await client.run(
+                definition,
+                input_value="private text prompt",
+                metadata={"tenant": "safe"},
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "public summary")
+        self.assertTrue(output.ready)
+        self.assertEqual(output.output_summary, {"privacy": "<redacted>"})
+        self.assertEqual(target.input_values, ["private text prompt"])
+        self.assertEqual(target.metadata_values, [{"tenant": "safe"}])
+        self.assertEqual(len(inspection.usage), 1)
+        self.assertEqual(inspection.usage[0].source, UsageSource.EXACT)
+        self.assertEqual(inspection.usage[0].totals.input_tokens, 9)
+        self.assertEqual(inspection.usage_totals.cached_input_tokens, 4)
+        self.assertEqual(inspection.usage_totals.output_tokens, 6)
+        self.assertEqual(inspection.usage_totals.reasoning_tokens, 2)
+        self.assertEqual(inspection.usage_totals.total_tokens, 15)
+        self.assertEqual(
+            inspection.usage[0].metadata,
+            {"provider_family": "openai"},
+        )
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private text prompt", inspection_value)
+        self.assertNotIn("raw_response_id", inspection_value)
+        self.assertNotIn("private-response-id", inspection_value)
+        self.assertNotIn("public summary", inspection_value)
 
     async def test_sdk_schema_ref_task_runs_with_same_identity_as_toml(
         self,

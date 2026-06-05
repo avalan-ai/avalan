@@ -73,6 +73,7 @@ from avalan.task import (
     TaskValidationIssue,
     TaskWorker,
     TaskWorkerShutdown,
+    UsageSource,
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.idempotency import TaskIdempotencyIdentity
@@ -189,6 +190,49 @@ class TextTarget(TaskTargetRunner):
         self.inputs.append(context.input_value)
         await context.check_cancelled()
         return "public answer"
+
+
+class UsageTextOutput(str):
+    _usage: object | None
+    _usage_responses: tuple[object, ...]
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        usage: object | None = None,
+        usage_responses: tuple[object, ...] = (),
+    ) -> "UsageTextOutput":
+        output = str.__new__(cls, value)
+        output._usage = usage
+        output._usage_responses = usage_responses
+        return output
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
+
+    @property
+    def usage_responses(self) -> tuple[object, ...]:
+        return self._usage_responses
+
+
+class ReturnedUsageTextTarget(TextTarget):
+    async def run(self, context: TaskTargetContext) -> object:
+        self.inputs.append(context.input_value)
+        await context.check_cancelled()
+        return UsageTextOutput(
+            "public answer",
+            usage={
+                "input_tokens": 6,
+                "cached_input_tokens": 2,
+                "output_tokens": 4,
+                "reasoning_tokens": 1,
+                "total_tokens": 10,
+                "provider_family": "openai",
+                "raw_response_id": "private-response-id",
+            },
+        )
 
 
 class PrefixTextConverter:
@@ -1019,6 +1063,46 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(depth.active, 0)
         self.assertEqual(depth.dead, 0)
         self.assertIsNone(health.oldest_available_at)
+
+    async def test_returned_usage_output_reaches_queued_inspection(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = ReturnedUsageTextTarget()
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition()
+
+        submission = await client.enqueue(
+            definition,
+            input_value="private prompt",
+        )
+        processed = await worker.process_once()
+        inspection = await client.inspect(submission.run.run_id)
+        output = await client.output(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertTrue(output.ready)
+        self.assertEqual(output.output_summary, {"privacy": REDACTED_MARKER})
+        self.assertEqual(target.inputs, ["private prompt"])
+        self.assertEqual(len(inspection.usage), 1)
+        self.assertEqual(inspection.usage[0].source, UsageSource.EXACT)
+        self.assertEqual(inspection.usage[0].totals.input_tokens, 6)
+        self.assertEqual(inspection.usage_totals.cached_input_tokens, 2)
+        self.assertEqual(inspection.usage_totals.output_tokens, 4)
+        self.assertEqual(inspection.usage_totals.reasoning_tokens, 1)
+        self.assertEqual(inspection.usage_totals.total_tokens, 10)
+        self.assertEqual(
+            inspection.usage[0].metadata,
+            {"provider_family": "openai"},
+        )
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private prompt", inspection_value)
+        self.assertNotIn("raw_response_id", inspection_value)
+        self.assertNotIn("private-response-id", inspection_value)
 
     async def test_file_array_task_materializes_all_inputs(
         self,

@@ -9,7 +9,11 @@ from .artifact import (
 )
 from .attempt import TaskAttemptDecision, TaskAttemptPolicy
 from .canonical import spec_hash
-from .context import TaskInputFile, TaskTargetContext
+from .context import (
+    TaskInputFile,
+    TaskTargetContext,
+    TaskUsageObservationTracker,
+)
 from .converters import (
     FileConverter,
     TaskFileConversionError,
@@ -953,6 +957,23 @@ class DirectTaskRunner:
         sanitizer: PrivacySanitizer,
         expires_at: datetime | None,
     ) -> TaskRunResult:
+        async def observe_usage(response: object) -> None:
+            await self._record_usage(
+                response,
+                definition=definition,
+                run=run,
+                attempt=attempt,
+            )
+
+        usage_observer = (
+            observe_usage if definition.observability.metrics else None
+        )
+        usage_tracker = TaskUsageObservationTracker(
+            usage_observer,
+            has_observations=lambda response: bool(
+                usage_observations_from_response(response)
+            ),
+        )
         context = TaskTargetContext(
             definition=definition,
             execution=attempt.context,
@@ -970,16 +991,7 @@ class DirectTaskRunner:
                 sanitizer=sanitizer,
             ),
             usage_observer=(
-                (
-                    lambda response: self._record_usage(
-                        response,
-                        definition=definition,
-                        run=run,
-                        attempt=attempt,
-                    )
-                )
-                if definition.observability.metrics
-                else None
+                usage_tracker.observe if usage_observer is not None else None
             ),
             artifact_store=self._artifact_store,
             task_store=self._store,
@@ -991,6 +1003,8 @@ class DirectTaskRunner:
             timeout=definition.run.timeout_seconds,
         )
         await self._check_cancellation_or_expiry(run, expires_at)
+        if not usage_tracker.observed:
+            await usage_tracker.observe(output)
         output_issues = validate_task_output(definition, output)
         if output_issues:
             return await self._finalizer.finalize_failure(

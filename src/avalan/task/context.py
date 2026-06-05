@@ -21,6 +21,36 @@ _SAFE_LOGICAL_PATH_PREFIXES = ("artifact:", "inline:", "provider:")
 TaskCancellationChecker = Callable[[], Awaitable[None]]
 TaskEventListener = Callable[[Event], Awaitable[None] | None]
 TaskUsageObserver = Callable[[object], Awaitable[None] | None]
+TaskUsageObservationPredicate = Callable[[object], bool]
+
+
+class TaskUsageObservationTracker:
+    def __init__(
+        self,
+        observer: TaskUsageObserver | None,
+        *,
+        has_observations: TaskUsageObservationPredicate,
+    ) -> None:
+        if observer is not None:
+            assert callable(observer)
+        assert callable(has_observations)
+        self._observer = observer
+        self._has_observations = has_observations
+        self._observed = False
+
+    @property
+    def observed(self) -> bool:
+        return self._observed
+
+    async def observe(self, response: object) -> None:
+        if self._observer is None:
+            return
+        has_observations = self._has_observations(response)
+        previous_observed = self._observed
+        result = self._observer(response)
+        if result is not None:
+            await result
+        self._observed = previous_observed or has_observations
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,7 +1,11 @@
 from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactPurpose, TaskArtifactState
 from .attempt import TaskAttemptPolicy
-from .context import TaskInputFile, TaskTargetContext
+from .context import (
+    TaskInputFile,
+    TaskTargetContext,
+    TaskUsageObservationTracker,
+)
 from .converters import FileConverter
 from .converters.registry import default_file_converters
 from .definition import ObservabilitySinkType, TaskDefinition, TaskInputType
@@ -288,6 +292,23 @@ class TaskWorker:
         attempt: TaskAttempt,
         sanitizer: PrivacySanitizer,
     ) -> object:
+        async def observe_usage(response: object) -> None:
+            await self._record_usage(
+                response,
+                definition=definition,
+                run=run,
+                attempt=attempt,
+            )
+
+        usage_observer = (
+            observe_usage if definition.observability.metrics else None
+        )
+        usage_tracker = TaskUsageObservationTracker(
+            usage_observer,
+            has_observations=lambda response: bool(
+                usage_observations_from_response(response)
+            ),
+        )
         context = TaskTargetContext(
             definition=definition,
             execution=attempt.context,
@@ -302,16 +323,7 @@ class TaskWorker:
                 sanitizer=sanitizer,
             ),
             usage_observer=(
-                (
-                    lambda response: self._record_usage(
-                        response,
-                        definition=definition,
-                        run=run,
-                        attempt=attempt,
-                    )
-                )
-                if definition.observability.metrics
-                else None
+                usage_tracker.observe if usage_observer is not None else None
             ),
             artifact_store=self._artifact_store,
             task_store=self._store,
@@ -324,6 +336,8 @@ class TaskWorker:
             timeout=definition.run.timeout_seconds,
         )
         await self._check_cancelled(run.run_id)
+        if not usage_tracker.observed:
+            await usage_tracker.observe(output)
         issues = validate_task_output(definition, output)
         if issues:
             raise TaskValidationError(issues)
