@@ -21,7 +21,7 @@ from .usage import (
     UsageSource,
     UsageTotals,
     stable_usage_id_for_response,
-    usage_observations_from_response,
+    usage_observation_entries_from_response,
 )
 
 from collections.abc import Awaitable, Callable, Mapping
@@ -257,20 +257,20 @@ async def record_response_usage(
     run_id: str,
     attempt_id: str | None = None,
 ) -> None:
-    observations = usage_observations_from_response(response)
-    if not observations:
+    entries = usage_observation_entries_from_response(response)
+    if not entries:
         return
     recorded_usage_ids = await _recorded_usage_ids(
         store,
         run_id=run_id,
         attempt_id=attempt_id,
     )
-    for sequence, observation in enumerate(observations, start=1):
+    for entry in entries:
         usage_id = stable_usage_id_for_response(
-            response,
+            entry.response,
             run_id=run_id,
             attempt_id=attempt_id,
-            sequence=sequence,
+            sequence=entry.sequence,
         )
         if usage_id in recorded_usage_ids:
             continue
@@ -280,7 +280,7 @@ async def record_response_usage(
             run_id=run_id,
             attempt_id=attempt_id,
             usage_id=usage_id,
-            observation=observation,
+            observation=entry.observation,
         )
         recorded_usage_ids.add(usage_id)
 

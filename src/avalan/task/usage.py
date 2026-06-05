@@ -155,6 +155,21 @@ class UsageRecord:
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class UsageObservationEntry:
+    response: object
+    sequence: int
+    observation: UsageObservation
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.sequence, int), "sequence must be an integer"
+        assert not isinstance(
+            self.sequence, bool
+        ), "sequence must be an integer"
+        assert self.sequence > 0, "sequence must be positive"
+        assert isinstance(self.observation, UsageObservation)
+
+
 class UsageResponse(Protocol):
     input_token_count: int | None
     output_token_count: int | None
@@ -316,21 +331,37 @@ def usage_smoke_summary(
 def usage_observations_from_response(
     response: object,
 ) -> tuple[UsageObservation, ...]:
-    child_observations = _child_usage_observations(response)
-    if child_observations:
-        return child_observations
+    return tuple(
+        entry.observation
+        for entry in usage_observation_entries_from_response(response)
+    )
 
+
+def usage_observation_entries_from_response(
+    response: object,
+) -> tuple[UsageObservationEntry, ...]:
+    child_entries = _child_usage_observation_entries(response)
+    if child_entries:
+        return child_entries
     usage = _usage_container(response)
     if isinstance(usage, list | tuple):
-        observations = _usage_observations_from_usage_items(
+        entries = _usage_observation_entries_from_usage_items(
             usage,
             response=response,
         )
-        if observations:
-            return observations
+        if entries:
+            return entries
 
     observation = usage_observation_from_response(response)
-    return (observation,) if observation is not None else ()
+    if observation is None:
+        return ()
+    return (
+        UsageObservationEntry(
+            response=response,
+            sequence=1,
+            observation=observation,
+        ),
+    )
 
 
 def usage_totals_from_response(response: object) -> UsageTotals | None:
@@ -391,23 +422,25 @@ def attach_response_usage_recorder(
         if recorded:
             return
         recorded = True
-        observations = usage_observations_from_response(response)
-        for sequence, observation in enumerate(observations, start=1):
+        entries = usage_observation_entries_from_response(response)
+        for entry in entries:
             await store.append_usage(
                 run_id,
                 attempt_id=attempt_id,
                 usage_id=_usage_record_id(
-                    response,
+                    entry.response,
                     run_id=run_id,
                     attempt_id=attempt_id,
-                    sequence=sequence,
+                    sequence=entry.sequence,
                     usage_id=usage_id,
-                    observation_count=len(observations),
+                    observation_count=len(entries),
                 ),
-                source=source or observation.source,
-                totals=observation.totals,
+                source=source or entry.observation.source,
+                totals=entry.observation.totals,
                 metadata=(
-                    metadata if metadata is not None else observation.metadata
+                    metadata
+                    if metadata is not None
+                    else entry.observation.metadata
                 ),
             )
 
@@ -598,6 +631,17 @@ def _child_usage_observations(
     *,
     seen: set[int] | None = None,
 ) -> tuple[UsageObservation, ...]:
+    return tuple(
+        entry.observation
+        for entry in _child_usage_observation_entries(response, seen=seen)
+    )
+
+
+def _child_usage_observation_entries(
+    response: object,
+    *,
+    seen: set[int] | None = None,
+) -> tuple[UsageObservationEntry, ...]:
     if seen is None:
         seen = set()
     response_id = id(response)
@@ -612,7 +656,7 @@ def _child_usage_observations(
     if not isinstance(usage_responses, list | tuple):
         return ()
 
-    observations: list[UsageObservation] = []
+    entries: list[UsageObservationEntry] = []
     for usage_response in usage_responses:
         if usage_response is response:
             continue
@@ -621,9 +665,10 @@ def _child_usage_observations(
             continue
         usage = _usage_container(usage_response)
         if usage is not None:
+            seen.add(usage_response_id)
             if isinstance(usage, list | tuple):
-                observations.extend(
-                    _usage_observations_from_usage_items(
+                entries.extend(
+                    _usage_observation_entries_from_usage_items(
                         usage,
                         response=usage_response,
                     )
@@ -634,24 +679,28 @@ def _child_usage_observations(
                     _PROVIDER_COUNTER_PATHS,
                 )
                 if totals is not None:
-                    observations.append(
-                        UsageObservation(
-                            source=UsageSource.EXACT,
-                            totals=totals,
-                            metadata=_usage_metadata_from_response(
-                                usage_response,
-                                usage,
+                    entries.append(
+                        UsageObservationEntry(
+                            response=usage_response,
+                            sequence=1,
+                            observation=UsageObservation(
+                                source=UsageSource.EXACT,
+                                totals=totals,
+                                metadata=_usage_metadata_from_response(
+                                    usage_response,
+                                    usage,
+                                ),
                             ),
                         )
                     )
             continue
 
-        child_observations = _child_usage_observations(
+        child_entries = _child_usage_observation_entries(
             usage_response,
             seen=seen,
         )
-        if child_observations:
-            observations.extend(child_observations)
+        if child_entries:
+            entries.extend(child_entries)
             continue
 
         totals = _usage_totals_from_value(
@@ -659,17 +708,21 @@ def _child_usage_observations(
             _RESPONSE_COUNTER_PATHS,
         )
         if totals is not None:
-            observations.append(
-                UsageObservation(
-                    source=UsageSource.ESTIMATED,
-                    totals=totals,
-                    metadata=_usage_metadata_from_response(
-                        usage_response,
-                        None,
+            entries.append(
+                UsageObservationEntry(
+                    response=usage_response,
+                    sequence=1,
+                    observation=UsageObservation(
+                        source=UsageSource.ESTIMATED,
+                        totals=totals,
+                        metadata=_usage_metadata_from_response(
+                            usage_response,
+                            None,
+                        ),
                     ),
                 )
             )
-    return tuple(observations)
+    return tuple(entries)
 
 
 def _usage_observations_from_usage_items(
@@ -677,6 +730,20 @@ def _usage_observations_from_usage_items(
     *,
     response: object,
 ) -> tuple[UsageObservation, ...]:
+    return tuple(
+        entry.observation
+        for entry in _usage_observation_entries_from_usage_items(
+            usage_items,
+            response=response,
+        )
+    )
+
+
+def _usage_observation_entries_from_usage_items(
+    usage_items: list[object] | tuple[object, ...],
+    *,
+    response: object,
+) -> tuple[UsageObservationEntry, ...]:
     observations: list[UsageObservation] = []
     for usage in usage_items:
         totals = _usage_totals_from_value(usage, _PROVIDER_COUNTER_PATHS)
@@ -689,7 +756,14 @@ def _usage_observations_from_usage_items(
                 metadata=_usage_metadata_from_response(response, usage),
             )
         )
-    return tuple(observations)
+    return tuple(
+        UsageObservationEntry(
+            response=response,
+            sequence=sequence,
+            observation=observation,
+        )
+        for sequence, observation in enumerate(observations, start=1)
+    )
 
 
 def _aggregate_usage_observations(

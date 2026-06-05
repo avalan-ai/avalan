@@ -205,6 +205,53 @@ class DistinctProviderUsageObservingTarget:
         return "short summary"
 
 
+class PartiallyObservedUsageWrapperTarget:
+    def __init__(self) -> None:
+        self.contexts: list[TaskTargetContext] = []
+        self.first_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 4,
+                "cached_input_tokens": 1,
+                "output_tokens": 6,
+                "total_tokens": 10,
+                "raw_response_id": "private-first-response",
+            },
+        )
+        self.second_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 5,
+                "cache_creation_input_tokens": 2,
+                "output_tokens": 7,
+                "reasoning_tokens": 3,
+                "total_tokens": 12,
+                "raw_response_id": "private-second-response",
+            },
+        )
+        self.malformed_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": "private prompt",
+                "output_tokens": -1,
+                "total_tokens": True,
+                "raw_response_body": "private provider body",
+            },
+        )
+
+    async def __call__(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        await context.observe_usage(self.first_response)
+        return UsageTextOutput(
+            "short summary",
+            usage_responses=(
+                self.first_response,
+                self.second_response,
+                self.malformed_response,
+            ),
+        )
+
+
 class EmptyThenReturnedUsageTarget:
     def __init__(self, output: object) -> None:
         self.output = output
@@ -900,6 +947,40 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(sink.usage_totals), 2)
         self.assertEqual(sink.usage_event_count, 2)
         self.assertNotIn("private-response", str(records))
+
+    async def test_observe_usage_records_unobserved_returned_wrapper_calls(
+        self,
+    ) -> None:
+        sink = RecordingUsageSink()
+        target = PartiallyObservedUsageWrapperTarget()
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-partial-wrapper",
+            observability_sink=sink,
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+        totals = await self.store.usage_totals(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record.sequence for record in records], [1, 2])
+        self.assertEqual(records[0].totals.input_tokens, 4)
+        self.assertEqual(records[0].totals.cached_input_tokens, 1)
+        self.assertEqual(records[1].totals.input_tokens, 5)
+        self.assertEqual(records[1].totals.cache_creation_input_tokens, 2)
+        self.assertEqual(records[1].totals.reasoning_tokens, 3)
+        self.assertEqual(totals.input_tokens, 9)
+        self.assertEqual(totals.output_tokens, 13)
+        self.assertEqual(totals.total_tokens, 22)
+        self.assertEqual(len(sink.usage_totals), 2)
+        self.assertEqual(sink.usage_event_count, 2)
+        self.assertNotIn("private-first-response", str(records))
+        self.assertNotIn("private-second-response", str(records))
+        self.assertNotIn("private provider body", str(records))
 
     async def test_observe_usage_drops_malformed_nested_provider_call(
         self,

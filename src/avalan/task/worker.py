@@ -332,8 +332,7 @@ class TaskWorker:
             timeout=definition.run.timeout_seconds,
         )
         await self._check_cancelled(run.run_id)
-        if not usage_tracker.observed:
-            await usage_tracker.observe(output)
+        await usage_tracker.observe(output)
         issues = validate_task_output(definition, output)
         if issues:
             raise TaskValidationError(issues)

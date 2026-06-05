@@ -110,6 +110,15 @@ class FakeProviderResponse(FakeConsumedResponse):
         )
 
 
+class FakeUsageWrapperResponse(FakeConsumedResponse):
+    def __init__(self, *responses: object) -> None:
+        super().__init__(
+            input_token_count=None,
+            output_token_count=None,
+        )
+        self.usage_responses = responses
+
+
 class HostileResponse:
     input_token_count = -1
     output_token_count = True
@@ -1624,6 +1633,72 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
             records[0].metadata["cache_creation_ephemeral_1h_input_tokens"],
             8,
         )
+
+    async def test_callback_records_nested_usage_without_private_replay(
+        self,
+    ) -> None:
+        first_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 2,
+                "cached_input_tokens": 1,
+                "output_tokens": 3,
+                "total_tokens": 5,
+                "raw_response_id": "private-first-response",
+            },
+        )
+        second_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 4,
+                "cache_creation_input_tokens": 2,
+                "output_tokens": 6,
+                "reasoning_tokens": 1,
+                "total_tokens": 10,
+                "raw_response_id": "private-second-response",
+            },
+        )
+        malformed_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": "private prompt",
+                "output_tokens": -1,
+                "total_tokens": True,
+                "raw_response_body": "private provider body",
+            },
+        )
+        response = FakeUsageWrapperResponse(
+            first_response,
+            second_response,
+            malformed_response,
+        )
+
+        self.assertTrue(
+            attach_response_usage_recorder(
+                response,
+                store=self.store,
+                run_id=self.run.run_id,
+                attempt_id=self.attempt.attempt_id,
+            )
+        )
+        await response.consume()
+        await response.consume()
+
+        records = await self.store.list_usage(self.run.run_id)
+        totals = await self.store.usage_totals(self.run.run_id)
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record.sequence for record in records], [1, 2])
+        self.assertEqual(records[0].totals.input_tokens, 2)
+        self.assertEqual(records[0].totals.cached_input_tokens, 1)
+        self.assertEqual(records[1].totals.input_tokens, 4)
+        self.assertEqual(records[1].totals.cache_creation_input_tokens, 2)
+        self.assertEqual(records[1].totals.reasoning_tokens, 1)
+        self.assertEqual(totals.input_tokens, 6)
+        self.assertEqual(totals.output_tokens, 9)
+        self.assertEqual(totals.total_tokens, 15)
+        self.assertNotIn("private-first-response", str(records))
+        self.assertNotIn("private-second-response", str(records))
+        self.assertNotIn("private provider body", str(records))
 
     async def test_stable_usage_id_prevents_duplicate_records(self) -> None:
         usage_id = stable_usage_id(

@@ -246,6 +246,53 @@ class UsageTarget(FakeTarget):
         return self.output
 
 
+class PartiallyObservedUsageWrapperTarget(FakeTarget):
+    def __init__(self) -> None:
+        super().__init__("done")
+        self.first_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 4,
+                "cached_input_tokens": 1,
+                "output_tokens": 6,
+                "total_tokens": 10,
+                "raw_response_id": "private-first-response",
+            },
+        )
+        self.second_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": 5,
+                "cache_creation_input_tokens": 2,
+                "output_tokens": 7,
+                "reasoning_tokens": 3,
+                "total_tokens": 12,
+                "raw_response_id": "private-second-response",
+            },
+        )
+        self.malformed_response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": "private prompt",
+                "output_tokens": -1,
+                "total_tokens": True,
+                "raw_response_body": "private provider body",
+            },
+        )
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        await context.observe_usage(self.first_response)
+        return UsageTextOutput(
+            "done",
+            usage_responses=(
+                self.first_response,
+                self.second_response,
+                self.malformed_response,
+            ),
+        )
+
+
 class StaticEncryptionProvider:
     def encrypt(
         self,
@@ -2101,6 +2148,43 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(totals.output_tokens, 3)
         self.assertEqual(len(sink.usage_totals), 1)
         self.assertEqual(sink.usage_event_count, 1)
+
+    async def test_process_once_records_unobserved_returned_wrapper_calls(
+        self,
+    ) -> None:
+        sink = RecordingUsageSink()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=PartiallyObservedUsageWrapperTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+            observability_sink=sink,
+        )
+
+        result = await worker.process_once()
+
+        records = await self.store.list_usage(self.run.run_id)
+        totals = await self.store.usage_totals(self.run.run_id)
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(result.completion)
+        assert result.completion is not None
+        self.assertEqual(result.completion.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record.sequence for record in records], [1, 2])
+        self.assertEqual(records[0].totals.input_tokens, 4)
+        self.assertEqual(records[0].totals.cached_input_tokens, 1)
+        self.assertEqual(records[1].totals.input_tokens, 5)
+        self.assertEqual(records[1].totals.cache_creation_input_tokens, 2)
+        self.assertEqual(records[1].totals.reasoning_tokens, 3)
+        self.assertEqual(totals.input_tokens, 9)
+        self.assertEqual(totals.output_tokens, 13)
+        self.assertEqual(totals.total_tokens, 22)
+        self.assertEqual(len(sink.usage_totals), 2)
+        self.assertEqual(sink.usage_event_count, 2)
+        self.assertNotIn("private-first-response", str(records))
+        self.assertNotIn("private-second-response", str(records))
+        self.assertNotIn("private provider body", str(records))
 
     async def test_record_usage_conflict_does_not_emit_sink_usage(
         self,

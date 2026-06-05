@@ -999,8 +999,7 @@ class DirectTaskRunner:
             timeout=definition.run.timeout_seconds,
         )
         await self._check_cancellation_or_expiry(run, expires_at)
-        if not usage_tracker.observed:
-            await usage_tracker.observe(output)
+        await usage_tracker.observe(output)
         output_issues = validate_task_output(definition, output)
         if output_issues:
             return await self._finalizer.finalize_failure(
