@@ -982,6 +982,94 @@ class UsageTotalsTest(TestCase):
             UsageProviderFamily.OPENAI.value,
         )
 
+    def test_nested_usage_responses_are_flattened_per_call(self) -> None:
+        nested = MultiCallUsageResponse(
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 1,
+                    "total_tokens": 2,
+                    "provider_family": "openai",
+                }
+            ),
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 3,
+                    "reasoning_tokens": 1,
+                    "total_tokens": 4,
+                    "provider_family": "openai",
+                }
+            ),
+        )
+        response = MultiCallUsageResponse(
+            nested,
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 5,
+                    "cached_input_tokens": 2,
+                    "total_tokens": 6,
+                    "provider_family": "openai",
+                }
+            ),
+        )
+
+        observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
+
+        self.assertEqual(len(observations), 3)
+        self.assertEqual(
+            [observation.totals.input_tokens for observation in observations],
+            [1, 3, 5],
+        )
+        self.assertEqual(observations[1].totals.reasoning_tokens, 1)
+        self.assertEqual(observations[2].totals.cached_input_tokens, 2)
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.totals.input_tokens, 9)
+        self.assertEqual(aggregate.totals.cached_input_tokens, 2)
+        self.assertEqual(aggregate.totals.reasoning_tokens, 1)
+        self.assertEqual(aggregate.totals.total_tokens, 12)
+        self.assertEqual(
+            aggregate.metadata["provider_family"],
+            UsageProviderFamily.OPENAI.value,
+        )
+
+    def test_cyclic_usage_responses_are_ignored(self) -> None:
+        parent = MultiCallUsageResponse()
+        child = MultiCallUsageResponse(parent)
+        parent.usage_responses = (
+            child,
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 7,
+                    "total_tokens": 8,
+                    "provider_family": "openai",
+                }
+            ),
+        )
+
+        observations = usage_observations_from_response(parent)
+        aggregate = usage_observation_from_response(parent)
+
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].totals.input_tokens, 7)
+        self.assertEqual(observations[0].totals.total_tokens, 8)
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.totals.input_tokens, 7)
+        self.assertEqual(aggregate.totals.total_tokens, 8)
+
+    def test_seen_usage_response_is_ignored(self) -> None:
+        response = MultiCallUsageResponse(
+            SimpleNamespace(usage={"input_tokens": 1})
+        )
+
+        observations = usage_module._child_usage_observations(
+            response,
+            seen={id(response)},
+        )
+
+        self.assertEqual(observations, ())
+
     def test_mixed_source_aggregate_is_estimated_without_shared_metadata(
         self,
     ) -> None:

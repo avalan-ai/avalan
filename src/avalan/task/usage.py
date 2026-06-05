@@ -595,7 +595,15 @@ def _provider_family_value(value: object) -> UsageProviderFamily | None:
 
 def _child_usage_observations(
     response: object,
+    *,
+    seen: set[int] | None = None,
 ) -> tuple[UsageObservation, ...]:
+    if seen is None:
+        seen = set()
+    response_id = id(response)
+    if response_id in seen:
+        return ()
+    seen.add(response_id)
     usage_responses = getattr(response, "usage_responses", None)
     if usage_responses is None:
         return ()
@@ -607,6 +615,9 @@ def _child_usage_observations(
     observations: list[UsageObservation] = []
     for usage_response in usage_responses:
         if usage_response is response:
+            continue
+        usage_response_id = id(usage_response)
+        if usage_response_id in seen:
             continue
         usage = _usage_container(usage_response)
         if usage is not None:
@@ -635,9 +646,29 @@ def _child_usage_observations(
                     )
             continue
 
-        observation = usage_observation_from_response(usage_response)
-        if observation is not None:
-            observations.append(observation)
+        child_observations = _child_usage_observations(
+            usage_response,
+            seen=seen,
+        )
+        if child_observations:
+            observations.extend(child_observations)
+            continue
+
+        totals = _usage_totals_from_value(
+            usage_response,
+            _RESPONSE_COUNTER_PATHS,
+        )
+        if totals is not None:
+            observations.append(
+                UsageObservation(
+                    source=UsageSource.ESTIMATED,
+                    totals=totals,
+                    metadata=_usage_metadata_from_response(
+                        usage_response,
+                        None,
+                    ),
+                )
+            )
     return tuple(observations)
 
 
