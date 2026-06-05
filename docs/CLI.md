@@ -1862,6 +1862,13 @@ Direct runs with `--ephemeral` are useful for local output checks only. To
 inspect records after the process exits, run with a durable store or inspect
 the in-memory client from the same SDK process that executed the task.
 
+For live usage smoke, keep inputs, outputs, and summaries in an ignored local
+workspace. Run without `--ephemeral`, capture the run id printed after
+`Task run completed:`, then call `avalan task inspect` and
+`avalan task usage --source exact` against the same durable store. Ephemeral
+runs validate output shape only; SDK smoke can use `InMemoryTaskStore` when
+inspection happens in the same process.
+
 ### avalan task usage
 
 Print usage records and rollups for a run:

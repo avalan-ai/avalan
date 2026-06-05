@@ -8,12 +8,13 @@ from ..types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from math import isfinite
+from re import fullmatch
 from types import MappingProxyType
 from typing import Protocol, TypeAlias, cast
 
@@ -38,6 +39,12 @@ class UsageProviderFamily(StrEnum):
     OPENAI = "openai"
     OPENAI_COMPATIBLE = "openai_compatible"
     OTHER = "other"
+
+
+class UsageCounterPresence(StrEnum):
+    MISSING = "missing"
+    REPORTED_ZERO = "reported_zero"
+    REPORTED_POSITIVE = "reported_positive"
 
 
 USAGE_COUNTER_NAMES = (
@@ -245,6 +252,54 @@ def usage_observation_from_response(
     )
 
 
+def usage_counter_presence(
+    totals: UsageTotals,
+) -> Mapping[str, UsageCounterPresence]:
+    assert isinstance(totals, UsageTotals)
+    return MappingProxyType(
+        {
+            name: _usage_counter_presence(_counter_value(totals, name))
+            for name in USAGE_COUNTER_NAMES
+        }
+    )
+
+
+def usage_smoke_summary(
+    *,
+    task_variant: str,
+    success: bool,
+    schema_valid: bool,
+    expected_output_match: bool,
+    totals: UsageTotals,
+    required_counters: Iterable[str] = (),
+) -> Mapping[str, TaskUsageValue]:
+    _assert_smoke_task_variant(task_variant)
+    assert isinstance(success, bool), "success must be a boolean"
+    assert isinstance(schema_valid, bool), "schema_valid must be a boolean"
+    assert isinstance(
+        expected_output_match, bool
+    ), "expected_output_match must be a boolean"
+    assert isinstance(totals, UsageTotals)
+    required_counter_names = _usage_required_counter_names(required_counters)
+    presence = usage_counter_presence(totals)
+    return MappingProxyType(
+        {
+            "task_variant": task_variant,
+            "success": success,
+            "schema_valid": schema_valid,
+            "expected_output_match": expected_output_match,
+            "required_usage_present": all(
+                presence[name] != UsageCounterPresence.MISSING
+                for name in required_counter_names
+            ),
+            "usage_field_presence": MappingProxyType(
+                {name: presence[name].value for name in USAGE_COUNTER_NAMES}
+            ),
+            "usage_totals": _usage_totals_snapshot(totals),
+        }
+    )
+
+
 def usage_observations_from_response(
     response: object,
 ) -> tuple[UsageObservation, ...]:
@@ -268,6 +323,39 @@ def usage_observations_from_response(
 def usage_totals_from_response(response: object) -> UsageTotals | None:
     observation = usage_observation_from_response(response)
     return observation.totals if observation is not None else None
+
+
+def _usage_counter_presence(value: int | None) -> UsageCounterPresence:
+    if value is None:
+        return UsageCounterPresence.MISSING
+    if value == 0:
+        return UsageCounterPresence.REPORTED_ZERO
+    return UsageCounterPresence.REPORTED_POSITIVE
+
+
+def _usage_totals_snapshot(totals: UsageTotals) -> TaskUsageMetadata:
+    return MappingProxyType(
+        {name: _counter_value(totals, name) for name in USAGE_COUNTER_NAMES}
+    )
+
+
+def _assert_smoke_task_variant(value: str) -> None:
+    _assert_non_empty_string(value, "task_variant")
+    assert fullmatch(
+        r"[a-z][a-z0-9_.-]{0,63}", value
+    ), "task_variant must be a safe label"
+
+
+def _usage_required_counter_names(
+    values: Iterable[str],
+) -> tuple[str, ...]:
+    names: list[str] = []
+    for value in values:
+        assert isinstance(value, str), "required counters must be strings"
+        assert value in USAGE_COUNTER_NAMES, "unknown required usage counter"
+        if value not in names:
+            names.append(value)
+    return tuple(names)
 
 
 def attach_response_usage_recorder(

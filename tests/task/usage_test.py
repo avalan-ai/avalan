@@ -18,6 +18,7 @@ from avalan.task import (
     TaskOutputContract,
     TaskStoreConflictError,
     TaskStoreNotFoundError,
+    UsageCounterPresence,
     UsageProviderFamily,
     UsageRecord,
     UsageSource,
@@ -27,8 +28,10 @@ from avalan.task import (
     freeze_usage_value,
     stable_usage_id,
     stable_usage_id_for_response,
+    usage_counter_presence,
     usage_observation_from_response,
     usage_observations_from_response,
+    usage_smoke_summary,
     usage_totals_from_response,
 )
 from avalan.task.stores import InMemoryTaskStore
@@ -161,6 +164,132 @@ class UsageTotalsTest(TestCase):
                 "cache_read_ephemeral_1h_input_tokens",
             ),
         )
+
+    def test_usage_counter_presence_distinguishes_missing_zero_and_positive(
+        self,
+    ) -> None:
+        presence = usage_counter_presence(
+            UsageTotals(
+                input_tokens=None,
+                cached_input_tokens=0,
+                cache_creation_input_tokens=2,
+                output_tokens=5,
+            )
+        )
+
+        self.assertEqual(
+            presence["input_tokens"],
+            UsageCounterPresence.MISSING,
+        )
+        self.assertEqual(
+            presence["cached_input_tokens"],
+            UsageCounterPresence.REPORTED_ZERO,
+        )
+        self.assertEqual(
+            presence["cache_creation_input_tokens"],
+            UsageCounterPresence.REPORTED_POSITIVE,
+        )
+        self.assertEqual(
+            presence["output_tokens"],
+            UsageCounterPresence.REPORTED_POSITIVE,
+        )
+        with self.assertRaises(TypeError):
+            cast(dict[str, object], presence)["input_tokens"] = "private"
+
+    def test_usage_smoke_summary_is_redacted_and_numeric(self) -> None:
+        summary = usage_smoke_summary(
+            task_variant="native_pdf",
+            success=True,
+            schema_valid=True,
+            expected_output_match=False,
+            totals=UsageTotals(
+                input_tokens=12,
+                cached_input_tokens=0,
+                output_tokens=8,
+                reasoning_tokens=3,
+                total_tokens=20,
+            ),
+            required_counters=(
+                "cached_input_tokens",
+                "reasoning_tokens",
+            ),
+        )
+
+        self.assertEqual(summary["task_variant"], "native_pdf")
+        self.assertTrue(summary["success"])
+        self.assertTrue(summary["schema_valid"])
+        self.assertFalse(summary["expected_output_match"])
+        self.assertTrue(summary["required_usage_present"])
+        presence = summary["usage_field_presence"]
+        assert isinstance(presence, Mapping)
+        self.assertEqual(
+            presence["cached_input_tokens"],
+            "reported_zero",
+        )
+        self.assertEqual(
+            presence["reasoning_tokens"],
+            "reported_positive",
+        )
+        totals = summary["usage_totals"]
+        assert isinstance(totals, Mapping)
+        self.assertEqual(totals["input_tokens"], 12)
+        self.assertEqual(totals["cached_input_tokens"], 0)
+        self.assertIsNone(totals["cache_creation_input_tokens"])
+        self.assertNotIn("private", str(summary))
+
+    def test_usage_smoke_summary_reports_missing_required_counters(
+        self,
+    ) -> None:
+        summary = usage_smoke_summary(
+            task_variant="image_flow",
+            success=True,
+            schema_valid=True,
+            expected_output_match=True,
+            totals=UsageTotals(input_tokens=0),
+            required_counters=("reasoning_tokens",),
+        )
+
+        self.assertFalse(summary["required_usage_present"])
+        presence = summary["usage_field_presence"]
+        assert isinstance(presence, Mapping)
+        self.assertEqual(presence["input_tokens"], "reported_zero")
+        self.assertEqual(presence["reasoning_tokens"], "missing")
+
+    def test_usage_smoke_summary_rejects_unsafe_values(self) -> None:
+        hostile_variants = (
+            "",
+            "../native_pdf",
+            "NativePDF",
+            "native pdf",
+            "native_pdf/private",
+        )
+        for task_variant in hostile_variants:
+            with self.subTest(task_variant=task_variant):
+                with self.assertRaises(AssertionError):
+                    usage_smoke_summary(
+                        task_variant=task_variant,
+                        success=True,
+                        schema_valid=True,
+                        expected_output_match=True,
+                        totals=UsageTotals(input_tokens=1),
+                    )
+        with self.assertRaises(AssertionError):
+            usage_smoke_summary(
+                task_variant="native_pdf",
+                success=True,
+                schema_valid=True,
+                expected_output_match=True,
+                totals=UsageTotals(input_tokens=1),
+                required_counters=("private_counter",),
+            )
+        with self.assertRaises(AssertionError):
+            usage_smoke_summary(
+                task_variant="native_pdf",
+                success=cast(bool, 1),
+                schema_valid=True,
+                expected_output_match=True,
+                totals=UsageTotals(input_tokens=1),
+            )
 
     def test_response_usage_preserves_unavailable_counters_as_none(
         self,

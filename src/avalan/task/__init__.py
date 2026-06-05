@@ -342,6 +342,7 @@ from .usage import USAGE_METADATA_KEYS as USAGE_METADATA_KEYS
 from .usage import TaskUsageMetadata as TaskUsageMetadata
 from .usage import TaskUsageStore as TaskUsageStore
 from .usage import TaskUsageValue as TaskUsageValue
+from .usage import UsageCounterPresence as UsageCounterPresence
 from .usage import UsageObservation as UsageObservation
 from .usage import UsageProviderFamily as UsageProviderFamily
 from .usage import UsageRecord as UsageRecord
@@ -358,12 +359,14 @@ from .usage import stable_usage_id as stable_usage_id
 from .usage import (
     stable_usage_id_for_response as stable_usage_id_for_response,
 )
+from .usage import usage_counter_presence as usage_counter_presence
 from .usage import (
     usage_observation_from_response as usage_observation_from_response,
 )
 from .usage import (
     usage_observations_from_response as usage_observations_from_response,
 )
+from .usage import usage_smoke_summary as usage_smoke_summary
 from .usage import usage_totals_from_response as usage_totals_from_response
 from .validation import (
     TASK_FILE_DELIVERY_DIAGNOSTIC_CODES as TASK_FILE_DELIVERY_DIAGNOSTIC_CODES,

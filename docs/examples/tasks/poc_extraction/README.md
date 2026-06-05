@@ -96,3 +96,106 @@ all of the following are true:
 * The agent `engine.base_url` points at the intended Azure OpenAI `/openai/v1/`
   endpoint.
 * The expected output is a JSON object with a non-empty `line_items` array.
+
+Use an ignored local workspace for live inputs, outputs, and summaries. Keep
+full extraction JSON and provider logs out of tracked files.
+
+Ephemeral runs validate output shape only because usage records disappear when
+the process exits:
+
+```bash
+poetry run avalan task run task.toml \
+  --ephemeral \
+  --pdf ./sample.pdf \
+  --json \
+  --output artifacts/native-output.json
+
+poetry run avalan task run image_flow_task.toml \
+  --ephemeral \
+  --pdf ./sample.pdf \
+  --json \
+  --output artifacts/image-output.json
+```
+
+Durable CLI usage smoke requires a configured task store. Capture the run id
+from the compact run summary, then inspect usage through the durable store:
+
+```bash
+poetry run avalan task run task.toml \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --pdf ./sample.pdf \
+  --json \
+  --output artifacts/native-output.json \
+  | tee artifacts/native-run.txt
+
+RUN_ID="$(python - <<'PY'
+from pathlib import Path
+from re import search
+
+text = Path("artifacts/native-run.txt").read_text(encoding="utf-8")
+match = search(r"Task run completed: ([A-Za-z0-9_.:-]+)", text)
+raise SystemExit(match.group(1) if match else "missing-run-id")
+PY
+)"
+
+poetry run avalan task inspect "$RUN_ID" \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  > artifacts/native-inspect.json
+
+poetry run avalan task usage "$RUN_ID" \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --source exact \
+  > artifacts/native-usage.json
+```
+
+SDK smoke can validate live usage without a durable store by inspecting the
+same in-memory client that executed the task:
+
+```python
+from pathlib import Path
+
+from avalan.task import (
+    TaskClient,
+    TaskDefinitionLoader,
+    UsageTotals,
+    usage_smoke_summary,
+)
+from avalan.task.stores import InMemoryTaskStore
+
+definition = TaskDefinitionLoader().load(Path("task.toml"))
+target = ...  # Configure the same agent target runner used by the CLI.
+client = TaskClient(InMemoryTaskStore(), target=target)
+result = await client.run(
+    definition,
+    input_value=TaskClient.local_file(
+        "sample.pdf",
+        mime_type="application/pdf",
+    ),
+)
+inspection = await client.inspect(result.run.run_id)
+totals = inspection.usage_totals or UsageTotals()
+output = result.output if isinstance(result.output, dict) else {}
+summary = usage_smoke_summary(
+    task_variant="native_pdf",
+    success=result.run.state.value == "succeeded",
+    schema_valid=isinstance(result.output, dict),
+    expected_output_match=bool(output.get("line_items")),
+    totals=totals,
+    required_counters=("input_tokens", "output_tokens", "total_tokens"),
+)
+```
+
+For Azure GPT-5 reasoning validation, include `reasoning_tokens` in
+`required_counters` when the provider response reports it. Cache counters
+should be checked for presence and whether they are `missing`, `reported_zero`,
+or `reported_positive`; do not fail a single live run only because a cache hit
+is reported as zero.
+
+Default CI uses fake-provider tests instead of network calls:
+
+```bash
+poetry run pytest --verbose -s \
+  tests/task/direct_client_e2e_test.py \
+  tests/task/full_e2e_matrix_test.py \
+  tests/cli/task_test.py
+```
