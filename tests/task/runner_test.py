@@ -157,6 +157,11 @@ class CountingUsageResponse:
     output_token_count = 5
 
 
+class MultiCallUsageResponse:
+    def __init__(self, *responses: object) -> None:
+        self.usage_responses = responses
+
+
 class ArtifactOutputTarget:
     async def __call__(self, context: TaskTargetContext) -> object:
         assert context.artifact_store is not None
@@ -611,6 +616,110 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             target.contexts[0].execution.run_id, result.run.run_id
         )
         self.assertEqual(await self.store.list_usage(result.run.run_id), ())
+
+    async def test_observe_usage_records_each_provider_call(self) -> None:
+        target = UsageObservingTarget(
+            MultiCallUsageResponse(
+                type(
+                    "FirstUsageResponse",
+                    (),
+                    {
+                        "usage": {
+                            "input_tokens": 3,
+                            "cached_input_tokens": 1,
+                            "output_tokens": 2,
+                            "total_tokens": 5,
+                            "provider_family": "openai",
+                        }
+                    },
+                )(),
+                type(
+                    "SecondUsageResponse",
+                    (),
+                    {
+                        "usage": {
+                            "input_tokens": 4,
+                            "cache_creation_input_tokens": 2,
+                            "output_tokens": 6,
+                            "reasoning_tokens": 1,
+                            "total_tokens": 10,
+                            "provider_family": "openai",
+                            "raw_response_id": "private-response-id",
+                        }
+                    },
+                )(),
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-multi-call",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+        totals = await self.store.usage_totals(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record.sequence for record in records], [1, 2])
+        self.assertEqual(
+            [record.source for record in records],
+            [UsageSource.EXACT, UsageSource.EXACT],
+        )
+        self.assertEqual(records[0].totals.cached_input_tokens, 1)
+        self.assertEqual(records[1].totals.cache_creation_input_tokens, 2)
+        self.assertEqual(records[1].totals.reasoning_tokens, 1)
+        self.assertNotIn("raw_response_id", records[1].metadata)
+        self.assertEqual(totals.input_tokens, 7)
+        self.assertEqual(totals.output_tokens, 8)
+        self.assertEqual(totals.total_tokens, 15)
+
+    async def test_observe_usage_drops_malformed_nested_provider_call(
+        self,
+    ) -> None:
+        target = UsageObservingTarget(
+            MultiCallUsageResponse(
+                type(
+                    "InvalidUsageResponse",
+                    (),
+                    {
+                        "usage": {
+                            "input_tokens": "private prompt",
+                            "output_tokens": -1,
+                            "total_tokens": True,
+                        }
+                    },
+                )(),
+                type(
+                    "ZeroUsageResponse",
+                    (),
+                    {
+                        "usage": {
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "total_tokens": 0,
+                        }
+                    },
+                )(),
+            )
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-malformed-call",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].totals.input_tokens, 0)
+        self.assertEqual(records[0].totals.output_tokens, 0)
+        self.assertEqual(records[0].totals.total_tokens, 0)
 
     async def test_usage_store_failure_does_not_fail_run(self) -> None:
         store = FailingUsageStore()

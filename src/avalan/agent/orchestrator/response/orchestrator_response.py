@@ -93,6 +93,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._tool_confirm_all = False
         self._parser_queue = Queue()
         self._cancellation_checker = None
+        self._model_responses = [response]
         self._tool_parser = (
             ToolCallResponseParser(self._tool_manager, self._event_manager)
             if enable_tool_parsing and self._tool_manager
@@ -106,6 +107,23 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     @property
     def output_token_count(self) -> int:
         return self._response.output_token_count
+
+    @property
+    def usage(self) -> object | None:
+        usage_values = tuple(
+            usage
+            for response in self._model_responses
+            if (usage := response.usage) is not None
+        )
+        if not usage_values:
+            return None
+        if len(usage_values) == 1:
+            return usage_values[0]
+        return usage_values
+
+    @property
+    def usage_responses(self) -> tuple[TextGenerationResponse, ...]:
+        return tuple(self._model_responses)
 
     @property
     def can_think(self) -> bool:
@@ -338,6 +356,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             assert inner_response
             assert isinstance(inner_response, TextGenerationResponse)
 
+            self._model_responses.append(inner_response)
             self._response = inner_response
             self.__aiter__()
 
@@ -610,6 +629,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         response = await self._engine_agent(context)
         assert response
         assert isinstance(response, TextGenerationResponse)
+        self._model_responses.append(response)
         return response
 
     async def _emit(

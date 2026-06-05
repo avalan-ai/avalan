@@ -77,7 +77,7 @@ from .target import (
     TaskTargetRunner,
     TaskValidationContext,
 )
-from .usage import UsageRecord, usage_observation_from_response
+from .usage import UsageRecord, usage_observations_from_response
 from .validation import (
     TaskValidationCategory,
     TaskValidationError,
@@ -1196,29 +1196,27 @@ class DirectTaskRunner:
         run: TaskRun,
         attempt: TaskAttempt,
     ) -> None:
-        observation = usage_observation_from_response(response)
-        if observation is None:
-            return
-        usage_record: UsageRecord | None = None
-        try:
-            usage_record = await self._store.append_usage(
-                run.run_id,
+        for observation in usage_observations_from_response(response):
+            usage_record: UsageRecord | None = None
+            try:
+                usage_record = await self._store.append_usage(
+                    run.run_id,
+                    attempt_id=attempt.attempt_id,
+                    source=observation.source,
+                    totals=observation.totals,
+                    metadata=observation.metadata,
+                )
+            except Exception:
+                pass
+            await record_observability_usage(
+                self._observability_sink_for(definition),
+                run_id=run.run_id,
                 attempt_id=attempt.attempt_id,
                 source=observation.source,
                 totals=observation.totals,
                 metadata=observation.metadata,
+                record=usage_record,
             )
-        except Exception:
-            pass
-        await record_observability_usage(
-            self._observability_sink_for(definition),
-            run_id=run.run_id,
-            attempt_id=attempt.attempt_id,
-            source=observation.source,
-            totals=observation.totals,
-            metadata=observation.metadata,
-            record=usage_record,
-        )
 
     def _observability_sink_for(
         self,

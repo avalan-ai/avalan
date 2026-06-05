@@ -197,8 +197,20 @@ def freeze_usage_value(value: object) -> TaskUsageValue:
 def usage_observation_from_response(
     response: object,
 ) -> UsageObservation | None:
+    child_observations = _child_usage_observations(response)
+    if child_observations:
+        return _aggregate_usage_observations(child_observations)
+
     usage = _usage_container(response)
     metadata = _usage_metadata_from_response(response, usage)
+    if isinstance(usage, list | tuple):
+        observations = _usage_observations_from_usage_items(
+            usage,
+            response=response,
+        )
+        if observations:
+            return _aggregate_usage_observations(observations)
+
     if usage is not None:
         totals = _usage_totals_from_value(usage, _PROVIDER_COUNTER_PATHS)
         if totals is not None:
@@ -216,6 +228,26 @@ def usage_observation_from_response(
         totals=totals,
         metadata=metadata,
     )
+
+
+def usage_observations_from_response(
+    response: object,
+) -> tuple[UsageObservation, ...]:
+    child_observations = _child_usage_observations(response)
+    if child_observations:
+        return child_observations
+
+    usage = _usage_container(response)
+    if isinstance(usage, list | tuple):
+        observations = _usage_observations_from_usage_items(
+            usage,
+            response=response,
+        )
+        if observations:
+            return observations
+
+    observation = usage_observation_from_response(response)
+    return (observation,) if observation is not None else ()
 
 
 def usage_totals_from_response(response: object) -> UsageTotals | None:
@@ -243,19 +275,17 @@ def attach_response_usage_recorder(
         if recorded:
             return
         recorded = True
-        observation = usage_observation_from_response(response)
-        if observation is None:
-            return
-        await store.append_usage(
-            run_id,
-            attempt_id=attempt_id,
-            usage_id=usage_id,
-            source=source or observation.source,
-            totals=observation.totals,
-            metadata=(
-                metadata if metadata is not None else observation.metadata
-            ),
-        )
+        for observation in usage_observations_from_response(response):
+            await store.append_usage(
+                run_id,
+                attempt_id=attempt_id,
+                usage_id=usage_id,
+                source=source or observation.source,
+                totals=observation.totals,
+                metadata=(
+                    metadata if metadata is not None else observation.metadata
+                ),
+            )
 
     cast(UsageCallbackResponse, response).add_done_callback(record_usage)
     return True
@@ -337,6 +367,146 @@ def _provider_family_value(value: object) -> UsageProviderFamily | None:
         except ValueError:
             return None
     return None
+
+
+def _child_usage_observations(
+    response: object,
+) -> tuple[UsageObservation, ...]:
+    usage_responses = getattr(response, "usage_responses", None)
+    if usage_responses is None:
+        return ()
+    if callable(usage_responses):
+        usage_responses = usage_responses()
+    if not isinstance(usage_responses, list | tuple):
+        return ()
+
+    observations: list[UsageObservation] = []
+    for usage_response in usage_responses:
+        if usage_response is response:
+            continue
+        usage = _usage_container(usage_response)
+        if usage is not None:
+            if isinstance(usage, list | tuple):
+                observations.extend(
+                    _usage_observations_from_usage_items(
+                        usage,
+                        response=usage_response,
+                    )
+                )
+            else:
+                totals = _usage_totals_from_value(
+                    usage,
+                    _PROVIDER_COUNTER_PATHS,
+                )
+                if totals is not None:
+                    observations.append(
+                        UsageObservation(
+                            source=UsageSource.EXACT,
+                            totals=totals,
+                            metadata=_usage_metadata_from_response(
+                                usage_response,
+                                usage,
+                            ),
+                        )
+                    )
+            continue
+
+        observation = usage_observation_from_response(usage_response)
+        if observation is not None:
+            observations.append(observation)
+    return tuple(observations)
+
+
+def _usage_observations_from_usage_items(
+    usage_items: list[object] | tuple[object, ...],
+    *,
+    response: object,
+) -> tuple[UsageObservation, ...]:
+    observations: list[UsageObservation] = []
+    for usage in usage_items:
+        totals = _usage_totals_from_value(usage, _PROVIDER_COUNTER_PATHS)
+        if totals is None:
+            continue
+        observations.append(
+            UsageObservation(
+                source=UsageSource.EXACT,
+                totals=totals,
+                metadata=_usage_metadata_from_response(response, usage),
+            )
+        )
+    return tuple(observations)
+
+
+def _aggregate_usage_observations(
+    observations: tuple[UsageObservation, ...],
+) -> UsageObservation:
+    assert observations, "observations must not be empty"
+    metadata = _shared_usage_metadata(observations)
+    return UsageObservation(
+        source=_aggregate_usage_source(observations),
+        totals=UsageTotals(
+            input_tokens=_sum_observation_counter(
+                observations,
+                "input_tokens",
+            ),
+            cached_input_tokens=_sum_observation_counter(
+                observations,
+                "cached_input_tokens",
+            ),
+            cache_creation_input_tokens=_sum_observation_counter(
+                observations,
+                "cache_creation_input_tokens",
+            ),
+            output_tokens=_sum_observation_counter(
+                observations,
+                "output_tokens",
+            ),
+            reasoning_tokens=_sum_observation_counter(
+                observations,
+                "reasoning_tokens",
+            ),
+            total_tokens=_sum_observation_counter(
+                observations,
+                "total_tokens",
+            ),
+        ),
+        metadata=metadata,
+    )
+
+
+def _aggregate_usage_source(
+    observations: tuple[UsageObservation, ...],
+) -> UsageSource:
+    sources = {observation.source for observation in observations}
+    if len(sources) == 1:
+        return observations[0].source
+    return UsageSource.ESTIMATED
+
+
+def _shared_usage_metadata(
+    observations: tuple[UsageObservation, ...],
+) -> TaskUsageMetadata:
+    first = observations[0].metadata
+    if all(observation.metadata == first for observation in observations):
+        return first
+    return _empty_metadata()
+
+
+def _sum_observation_counter(
+    observations: tuple[UsageObservation, ...],
+    field_name: str,
+) -> int | None:
+    total = 0
+    observed = False
+    for observation in observations:
+        value = _counter_value(observation.totals, field_name)
+        if value is None:
+            continue
+        observed = True
+        total += value
+    if not observed:
+        return None
+    return total
 
 
 CounterPath = tuple[str, ...]

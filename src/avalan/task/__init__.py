@@ -356,6 +356,9 @@ from .usage import stable_usage_id as stable_usage_id
 from .usage import (
     usage_observation_from_response as usage_observation_from_response,
 )
+from .usage import (
+    usage_observations_from_response as usage_observations_from_response,
+)
 from .usage import usage_totals_from_response as usage_totals_from_response
 from .validation import (
     TASK_FILE_DELIVERY_DIAGNOSTIC_CODES as TASK_FILE_DELIVERY_DIAGNOSTIC_CODES,

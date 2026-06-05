@@ -27,6 +27,7 @@ from avalan.task import (
     freeze_usage_value,
     stable_usage_id,
     usage_observation_from_response,
+    usage_observations_from_response,
     usage_totals_from_response,
 )
 from avalan.task.stores import InMemoryTaskStore
@@ -105,6 +106,22 @@ class HostileResponse:
     input_token_count = -1
     output_token_count = True
     cached_input_token_count = "raw"
+
+
+class MultiCallUsageResponse:
+    def __init__(
+        self, *responses: object, usage: object | None = None
+    ) -> None:
+        self.usage_responses = responses
+        self.usage = usage
+
+
+class CallableUsageResponses:
+    def __init__(self, responses: object) -> None:
+        self._responses = responses
+
+    def usage_responses(self) -> object:
+        return self._responses
 
 
 def definition() -> TaskDefinition:
@@ -216,6 +233,185 @@ class UsageTotalsTest(TestCase):
     def test_invalid_response_counters_are_unavailable(self) -> None:
         self.assertIsNone(usage_totals_from_response(object()))
         self.assertIsNone(usage_totals_from_response(HostileResponse()))
+
+    def test_usage_observations_preserve_per_call_provider_usage(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 2,
+                    "cached_input_tokens": 1,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                    "provider_family": "openai",
+                }
+            ),
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 4,
+                    "cache_creation_input_tokens": 2,
+                    "output_tokens": 6,
+                    "reasoning_tokens": 1,
+                    "total_tokens": 10,
+                    "provider_family": "openai",
+                    "raw_response_id": "private-response-id",
+                }
+            ),
+        )
+
+        observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
+
+        self.assertEqual(len(observations), 2)
+        self.assertTrue(
+            all(
+                observation.source == UsageSource.EXACT
+                for observation in observations
+            )
+        )
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.source, UsageSource.EXACT)
+        self.assertEqual(aggregate.totals.input_tokens, 6)
+        self.assertEqual(aggregate.totals.cached_input_tokens, 1)
+        self.assertEqual(aggregate.totals.cache_creation_input_tokens, 2)
+        self.assertEqual(aggregate.totals.output_tokens, 9)
+        self.assertEqual(aggregate.totals.reasoning_tokens, 1)
+        self.assertEqual(aggregate.totals.total_tokens, 15)
+        self.assertEqual(
+            aggregate.metadata["provider_family"],
+            UsageProviderFamily.OPENAI.value,
+        )
+        self.assertNotIn("raw_response_id", aggregate.metadata)
+
+    def test_usage_observations_drop_malformed_nested_provider_usage(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            SimpleNamespace(
+                usage={
+                    "input_tokens": -1,
+                    "cached_input_tokens": True,
+                    "output_tokens": "private-token-count",
+                    "total_tokens": 1.5,
+                    "provider_family": "private-provider",
+                }
+            ),
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                }
+            ),
+        )
+
+        observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
+
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].totals.input_tokens, 0)
+        self.assertEqual(observations[0].totals.output_tokens, 0)
+        self.assertEqual(observations[0].totals.total_tokens, 0)
+        self.assertEqual(observations[0].metadata, {})
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.totals.total_tokens, 0)
+
+    def test_public_usage_tuple_is_split_into_per_call_observations(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            usage=(
+                {"input_tokens": 1, "total_tokens": 2},
+                {"input_tokens": 3, "total_tokens": 4},
+                {"input_tokens": "private malformed"},
+            )
+        )
+
+        observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
+
+        self.assertEqual(len(observations), 2)
+        self.assertEqual(observations[0].totals.input_tokens, 1)
+        self.assertEqual(observations[1].totals.input_tokens, 3)
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.totals.input_tokens, 4)
+        self.assertEqual(aggregate.totals.total_tokens, 6)
+
+    def test_callable_usage_responses_are_supported(self) -> None:
+        response = CallableUsageResponses(
+            (SimpleNamespace(input_token_count=1, output_token_count=2),)
+        )
+
+        observations = usage_observations_from_response(response)
+
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].source, UsageSource.ESTIMATED)
+        self.assertEqual(observations[0].totals.input_tokens, 1)
+        self.assertEqual(observations[0].totals.output_tokens, 2)
+
+    def test_invalid_usage_responses_shape_is_ignored(self) -> None:
+        response = CallableUsageResponses("private invalid shape")
+
+        self.assertEqual(usage_observations_from_response(response), ())
+
+    def test_usage_responses_skip_self_references(self) -> None:
+        response = MultiCallUsageResponse()
+        response.usage_responses = (
+            response,
+            SimpleNamespace(usage={"input_tokens": 1}),
+        )
+
+        observations = usage_observations_from_response(response)
+
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].totals.input_tokens, 1)
+
+    def test_child_usage_tuple_is_split_into_observations(self) -> None:
+        response = MultiCallUsageResponse(
+            SimpleNamespace(
+                usage=(
+                    {"input_tokens": 1, "provider_family": "openai"},
+                    {"input_tokens": 2, "provider_family": "openai"},
+                )
+            )
+        )
+
+        observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
+
+        self.assertEqual(len(observations), 2)
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.totals.input_tokens, 3)
+        self.assertEqual(
+            aggregate.metadata["provider_family"],
+            UsageProviderFamily.OPENAI.value,
+        )
+
+    def test_mixed_source_aggregate_is_estimated_without_shared_metadata(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            SimpleNamespace(input_token_count=1),
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 2,
+                    "provider_family": "openai",
+                }
+            ),
+        )
+
+        aggregate = usage_observation_from_response(response)
+
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.source, UsageSource.ESTIMATED)
+        self.assertEqual(aggregate.totals.input_tokens, 3)
+        self.assertEqual(aggregate.metadata, {})
 
     def test_usage_entities_are_frozen_and_reject_invalid_counters(
         self,

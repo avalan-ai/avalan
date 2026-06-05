@@ -25,6 +25,12 @@ from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.stream import TextGenerationSingleStream
+from avalan.task.usage import (
+    UsageSource,
+    usage_observation_from_response,
+    usage_observations_from_response,
+)
 from avalan.tool.manager import ToolManager
 
 
@@ -64,6 +70,14 @@ def _dummy_response(async_gen: bool = True) -> TextGenerationResponse:
     )
 
 
+def _usage_response(text: str, usage: object) -> TextGenerationResponse:
+    return TextGenerationResponse(
+        TextGenerationSingleStream(text, usage=usage),
+        logger=getLogger(),
+        use_async_generator=False,
+    )
+
+
 def _make_response(
     input_value: Input,
     response: TextGenerationResponse,
@@ -89,6 +103,179 @@ def _make_response(
 
 
 class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
+    async def test_usage_returns_none_without_provider_usage(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        self.assertIsNone(response.usage)
+
+    async def test_usage_returns_single_provider_usage(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        usage = {"input_tokens": 1, "total_tokens": 2}
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _usage_response("answer", usage),
+            agent,
+            operation,
+            {},
+        )
+
+        self.assertEqual(response.usage, usage)
+
+    async def test_provider_usage_survives_to_str_tool_loop(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        outer_response = _usage_response(
+            "call",
+            {
+                "input_tokens": 3,
+                "cached_input_tokens": 1,
+                "output_tokens": 2,
+                "total_tokens": 5,
+                "provider_family": "openai",
+            },
+        )
+        inner_response = _usage_response(
+            "answer",
+            {
+                "input_tokens": 4,
+                "cache_creation_input_tokens": 2,
+                "output_tokens": 6,
+                "reasoning_tokens": 1,
+                "total_tokens": 10,
+                "provider_family": "openai",
+            },
+        )
+        agent.return_value = inner_response
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="calc", arguments=None)]
+            if text == "call"
+            else None
+        )
+
+        async def exec_tool(call, context):
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="ok",
+            )
+
+        tool.side_effect = exec_tool
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        output = await response.to_str()
+        observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
+
+        self.assertEqual(output, "answer")
+        self.assertEqual(len(response.usage_responses), 2)
+        self.assertIsInstance(response.usage, tuple)
+        self.assertEqual(len(observations), 2)
+        self.assertTrue(
+            all(
+                observation.source == UsageSource.EXACT
+                for observation in observations
+            )
+        )
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.totals.input_tokens, 7)
+        self.assertEqual(aggregate.totals.cached_input_tokens, 1)
+        self.assertEqual(aggregate.totals.cache_creation_input_tokens, 2)
+        self.assertEqual(aggregate.totals.output_tokens, 8)
+        self.assertEqual(aggregate.totals.reasoning_tokens, 1)
+        self.assertEqual(aggregate.totals.total_tokens, 15)
+
+    async def test_malformed_wrapper_usage_does_not_hide_valid_child_usage(
+        self,
+    ):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        outer_response = _usage_response(
+            "call",
+            {
+                "input_tokens": "private prompt",
+                "cached_input_tokens": True,
+                "output_tokens": -1,
+                "total_tokens": 1.5,
+                "provider_family": "private-provider",
+            },
+        )
+        inner_response = _usage_response(
+            "answer",
+            {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        )
+        agent.return_value = inner_response
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [ToolCall(id=uuid4(), name="calc", arguments=None)]
+            if text == "call"
+            else None
+        )
+
+        async def exec_tool(call, context):
+            return ToolCallResult(
+                id=uuid4(),
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="ok",
+            )
+
+        tool.side_effect = exec_tool
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        await response.to_str()
+        observations = usage_observations_from_response(response)
+
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].source, UsageSource.EXACT)
+        self.assertEqual(observations[0].totals.input_tokens, 0)
+        self.assertEqual(observations[0].totals.output_tokens, 0)
+        self.assertEqual(observations[0].totals.total_tokens, 0)
+        self.assertEqual(observations[0].metadata, {})
+
     async def test_react_uses_explicit_output(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)

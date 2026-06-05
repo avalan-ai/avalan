@@ -64,6 +64,7 @@ from avalan.task import (
     TaskValidationIssue,
     TaskWorker,
     TaskWorkerShutdown,
+    UsageSource,
 )
 from avalan.task.error import classify_task_error
 from avalan.task.idempotency import TaskIdempotencyIdentity
@@ -96,6 +97,11 @@ class FakeTarget(TaskTargetRunner):
         self.contexts.append(context)
         await context.check_cancelled()
         return self.output
+
+
+class MultiCallUsageResponse:
+    def __init__(self, *responses: object) -> None:
+        self.usage_responses = responses
 
 
 class WaitingTarget(FakeTarget):
@@ -1853,6 +1859,61 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
 
         records = await self.store.list_usage(self.run.run_id)
         self.assertEqual(records, ())
+
+    async def test_record_usage_persists_each_provider_call(self) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+        attempt = await self.store.create_attempt(self.run.run_id)
+        response = MultiCallUsageResponse(
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 2,
+                    "cached_input_tokens": 1,
+                    "output_tokens": 3,
+                    "total_tokens": 5,
+                    "provider_family": "openai",
+                }
+            ),
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 4,
+                    "cache_creation_input_tokens": 2,
+                    "output_tokens": 6,
+                    "reasoning_tokens": 1,
+                    "total_tokens": 10,
+                    "provider_family": "openai",
+                    "raw_response_id": "private-response-id",
+                }
+            ),
+        )
+
+        await worker._record_usage(
+            response,
+            definition=self.definition,
+            run=self.run,
+            attempt=attempt,
+        )
+
+        records = await self.store.list_usage(self.run.run_id)
+        totals = await self.store.usage_totals(self.run.run_id)
+        self.assertEqual(len(records), 2)
+        self.assertEqual([record.sequence for record in records], [1, 2])
+        self.assertEqual(
+            [record.source for record in records],
+            [UsageSource.EXACT, UsageSource.EXACT],
+        )
+        self.assertEqual(records[0].totals.cached_input_tokens, 1)
+        self.assertEqual(records[1].totals.cache_creation_input_tokens, 2)
+        self.assertEqual(records[1].totals.reasoning_tokens, 1)
+        self.assertNotIn("raw_response_id", records[1].metadata)
+        self.assertEqual(totals.input_tokens, 6)
+        self.assertEqual(totals.output_tokens, 9)
+        self.assertEqual(totals.total_tokens, 15)
 
     async def test_process_once_reports_no_work(self) -> None:
         self.queue.item = None
