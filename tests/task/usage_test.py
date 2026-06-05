@@ -1119,6 +1119,47 @@ class UsageTotalsTest(TestCase):
             UsageProviderFamily.OPENAI.value,
         )
 
+    def test_malformed_child_usage_does_not_hide_nested_usage(
+        self,
+    ) -> None:
+        nested = MultiCallUsageResponse(
+            SimpleNamespace(
+                usage={
+                    "input_tokens": 6,
+                    "output_tokens": 4,
+                    "total_tokens": 10,
+                    "provider_family": "openai",
+                }
+            )
+        )
+        wrapper = MultiCallUsageResponse(nested)
+        wrapper.usage = {
+            "input_tokens": "private prompt token text",
+            "output_tokens": -1,
+            "total_tokens": True,
+            "provider_family": "private-provider",
+        }
+        response = MultiCallUsageResponse(wrapper)
+
+        observations = usage_observations_from_response(response)
+        aggregate = usage_observation_from_response(response)
+
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0].source, UsageSource.EXACT)
+        self.assertEqual(
+            observations[0].totals,
+            UsageTotals(input_tokens=6, output_tokens=4, total_tokens=10),
+        )
+        self.assertEqual(
+            observations[0].metadata,
+            {"provider_family": UsageProviderFamily.OPENAI.value},
+        )
+        self.assertIsNotNone(aggregate)
+        assert aggregate is not None
+        self.assertEqual(aggregate.totals.input_tokens, 6)
+        self.assertNotIn("private prompt token text", str(observations))
+        self.assertNotIn("private-provider", str(observations))
+
     def test_nested_usage_responses_are_flattened_per_call(self) -> None:
         nested = MultiCallUsageResponse(
             SimpleNamespace(

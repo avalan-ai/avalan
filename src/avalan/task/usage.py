@@ -675,34 +675,42 @@ def _child_usage_observation_entries(
             continue
         usage = _usage_container(usage_response)
         if usage is not None:
-            seen.add(usage_response_id)
             if isinstance(usage, list | tuple):
+                seen.add(usage_response_id)
                 entries.extend(
                     _usage_observation_entries_from_usage_items(
                         usage,
                         response=usage_response,
                     )
                 )
-            else:
-                totals = _usage_totals_from_value(
-                    usage,
-                    _PROVIDER_COUNTER_PATHS,
-                )
-                if totals is not None:
-                    entries.append(
-                        UsageObservationEntry(
-                            response=usage_response,
-                            sequence=1,
-                            observation=UsageObservation(
-                                source=UsageSource.EXACT,
-                                totals=totals,
-                                metadata=_usage_metadata_from_response(
-                                    usage_response,
-                                    usage,
-                                ),
+                continue
+            totals = _usage_totals_from_value(
+                usage,
+                _PROVIDER_COUNTER_PATHS,
+            )
+            if totals is not None:
+                seen.add(usage_response_id)
+                entries.append(
+                    UsageObservationEntry(
+                        response=usage_response,
+                        sequence=1,
+                        observation=UsageObservation(
+                            source=UsageSource.EXACT,
+                            totals=totals,
+                            metadata=_usage_metadata_from_response(
+                                usage_response,
+                                usage,
                             ),
-                        )
+                        ),
                     )
+                )
+                continue
+            child_entries = _child_usage_observation_entries(
+                usage_response,
+                seen=seen,
+            )
+            if child_entries:
+                entries.extend(child_entries)
             continue
 
         child_entries = _child_usage_observation_entries(
