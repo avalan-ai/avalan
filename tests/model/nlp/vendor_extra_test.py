@@ -811,6 +811,18 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(usage_observation_from_response(empty_gen))
         self.assertIsNone(usage_totals_from_response(empty_gen))
 
+    async def test_provider_instructions_are_rejected_before_api_call(self):
+        hf_client = self.mod.HuggingfaceClient("k", base_url="b")
+
+        with self.assertRaisesRegex(AssertionError, "provider instructions"):
+            await hf_client(
+                "m",
+                [Message(role=MessageRole.USER, content="hi")],
+                instructions="private policy",
+            )
+
+        self.client.chat_completion.assert_not_awaited()
+
 
 class OllamaTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
@@ -886,6 +898,19 @@ class OllamaTestCase(IsolatedAsyncioTestCase):
         ClientMock.assert_called_once_with(base_url="u")
         self.assertIs(loaded, ClientMock.return_value)
         self.assertFalse(model._settings.enable_eval)
+
+    async def test_provider_instructions_are_rejected_before_api_call(self):
+        client = self.mod.OllamaClient(base_url="b")
+        client._client.chat = AsyncMock()
+
+        with self.assertRaisesRegex(AssertionError, "provider instructions"):
+            await client(
+                "m",
+                [Message(role=MessageRole.USER, content="hi")],
+                instructions="private policy",
+            )
+
+        client._client.chat.assert_not_awaited()
 
 
 class OpenAIVendorsTestCase(TestCase):
@@ -1135,6 +1160,18 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(empty_gen.provider_family, "openai_compatible")
         self.assertIsNone(usage_observation_from_response(empty_gen))
         self.assertIsNone(usage_totals_from_response(empty_gen))
+
+    async def test_provider_instructions_are_rejected_before_api_call(self):
+        client = self.mod.LiteLLMClient(api_key="k", base_url="b")
+
+        with self.assertRaisesRegex(AssertionError, "provider instructions"):
+            await client(
+                "m",
+                [Message(role=MessageRole.USER, content="hi")],
+                instructions="private policy",
+            )
+
+        self.stub.acompletion.assert_not_awaited()
 
 
 if __name__ == "__main__":

@@ -53,7 +53,9 @@ class HuggingfaceClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
-        _ = instructions
+        assert (
+            instructions is None
+        ), "Hugging Face does not support provider instructions"
         settings = settings or GenerationSettings()
         template_messages = cast(
             list[dict[str, Any]], self._template_messages(messages)

@@ -52,7 +52,9 @@ class LiteLLMClient(TextGenerationVendor):
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
-        _ = instructions
+        assert (
+            instructions is None
+        ), "LiteLLM does not support provider instructions"
         template_messages = self._template_messages(messages)
         kwargs: dict[str, Any] = dict(
             model=model_id,
