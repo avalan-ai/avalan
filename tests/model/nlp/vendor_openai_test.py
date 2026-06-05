@@ -1157,6 +1157,68 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_image_message_content_preserves_data_url(self):
+        content = MessageContentImage(
+            type="image_url",
+            image_url={
+                "data": "data:image/png;base64,YWJj",
+                "mime_type": "image/png",
+            },
+        )
+        await self._assert_messages(
+            content,
+            [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,YWJj",
+                }
+            ],
+        )
+
+    async def test_image_message_content_rejects_non_image_mime(self):
+        resp = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        create_mock = AsyncMock(return_value=resp)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        message = Message(
+            role=MessageRole.USER,
+            content=MessageContentImage(
+                type="image_url",
+                image_url={"data": "YWJj", "mime_type": "application/pdf"},
+            ),
+        )
+
+        with self.assertRaisesRegex(AssertionError, "image MIME type"):
+            await client("model", [message], use_async_generator=False)
+
+        create_mock.assert_not_awaited()
+
+    async def test_image_message_content_rejects_invalid_mime_type(self):
+        resp = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        create_mock = AsyncMock(return_value=resp)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        message = Message(
+            role=MessageRole.USER,
+            content=MessageContentImage(
+                type="image_url",
+                image_url={"data": "YWJj", "mime_type": object()},
+            ),
+        )
+
+        with self.assertRaisesRegex(AssertionError, "image MIME type"):
+            await client("model", [message], use_async_generator=False)
+
+        create_mock.assert_not_awaited()
+
     async def test_mixed_message_content(self):
         content = [
             MessageContentText(type="text", text="hi"),

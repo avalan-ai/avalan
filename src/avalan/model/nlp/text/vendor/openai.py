@@ -556,7 +556,10 @@ class OpenAIClient(TextGenerationVendor):
         elif isinstance(image_url, str):
             payload["image_url"] = image_url
         elif isinstance(image_data, str):
-            payload["image_url"] = f"data:{mime_type};base64,{image_data}"
+            payload["image_url"] = OpenAIClient._image_data_url(
+                image_data,
+                mime_type,
+            )
         else:
             raise AssertionError(
                 "OpenAI image blocks require file_id, url, or data"
@@ -565,6 +568,18 @@ class OpenAIClient(TextGenerationVendor):
         if isinstance(detail, str):
             payload["detail"] = detail
         return payload
+
+    @staticmethod
+    def _image_data_url(image_data: str, mime_type: object) -> str:
+        if image_data.startswith("data:"):
+            return image_data
+        assert isinstance(
+            mime_type, str
+        ), "OpenAI image blocks require an image MIME type"
+        assert mime_type.startswith(
+            "image/"
+        ), "OpenAI image blocks require an image MIME type"
+        return f"data:{mime_type};base64,{image_data}"
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
