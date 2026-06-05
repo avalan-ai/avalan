@@ -650,6 +650,139 @@ class UsageTotalsTest(TestCase):
             ),
         )
 
+    def test_nested_provider_usage_containers_are_preserved(self) -> None:
+        openai = SimpleNamespace(
+            type="response.completed",
+            provider_family="openai",
+            response={
+                "usage": {
+                    "input_tokens": 7,
+                    "input_tokens_details": {"cached_tokens": 2},
+                    "output_tokens": 5,
+                    "output_tokens_details": {"reasoning_tokens": 3},
+                    "total_tokens": 12,
+                    "response_id": "private-response-id",
+                }
+            },
+        )
+        anthropic = {
+            "type": "message_delta",
+            "provider_family": "anthropic",
+            "delta": {
+                "usage": {
+                    "input_tokens": 11,
+                    "cache_read_input_tokens": 4,
+                    "cache_creation_input_tokens": 6,
+                    "output_tokens": 8,
+                    "output_tokens_details": {"thinking_tokens": 5},
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 9,
+                        "cache_key": "private-cache-key",
+                    },
+                }
+            },
+        }
+        bedrock = {
+            "metadata": {
+                "usage": {
+                    "inputTokens": 13,
+                    "cacheReadInputTokens": 1,
+                    "cacheWriteInputTokens": 2,
+                    "outputTokens": 17,
+                    "totalTokens": 30,
+                },
+                "endpoint": "https://private-endpoint.example",
+            },
+            "provider_family": "bedrock",
+        }
+
+        openai_observation = usage_observation_from_response(openai)
+        anthropic_observation = usage_observation_from_response(anthropic)
+        bedrock_observation = usage_observation_from_response(bedrock)
+
+        self.assertIsNotNone(openai_observation)
+        self.assertIsNotNone(anthropic_observation)
+        self.assertIsNotNone(bedrock_observation)
+        assert openai_observation is not None
+        assert anthropic_observation is not None
+        assert bedrock_observation is not None
+        self.assertEqual(
+            openai_observation.totals,
+            UsageTotals(
+                input_tokens=7,
+                cached_input_tokens=2,
+                output_tokens=5,
+                reasoning_tokens=3,
+                total_tokens=12,
+            ),
+        )
+        self.assertEqual(
+            openai_observation.metadata,
+            {"provider_family": UsageProviderFamily.OPENAI.value},
+        )
+        self.assertEqual(
+            anthropic_observation.totals,
+            UsageTotals(
+                input_tokens=11,
+                cached_input_tokens=4,
+                cache_creation_input_tokens=6,
+                output_tokens=8,
+                reasoning_tokens=5,
+            ),
+        )
+        self.assertEqual(
+            anthropic_observation.metadata,
+            {
+                "provider_family": UsageProviderFamily.ANTHROPIC.value,
+                "cache_creation_ephemeral_5m_input_tokens": 9,
+            },
+        )
+        self.assertEqual(
+            bedrock_observation.totals,
+            UsageTotals(
+                input_tokens=13,
+                cached_input_tokens=1,
+                cache_creation_input_tokens=2,
+                output_tokens=17,
+                total_tokens=30,
+            ),
+        )
+        self.assertEqual(
+            bedrock_observation.metadata,
+            {"provider_family": UsageProviderFamily.BEDROCK.value},
+        )
+        rendered = (
+            str(openai_observation)
+            + str(anthropic_observation)
+            + str(bedrock_observation)
+        )
+        self.assertNotIn("private-response-id", rendered)
+        self.assertNotIn("private-cache-key", rendered)
+        self.assertNotIn("private-endpoint.example", rendered)
+
+    def test_malformed_nested_provider_usage_is_ignored_safely(
+        self,
+    ) -> None:
+        response = SimpleNamespace(
+            provider_family="azure_openai",
+            response={
+                "usage": {
+                    "input_tokens": "private prompt token text",
+                    "cached_input_tokens": True,
+                    "output_tokens": -1,
+                    "reasoning_tokens": 1.5,
+                    "total_tokens": float("nan"),
+                    "response_id": "private-response-id",
+                }
+            },
+        )
+
+        self.assertIsNone(usage_observation_from_response(response))
+        self.assertNotIn(
+            "private-response-id",
+            str(usage_observations_from_response(response)),
+        )
+
     def test_anthropic_usage_preserves_cache_and_thinking_details(
         self,
     ) -> None:

@@ -970,8 +970,16 @@ _USAGE_METADATA_COUNTER_PATHS: CounterPathMap = {
 
 
 def _usage_container(response: object) -> object | None:
-    for attribute in ("usage", "usage_metadata", "usageMetadata"):
-        value = _value_at_path(response, (attribute,))
+    for path in (
+        ("usage",),
+        ("usage_metadata",),
+        ("usageMetadata",),
+        ("response", "usage"),
+        ("message", "usage"),
+        ("delta", "usage"),
+        ("metadata", "usage"),
+    ):
+        value = _value_at_path(response, path)
         if value is not None:
             return value
     return None

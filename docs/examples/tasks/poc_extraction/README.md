@@ -121,32 +121,54 @@ Durable CLI usage smoke requires a configured task store. Capture the run id
 from the compact run summary, then inspect usage through the durable store:
 
 ```bash
+poetry run avalan task pgsql migrate \
+  --dsn "$AVALAN_TASK_STORE_DSN" \
+  --schema "$AVALAN_TASK_STORE_SCHEMA" \
+  head
+
+poetry run avalan task pgsql check \
+  --dsn "$AVALAN_TASK_STORE_DSN" \
+  --schema "$AVALAN_TASK_STORE_SCHEMA"
+
 poetry run avalan task run task.toml \
   --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --store-schema "$AVALAN_TASK_STORE_SCHEMA" \
   --pdf ./sample.pdf \
-  --json \
   --output artifacts/native-output.json \
   | tee artifacts/native-run.txt
 
-RUN_ID="$(python - <<'PY'
-from pathlib import Path
-from re import search
-
-text = Path("artifacts/native-run.txt").read_text(encoding="utf-8")
-match = search(r"Task run completed: ([A-Za-z0-9_.:-]+)", text)
-raise SystemExit(match.group(1) if match else "missing-run-id")
-PY
-)"
+RUN_ID="$(awk '/^Task run completed:/ {print $4}' artifacts/native-run.txt)"
 
 poetry run avalan task inspect "$RUN_ID" \
   --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --store-schema "$AVALAN_TASK_STORE_SCHEMA" \
   > artifacts/native-inspect.json
 
 poetry run avalan task usage "$RUN_ID" \
   --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --store-schema "$AVALAN_TASK_STORE_SCHEMA" \
   --source exact \
-  > artifacts/native-usage.json
+  > artifacts/native-usage.txt
+
+poetry run avalan task run image_flow_task.toml \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --store-schema "$AVALAN_TASK_STORE_SCHEMA" \
+  --pdf ./sample.pdf \
+  --output artifacts/image-output.json \
+  | tee artifacts/image-run.txt
+
+RUN_ID="$(awk '/^Task run completed:/ {print $4}' artifacts/image-run.txt)"
+
+poetry run avalan task usage "$RUN_ID" \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --store-schema "$AVALAN_TASK_STORE_SCHEMA" \
+  --source exact \
+  > artifacts/image-usage.txt
 ```
+
+Use `--output` without `--json` for durable usage smoke. `--json` prints only
+the structured extraction object and suppresses the run summary line needed for
+follow-up inspection commands.
 
 SDK smoke can validate live usage without a durable store by inspecting the
 same in-memory client that executed the task:
