@@ -202,38 +202,17 @@ def test_memory_extra_omits_migration_dependencies() -> None:
     assert "sqlalchemy" not in memory_dependencies
 
 
-def test_vllm_extras_remain_scoped_below_python_314() -> None:
+def test_vllm_extras_omit_vulnerable_runtime_dependency() -> None:
     optional_deps = _optional_dependencies()
 
     for extra in ("vllm", "nvidia"):
-        requirements: list[Requirement] = []
-        for requirement in optional_deps[extra]:
-            parsed = Requirement(requirement)
-            if canonicalize_name(parsed.name) == "vllm":
-                requirements.append(parsed)
+        dependencies = {
+            canonicalize_name(Requirement(requirement).name)
+            for requirement in optional_deps[extra]
+        }
 
-        assert len(requirements) == 1
-        marker = requirements[0].marker
-
-        assert marker is not None
-        assert marker.evaluate(
-            {
-                "platform_system": "Linux",
-                "python_version": "3.13",
-            }
-        )
-        assert not marker.evaluate(
-            {
-                "platform_system": "Linux",
-                "python_version": "3.14",
-            }
-        )
-        assert not marker.evaluate(
-            {
-                "platform_system": "Darwin",
-                "python_version": "3.13",
-            }
-        )
+        assert "vllm" not in dependencies
+        assert "diskcache" not in dependencies
 
 
 def test_vision_extra_scopes_torchvision_python_3141() -> None:
