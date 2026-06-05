@@ -554,7 +554,10 @@ def _explicit_usage_call_key(response: object) -> str | None:
         "usage_key",
         "usage_id",
     ):
-        value = getattr(response, attribute, None)
+        if isinstance(response, Mapping):
+            value = response.get(attribute)
+        else:
+            value = getattr(response, attribute, None)
         if isinstance(value, str) and value.strip():
             return value
     return None
@@ -751,26 +754,31 @@ def _usage_observation_entries_from_usage_items(
     *,
     response: object,
 ) -> tuple[UsageObservationEntry, ...]:
-    observations: list[UsageObservation] = []
+    entries: list[UsageObservationEntry] = []
+    sequence = 1
     for usage in usage_items:
         totals = _usage_totals_from_value(usage, _PROVIDER_COUNTER_PATHS)
         if totals is None:
             continue
-        observations.append(
-            UsageObservation(
-                source=UsageSource.EXACT,
-                totals=totals,
-                metadata=_usage_metadata_from_response(response, usage),
+        entries.append(
+            UsageObservationEntry(
+                response=_usage_item_identity_response(response, usage),
+                sequence=sequence,
+                observation=UsageObservation(
+                    source=UsageSource.EXACT,
+                    totals=totals,
+                    metadata=_usage_metadata_from_response(response, usage),
+                ),
             )
         )
-    return tuple(
-        UsageObservationEntry(
-            response=response,
-            sequence=sequence,
-            observation=observation,
-        )
-        for sequence, observation in enumerate(observations, start=1)
-    )
+        sequence += 1
+    return tuple(entries)
+
+
+def _usage_item_identity_response(response: object, usage: object) -> object:
+    if _explicit_usage_call_key(usage) is not None:
+        return usage
+    return response
 
 
 def _aggregate_usage_observations(

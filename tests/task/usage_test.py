@@ -35,6 +35,7 @@ from avalan.task import (
     usage_smoke_summary,
     usage_totals_from_response,
 )
+from avalan.task.observability import record_response_usage
 from avalan.task.stores import InMemoryTaskStore
 
 
@@ -941,6 +942,68 @@ class UsageTotalsTest(TestCase):
         self.assertEqual(aggregate.totals.input_tokens, 4)
         self.assertEqual(aggregate.totals.total_tokens, 6)
 
+    def test_public_usage_items_use_explicit_mapping_identity(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            usage=(
+                {
+                    "usage_call_key": "private-provider-call",
+                    "input_tokens": 1,
+                    "provider_family": "openai",
+                },
+                {"input_tokens": 2, "provider_family": "openai"},
+            )
+        )
+        replayed = MultiCallUsageResponse(
+            usage=(
+                {
+                    "usage_call_key": "private-provider-call",
+                    "input_tokens": 1,
+                    "provider_family": "openai",
+                },
+                {"input_tokens": 2, "provider_family": "openai"},
+            )
+        )
+
+        entries = usage_module.usage_observation_entries_from_response(
+            response
+        )
+        replayed_entries = (
+            usage_module.usage_observation_entries_from_response(replayed)
+        )
+
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(len(replayed_entries), 2)
+        usage_id = stable_usage_id_for_response(
+            entries[0].response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=entries[0].sequence,
+        )
+        replayed_usage_id = stable_usage_id_for_response(
+            replayed_entries[0].response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=replayed_entries[0].sequence,
+        )
+        unkeyed_usage_id = stable_usage_id_for_response(
+            entries[1].response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=entries[1].sequence,
+        )
+        replayed_unkeyed_usage_id = stable_usage_id_for_response(
+            replayed_entries[1].response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=replayed_entries[1].sequence,
+        )
+
+        self.assertEqual(usage_id, replayed_usage_id)
+        self.assertNotEqual(unkeyed_usage_id, replayed_unkeyed_usage_id)
+        self.assertNotIn("private-provider-call", usage_id)
+
     def test_callable_usage_responses_are_supported(self) -> None:
         response = CallableUsageResponses(
             (SimpleNamespace(input_token_count=1, output_token_count=2),)
@@ -1261,6 +1324,32 @@ class UsageTotalsTest(TestCase):
                 attempt_id="attempt-1",
                 sequence=0,
             )
+
+    def test_stable_usage_id_for_response_hashes_mapping_key(self) -> None:
+        response = {
+            "usage_call_key": "private-provider-response-id",
+            "usage": {"input_tokens": 1},
+        }
+        replayed = {
+            "usage_call_key": "private-provider-response-id",
+            "usage": {"input_tokens": 1},
+        }
+
+        usage_id = stable_usage_id_for_response(
+            response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        replayed_usage_id = stable_usage_id_for_response(
+            replayed,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+
+        self.assertEqual(usage_id, replayed_usage_id)
+        self.assertNotIn("private-provider-response-id", usage_id)
 
     def test_stable_usage_id_for_response_keeps_exact_calls_distinct(
         self,
@@ -1741,6 +1830,54 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
         self.assertNotIn("private-first-response", str(records))
         self.assertNotIn("private-second-response", str(records))
         self.assertNotIn("private provider body", str(records))
+
+    async def test_record_response_usage_deduplicates_mapping_replay(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            usage=(
+                {
+                    "usage_call_key": "private-provider-call",
+                    "input_tokens": 3,
+                    "output_tokens": 5,
+                    "total_tokens": 8,
+                },
+            )
+        )
+        replayed = MultiCallUsageResponse(
+            usage=(
+                {
+                    "usage_call_key": "private-provider-call",
+                    "input_tokens": 3,
+                    "output_tokens": 5,
+                    "total_tokens": 8,
+                },
+            )
+        )
+
+        await record_response_usage(
+            None,
+            store=self.store,
+            response=response,
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+        )
+        await record_response_usage(
+            None,
+            store=self.store,
+            response=replayed,
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+        )
+
+        records = await self.store.list_usage(self.run.run_id)
+        totals = await self.store.usage_totals(self.run.run_id)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.input_tokens, 3)
+        self.assertEqual(totals.total_tokens, 8)
+        self.assertNotIn("private-provider-call", records[0].usage_id)
 
     async def test_stable_usage_id_prevents_duplicate_records(self) -> None:
         usage_id = stable_usage_id(
