@@ -183,6 +183,23 @@ class CliTaskOptionTestCase(TestCase):
                 {"task_command": "inspect", "run_id": "run-123"},
             ),
             (
+                [
+                    "task",
+                    "usage",
+                    "run-123",
+                    "--attempt-id",
+                    "attempt-1",
+                    "--source",
+                    "exact",
+                ],
+                {
+                    "task_command": "usage",
+                    "run_id": "run-123",
+                    "attempt_id": "attempt-1",
+                    "source": "exact",
+                },
+            ),
+            (
                 ["task", "output", "run-123"],
                 {"task_command": "output", "run_id": "run-123"},
             ),
@@ -979,6 +996,7 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
             ),
             ("task_events", "avalan.cli.commands.task", "task_events"),
             ("task_inspect", "avalan.cli.commands.task", "task_inspect"),
+            ("task_usage", "avalan.cli.commands.task", "task_usage"),
             ("task_output", "avalan.cli.commands.task", "task_output"),
             ("task_validate", "avalan.cli.commands.task", "task_validate"),
             (
@@ -1127,6 +1145,9 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             task_inspect_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_inspect")
             )
+            task_usage_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_usage")
+            )
             task_output_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_output")
             )
@@ -1183,6 +1204,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("task", "enqueue", task_enqueue_mock),
                 ("task", "events", task_events_mock),
                 ("task", "inspect", task_inspect_mock),
+                ("task", "usage", task_usage_mock),
                 ("task", "output", task_output_mock),
                 ("task", "validate", task_validate_mock),
                 ("task", "pgsql:check", task_pgsql_check_mock),

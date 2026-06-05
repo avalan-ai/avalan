@@ -626,6 +626,94 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
         self.assertEqual(result.output, "callable summary")
 
+    async def test_usage_inspection_filters_attempt_and_source(self) -> None:
+        async def target(context: TaskTargetContext) -> object:
+            _ = context
+            return "unused"
+
+        store = InMemoryTaskStore()
+        definition = _definition()
+        await store.register_definition(
+            definition,
+            definition_hash="client-usage-hash",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="client-usage-hash")
+        )
+        attempt = await store.create_attempt(run.run_id)
+        exact = await store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(
+                input_tokens=1,
+                cached_input_tokens=0,
+                output_tokens=2,
+                total_tokens=3,
+            ),
+        )
+        estimated = await store.append_usage(
+            run.run_id,
+            source=UsageSource.ESTIMATED,
+            totals=UsageTotals(input_tokens=9, output_tokens=8),
+        )
+        client = TaskClient(store, target=target)
+
+        usage = await client.usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+        )
+        estimated_totals = await client.usage_totals(
+            run.run_id,
+            source=UsageSource.ESTIMATED,
+        )
+        inspection = await client.usage_inspection(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+        )
+        snapshot = cast(Mapping[str, object], inspection.as_dict())
+
+        self.assertEqual(usage, (exact,))
+        self.assertEqual(inspection.usage, (exact,))
+        self.assertEqual(estimated_totals, estimated.totals)
+        self.assertEqual(
+            inspection.usage_totals,
+            UsageTotals(
+                input_tokens=1,
+                cached_input_tokens=0,
+                output_tokens=2,
+                total_tokens=3,
+            ),
+        )
+        self.assertEqual(
+            snapshot["usage_totals"],
+            {
+                "input_tokens": 1,
+                "cached_input_tokens": 0,
+                "cache_creation_input_tokens": None,
+                "output_tokens": 2,
+                "reasoning_tokens": None,
+                "total_tokens": 3,
+            },
+        )
+
+    async def test_usage_filters_reject_invalid_source(self) -> None:
+        async def target(context: TaskTargetContext) -> object:
+            _ = context
+            return "unused"
+
+        client = TaskClient(InMemoryTaskStore(), target=target)
+        invalid_source = cast(UsageSource, "exact")
+
+        with self.assertRaises(AssertionError):
+            await client.usage("run-1", source=invalid_source)
+        with self.assertRaises(AssertionError):
+            await client.usage_totals("run-1", source=invalid_source)
+        with self.assertRaises(AssertionError):
+            await client.usage_inspection("run-1", source=invalid_source)
+
     async def test_validate_uses_configured_file_converters(self) -> None:
         client = TaskClient(
             InMemoryTaskStore(),

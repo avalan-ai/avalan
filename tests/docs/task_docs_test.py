@@ -67,6 +67,7 @@ class TaskDocsTest(TestCase):
                 "pgsql",
                 "retention-sweep",
                 "run",
+                "usage",
                 "validate",
                 "worker",
             },

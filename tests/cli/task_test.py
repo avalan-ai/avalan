@@ -44,6 +44,7 @@ from avalan.task import (
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
+    UsageSource,
     canonical_schema_json,
 )
 from avalan.task import client as task_client_module
@@ -71,6 +72,7 @@ class _FakeTaskClient:
         enqueue_result: object | None = None,
         wait_result: object | None = None,
         inspect_result: object | None = None,
+        usage_result: object | None = None,
         output_result: object | None = None,
         events_result: tuple[object, ...] = (),
         artifacts_result: tuple[object, ...] = (),
@@ -78,6 +80,7 @@ class _FakeTaskClient:
         enqueue_error: BaseException | None = None,
         wait_error: BaseException | None = None,
         inspect_error: BaseException | None = None,
+        usage_error: BaseException | None = None,
         output_error: BaseException | None = None,
         events_error: BaseException | None = None,
         artifacts_error: BaseException | None = None,
@@ -86,6 +89,7 @@ class _FakeTaskClient:
         self.enqueue_result = enqueue_result
         self.wait_result = wait_result
         self.inspect_result = inspect_result
+        self.usage_result = usage_result
         self.output_result = output_result
         self.events_result = events_result
         self.artifacts_result = artifacts_result
@@ -93,6 +97,7 @@ class _FakeTaskClient:
         self.enqueue_error = enqueue_error
         self.wait_error = wait_error
         self.inspect_error = inspect_error
+        self.usage_error = usage_error
         self.output_error = output_error
         self.events_error = events_error
         self.artifacts_error = artifacts_error
@@ -103,6 +108,7 @@ class _FakeTaskClient:
         self.poll_interval: float | None = None
         self.after_sequence: int | None = None
         self.attempt_id: str | None = None
+        self.source: object | None = None
 
     async def run(
         self,
@@ -161,6 +167,20 @@ class _FakeTaskClient:
         if self.output_error is not None:
             raise self.output_error
         return self.output_result
+
+    async def usage_inspection(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str | None = None,
+        source: object | None = None,
+    ) -> object:
+        _ = run_id
+        if self.usage_error is not None:
+            raise self.usage_error
+        self.attempt_id = attempt_id
+        self.source = source
+        return self.usage_result
 
     async def events(
         self,
@@ -750,6 +770,7 @@ class CliTaskCommandShellTestCase(TestCase):
             task_cmds.task_events,
             task_cmds.task_inspect,
             task_cmds.task_output,
+            task_cmds.task_usage,
         ]
 
         for command in commands:
@@ -786,6 +807,36 @@ class CliTaskCommandShellTestCase(TestCase):
                         "input_summary": {"privacy": "<redacted>"},
                     },
                     "events": (),
+                }
+            ),
+            usage_result=_Snapshot(
+                {
+                    "usage": (
+                        {
+                            "usage_id": "usage-1",
+                            "run_id": "run-1",
+                            "attempt_id": "attempt-1",
+                            "sequence": 1,
+                            "source": "exact",
+                            "totals": {
+                                "input_tokens": 1,
+                                "cached_input_tokens": 0,
+                                "cache_creation_input_tokens": None,
+                                "output_tokens": 2,
+                                "reasoning_tokens": None,
+                                "total_tokens": 3,
+                            },
+                            "metadata": {"provider_family": "openai"},
+                        },
+                    ),
+                    "usage_totals": {
+                        "input_tokens": 1,
+                        "cached_input_tokens": 0,
+                        "cache_creation_input_tokens": None,
+                        "output_tokens": 2,
+                        "reasoning_tokens": None,
+                        "total_tokens": 3,
+                    },
                 }
             ),
             output_result=_Snapshot(
@@ -846,6 +897,18 @@ class CliTaskCommandShellTestCase(TestCase):
                 output_console,
                 self.theme,
             )
+            usage_console = Console(record=True, width=200)
+            usage_result = task_cmds.task_usage(
+                Namespace(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    attempt_id="attempt-1",
+                    source="exact",
+                ),
+                usage_console,
+                self.theme,
+            )
             events_console = Console(record=True, width=200)
             events_result = task_cmds.task_events(
                 Namespace(
@@ -871,18 +934,24 @@ class CliTaskCommandShellTestCase(TestCase):
 
         self.assertTrue(inspect_result)
         self.assertTrue(output_result)
+        self.assertTrue(usage_result)
         self.assertTrue(events_result)
         self.assertTrue(artifacts_result)
         self.assertEqual(client.after_sequence, 1)
         self.assertEqual(client.attempt_id, "attempt-1")
+        self.assertEqual(client.source, UsageSource.EXACT)
         rendered = (
             inspect_console.export_text()
             + output_console.export_text()
+            + usage_console.export_text()
             + events_console.export_text()
             + artifacts_console.export_text()
         )
         self.assertIn("inspect", rendered)
+        self.assertIn("usage", rendered)
         self.assertIn('"input_summary":{"privacy":"<redacted>"}', rendered)
+        self.assertIn('"cached_input_tokens":0', rendered)
+        self.assertIn('"provider_family":"openai"', rendered)
         self.assertIn('"error":{"code":"runnable.failed"}', rendered)
         self.assertIn('"sequence":2', rendered)
         self.assertIn('"artifact_id":"artifact-1"', rendered)
@@ -916,6 +985,33 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertNotIn("private run secret", output)
         self.assertNotIn("run-private", output)
 
+    def test_usage_rejects_invalid_source_safely(self) -> None:
+        console = Console(record=True, width=160)
+        client = _FakeTaskClient(usage_result=_Snapshot({}))
+
+        with patch.object(
+            task_cmds,
+            "_task_cli_inspection_client_context",
+            return_value=_FakeTaskClientContext(client),
+        ):
+            result = task_cmds.task_usage(
+                Namespace(
+                    run_id="run-private",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    attempt_id=None,
+                    source="raw-provider",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("task.inspection", output)
+        self.assertNotIn("raw-provider", output)
+        self.assertIsNone(client.source)
+
     def test_inspection_commands_report_safe_errors(self) -> None:
         cases = (
             (
@@ -939,6 +1035,18 @@ class CliTaskCommandShellTestCase(TestCase):
                     store_schema=None,
                     attempt_id=None,
                     after_sequence=None,
+                ),
+            ),
+            (
+                task_cmds.task_usage,
+                _FakeTaskClient(usage_error=AssertionError("private")),
+                "task.inspection",
+                Namespace(
+                    run_id="run-private",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema=None,
+                    attempt_id=None,
+                    source=None,
                 ),
             ),
             (

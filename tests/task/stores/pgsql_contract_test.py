@@ -238,12 +238,17 @@ class FakeCursor:
         elif 'FROM "task_usage_records" WHERE "usage_id"' in query:
             self.row = self.database.usage.get(cast(str, params[0]))
         elif 'FROM "task_usage_records"' in query:
-            self.rows = self._filtered(
-                self.database.usage,
-                cast(str, params[0]),
-                cast(str | None, params[1]),
-                None,
-                "sequence",
+            source = cast(str | None, params[3])
+            self.rows = tuple(
+                row
+                for row in self._filtered(
+                    self.database.usage,
+                    cast(str, params[0]),
+                    cast(str | None, params[1]),
+                    None,
+                    "sequence",
+                )
+                if source is None or row["source"] == source
             )
         elif 'SELECT * FROM "task_artifacts" WHERE "artifact_id"' in query:
             self.row = self.database.artifacts.get(cast(str, params[0]))
@@ -1085,6 +1090,69 @@ class PgsqlStoreContractTest(
             await self.store.usage_totals(run.run_id),
             UsageTotals(input_tokens=1, cached_input_tokens=3),
         )
+
+    async def test_usage_list_and_totals_filter_by_source(self) -> None:
+        run = await self._created_run()
+        attempt = await self.store.create_attempt(run.run_id)
+        exact = await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1, cached_input_tokens=0),
+        )
+        await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.UNAVAILABLE,
+            totals=UsageTotals(),
+        )
+        estimated = await self.store.append_usage(
+            run.run_id,
+            source=UsageSource.ESTIMATED,
+            totals=UsageTotals(output_tokens=5),
+        )
+
+        exact_records = await self.store.list_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+        )
+        estimated_records = await self.store.list_usage(
+            run.run_id,
+            source=UsageSource.ESTIMATED,
+        )
+        exact_totals = await self.store.usage_totals(
+            run.run_id,
+            source=UsageSource.EXACT,
+        )
+
+        self.assertEqual(exact_records, (exact,))
+        self.assertEqual(estimated_records, (estimated,))
+        self.assertEqual(
+            exact_totals,
+            UsageTotals(input_tokens=1, cached_input_tokens=0),
+        )
+        self.assertTrue(
+            any(
+                '"source" = %s::text' in query
+                for query in self.database.executed_queries
+            )
+        )
+
+    async def test_usage_filters_reject_invalid_source(self) -> None:
+        run = await self._created_run()
+        invalid_source = cast(UsageSource, "exact")
+
+        with self.assertRaises(AssertionError):
+            await self.store.list_usage(
+                run.run_id,
+                source=invalid_source,
+            )
+        with self.assertRaises(AssertionError):
+            await self.store.usage_totals(
+                run.run_id,
+                source=invalid_source,
+            )
 
     async def test_stable_usage_id_deduplicates_records(self) -> None:
         run = await self._created_run()

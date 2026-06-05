@@ -41,6 +41,7 @@ from ...task import (
     TaskValidationIssue,
     TaskWorker,
     TaskWorkerShutdown,
+    UsageSource,
     require_feature,
     validate_task_definition,
     validate_task_input,
@@ -348,6 +349,15 @@ def task_inspect(
 ) -> bool:
     """Inspect a task run."""
     return _run_awaitable(_task_inspect(args, console))
+
+
+def task_usage(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Inspect task run usage."""
+    return _run_awaitable(_task_usage(args, console))
 
 
 def task_output(
@@ -748,6 +758,34 @@ async def _task_inspect(args: Namespace, console: Console) -> bool:
         return False
     console.print(
         f"inspect {_format_task_cli_value(inspection.as_dict())}",
+        markup=False,
+        soft_wrap=True,
+    )
+    return True
+
+
+async def _task_usage(args: Namespace, console: Console) -> bool:
+    client_context = _task_cli_inspection_client_context(args, console)
+    if client_context is None:
+        return False
+    try:
+        source = _task_cli_usage_source(args)
+        async with client_context as client:
+            inspection = await client.usage_inspection(
+                args.run_id,
+                attempt_id=getattr(args, "attempt_id", None),
+                source=source,
+            )
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_task_inspection_error(console, exc)
+        return False
+    console.print(
+        f"usage {_format_task_cli_value(inspection.as_dict())}",
         markup=False,
         soft_wrap=True,
     )
@@ -1552,6 +1590,17 @@ def _task_cli_after_sequence(args: Namespace) -> int | None:
     assert not isinstance(value, bool)
     assert value >= 0
     return value
+
+
+def _task_cli_usage_source(args: Namespace) -> UsageSource | None:
+    value = getattr(args, "source", None)
+    if value is None:
+        return None
+    assert isinstance(value, str)
+    try:
+        return UsageSource(value)
+    except ValueError as exc:
+        raise AssertionError("source must be a task usage source") from exc
 
 
 def _task_event_cli_value(event: object) -> Mapping[str, object]:

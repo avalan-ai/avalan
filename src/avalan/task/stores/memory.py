@@ -504,30 +504,46 @@ class InMemoryTaskStore:
         run_id: str,
         *,
         attempt_id: str | None = None,
+        source: UsageSource | None = None,
     ) -> tuple[UsageRecord, ...]:
         _assert_non_empty_string(run_id, "run_id")
         if attempt_id is not None:
             _assert_non_empty_string(attempt_id, "attempt_id")
+        if source is not None:
+            assert isinstance(source, UsageSource)
         async with self._lock:
             self._run_or_raise(run_id)
-            if attempt_id is None:
-                return tuple(self._usage_by_run_id[run_id])
-            attempt = self._attempt_or_raise(attempt_id)
-            if attempt.run_id != run_id:
-                raise TaskStoreNotFoundError(
-                    "task attempt was not found for run"
-                )
+            if attempt_id is not None:
+                attempt = self._attempt_or_raise(attempt_id)
+                if attempt.run_id != run_id:
+                    raise TaskStoreNotFoundError(
+                        "task attempt was not found for run"
+                    )
             return tuple(
                 record
                 for record in self._usage_by_run_id[run_id]
-                if record.attempt_id == attempt_id
+                if (attempt_id is None or record.attempt_id == attempt_id)
+                and (source is None or record.source == source)
             )
 
-    async def usage_totals(self, run_id: str) -> UsageTotals:
+    async def usage_totals(
+        self,
+        run_id: str,
+        *,
+        source: UsageSource | None = None,
+    ) -> UsageTotals:
         _assert_non_empty_string(run_id, "run_id")
+        if source is not None:
+            assert isinstance(source, UsageSource)
         async with self._lock:
             self._run_or_raise(run_id)
-            return aggregate_usage_totals(tuple(self._usage_by_run_id[run_id]))
+            return aggregate_usage_totals(
+                tuple(
+                    record
+                    for record in self._usage_by_run_id[run_id]
+                    if source is None or record.source == source
+                )
+            )
 
     async def append_artifact(
         self,

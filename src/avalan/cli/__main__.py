@@ -526,6 +526,12 @@ def task_inspect(*args: Any, **kwargs: Any) -> Any:
     )
 
 
+def task_usage(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_usage")(
+        *args, **kwargs
+    )
+
+
 def task_output(*args: Any, **kwargs: Any) -> Any:
     return _load_command("avalan.cli.commands.task", "task_output")(
         *args, **kwargs
@@ -1763,6 +1769,40 @@ class CLI:
             type=int,
             default=None,
             help="Only include events after this sequence.",
+        )
+        task_usage_parser = task_command_parsers.add_parser(
+            name="usage",
+            description="Inspect task run usage",
+            parents=[global_parser],
+        )
+        task_usage_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_usage_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_usage_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_usage_parser.add_argument(
+            "--attempt-id",
+            type=str,
+            default=None,
+            help="Only include usage records for this attempt.",
+        )
+        task_usage_parser.add_argument(
+            "--source",
+            choices=("exact", "estimated", "unavailable"),
+            default=None,
+            help="Only include usage records from this source.",
         )
         task_output_parser = task_command_parsers.add_parser(
             name="output",
@@ -3598,6 +3638,8 @@ class CLI:
                         task_events(args, console, theme)
                     case "inspect":
                         task_inspect(args, console, theme)
+                    case "usage":
+                        task_usage(args, console, theme)
                     case "output":
                         task_output(args, console, theme)
                     case "retention-sweep":

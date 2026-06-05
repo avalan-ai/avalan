@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.task import (
@@ -17,6 +18,8 @@ from avalan.task import (
     TaskRunState,
     TaskStoreConflictError,
     TaskStoreNotFoundError,
+    UsageSource,
+    UsageTotals,
 )
 from avalan.task.stores import InMemoryTaskStore
 
@@ -91,6 +94,69 @@ class InMemoryTaskStoreTest(IsolatedAsyncioTestCase):
             await self.store.get_artifact("missing")
         with self.assertRaises(TaskStoreNotFoundError):
             await self.store.list_artifacts("missing")
+
+    async def test_usage_list_and_totals_filter_by_source(self) -> None:
+        run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        attempt = await self.store.create_attempt(run.run_id)
+        exact = await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.EXACT,
+            totals=UsageTotals(input_tokens=1, cached_input_tokens=0),
+        )
+        await self.store.append_usage(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            source=UsageSource.UNAVAILABLE,
+            totals=UsageTotals(),
+        )
+        estimated = await self.store.append_usage(
+            run.run_id,
+            source=UsageSource.ESTIMATED,
+            totals=UsageTotals(output_tokens=5),
+        )
+
+        self.assertEqual(
+            await self.store.list_usage(
+                run.run_id,
+                attempt_id=attempt.attempt_id,
+                source=UsageSource.EXACT,
+            ),
+            (exact,),
+        )
+        self.assertEqual(
+            await self.store.list_usage(
+                run.run_id,
+                source=UsageSource.ESTIMATED,
+            ),
+            (estimated,),
+        )
+        self.assertEqual(
+            await self.store.usage_totals(
+                run.run_id,
+                source=UsageSource.EXACT,
+            ),
+            UsageTotals(input_tokens=1, cached_input_tokens=0),
+        )
+
+    async def test_usage_filters_reject_invalid_source(self) -> None:
+        run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        invalid_source = cast(UsageSource, "exact")
+
+        with self.assertRaises(AssertionError):
+            await self.store.list_usage(
+                run.run_id,
+                source=invalid_source,
+            )
+        with self.assertRaises(AssertionError):
+            await self.store.usage_totals(
+                run.run_id,
+                source=invalid_source,
+            )
 
     async def test_run_and_attempt_metadata_rejects_unsafe_values(
         self,

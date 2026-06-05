@@ -47,6 +47,7 @@ from .client import TaskClientOutput as TaskClientOutput
 from .client import (
     TaskClientUnsupportedOperationError as TaskClientUnsupportedOperationError,
 )
+from .client import TaskClientUsageInspection as TaskClientUsageInspection
 from .client import TaskClientValidationResult as TaskClientValidationResult
 from .client import TaskClientWaitTimeoutError as TaskClientWaitTimeoutError
 from .context import TaskCancellationChecker as TaskCancellationChecker

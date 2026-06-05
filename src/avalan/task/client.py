@@ -77,7 +77,12 @@ from .target import (
     TaskTargetRunner,
     TaskValidationContext,
 )
-from .usage import UsageRecord, UsageTotals
+from .usage import (
+    UsageRecord,
+    UsageSource,
+    UsageTotals,
+    aggregate_usage_totals,
+)
 from .validation import (
     TaskValidationCategory,
     TaskValidationError,
@@ -190,6 +195,22 @@ class TaskClientInspection:
                 ),
                 "usage_totals": _usage_totals_value(self.usage_totals),
                 "artifacts": self.artifacts,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskClientUsageInspection:
+    usage: tuple[UsageRecord, ...]
+    usage_totals: UsageTotals
+
+    def as_dict(self) -> TaskSnapshotValue:
+        return freeze_snapshot_value(
+            {
+                "usage": tuple(
+                    _usage_inspection_value(record) for record in self.usage
+                ),
+                "usage_totals": _usage_totals_value(self.usage_totals),
             }
         )
 
@@ -716,11 +737,42 @@ class TaskClient:
         run_id: str,
         *,
         attempt_id: str | None = None,
+        source: UsageSource | None = None,
     ) -> tuple[UsageRecord, ...]:
-        return await self._store.list_usage(run_id, attempt_id=attempt_id)
+        if source is not None:
+            assert isinstance(source, UsageSource)
+        return await self._store.list_usage(
+            run_id,
+            attempt_id=attempt_id,
+            source=source,
+        )
 
-    async def usage_totals(self, run_id: str) -> UsageTotals:
-        return await self._store.usage_totals(run_id)
+    async def usage_totals(
+        self,
+        run_id: str,
+        *,
+        source: UsageSource | None = None,
+    ) -> UsageTotals:
+        if source is not None:
+            assert isinstance(source, UsageSource)
+        return await self._store.usage_totals(run_id, source=source)
+
+    async def usage_inspection(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str | None = None,
+        source: UsageSource | None = None,
+    ) -> TaskClientUsageInspection:
+        records = await self.usage(
+            run_id,
+            attempt_id=attempt_id,
+            source=source,
+        )
+        return TaskClientUsageInspection(
+            usage=records,
+            usage_totals=aggregate_usage_totals(records),
+        )
 
     async def artifacts(self, run_id: str) -> tuple[TaskSnapshotValue, ...]:
         artifacts = await self._store.list_artifacts(run_id)

@@ -59,9 +59,15 @@ class PgsqlInspectionStore(Protocol):
         run_id: str,
         *,
         attempt_id: str | None = None,
+        source: UsageSource | None = None,
     ) -> tuple[UsageRecord, ...]: ...
 
-    async def usage_totals(self, run_id: str) -> UsageTotals: ...
+    async def usage_totals(
+        self,
+        run_id: str,
+        *,
+        source: UsageSource | None = None,
+    ) -> UsageTotals: ...
 
 
 @dataclass(slots=True, kw_only=True)

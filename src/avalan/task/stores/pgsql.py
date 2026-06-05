@@ -895,10 +895,13 @@ class PgsqlTaskStore:
         run_id: str,
         *,
         attempt_id: str | None = None,
+        source: UsageSource | None = None,
     ) -> tuple[UsageRecord, ...]:
         _assert_non_empty_string(run_id, "run_id")
         if attempt_id is not None:
             _assert_non_empty_string(attempt_id, "attempt_id")
+        if source is not None:
+            assert isinstance(source, UsageSource)
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
             await _run_or_raise(unit, run_id)
@@ -910,7 +913,13 @@ class PgsqlTaskStore:
                     )
             await unit.cursor.execute(
                 _SELECT_USAGE_SQL,
-                (run_id, attempt_id, attempt_id),
+                (
+                    run_id,
+                    attempt_id,
+                    attempt_id,
+                    source.value if source is not None else None,
+                    source.value if source is not None else None,
+                ),
             )
             return tuple(
                 _usage_from_row(row) for row in await unit.cursor.fetchall()
@@ -924,8 +933,13 @@ class PgsqlTaskStore:
             ),
         )
 
-    async def usage_totals(self, run_id: str) -> UsageTotals:
-        records = await self.list_usage(run_id)
+    async def usage_totals(
+        self,
+        run_id: str,
+        *,
+        source: UsageSource | None = None,
+    ) -> UsageTotals:
+        records = await self.list_usage(run_id, source=source)
         return aggregate_usage_totals(records)
 
     async def append_artifact(
@@ -1629,6 +1643,7 @@ _SELECT_USAGE_SQL = """
 SELECT * FROM "task_usage_records"
 WHERE "run_id" = %s
   AND (%s::text IS NULL OR "attempt_id" = %s::text)
+  AND (%s::text IS NULL OR "source" = %s::text)
 ORDER BY "sequence", "created_at", "usage_id"
 """
 _SELECT_USAGE_BY_ID_SQL = """

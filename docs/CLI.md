@@ -23,6 +23,7 @@ The CLI offers the following commands, some of them with multiple subcommands:
   * [avalan task run](#avalan-task-run)
   * [avalan task enqueue](#avalan-task-enqueue)
   * [avalan task inspect](#avalan-task-inspect)
+  * [avalan task usage](#avalan-task-usage)
   * [avalan task output](#avalan-task-output)
   * [avalan task events](#avalan-task-events)
   * [avalan task artifacts](#avalan-task-artifacts)
@@ -1856,6 +1857,26 @@ avalan task inspect RUN_ID --store-dsn "$AVALAN_TASK_STORE_DSN" --after-sequence
 The snapshot includes run state and sanitized events after the optional
 sequence cursor. It does not print raw prompts, file bytes, file paths, provider
 handles, token text, exception messages, or stack traces.
+
+Direct runs with `--ephemeral` are useful for local output checks only. To
+inspect records after the process exits, run with a durable store or inspect
+the in-memory client from the same SDK process that executed the task.
+
+### avalan task usage
+
+Print usage records and rollups for a run:
+
+```bash
+avalan task usage RUN_ID \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --attempt-id ATTEMPT_ID \
+  --source exact
+```
+
+The output contains each usage record with its attempt id, sequence, source,
+counters, privacy-safe metadata, and a `usage_totals` object. The rollup is
+computed from the records returned by the selected filters. Missing counters
+are printed as `null`; reported zero values remain `0`.
 
 ### avalan task output
 
