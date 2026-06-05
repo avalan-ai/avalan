@@ -769,6 +769,48 @@ def test_plan_delivery_rejects_image_vision_limit_safely() -> None:
     assert "private" not in str(rejected)
 
 
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"width_pixels": 512},
+        {"height_pixels": 512},
+        {"width_pixels": 512, "height_pixels": "private"},
+        {"vision_tokens": 0},
+        {"vision_tokens": True},
+    ],
+)
+def test_plan_delivery_rejects_images_without_vision_estimate(
+    metadata: dict[str, object],
+) -> None:
+    profile = FileDeliveryProfile(
+        name="vision_limited",
+        delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+        accepted_mime_types=("image/*",),
+        vision_token_limit=FileDeliveryLimit(
+            name="vision_tokens",
+            source="test",
+            max_tokens=85,
+        ),
+    )
+
+    decision = profile.plan_delivery(
+        FileDeliveryRequest(
+            mime_type="image/png",
+            size_bytes=1,
+            has_artifact=True,
+            metadata=metadata,
+        )
+    )
+
+    assert decision.mode == FileDeliveryMode.REJECT
+    assert decision.diagnostic is not None
+    assert (
+        decision.diagnostic.code == "model.file_delivery.unknown_vision_tokens"
+    )
+    assert "private" not in str(decision)
+
+
 def test_plan_delivery_rejects_image_without_mime_type() -> None:
     profile = FileDeliveryProfile(
         name="image",

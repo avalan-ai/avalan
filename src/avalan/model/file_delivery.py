@@ -679,7 +679,16 @@ def _vision_token_diagnostic(
         height = _metadata_positive_int(request.metadata, "height_pixels")
         if width is not None and height is not None:
             estimate = _estimate_vision_tokens(width, height)
-    if estimate is None or estimate <= limit.max_tokens:
+    if estimate is None:
+        return _reject(
+            code="model.file_delivery.unknown_vision_tokens",
+            message="Model image delivery requires a vision token estimate.",
+            hint=(
+                f"Provide image dimensions or a {limit.name} estimate before "
+                "dispatch."
+            ),
+        )
+    if estimate <= limit.max_tokens:
         return None
     return _reject(
         code="model.file_delivery.vision_limit_exceeded",

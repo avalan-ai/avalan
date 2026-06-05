@@ -249,6 +249,88 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
         )
         self.assertIn("inline_file_bytes", plan.decision.diagnostic.hint)
 
+    async def test_inline_bytes_without_provider_limit_succeeds(self) -> None:
+        plan = await plan_task_file_delivery(
+            _definition(),
+            TaskInputFile(
+                logical_path="artifact:input",
+                artifact_ref=_artifact_ref(size_bytes=4),
+                media_type="application/octet-stream",
+                size_bytes=4,
+            ),
+            profile=_profile(FileDeliveryMode.INLINE_BYTES),
+            artifact_store=RecordingArtifactStore(),
+        )
+
+        self.assertEqual(plan.decision.mode, FileDeliveryMode.INLINE_BYTES)
+
+    async def test_inline_image_delivery_uses_flattened_dimensions(
+        self,
+    ) -> None:
+        plan = await plan_task_file_delivery(
+            _definition(),
+            TaskInputFile(
+                logical_path="artifact:page",
+                artifact_ref=_artifact_ref(size_bytes=4),
+                media_type="image/png",
+                size_bytes=4,
+                metadata={
+                    "dimensions": {
+                        "width_pixels": 512,
+                        "height_pixels": 512,
+                    }
+                },
+            ),
+            profile=_profile(
+                FileDeliveryMode.INLINE_IMAGE,
+                accepted_mime_types=("image/*",),
+                vision_token_limit=FileDeliveryLimit(
+                    name="vision_tokens",
+                    source="provider.test",
+                    max_tokens=85,
+                ),
+            ),
+            artifact_store=RecordingArtifactStore(),
+        )
+
+        self.assertEqual(plan.decision.mode, FileDeliveryMode.INLINE_IMAGE)
+
+    async def test_inline_image_delivery_rejects_unknown_vision_cost(
+        self,
+    ) -> None:
+        plan = await plan_task_file_delivery(
+            _definition(),
+            TaskInputFile(
+                logical_path="artifact:page",
+                artifact_ref=_artifact_ref(size_bytes=4),
+                media_type="image/png",
+                size_bytes=4,
+                metadata={
+                    "dimensions": {
+                        "width_pixels": 512,
+                        "height_pixels": "private",
+                    }
+                },
+            ),
+            profile=_profile(
+                FileDeliveryMode.INLINE_IMAGE,
+                accepted_mime_types=("image/*",),
+                vision_token_limit=FileDeliveryLimit(
+                    name="vision_tokens",
+                    source="provider.test",
+                    max_tokens=85,
+                ),
+            ),
+            artifact_store=RecordingArtifactStore(),
+        )
+
+        self.assertEqual(plan.decision.mode, FileDeliveryMode.REJECT)
+        self.assertEqual(
+            plan.decision.diagnostic.code,
+            "model.file_delivery.unknown_vision_tokens",
+        )
+        self.assertNotIn("private", str(plan.decision))
+
     async def test_unknown_inline_byte_size_rejects_with_limit_name(
         self,
     ) -> None:
@@ -439,6 +521,24 @@ class TaskDeliveryPlannerTest(IsolatedAsyncioTestCase):
                 FileDeliveryMode.INLINE_TEXT,
                 accepted_mime_types=("text/*",),
             ),
+            artifact_store=RecordingArtifactStore(),
+        )
+
+        self.assertEqual(plan.decision.mode, FileDeliveryMode.REJECT)
+        self.assertEqual(
+            plan.decision.diagnostic.code,
+            "task.file_delivery.unsupported_mime",
+        )
+
+    async def test_artifact_file_without_mime_rejects_safely(self) -> None:
+        plan = await plan_task_file_delivery(
+            _definition(),
+            TaskInputFile(
+                logical_path="artifact:input",
+                artifact_ref=_artifact_ref(size_bytes=4),
+                size_bytes=4,
+            ),
+            profile=_profile(FileDeliveryMode.INLINE_TEXT),
             artifact_store=RecordingArtifactStore(),
         )
 
@@ -645,8 +745,10 @@ def _profile(
     *modes: FileDeliveryMode,
     accepted_mime_types: tuple[str, ...] = ("*/*",),
     inline_byte_limit: FileDeliveryLimit | None = None,
+    inline_image_limit: FileDeliveryLimit | None = None,
     inline_text_limit: FileDeliveryLimit | None = None,
     source_kinds: frozenset[str] | None = None,
+    vision_token_limit: FileDeliveryLimit | None = None,
 ) -> FileDeliveryProfile:
     if source_kinds is not None:
         return FileDeliveryProfile(
@@ -654,15 +756,19 @@ def _profile(
             delivery_modes=frozenset(modes),
             accepted_mime_types=accepted_mime_types,
             inline_byte_limit=inline_byte_limit,
+            inline_image_limit=inline_image_limit,
             inline_text_limit=inline_text_limit,
             source_kinds=source_kinds,
+            vision_token_limit=vision_token_limit,
         )
     return FileDeliveryProfile(
         name="test",
         delivery_modes=frozenset(modes),
         accepted_mime_types=accepted_mime_types,
         inline_byte_limit=inline_byte_limit,
+        inline_image_limit=inline_image_limit,
         inline_text_limit=inline_text_limit,
+        vision_token_limit=vision_token_limit,
     )
 
 
