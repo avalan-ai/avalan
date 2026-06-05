@@ -2175,6 +2175,52 @@ file_delivery_profile = "multimodal"
         self.assertEqual(loader.inputs, [])
         self.assertNotIn("private-source.pdf", str(error.exception))
 
+    async def test_run_allows_converted_image_append_policy_when_opted_in(
+        self,
+    ) -> None:
+        loader = FakeLoader(response="accepted")
+        profile = FileDeliveryProfile(
+            name="image-append",
+            delivery_modes=frozenset({FileDeliveryMode.INLINE_IMAGE}),
+            accepted_mime_types=("image/*",),
+            metadata={"allow_append_file_policy": True},
+        )
+        runner = AgentTaskTargetRunner(
+            loader,
+            file_delivery_resolver=lambda uri: profile,
+            uri="ai://env:KEY@fake/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        await runner.run(
+            self._context(
+                self._definition(),
+                "describe",
+                files=(
+                    TaskInputFile(
+                        logical_path="artifact:artifact-1",
+                        artifact_ref=artifact_ref,
+                        media_type="image/png",
+                        size_bytes=4,
+                        metadata={
+                            "file_policy": "append",
+                            "display_name": "private-source.pdf",
+                        },
+                    ),
+                ),
+                artifact_store=FakeArtifactStore(b"\x89PNG"),
+            )
+        )
+
+        content = cast(list[Any], cast(Message, loader.inputs[0]).content)
+        self.assertIsInstance(content[1], MessageContentImage)
+        self.assertEqual(content[1].image_url["data"], "iVBORw==")
+        self.assertNotIn("private-source.pdf", str(loader.inputs))
+
     async def test_run_rejects_image_byte_limit_before_provider_call(
         self,
     ) -> None:

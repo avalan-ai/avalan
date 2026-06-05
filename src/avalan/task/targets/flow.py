@@ -911,8 +911,23 @@ def _agent_node_files(
     if file_plan.file_policy == "replace":
         return files
     if file_plan.file_policy == "append":
-        return context.files + files
+        return context.files + _append_policy_files(files)
     raise AssertionError("validated agent file policy is unsupported")
+
+
+def _append_policy_files(
+    files: tuple[TaskInputFile, ...],
+) -> tuple[TaskInputFile, ...]:
+    return tuple(
+        replace(
+            file,
+            metadata={
+                **file.metadata,
+                "file_policy": "append",
+            },
+        )
+        for file in files
+    )
 
 
 def _flow_file_selector_value(

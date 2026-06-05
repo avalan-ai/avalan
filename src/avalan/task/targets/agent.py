@@ -344,6 +344,9 @@ async def _agent_input(
         return value
     if not profile.accepts_file_count(len(context.files)):
         raise _agent_file_error(path="input.files")
+    append_error = _append_policy_error(context.files, profile)
+    if append_error is not None:
+        raise append_error
     file_blocks: list[_AgentFileBlock] = []
     for index, file in enumerate(context.files):
         file_blocks.append(
@@ -529,8 +532,6 @@ async def _agent_file_content(
                 metadata=metadata,
             )
         case FileDeliveryMode.INLINE_IMAGE:
-            if not _append_policy_allowed(file, profile):
-                raise _agent_file_error(path=path, decision=decision)
             data = await _artifact_bytes(
                 file,
                 context=context,
@@ -722,14 +723,16 @@ def _message_image(file: object, data: bytes) -> dict[str, str]:
     }
 
 
-def _append_policy_allowed(
-    file: TaskInputFile,
+def _append_policy_error(
+    files: tuple[TaskInputFile, ...],
     profile: FileDeliveryProfile,
-) -> bool:
-    policy = file.metadata.get("file_policy")
-    if policy != "append":
-        return True
-    return profile.metadata.get("allow_append_file_policy") is True
+) -> TaskValidationError | None:
+    if profile.metadata.get("allow_append_file_policy") is True:
+        return None
+    for index, file in enumerate(files):
+        if file.metadata.get("file_policy") == "append":
+            return _agent_file_error(path=f"input.files[{index}]")
+    return None
 
 
 def _message_file_name(media_type: object) -> str:

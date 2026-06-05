@@ -1006,9 +1006,16 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "agent output")
         self.assertEqual(
-            agent_runner.contexts[0].files,
-            (parent_file, generated_file),
+            agent_runner.contexts[0].files[0],
+            parent_file,
         )
+        appended_file = agent_runner.contexts[0].files[1]
+        self.assertEqual(
+            appended_file.logical_path, generated_file.logical_path
+        )
+        self.assertEqual(appended_file.media_type, generated_file.media_type)
+        self.assertEqual(appended_file.metadata["file_policy"], "append")
+        self.assertEqual(generated_file.metadata, {})
 
     async def test_run_agent_node_rejects_bad_file_selector_outputs(
         self,
@@ -3163,6 +3170,106 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private.pdf", str(result.run.result))
         self.assertNotIn("%PDF-private", str(result.run.result))
+
+    async def test_direct_runner_rejects_appended_converted_images(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter(
+            (_page_result(1, b"private image bytes"),)
+        )
+        loader = FlowAgentLoader(text='{"status": "ready", "count": 1}')
+
+        def resolve(context: TaskTargetContext) -> Flow:
+            agent_runner = AgentTaskTargetRunner(loader, ref_base=root)
+            registry = task_flow_node_registry(
+                context,
+                agent_runner=agent_runner,
+            )
+            flow = Flow()
+            flow.add_node(
+                registry.build(
+                    FlowNodeDefinition(
+                        name="render",
+                        type="file_convert",
+                        input="pdf",
+                        output="files",
+                        config={
+                            "converter": "pdf_image",
+                            "format": "png",
+                            "max_pages": 1,
+                        },
+                    )
+                )
+            )
+            flow.add_node(
+                registry.build(
+                    FlowNodeDefinition(
+                        name="extract",
+                        type="agent",
+                        ref="agents/extract.toml",
+                        config={
+                            "files_input": "render.files",
+                            "file_policy": "append",
+                        },
+                    )
+                )
+            )
+            flow.add_connection("render", "extract")
+            return flow
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "agents").mkdir()
+            (root / "agents" / "extract.toml").write_text(
+                """
+[agent]
+name = "Extract"
+user = "Review."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            (root / "private.pdf").write_bytes(b"%PDF-private source")
+            artifact_store = LocalArtifactStore(
+                root / "artifacts",
+                raw_storage_allowed=True,
+                id_factory=_id_factory(("source-1", "page-1")),
+            )
+            runner = DirectTaskRunner(
+                self.store,
+                target=FlowTaskTargetRunner(flow_resolver=resolve),
+                hmac_provider=StaticHmacProvider(),
+                artifact_store=artifact_store,
+                file_converters={"pdf_image": converter},
+                execution_roots=(root,),
+                definition_hash=lambda _: "flow-direct-agent-append-reject",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",)
+                    ),
+                    output_contract=self._object_output_contract(),
+                    artifact=TaskArtifactPolicy.references_only(
+                        retention_days=4,
+                    ),
+                ),
+                input_value=TaskFileDescriptor.local_path(
+                    "private.pdf",
+                    mime_type="application/pdf",
+                ),
+            )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertIsNone(result.output)
+        self.assertEqual(loader.inputs, [])
+        self.assertEqual(len(converter.calls), 1)
+        self.assertNotIn("private.pdf", str(result.run.result))
+        self.assertNotIn("%PDF-private", str(result.run.result))
+        self.assertNotIn("private image bytes", str(result.run.result))
 
     async def test_direct_runner_rejects_flow_agent_provider_mismatch(
         self,
