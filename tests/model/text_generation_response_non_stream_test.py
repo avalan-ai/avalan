@@ -4,13 +4,18 @@ from unittest import IsolatedAsyncioTestCase
 from avalan.entities import GenerationSettings, Token
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import TextGenerationSingleStream
+from avalan.task.usage import usage_observation_from_response
 
 
 class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
     async def test_str_prefetches_single_stream(self) -> None:
         settings = GenerationSettings()
         usage = {"input_tokens": 2}
-        stream = TextGenerationSingleStream("hello", usage=usage)
+        stream = TextGenerationSingleStream(
+            "hello",
+            provider_family="openai",
+            usage=usage,
+        )
         response = TextGenerationResponse(
             stream,
             logger=getLogger("response"),
@@ -18,7 +23,14 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
             settings=settings,
             use_async_generator=False,
         )
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
         self.assertEqual(response.usage, usage)
+        self.assertEqual(response.provider_family, "openai")
+        self.assertFalse(response.is_async_generator)
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
         self.assertEqual(str(response), "hello")
         self.assertEqual(response.output_token_count, len("hello"))
         response._ensure_non_stream_prefetched()
@@ -58,6 +70,7 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
             settings=settings,
             use_async_generator=False,
         )
+        self.assertIsNone(response.provider_family)
         self.assertIn("generic", str(response))
 
     async def test_streaming_str_and_prefetch_guard(self) -> None:

@@ -199,6 +199,104 @@ class UsageTotalsTest(TestCase):
             ),
         )
 
+    def test_openai_responses_usage_fields_are_preserved(self) -> None:
+        response = SimpleNamespace(
+            provider_family="azure_openai",
+            usage={
+                "input_tokens": 12,
+                "input_tokens_details": {"cached_tokens": 5},
+                "output_tokens": 8,
+                "output_tokens_details": {"reasoning_tokens": 3},
+                "total_tokens": 20,
+                "model": "private-deployment-name",
+                "response_id": "private-response-id",
+            },
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.source, UsageSource.EXACT)
+        self.assertEqual(
+            observation.metadata,
+            {"provider_family": UsageProviderFamily.AZURE_OPENAI.value},
+        )
+        self.assertEqual(
+            observation.totals,
+            UsageTotals(
+                input_tokens=12,
+                cached_input_tokens=5,
+                output_tokens=8,
+                reasoning_tokens=3,
+                total_tokens=20,
+            ),
+        )
+        self.assertIsNone(observation.totals.cache_creation_input_tokens)
+        self.assertNotIn("private-deployment-name", str(observation))
+        self.assertNotIn("private-response-id", str(observation))
+
+    def test_openai_chat_compatible_usage_fields_are_preserved(
+        self,
+    ) -> None:
+        response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "prompt_tokens": 9,
+                "prompt_tokens_details": {"cached_tokens": 4},
+                "completion_tokens": 7,
+                "completion_tokens_details": {"reasoning_tokens": 2},
+                "total_tokens": 16,
+            },
+        )
+
+        totals = usage_totals_from_response(response)
+
+        self.assertEqual(
+            totals,
+            UsageTotals(
+                input_tokens=9,
+                cached_input_tokens=4,
+                output_tokens=7,
+                reasoning_tokens=2,
+                total_tokens=16,
+            ),
+        )
+        assert totals is not None
+        self.assertIsNone(totals.cache_creation_input_tokens)
+
+    def test_openai_usage_drops_malformed_counters_without_inference(
+        self,
+    ) -> None:
+        response = SimpleNamespace(
+            provider_family="azure_openai",
+            usage={
+                "input_tokens": True,
+                "input_tokens_details": {"cached_tokens": -1},
+                "prompt_tokens_details": {"cached_tokens": "4"},
+                "output_tokens": 6,
+                "output_tokens_details": {"reasoning_tokens": 1.5},
+                "completion_tokens_details": {"reasoning_tokens": False},
+                "total_tokens": "6",
+                "model": "private-deployment-name",
+            },
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.totals,
+            UsageTotals(output_tokens=6),
+        )
+        self.assertIsNone(observation.totals.cache_creation_input_tokens)
+        self.assertEqual(
+            observation.metadata,
+            {"provider_family": UsageProviderFamily.AZURE_OPENAI.value},
+        )
+        self.assertNotIn("private-deployment-name", str(observation))
+
     def test_streaming_vendor_usage_aliases_are_preserved(self) -> None:
         google = usage_totals_from_response(
             SimpleNamespace(

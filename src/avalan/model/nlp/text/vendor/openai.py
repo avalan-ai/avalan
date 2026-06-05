@@ -40,7 +40,12 @@ class OpenAIStream(TextGenerationVendorStream):
     _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
 
-    def __init__(self, stream: AsyncIterator[Any]) -> None:
+    def __init__(
+        self,
+        stream: AsyncIterator[Any],
+        *,
+        provider_family: str = "openai",
+    ) -> None:
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_calls: dict[str, dict[str, str | list[str] | None]] = {}
             terminal_usage: object | None = None
@@ -140,7 +145,7 @@ class OpenAIStream(TextGenerationVendorStream):
             if terminal_usage is not None:
                 self._usage = terminal_usage
 
-        super().__init__(generator())
+        super().__init__(generator(), provider_family=provider_family)
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
@@ -251,13 +256,21 @@ class OpenAIClient(TextGenerationVendor):
         client_stream = await self._client.responses.create(**kwargs)
 
         if use_async_generator:
-            return OpenAIStream(stream=client_stream)
+            return OpenAIStream(
+                stream=client_stream,
+                provider_family=self._usage_provider_family,
+            )
 
         content = OpenAIClient._non_stream_response_content(client_stream)
         return TextGenerationSingleStream(
             content,
+            provider_family=self._usage_provider_family,
             usage=OpenAIClient._response_field(client_stream, "usage"),
         )
+
+    @property
+    def _usage_provider_family(self) -> str:
+        return "azure_openai" if self._is_azure else "openai"
 
     def _template_messages(
         self,

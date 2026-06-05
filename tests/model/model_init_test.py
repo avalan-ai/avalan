@@ -171,6 +171,11 @@ class StreamVendorTestCase(IsolatedAsyncioTestCase):
             async def __anext__(self):
                 return await self._generator.__anext__()
 
-        stream = DummyVendorStream(agen(), usage=usage)
+        stream = DummyVendorStream(
+            agen(),
+            provider_family="openai_compatible",
+            usage=usage,
+        )
 
+        self.assertEqual(stream.provider_family, "openai_compatible")
         self.assertEqual(stream.usage, usage)

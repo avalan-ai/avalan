@@ -171,6 +171,13 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         return cast(object | None, getattr(self._output, "usage", None))
 
     @property
+    def provider_family(self) -> str | None:
+        provider_family = getattr(self._output_fn, "provider_family", None)
+        if provider_family is not None:
+            return cast(str, provider_family)
+        return cast(str | None, getattr(self._output, "provider_family", None))
+
+    @property
     def is_async_generator(self) -> bool:
         return self._use_async_generator
 

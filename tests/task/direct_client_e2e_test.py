@@ -61,6 +61,7 @@ from avalan.task import (
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
+    UsageProviderFamily,
     UsageSource,
     canonical_schema_json,
     pdf_image_converter_capability,
@@ -661,6 +662,34 @@ class StreamingUsageTarget(TaskTargetRunner):
         output = await response.to_str()
         await context.observe_usage(response)
         return output
+
+
+class AzureUsageTarget(TaskTargetRunner):
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        await context.check_cancelled()
+        await context.observe_usage(
+            SimpleNamespace(
+                provider_family=UsageProviderFamily.AZURE_OPENAI.value,
+                usage={
+                    "input_tokens": 12,
+                    "input_tokens_details": {"cached_tokens": 5},
+                    "output_tokens": 8,
+                    "output_tokens_details": {"reasoning_tokens": 3},
+                    "total_tokens": 20,
+                    "model": "private-deployment-name",
+                    "response_id": "private-response-id",
+                },
+            )
+        )
+        return "public azure summary"
 
 
 class ProviderFakeClient:
@@ -3151,6 +3180,57 @@ capture_events = false
         self.assertEqual(inspection.usage_totals.total_tokens, 13)
         inspection_value = str(inspection.as_dict())
         self.assertNotIn("private prompt", inspection_value)
+
+    async def test_azure_response_usage_records_exact_safe_totals(
+        self,
+    ) -> None:
+        definition = TaskDefinition(
+            task=TaskMetadata(name="azure_summary", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/summarizer.toml"),
+            run=TaskRunPolicy.direct(timeout_seconds=60),
+            observability=TaskObservabilityPolicy(
+                metrics=True,
+                trace=False,
+                capture_events=True,
+            ),
+        )
+        store = InMemoryTaskStore(
+            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+        )
+        client = TaskClient(
+            store,
+            target=AzureUsageTarget(),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "azure-usage-e2e",
+            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        result = await client.run(
+            definition,
+            input_value="private prompt",
+        )
+        inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "public azure summary")
+        self.assertEqual(len(inspection.usage), 1)
+        self.assertEqual(inspection.usage[0].source, UsageSource.EXACT)
+        self.assertEqual(
+            inspection.usage[0].metadata,
+            {"provider_family": UsageProviderFamily.AZURE_OPENAI.value},
+        )
+        self.assertEqual(inspection.usage_totals.input_tokens, 12)
+        self.assertEqual(inspection.usage_totals.cached_input_tokens, 5)
+        self.assertIsNone(inspection.usage_totals.cache_creation_input_tokens)
+        self.assertEqual(inspection.usage_totals.output_tokens, 8)
+        self.assertEqual(inspection.usage_totals.reasoning_tokens, 3)
+        self.assertEqual(inspection.usage_totals.total_tokens, 20)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private prompt", inspection_value)
+        self.assertNotIn("private-deployment-name", inspection_value)
+        self.assertNotIn("private-response-id", inspection_value)
 
     async def test_loaded_file_task_accessors_filter_safe_records(
         self,

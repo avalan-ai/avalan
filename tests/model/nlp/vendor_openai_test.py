@@ -26,7 +26,10 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
-from avalan.task.usage import usage_totals_from_response
+from avalan.task.usage import (
+    usage_observation_from_response,
+    usage_totals_from_response,
+)
 
 
 class AsyncIter:
@@ -169,7 +172,10 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             stream=True,
             timeout=None,
         )
-        StreamMock.assert_called_once_with(stream=stream_instance)
+        StreamMock.assert_called_once_with(
+            stream=stream_instance,
+            provider_family="openai",
+        )
         self.assertIs(result, StreamMock.return_value)
 
     async def test_client_sends_top_level_instructions(self):
@@ -365,6 +371,11 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             await stream.__anext__()
 
         self.assertIs(stream.usage, usage)
+        self.assertEqual(stream.provider_family, "openai")
+        observation = usage_observation_from_response(stream)
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
         totals = usage_totals_from_response(stream)
         self.assertIsNotNone(totals)
         assert totals is not None
@@ -399,8 +410,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+        observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
         self.assertIsNotNone(totals)
         assert totals is not None
         self.assertEqual(totals.input_tokens, 0)
@@ -1015,7 +1030,58 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(response._output_fn, TextGenerationSingleStream)
         self.assertFalse(response._use_async_generator)
         self.assertEqual(response.usage.input_tokens, 1)
+        self.assertEqual(response.provider_family, "openai")
+        observation = usage_observation_from_response(response)
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
         self.assertEqual(await response.to_str(), "ok")
+
+    async def test_azure_response_usage_preserves_safe_metadata(self):
+        usage = SimpleNamespace(
+            input_tokens=11,
+            input_tokens_details=SimpleNamespace(cached_tokens=4),
+            output_tokens=7,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=3),
+            total_tokens=18,
+            model="private-deployment-name",
+            response_id="private-response-id",
+        )
+        resp = SimpleNamespace(
+            output=[
+                SimpleNamespace(content=[SimpleNamespace(text="azure ok")])
+            ],
+            usage=usage,
+        )
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=resp
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url="https://acct.openai.azure.com/openai/v1/",
+        )
+        response = await client(
+            "private-deployment-name",
+            [Message(role=MessageRole.USER, content="hi")],
+            use_async_generator=False,
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertEqual(response.provider_family, "azure_openai")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata, {"provider_family": "azure_openai"}
+        )
+        self.assertEqual(observation.totals.input_tokens, 11)
+        self.assertEqual(observation.totals.cached_input_tokens, 4)
+        self.assertIsNone(observation.totals.cache_creation_input_tokens)
+        self.assertEqual(observation.totals.output_tokens, 7)
+        self.assertEqual(observation.totals.reasoning_tokens, 3)
+        self.assertEqual(observation.totals.total_tokens, 18)
+        self.assertNotIn("private-deployment-name", str(observation))
+        self.assertNotIn("private-response-id", str(observation))
 
 
 class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):

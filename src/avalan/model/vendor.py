@@ -153,16 +153,23 @@ class TextGenerationVendor(ABC):
 
 class TextGenerationVendorStream(TextGenerationStream):
     _generator: AsyncIterator[Token | TokenDetail | str]
+    _provider_family: str | None
     _usage: object | None
 
     def __init__(
         self,
         generator: AsyncIterator[Token | TokenDetail | str],
         *,
+        provider_family: str | None = None,
         usage: object | None = None,
     ) -> None:
         self._generator = generator
+        self._provider_family = provider_family
         self._usage = usage
+
+    @property
+    def provider_family(self) -> str | None:
+        return self._provider_family
 
     @property
     def usage(self) -> object | None:
