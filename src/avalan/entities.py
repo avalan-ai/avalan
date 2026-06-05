@@ -156,6 +156,39 @@ class ToolFormat(StrEnum):
     DSML = "dsml"
 
 
+class ToolCallDiagnosticCode(StrEnum):
+    UNKNOWN_TOOL = "tool.unknown"
+    DISABLED_TOOL = "tool.disabled"
+    AMBIGUOUS_TOOL_NAME = "tool.ambiguous_name"
+    MALFORMED_CALL = "tool_call.malformed"
+    MALFORMED_ARGUMENTS = "tool_call.arguments_malformed"
+    ARGUMENT_VALIDATION_FAILED = "tool_call.arguments_invalid"
+    POLICY_SUPPRESSED = "tool_call.policy_suppressed"
+    FILTER_SUPPRESSED = "tool_call.filter_suppressed"
+    USER_REJECTED = "tool_call.user_rejected"
+    REPEATED_CALL = "tool_call.repeated"
+    MAXIMUM_DEPTH = "tool_call.maximum_depth"
+    CANCELLED = "tool_call.cancelled"
+    TIMEOUT = "tool_call.timeout"
+    LOOP_GUARD = "tool_call.loop_guard"
+    RUNAWAY_GUARD = "tool_call.runaway_guard"
+
+
+class ToolCallDiagnosticStage(StrEnum):
+    PARSE = "parse"
+    RESOLVE = "resolve"
+    VALIDATE = "validate"
+    POLICY = "policy"
+    FILTER = "filter"
+    CONFIRM = "confirm"
+    DISPATCH = "dispatch"
+    GUARD = "guard"
+
+
+class ToolCallDiagnosticStatus(StrEnum):
+    NON_EXECUTED = "non_executed"
+
+
 class VisionColorModel(StrEnum):
     ONE = "1"
     L = "L"
@@ -569,6 +602,66 @@ class ToolCallError(ToolCall):
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ToolCallDiagnostic:
+    id: UUID | str
+    call_id: UUID | str | None = None
+    requested_name: str | None = None
+    canonical_name: str | None = None
+    status: ToolCallDiagnosticStatus = ToolCallDiagnosticStatus.NON_EXECUTED
+    code: ToolCallDiagnosticCode
+    stage: ToolCallDiagnosticStage
+    message: str
+    retryable: bool = False
+    details: dict[str, ToolValue] = field(default_factory=dict)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    duration_ms: int | float | None = None
+
+    def __post_init__(self) -> None:
+        _assert_tool_identifier(self.id, "id")
+        if self.call_id is not None:
+            _assert_tool_identifier(self.call_id, "call_id")
+        _assert_optional_tool_name(self.requested_name, "requested_name")
+        _assert_optional_tool_name(self.canonical_name, "canonical_name")
+        assert isinstance(self.code, ToolCallDiagnosticCode)
+        assert isinstance(self.stage, ToolCallDiagnosticStage)
+        assert isinstance(self.status, ToolCallDiagnosticStatus)
+        assert isinstance(self.message, str)
+        assert self.message.strip(), "message must not be empty"
+        assert isinstance(self.retryable, bool)
+        assert isinstance(self.details, dict)
+        if self.started_at is not None:
+            assert isinstance(self.started_at, datetime)
+        if self.finished_at is not None:
+            assert isinstance(self.finished_at, datetime)
+        if self.duration_ms is not None:
+            assert isinstance(self.duration_ms, int | float)
+            assert not isinstance(self.duration_ms, bool)
+            assert self.duration_ms >= 0
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolCallParseOutcome:
+    calls: list[ToolCall] = field(default_factory=list)
+    diagnostics: list[ToolCallDiagnostic] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.calls, list)
+        assert isinstance(self.diagnostics, list)
+        for call in self.calls:
+            assert isinstance(call, ToolCall)
+        for diagnostic in self.diagnostics:
+            assert isinstance(diagnostic, ToolCallDiagnostic)
+
+
+ToolCallOutcome: TypeAlias = (
+    ToolCallResult | ToolCallError | ToolCallDiagnostic
+)
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Message:
     role: MessageRole
     thinking: str | None = ""
@@ -935,6 +1028,19 @@ class ToolManagerSettings:
         ]
         | None
     ) = None
+
+
+def _assert_tool_identifier(value: UUID | str, field_name: str) -> None:
+    assert isinstance(value, (UUID, str)), f"{field_name} is invalid"
+    if isinstance(value, str):
+        assert value.strip(), f"{field_name} must not be empty"
+
+
+def _assert_optional_tool_name(value: str | None, field_name: str) -> None:
+    if value is None:
+        return
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert value.strip(), f"{field_name} must not be empty"
 
 
 @final
