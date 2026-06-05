@@ -1,11 +1,20 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from importlib.util import module_from_spec, spec_from_file_location
 from json import load
 from pathlib import Path
+from tomllib import load as load_toml
 from types import ModuleType
 from typing import cast
 from unittest import TestCase, main
 
+from avalan.flow import (
+    FlowDefinitionLoader,
+    FlowInputType,
+    FlowNodeDefinition,
+    FlowNodeRegistry,
+    FlowOutputType,
+    Node,
+)
 from avalan.task import (
     TaskDefinition,
     TaskFileDescriptor,
@@ -29,6 +38,7 @@ VALID_EXAMPLES = (
     "provider_reference_direct.task.toml",
     "poc_extraction/task.toml",
     "poc_extraction/flow_task.toml",
+    "poc_extraction/image_flow_task.toml",
     "local_multimodal_media.task.toml",
     "queued_file_task.task.toml",
     "output_artifact.task.toml",
@@ -178,8 +188,14 @@ class TaskExamplesTest(TestCase):
         task_path = root / "task.toml"
         definition = load_task_definition(task_path)
         flow_definition = load_task_definition(root / "flow_task.toml")
+        image_definition = load_task_definition(root / "image_flow_task.toml")
+        flow_loader = _poc_flow_loader()
+        native_flow = flow_loader.load(root / "flow.toml")
+        image_flow = flow_loader.load(root / "image_flow.toml")
         with (root / "invoice.schema.json").open(encoding="utf-8") as file:
             schema = load(file)
+        with (root / "agent.toml").open("rb") as file:
+            agent_toml = load_toml(file)
 
         valid_output = _poc_extraction_output()
         invalid_output = _poc_extraction_output()
@@ -197,7 +213,12 @@ class TaskExamplesTest(TestCase):
             canonical_schema_json(flow_definition.output.schema),
             canonical_schema_json(schema),
         )
+        self.assertEqual(
+            canonical_schema_json(image_definition.output.schema),
+            canonical_schema_json(schema),
+        )
         self.assertEqual(flow_definition.execution.ref, "flow.toml")
+        self.assertEqual(image_definition.execution.ref, "image_flow.toml")
         self.assertEqual(
             validate_task_input(
                 definition,
@@ -209,11 +230,82 @@ class TaskExamplesTest(TestCase):
             ),
             (),
         )
+        self.assertEqual(
+            validate_task_input(
+                image_definition,
+                {
+                    "source_kind": "local_path",
+                    "reference": "./sample.pdf",
+                    "mime_type": "application/pdf",
+                },
+            ),
+            (),
+        )
+        self.assertEqual(
+            _issue_codes(
+                validate_task_input(
+                    image_definition,
+                    {
+                        "source_kind": "local_path",
+                        "reference": "./sample.png",
+                        "mime_type": "image/png",
+                    },
+                )
+            ),
+            {"input.invalid_file"},
+        )
         self.assertEqual(validate_task_output(definition, valid_output), ())
         self.assertEqual(
             _issue_codes(validate_task_output(definition, invalid_output)),
             {"output.invalid_type"},
         )
+        self.assertEqual(native_flow.output.schema_ref, "invoice.schema.json")
+        assert image_flow.input is not None
+        self.assertEqual(image_flow.input.name, "input")
+        self.assertEqual(image_flow.input.type, FlowInputType.FILE)
+        self.assertEqual(image_flow.input.mime_types, ("application/pdf",))
+        assert image_flow.output is not None
+        self.assertEqual(image_flow.output.name, "extraction")
+        self.assertEqual(image_flow.output.type, FlowOutputType.OBJECT)
+        self.assertEqual(image_flow.output.schema_ref, "invoice.schema.json")
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in image_flow.edges],
+            [("render_pages", "extract")],
+        )
+        image_nodes = image_flow.node_map
+        self.assertEqual(image_nodes["render_pages"].type, "file_convert")
+        self.assertEqual(image_nodes["render_pages"].input, "file")
+        self.assertEqual(image_nodes["render_pages"].output, "files")
+        self.assertEqual(
+            dict(image_nodes["render_pages"].config),
+            {
+                "converter": "pdf_image",
+                "format": "png",
+                "dpi": 144,
+                "pages": "1..",
+                "max_pages": 20,
+                "max_pixels_per_page": 12000000,
+                "max_total_pixels": 120000000,
+            },
+        )
+        self.assertEqual(image_nodes["extract"].type, "agent")
+        self.assertEqual(image_nodes["extract"].ref, "agent.toml")
+        self.assertEqual(image_nodes["extract"].input, "render_pages.files")
+        self.assertEqual(
+            dict(image_nodes["extract"].config),
+            {
+                "files_input": "render_pages.files",
+                "file_policy": "replace",
+            },
+        )
+        agent = cast(Mapping[str, object], agent_toml["agent"])
+        run = cast(Mapping[str, object], agent_toml["run"])
+        reasoning = cast(Mapping[str, object], run["reasoning"])
+        response_format = cast(Mapping[str, object], run["response_format"])
+        self.assertIsInstance(agent["instructions"], str)
+        self.assertIsInstance(agent["user"], str)
+        self.assertEqual(reasoning["effort"], "high")
+        self.assertEqual(response_format["schema_ref"], "invoice.schema.json")
 
         combined = "\n".join(
             path.read_text(encoding="utf-8")
@@ -237,6 +329,21 @@ class TaskExamplesTest(TestCase):
 
 def _issue_codes(issues: Iterable[object]) -> set[str]:
     return {getattr(issue, "code") for issue in issues}
+
+
+def _poc_flow_loader() -> FlowDefinitionLoader:
+    return FlowDefinitionLoader(
+        FlowNodeRegistry(
+            {
+                "agent": _poc_node_factory,
+                "file_convert": _poc_node_factory,
+            }
+        )
+    )
+
+
+def _poc_node_factory(definition: FlowNodeDefinition) -> Node:
+    return Node(definition.name, func=lambda value: value)
 
 
 def _poc_extraction_output() -> dict[str, object]:

@@ -15,7 +15,12 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from avalan.agent.loader import OrchestratorLoader
-from avalan.entities import Message, MessageContentFile, MessageContentText
+from avalan.entities import (
+    Message,
+    MessageContentFile,
+    MessageContentImage,
+    MessageContentText,
+)
 from avalan.event import Event, EventType
 from avalan.flow import Flow, FlowDefinitionLoader
 from avalan.task import (
@@ -30,6 +35,8 @@ from avalan.task import (
     TaskDefinition,
     TaskDefinitionLoader,
     TaskExecutionTarget,
+    TaskFileConversionPageCollection,
+    TaskFileConversionPageResult,
     TaskFileConversionRequest,
     TaskFileConversionResult,
     TaskFileConverterCapability,
@@ -54,6 +61,7 @@ from avalan.task import (
     TaskValidationIssue,
     UsageSource,
     canonical_schema_json,
+    pdf_image_converter_capability,
     spec_hash,
 )
 from avalan.task.artifacts import LocalArtifactStore
@@ -737,6 +745,17 @@ def _file_blocks(input_value: object) -> tuple[MessageContentFile, ...]:
     )
 
 
+def _image_blocks(input_value: object) -> tuple[MessageContentImage, ...]:
+    assert isinstance(input_value, Message)
+    content = input_value.content
+    assert isinstance(content, list)
+    return tuple(
+        block
+        for block in cast(list[Any], content)
+        if isinstance(block, MessageContentImage)
+    )
+
+
 def _only_file_block(input_value: object) -> MessageContentFile:
     blocks = _file_blocks(input_value)
     assert len(blocks) == 1
@@ -812,6 +831,65 @@ class ExtractionProviderFailureResponse:
 
     async def to_str(self) -> str:
         return "private provider fallback body"
+
+
+class ExtractionPdfImageConverter:
+    name = "pdf_image"
+    version = "fake"
+
+    def __init__(
+        self,
+        pages: tuple[TaskFileConversionPageResult, ...],
+    ) -> None:
+        base = pdf_image_converter_capability()
+        self.calls: list[tuple[bytes, str | None, Mapping[str, object]]] = []
+        self._pages = pages
+        self._capability = TaskFileConverterCapability(
+            source_mime_types=base.source_mime_types,
+            output_mime_types=base.output_mime_types,
+            supports_streaming=base.supports_streaming,
+            max_input_bytes=base.max_input_bytes,
+            max_output_bytes=base.max_output_bytes,
+            max_pages=base.max_pages,
+            min_dpi=base.min_dpi,
+            max_dpi=base.max_dpi,
+            min_quality=base.min_quality,
+            max_quality=base.max_quality,
+            max_pixels=base.max_pixels,
+            estimated_memory_bytes=base.estimated_memory_bytes,
+            timeout_seconds=base.timeout_seconds,
+            options_schema=base.options_schema,
+        )
+
+    @property
+    def capability(self) -> TaskFileConverterCapability:
+        return self._capability
+
+    def validate_options(self, options: Mapping[str, object]) -> None:
+        assert options.get("format") == "png"
+
+    async def convert(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionResult:
+        _ = content, source_media_type, options
+        raise AssertionError("page converter must use convert_pages")
+
+    async def convert_pages(
+        self,
+        content: bytes,
+        *,
+        source_media_type: str | None = None,
+        options: Mapping[str, object] | None = None,
+    ) -> TaskFileConversionPageCollection:
+        self.calls.append((content, source_media_type, dict(options or {})))
+        return TaskFileConversionPageCollection(
+            pages=self._pages,
+            metadata={"backend": "fake"},
+        )
 
 
 class ExtractionFakeOrchestrator:
@@ -1229,6 +1307,274 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             self.assertNotIn("sample.pdf", inspection_value)
             self.assertNotIn("file_data", inspection_value)
             self.assertNotIn("private-provider-token", inspection_value)
+
+    async def test_poc_extraction_image_flow_matches_native_contract(
+        self,
+    ) -> None:
+        fixture = (
+            Path(__file__).parents[2]
+            / "docs"
+            / "examples"
+            / "tasks"
+            / "poc_extraction"
+        )
+        instructions = _fixture_agent_instructions(fixture)
+        pdf_bytes = (fixture / "sample.pdf").read_bytes()
+        direct_definition = TaskDefinitionLoader().load(fixture / "task.toml")
+        image_definition = TaskDefinitionLoader().load(
+            fixture / "image_flow_task.toml"
+        )
+        output = _extraction_output()
+        orchestrator = ExtractionFakeOrchestrator(output)
+        converter = ExtractionPdfImageConverter(
+            (
+                TaskFileConversionPageResult(
+                    page_index=1,
+                    page_count=2,
+                    content=b"page one",
+                    media_type="image/png",
+                    width_pixels=20,
+                    height_pixels=30,
+                    metadata={"filename": "private-page-1.png"},
+                ),
+                TaskFileConversionPageResult(
+                    page_index=2,
+                    page_count=2,
+                    content=b"page two",
+                    media_type="image/png",
+                    width_pixels=40,
+                    height_pixels=50,
+                    metadata={"filename": "private-page-2.png"},
+                ),
+            )
+        )
+        settings_values: list[Any] = []
+
+        async def from_settings(
+            loader: OrchestratorLoader,
+            settings: object,
+            *,
+            tool_settings: object | None = None,
+            tool_format: object | None = None,
+        ) -> ExtractionFakeOrchestrator:
+            _ = loader, tool_settings, tool_format
+            call_options = cast(Any, settings).call_options
+            assert isinstance(call_options, Mapping)
+            response_format = cast(
+                Mapping[str, object],
+                call_options["response_format"],
+            )
+            orchestrator.text_formats.append(
+                {
+                    "type": response_format["type"],
+                    "name": response_format["name"],
+                    "schema": response_format["schema"],
+                    "strict": response_format["strict"],
+                }
+            )
+            orchestrator.reasoning_options.append(
+                cast(Mapping[str, object], call_options["reasoning"])
+            )
+            settings_values.append(settings)
+            return orchestrator
+
+        with TemporaryDirectory() as artifact_root:
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=cast(Any, object()),
+                logger=getLogger("avalan.tests.task.extraction.image_flow"),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            agent_runner = AgentTaskTargetRunner(loader, ref_base=fixture)
+
+            def resolve_image_flow(context: TaskTargetContext) -> Flow:
+                result = FlowDefinitionLoader(
+                    registry=task_flow_node_registry(
+                        context,
+                        agent_runner=agent_runner,
+                        execution_roots=(fixture,),
+                    )
+                ).load_result(fixture / "image_flow.toml")
+                assert result.flow is not None, result.issues
+                return result.flow
+
+            direct_store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            image_store = InMemoryTaskStore(
+                clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            direct_ids = iter(("direct-source",))
+            image_ids = iter(
+                (
+                    "image-source",
+                    "task-file-page-0001",
+                    "task-file-page-0002",
+                )
+            )
+            try:
+                with patch.object(
+                    OrchestratorLoader,
+                    "from_settings",
+                    new=from_settings,
+                ):
+                    direct_client = TaskClient(
+                        direct_store,
+                        target=agent_runner,
+                        artifact_store=LocalArtifactStore(
+                            Path(artifact_root) / "direct",
+                            raw_storage_allowed=True,
+                            id_factory=lambda: next(direct_ids),
+                        ),
+                        hmac_provider=StaticHmacProvider(),
+                        execution_roots=(fixture,),
+                        definition_hash=lambda task: (
+                            f"native-image-parity-{task.task.name}"
+                        ),
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                    )
+                    image_client = TaskClient(
+                        image_store,
+                        target=FlowTaskTargetRunner(
+                            ref_base=fixture,
+                            flow_resolver=resolve_image_flow,
+                        ),
+                        artifact_store=LocalArtifactStore(
+                            Path(artifact_root) / "image",
+                            raw_storage_allowed=True,
+                            id_factory=lambda: next(image_ids),
+                        ),
+                        file_converters={"pdf_image": converter},
+                        hmac_provider=StaticHmacProvider(),
+                        execution_roots=(fixture,),
+                        definition_hash=lambda task: (
+                            f"image-flow-parity-{task.task.name}"
+                        ),
+                        clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+                    )
+                    direct_descriptor = TaskClient.local_file(
+                        "./sample.pdf",
+                        mime_type="application/pdf",
+                        size_bytes=len(pdf_bytes),
+                    )
+                    image_descriptor = TaskClient.local_file(
+                        "./sample.pdf",
+                        mime_type="application/pdf",
+                        size_bytes=len(pdf_bytes),
+                    )
+
+                    direct_result = await direct_client.run(
+                        direct_definition,
+                        input_value=direct_descriptor,
+                    )
+                    image_result = await image_client.run(
+                        image_definition,
+                        input_value=image_descriptor,
+                    )
+                    image_artifacts = await image_store.list_artifacts(
+                        image_result.run.run_id
+                    )
+                    image_inspection = await image_client.inspect(
+                        image_result.run.run_id
+                    )
+            finally:
+                await stack.aclose()
+
+        self.assertEqual(direct_result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(image_result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(direct_result.output, output)
+        self.assertEqual(image_result.output, output)
+        self.assertEqual(len(settings_values), 2)
+        for settings in settings_values:
+            agent_config = settings.agent_config
+            self.assertIsInstance(agent_config, Mapping)
+            self.assertEqual(agent_config["instructions"], instructions)
+            self.assertNotIn("system", agent_config)
+            self.assertNotIn("task", agent_config)
+            self.assertEqual(settings.tools, [])
+            call_options = settings.call_options
+            self.assertIsInstance(call_options, Mapping)
+            self.assertNotIn("tools", call_options)
+            self.assertNotIn("tool_choice", call_options)
+        self.assertEqual(
+            orchestrator.reasoning_options,
+            [{"effort": "high"}, {"effort": "high"}],
+        )
+        self.assertEqual(
+            [text_format["name"] for text_format in orchestrator.text_formats],
+            ["invoice_extraction", "invoice_extraction"],
+        )
+        self.assertEqual(
+            [
+                canonical_schema_json(text_format["schema"])
+                for text_format in orchestrator.text_formats
+            ],
+            [
+                canonical_schema_json(direct_definition.output.schema),
+                canonical_schema_json(image_definition.output.schema),
+            ],
+        )
+        self.assertEqual(len(orchestrator.inputs), 2)
+        direct_message = _extraction_message_summary(
+            orchestrator.inputs[0],
+            pdf_bytes,
+        )
+        image_message = orchestrator.inputs[1]
+        self.assertEqual(
+            direct_message["text"],
+            "Analyze the attached synthetic invoice PDF and "
+            "extract all data according to the extraction instructions.",
+        )
+        self.assertEqual(_file_blocks(image_message), ())
+        image_blocks = _image_blocks(image_message)
+        self.assertEqual(len(image_blocks), 2)
+        self.assertEqual(
+            [block.image_url["mime_type"] for block in image_blocks],
+            ["image/png", "image/png"],
+        )
+        self.assertEqual(
+            [
+                b64decode(cast(str, block.image_url["data"]))
+                for block in image_blocks
+            ],
+            [b"page one", b"page two"],
+        )
+        self.assertEqual(len(converter.calls), 1)
+        self.assertEqual(converter.calls[0][0], pdf_bytes)
+        self.assertEqual(converter.calls[0][1], "application/pdf")
+        self.assertEqual(
+            converter.calls[0][2],
+            {"dpi": 144, "format": "png", "pages": {"start": 1}},
+        )
+        self.assertEqual(
+            [artifact.purpose for artifact in image_artifacts],
+            [
+                TaskArtifactPurpose.INPUT,
+                TaskArtifactPurpose.CONVERTED,
+                TaskArtifactPurpose.CONVERTED,
+            ],
+        )
+        self.assertEqual(
+            [artifact.artifact_id for artifact in image_artifacts],
+            ["image-source", "task-file-page-0001", "task-file-page-0002"],
+        )
+        self.assertEqual(
+            [
+                artifact.metadata["page_index"]
+                for artifact in image_artifacts[1:]
+            ],
+            [1, 2],
+        )
+        inspection_value = str(image_inspection.as_dict())
+        self.assertNotIn(instructions, str(image_message))
+        self.assertNotIn(instructions, inspection_value)
+        self.assertNotIn("sample.pdf", str(image_message))
+        self.assertNotIn("sample.pdf", inspection_value)
+        self.assertNotIn("private-page", inspection_value)
+        self.assertNotIn("file_data", inspection_value)
+        self.assertNotIn("page one", inspection_value)
+        self.assertNotIn("private-provider-token", inspection_value)
 
     async def test_poc_extraction_failures_are_classified_and_sanitized(
         self,
