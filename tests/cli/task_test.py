@@ -635,6 +635,58 @@ class CliTaskValidateTestCase(TestCase):
         self.assertTrue(result)
         self.assertIn("Task definition is valid: flow-task 1", output)
 
+    def test_validate_uses_task_registry_for_agent_flow_node(self) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            definition = root / "task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "flow-agent-task"
+                version = "1"
+
+                [input]
+                type = "string"
+
+                [output]
+                type = "object"
+                schema = {type = "object", additionalProperties = true}
+
+                [execution]
+                type = "flow"
+                ref = "flow.toml"
+                """,
+                encoding="utf-8",
+            )
+            (root / "flow.toml").write_text(
+                """
+                [flow]
+                name = "extract"
+                entrypoint = "extract"
+                output_node = "extract"
+
+                [nodes.extract]
+                type = "agent"
+                ref = "agent.toml"
+                input = "value"
+                output = "extraction"
+                """,
+                encoding="utf-8",
+            )
+
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = task_cmds.task_validate(
+                    Namespace(definition=str(definition)),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("Task definition is valid: flow-agent-task 1", output)
+        self.assertNotIn("flow.unsupported_node_type", output)
+
     def test_validate_reports_missing_flow_reference_safely(self) -> None:
         console = Console(record=True, width=160)
         with TemporaryDirectory() as tmpdir:

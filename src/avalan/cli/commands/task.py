@@ -281,9 +281,19 @@ def _validate_task_flow_reference(
         ),
         file_converters=default_file_converters(),
     )
+    agent_target = _agent_task_target(
+        definition_path.parent,
+        hub=None,
+        logger=getLogger("avalan.task"),
+        stack=AsyncExitStack(),
+    )
     try:
         result = FlowDefinitionLoader(
-            registry=task_flow_node_registry(context)
+            registry=task_flow_node_registry(
+                context,
+                agent_runner=agent_target,
+                execution_roots=(definition_path.parent,),
+            )
         ).load_result(path)
     except OSError:
         return (
