@@ -43,15 +43,16 @@ class OpenAIStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[Any]) -> None:
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_calls: dict[str, dict[str, str | list[str] | None]] = {}
+            terminal_usage: object | None = None
 
             async for event in stream:
-                etype = getattr(event, "type", None)
+                etype = OpenAIClient._response_field(event, "type")
 
                 if etype == "response.completed":
                     response = OpenAIClient._response_field(event, "response")
                     usage = OpenAIClient._response_field(response, "usage")
                     if usage is not None:
-                        self._usage = usage
+                        terminal_usage = usage
                     continue
 
                 if etype == "response.output_item.added":
@@ -135,6 +136,9 @@ class OpenAIStream(TextGenerationVendorStream):
                             yield token
 
                     continue
+
+            if terminal_usage is not None:
+                self._usage = terminal_usage
 
         super().__init__(generator())
 

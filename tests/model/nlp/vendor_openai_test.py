@@ -26,6 +26,7 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.task.usage import usage_totals_from_response
 
 
 class AsyncIter:
@@ -343,6 +344,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         usage = SimpleNamespace(
             input_tokens=3,
             input_tokens_details=SimpleNamespace(cached_tokens=1),
+            cache_creation_input_tokens=2,
             output_tokens=4,
             output_tokens_details=SimpleNamespace(reasoning_tokens=2),
             total_tokens=9,
@@ -363,6 +365,50 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             await stream.__anext__()
 
         self.assertIs(stream.usage, usage)
+        totals = usage_totals_from_response(stream)
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 3)
+        self.assertEqual(totals.cached_input_tokens, 1)
+        self.assertEqual(totals.cache_creation_input_tokens, 2)
+        self.assertEqual(totals.output_tokens, 4)
+        self.assertEqual(totals.reasoning_tokens, 2)
+        self.assertEqual(totals.total_tokens, 9)
+
+    async def test_stream_records_dict_terminal_usage_after_exhaustion(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "usage": {
+                                "input_tokens": 0,
+                                "prompt_tokens_details": {"cached_tokens": 0},
+                                "completion_tokens": 0,
+                                "completion_tokens_details": {
+                                    "reasoning_tokens": 0
+                                },
+                                "total_tokens": 0,
+                            }
+                        },
+                    }
+                ]
+            )
+        )
+
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        totals = usage_totals_from_response(stream)
+
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 0)
+        self.assertEqual(totals.cached_input_tokens, 0)
+        self.assertIsNone(totals.cache_creation_input_tokens)
+        self.assertEqual(totals.output_tokens, 0)
+        self.assertEqual(totals.reasoning_tokens, 0)
+        self.assertEqual(totals.total_tokens, 0)
 
     async def test_stream_keeps_null_or_interrupted_usage_unavailable(self):
         null_usage = self.mod.OpenAIStream(
@@ -390,6 +436,29 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await interrupted.__anext__()
         self.assertIsNone(interrupted.usage)
+
+        class FailingAfterUsageIter:
+            def __init__(self):
+                self._count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self._count += 1
+                if self._count == 1:
+                    return {
+                        "type": "response.completed",
+                        "response": {"usage": {"input_tokens": 1}},
+                    }
+                raise RuntimeError("provider failure")
+
+        interrupted_after_usage = self.mod.OpenAIStream(
+            FailingAfterUsageIter()
+        )
+        with self.assertRaises(RuntimeError):
+            await interrupted_after_usage.__anext__()
+        self.assertIsNone(interrupted_after_usage.usage)
 
     async def test_client_omits_auth_header_without_api_key(self):
         client = self.mod.OpenAIClient(

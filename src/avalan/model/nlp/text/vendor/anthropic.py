@@ -87,7 +87,7 @@ class AnthropicStream(TextGenerationVendorStream):
             cumulative_usage: object | None = None
 
             async for event in events:
-                etype = getattr(event, "type", None)
+                etype = _field(event, "type")
                 event_usage = _anthropic_event_usage(event)
                 if event_usage is not None:
                     cumulative_usage = _merge_usage(

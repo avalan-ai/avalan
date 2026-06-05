@@ -362,6 +362,63 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(totals.reasoning_tokens, 2)
         self.assertEqual(totals.total_tokens, 9)
 
+    async def test_stream_defers_usage_metadata_until_exhaustion(self):
+        stream = self.mod.GoogleStream(
+            AsyncIter(
+                [
+                    {
+                        "text": None,
+                        "usageMetadata": {
+                            "promptTokenCount": 0,
+                            "candidatesTokenCount": 0,
+                            "thoughtsTokenCount": 0,
+                            "totalTokenCount": 0,
+                        },
+                    },
+                    SimpleNamespace(text="late"),
+                ]
+            )
+        )
+
+        self.assertEqual(await stream.__anext__(), "late")
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        totals = usage_totals_from_response(stream)
+
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 0)
+        self.assertEqual(totals.output_tokens, 0)
+        self.assertEqual(totals.reasoning_tokens, 0)
+        self.assertEqual(totals.total_tokens, 0)
+
+    async def test_stream_failure_after_usage_metadata_keeps_unavailable(
+        self,
+    ):
+        class FailingIter:
+            def __init__(self):
+                self._count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self._count += 1
+                if self._count == 1:
+                    return {
+                        "text": None,
+                        "usageMetadata": {"promptTokenCount": 1},
+                    }
+                raise RuntimeError("provider failure")
+
+        stream = self.mod.GoogleStream(FailingIter())
+
+        with self.assertRaises(RuntimeError):
+            await stream.__anext__()
+        self.assertIsNone(stream.usage)
+        self.assertIsNone(usage_totals_from_response(stream))
+
     async def test_stream_supports_camel_usage_metadata_and_none(self):
         stream = self.mod.GoogleStream(
             AsyncIter(

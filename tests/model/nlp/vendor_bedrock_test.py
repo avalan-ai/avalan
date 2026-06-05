@@ -323,6 +323,69 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(totals.reasoning_tokens)
         self.assertEqual(totals.total_tokens, 12)
 
+    async def test_stream_defers_usage_until_metadata_stream_exhausts(self):
+        events = [
+            {
+                "metadata": {
+                    "usage": {
+                        "inputTokens": 0,
+                        "cacheReadInputTokens": 0,
+                        "cacheWriteInputTokens": 0,
+                        "outputTokens": 0,
+                        "totalTokens": 0,
+                    }
+                }
+            },
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": {"text": "late"}},
+                }
+            },
+            {"messageStop": {"reason": "done"}},
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(events))
+
+        token = await stream.__anext__()
+        self.assertIsInstance(token, Token)
+        self.assertEqual(token.token, "late")
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        totals = usage_totals_from_response(stream)
+
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 0)
+        self.assertEqual(totals.cached_input_tokens, 0)
+        self.assertEqual(totals.cache_creation_input_tokens, 0)
+        self.assertEqual(totals.output_tokens, 0)
+        self.assertIsNone(totals.reasoning_tokens)
+        self.assertEqual(totals.total_tokens, 0)
+
+    async def test_stream_failure_after_metadata_keeps_usage_unavailable(
+        self,
+    ):
+        class FailingIter:
+            def __init__(self):
+                self._count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self._count += 1
+                if self._count == 1:
+                    return {"metadata": {"usage": {"inputTokens": 1}}}
+                raise RuntimeError("provider failure")
+
+        stream = self.mod.BedrockStream(FailingIter())
+
+        with self.assertRaises(RuntimeError):
+            await stream.__anext__()
+        self.assertIsNone(stream.usage)
+        self.assertIsNone(usage_totals_from_response(stream))
+
     async def test_client_stream_invocation(self):
         self.client.converse_stream.return_value = {"stream": AsyncIter([])}
         exit_stack = AsyncExitStack()

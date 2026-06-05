@@ -109,6 +109,7 @@ class BedrockStream(TextGenerationVendorStream):
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
             message_stopped = False
+            terminal_usage: object | None = None
 
             async for event in events:
                 metadata = _get(event, "metadata")
@@ -118,7 +119,7 @@ class BedrockStream(TextGenerationVendorStream):
                     else None
                 )
                 if usage is not None:
-                    self._usage = usage
+                    terminal_usage = usage
                     continue
 
                 if _get(event, "messageStop"):
@@ -223,6 +224,9 @@ class BedrockStream(TextGenerationVendorStream):
                         )
                         yield token
                     continue
+
+            if terminal_usage is not None:
+                self._usage = terminal_usage
 
         super().__init__(generator())
 

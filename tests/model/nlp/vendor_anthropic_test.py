@@ -146,6 +146,7 @@ def test_stream_records_usage_on_message_stop(anthropic_mod):
                 "usage": {
                     "input_tokens": 7,
                     "cache_read_input_tokens": 2,
+                    "cache_creation_input_tokens": 3,
                 }
             },
         )
@@ -172,8 +173,42 @@ def test_stream_records_usage_on_message_stop(anthropic_mod):
     assert totals is not None
     assert totals.input_tokens == 7
     assert totals.cached_input_tokens == 2
+    assert totals.cache_creation_input_tokens == 3
     assert totals.output_tokens == 5
     assert totals.reasoning_tokens is None
+
+
+def test_stream_records_mapping_usage_on_message_stop(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield {
+            "type": "message_delta",
+            "usage": {
+                "input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "output_tokens": 0,
+            },
+        }
+        yield {"type": "message_stop"}
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        return stream
+
+    stream = asyncio.run(collect())
+    totals = usage_totals_from_response(stream)
+
+    assert totals is not None
+    assert totals.input_tokens == 0
+    assert totals.cached_input_tokens == 0
+    assert totals.cache_creation_input_tokens == 0
+    assert totals.output_tokens == 0
+    assert totals.reasoning_tokens is None
+    assert totals.total_tokens is None
 
 
 def test_stream_without_message_stop_drops_cumulative_usage(anthropic_mod):
@@ -188,6 +223,39 @@ def test_stream_without_message_stop_drops_cumulative_usage(anthropic_mod):
     async def collect():
         stream = mod.AnthropicStream(agen())
         with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        return stream
+
+    stream = asyncio.run(collect())
+
+    assert stream.usage is None
+    assert usage_totals_from_response(stream) is None
+
+
+def test_stream_failure_before_message_stop_drops_cumulative_usage(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+
+    class FailingIter:
+        def __init__(self):
+            self._count = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            self._count += 1
+            if self._count == 1:
+                return SimpleNamespace(
+                    type="message_delta",
+                    usage={"input_tokens": 1, "output_tokens": 2},
+                )
+            raise RuntimeError("provider failure")
+
+    async def collect():
+        stream = mod.AnthropicStream(FailingIter())
+        with pytest.raises(RuntimeError):
             await stream.__anext__()
         return stream
 
