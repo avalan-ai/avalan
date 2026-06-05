@@ -23,6 +23,10 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.task.usage import (
+    usage_observation_from_response,
+    usage_totals_from_response,
+)
 
 
 class AsyncIter:
@@ -274,6 +278,142 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         )
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+        self.assertIsNone(stream.usage)
+
+    async def test_stream_records_usage_from_terminal_metadata(self):
+        events = [
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": {"text": "hi"}},
+                }
+            },
+            {"messageStop": {"reason": "done"}},
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": {"text": "ignored"}},
+                }
+            },
+            {
+                "metadata": {
+                    "usage": {
+                        "inputTokens": 5,
+                        "cacheReadInputTokens": 1,
+                        "cacheWriteInputTokens": 2,
+                        "outputTokens": 7,
+                        "totalTokens": 12,
+                        "reasoning": {"text": "private thinking text"},
+                        "cacheDetails": {
+                            "cacheRead": {
+                                "ephemeral5mInputTokens": 3,
+                                "ephemeral1hInputTokens": 4,
+                            },
+                            "cacheWrite": {
+                                "ephemeral5mInputTokens": 5,
+                                "ephemeral1hInputTokens": 6,
+                            },
+                        },
+                    }
+                }
+            },
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(events))
+
+        token = await stream.__anext__()
+        self.assertIsInstance(token, Token)
+        self.assertEqual(token.token, "hi")
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        observation = usage_observation_from_response(stream)
+        totals = usage_totals_from_response(stream)
+
+        self.assertEqual(stream.provider_family, "bedrock")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata,
+            {
+                "provider_family": "bedrock",
+                "cache_creation_ephemeral_5m_input_tokens": 5,
+                "cache_creation_ephemeral_1h_input_tokens": 6,
+                "cache_read_ephemeral_5m_input_tokens": 3,
+                "cache_read_ephemeral_1h_input_tokens": 4,
+            },
+        )
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 5)
+        self.assertEqual(totals.cached_input_tokens, 1)
+        self.assertEqual(totals.cache_creation_input_tokens, 2)
+        self.assertEqual(totals.output_tokens, 7)
+        self.assertIsNone(totals.reasoning_tokens)
+        self.assertEqual(totals.total_tokens, 12)
+        self.assertNotIn("private thinking text", str(observation))
+
+    async def test_stream_defers_usage_until_metadata_stream_exhausts(self):
+        events = [
+            {
+                "metadata": {
+                    "usage": {
+                        "inputTokens": 0,
+                        "cacheReadInputTokens": 0,
+                        "cacheWriteInputTokens": 0,
+                        "outputTokens": 0,
+                        "totalTokens": 0,
+                    }
+                }
+            },
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": {"text": "late"}},
+                }
+            },
+            {"messageStop": {"reason": "done"}},
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(events))
+
+        token = await stream.__anext__()
+        self.assertIsInstance(token, Token)
+        self.assertEqual(token.token, "late")
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        totals = usage_totals_from_response(stream)
+
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 0)
+        self.assertEqual(totals.cached_input_tokens, 0)
+        self.assertEqual(totals.cache_creation_input_tokens, 0)
+        self.assertEqual(totals.output_tokens, 0)
+        self.assertIsNone(totals.reasoning_tokens)
+        self.assertEqual(totals.total_tokens, 0)
+
+    async def test_stream_failure_after_metadata_keeps_usage_unavailable(
+        self,
+    ):
+        class FailingIter:
+            def __init__(self):
+                self._count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self._count += 1
+                if self._count == 1:
+                    return {"metadata": {"usage": {"inputTokens": 1}}}
+                raise RuntimeError("provider failure")
+
+        stream = self.mod.BedrockStream(FailingIter())
+
+        with self.assertRaises(RuntimeError):
+            await stream.__anext__()
+        self.assertIsNone(stream.usage)
+        self.assertIsNone(usage_totals_from_response(stream))
 
     async def test_client_stream_invocation(self):
         self.client.converse_stream.return_value = {"stream": AsyncIter([])}
@@ -305,6 +445,18 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             events=self.client.converse_stream.return_value["stream"]
         )
         self.assertIs(result, StreamMock.return_value)
+        await exit_stack.aclose()
+
+    async def test_provider_instructions_are_rejected_before_api_call(self):
+        exit_stack = AsyncExitStack()
+        client = self.mod.BedrockClient(exit_stack=exit_stack)
+
+        with self.assertRaisesRegex(AssertionError, "provider instructions"):
+            await client("model", [], instructions="private policy")
+
+        self.session_mock.client.assert_not_called()
+        self.client.converse_stream.assert_not_awaited()
+        self.client.converse.assert_not_awaited()
         await exit_stack.aclose()
 
     async def test_client_stream_payload_includes_configs(self):
@@ -498,7 +650,8 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
                         {"text": {"text": " world"}},
                     ]
                 }
-            }
+            },
+            "usage": {"inputTokens": 3},
         }
         exit_stack = AsyncExitStack()
         client = self.mod.BedrockClient(exit_stack=exit_stack)
@@ -518,6 +671,8 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
 
         text = await result.__anext__()
         self.assertEqual(text, "hello world")
+        self.assertEqual(result.provider_family, "bedrock")
+        self.assertEqual(result.usage, {"inputTokens": 3})
         self.client.converse.assert_awaited_once()
         await exit_stack.aclose()
 

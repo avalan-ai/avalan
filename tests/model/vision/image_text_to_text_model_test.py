@@ -199,7 +199,11 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
     model_id = "dummy/model"
 
     async def _run_call(
-        self, batch_decode_return, system_prompt=None, width=None
+        self,
+        batch_decode_return,
+        system_prompt=None,
+        width=None,
+        instructions=None,
     ):
         logger_mock = MagicMock(spec=Logger)
         with (
@@ -250,6 +254,7 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
             result = await model(
                 "img.jpg",
                 "prompt",
+                instructions=instructions,
                 system_prompt=system_prompt,
                 settings=gen_settings,
                 width=width,
@@ -279,6 +284,13 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
                 expected_image = rgb_image
 
             expected_messages = []
+            if instructions:
+                expected_messages.append(
+                    {
+                        "role": str(MessageRole.SYSTEM),
+                        "content": [{"type": "text", "text": instructions}],
+                    }
+                )
             if system_prompt:
                 expected_messages.append(
                     {
@@ -329,6 +341,9 @@ class ImageTextToTextModelCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_with_system_prompt(self):
         await self._run_call("ok", system_prompt="sys")
+
+    async def test_call_with_instructions(self):
+        await self._run_call("ok", instructions="provider")
 
     async def test_call_with_width(self):
         await self._run_call("ok", width=20)

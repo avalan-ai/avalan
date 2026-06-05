@@ -133,6 +133,8 @@ class TransformerModel(Engine, ABC):
         input: Input,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
+        *,
+        instructions: str | None = None,
     ) -> int:
         _l = self._log
         assert self._tokenizer, (
@@ -144,6 +146,7 @@ class TransformerModel(Engine, ABC):
             system_prompt=system_prompt,
             developer_prompt=developer_prompt,
             context=None,
+            instructions=instructions,
         )
         if not isinstance(inputs, (dict, _batch_encoding_type())):
             return 0

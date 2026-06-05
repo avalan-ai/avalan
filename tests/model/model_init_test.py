@@ -160,3 +160,22 @@ class StreamVendorTestCase(IsolatedAsyncioTestCase):
         async for token in it:
             collected.append(token)
         self.assertEqual(collected, ["a", "b"])
+
+    async def test_vendor_stream_exposes_usage(self):
+        usage = {"input_tokens": 1}
+
+        async def agen():
+            yield "x"
+
+        class DummyVendorStream(TextGenerationVendorStream):
+            async def __anext__(self):
+                return await self._generator.__anext__()
+
+        stream = DummyVendorStream(
+            agen(),
+            provider_family="openai_compatible",
+            usage=usage,
+        )
+
+        self.assertEqual(stream.provider_family, "openai_compatible")
+        self.assertEqual(stream.usage, usage)

@@ -95,13 +95,19 @@ class TemplateEngineAgent(EngineAgent):
     def _prepare_call(self, context: ModelCallContext) -> Any:
         specification = context.specification
         kwargs = dict(context.engine_args)
-        if specification.system_prompt is not None:
+        if specification.system_prompt is not None or (
+            specification.developer_prompt is not None
+            and specification.role is None
+            and specification.goal is None
+        ):
             kwargs.setdefault("settings", specification.settings)
-            kwargs.setdefault("system_prompt", specification.system_prompt)
+            if specification.instructions is not None:
+                kwargs.setdefault("instructions", specification.instructions)
+            if specification.system_prompt is not None:
+                kwargs.setdefault("system_prompt", specification.system_prompt)
             if specification.developer_prompt is not None:
-                kwargs.setdefault(
-                    "developer_prompt", specification.developer_prompt
-                )
+                developer_prompt = specification.developer_prompt
+                kwargs.setdefault("developer_prompt", developer_prompt)
             return kwargs
 
         template_id = specification.template_id or "agent.md"
@@ -143,15 +149,15 @@ class TemplateEngineAgent(EngineAgent):
             ),
         )
         template_vars.setdefault(
-            "instructions",
+            "goal_instructions",
             (
                 [
                     self._renderer.from_string(instruction, template_vars)
-                    for instruction in specification.goal.instructions
+                    for instruction in specification.goal.goal_instructions
                 ]
                 if specification.goal and template_vars
                 else (
-                    specification.goal.instructions
+                    specification.goal.goal_instructions
                     if specification.goal
                     else None
                 )
@@ -171,9 +177,10 @@ class TemplateEngineAgent(EngineAgent):
         system_prompt = self._renderer(template_id, **template_vars)
 
         kwargs.setdefault("settings", specification.settings)
+        if specification.instructions is not None:
+            kwargs.setdefault("instructions", specification.instructions)
         kwargs.setdefault("system_prompt", system_prompt)
         if specification.developer_prompt is not None:
-            kwargs.setdefault(
-                "developer_prompt", specification.developer_prompt
-            )
+            developer_prompt = specification.developer_prompt
+            kwargs.setdefault("developer_prompt", developer_prompt)
         return kwargs

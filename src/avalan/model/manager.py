@@ -16,6 +16,7 @@ from ..event.manager import EventManager
 from ..secrets import KeyringSecrets
 from .call import ModelCall
 from .modalities import ModalityRegistry
+from .provider import provider_options_from_uri_params
 
 import asyncio
 from argparse import Namespace
@@ -319,6 +320,16 @@ class ModelManager:
             backend_param = engine_uri.params["backend"]
             assert isinstance(backend_param, str)
             engine_settings_args["backend"] = Backend(backend_param)
+        provider_options = provider_options_from_uri_params(engine_uri.params)
+        if provider_options:
+            explicit_provider_options = cast(
+                dict[str, object],
+                engine_settings_args.get("provider_options") or {},
+            )
+            engine_settings_args["provider_options"] = {
+                **provider_options,
+                **explicit_provider_options,
+            }
 
         backend = engine_settings_args.get("backend", Backend.TRANSFORMERS)
         if _is_ds4_backend(cast(Backend | str, backend)):

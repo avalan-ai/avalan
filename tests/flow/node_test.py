@@ -1,4 +1,5 @@
-from unittest import TestCase
+from asyncio import CancelledError, sleep
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
@@ -69,6 +70,58 @@ class NodeExtraTestCase(TestCase):
     def test_repr(self):
         node = Node("repr")
         self.assertEqual(repr(node), "<Node repr>")
+
+    def test_execute_rejects_async_function(self) -> None:
+        async def inc(inputs: dict[str, int]) -> int:
+            return inputs["x"] + 1
+
+        node = Node("n", func=inc)
+
+        with self.assertRaisesRegex(TypeError, "execute_async"):
+            node.execute({"x": 1})
+
+
+class NodeAsyncTestCase(IsolatedAsyncioTestCase):
+    async def test_execute_async_with_function(self) -> None:
+        async def inc(inputs: dict[str, int]) -> int:
+            await sleep(0)
+            return inputs["x"] + 1
+
+        node = Node("n", func=inc, output_schema=int)
+
+        self.assertEqual(await node.execute_async({"x": 1}), 2)
+
+    async def test_execute_async_function_varargs(self) -> None:
+        async def add(a: int, b: int) -> int:
+            await sleep(0)
+            return a + b
+
+        node = Node("n", func=add)
+
+        self.assertEqual(await node.execute_async({"a": 1, "b": 2}), 3)
+
+    async def test_execute_async_subgraph(self) -> None:
+        sub = Flow()
+
+        async def double(inp: dict[str, int]) -> int:
+            await sleep(0)
+            return inp["__init__"] * 2
+
+        sub.add_node(Node("A", func=double))
+        sub.add_node(Node("B", func=lambda inp: inp["A"] + 3))
+        sub.add_connection("A", "B")
+        node = Node("sub", subgraph=sub, output_schema=int)
+
+        self.assertEqual(await node.execute_async({"val": 5}), 13)
+
+    async def test_execute_async_checks_cancellation(self) -> None:
+        async def cancelled() -> None:
+            raise CancelledError()
+
+        node = Node("n", func=lambda _: 1)
+
+        with self.assertRaises(CancelledError):
+            await node.execute_async({}, cancellation_checker=cancelled)
 
 
 class NodeImportTestCase(TestCase):

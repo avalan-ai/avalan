@@ -26,8 +26,8 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
   [`DS4`](https://github.com/avalan-ai/pyds4)-supported DeepSeek V4 Flash GGUFs.
 - 🧰 **Built-in tools and memory** for browser automation, code execution,
   databases, MCP, search, YouTube, and vector-backed retrieval.
-- 🧠 **Composable orchestration** with flows, branching, reasoning strategies, and
-  observability.
+- 🧠 **Composable orchestration** with flows, structured tasks, branching,
+  reasoning strategies, and observability.
 - 🌐 **Open serving surfaces** for OpenAI-compatible APIs, MCP, and A2A.
 
 # 🗂️ Table of Contents
@@ -40,6 +40,9 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 - 🧠 [Reasoning strategies](#reasoning-strategies)
 - 🗃️ [Memories](#memories)
 - 🤖 [Agents](#agents)
+- 🔁 [Flows](#flows)
+- ✅ [Tasks](#tasks)
+- 🧩 [Installation options](#installation-options)
 - 📚 [Documentation & Resources](#documentation--resources)
 - 🤝 [Community & Support](#community--support)
 - 🧑‍💻 [Contributing](#contributing)
@@ -47,10 +50,6 @@ Avalan is a Python SDK and CLI for building and running AI workflows and agents 
 ## 📦 Install
 
 Avalan supports Python 3.11 through 3.14.
-
-> [!TIP]
-> Pre-packaged installations of avalan install the same extras profile as
-> `avalan[agent,server,tool,vendors]`.
 
 ### 🍺 Homebrew (macOS)
 
@@ -72,44 +71,11 @@ sudo apt install -y avalan
 python3 -m pip install -U "avalan[agent,server,tool,vendors]"
 ```
 
-Add hardware-specific extras when needed:
-
-- `mlx` or `apple` – Apple Silicon acceleration via MLX / MLX-LM.
-- `nvidia` – Linux + NVIDIA bundle for quantization support and vLLM
-  (vLLM on Python 3.11 through 3.13 while upstream `cuda-tile` is capped).
-- `vllm` – the vLLM runtime without the full NVIDIA bundle
-  (Python 3.11 through 3.13 while upstream `cuda-tile` is capped).
-- `quantization` – 4-bit and 8-bit model loading.
-- `ds4` – native DS4 inference for DS4-supported DeepSeek V4 Flash GGUFs
-  through [pyds4](https://github.com/avalan-ai/pyds4). Production targets are macOS arm64 with Metal and Linux
-  with CUDA; CPU mode is only a debug/reference path.
-
-For the leanest install, omit the extras list entirely.
-
-DS4 users can install the optional backend with:
-
-```sh
-python3 -m pip install -U "avalan[ds4]"
-```
-
-If no [pyds4](https://github.com/avalan-ai/pyds4) wheel is available for your platform, build or install the
-binding first, then install Avalan. See [docs/INSTALL.md](docs/INSTALL.md#ds4-native-backend)
-for the supported targets and source-build path, and
-[docs/DS4.md](docs/DS4.md) for CLI examples and current limitations.
-
 ### 🛠️ From Source with Poetry
 
 ```sh
 poetry install --extras "agent server tool vendors" --with test
 ```
-
-> [!TIP]
-> On macOS ensure the Xcode command line tools are present and install the build dependencies before compiling extras that rely on `sentencepiece`:
->
-> ```sh
-> xcode-select --install
-> brew install cmake pkg-config protobuf sentencepiece
-> ```
 
 ## ⚡ Quickstart
 
@@ -146,6 +112,47 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+### ✅ Run a flow-backed task
+
+Tasks package repeatable AI work behind input and output contracts. This one
+accepts a PDF invoice, runs a flow that renders each page to images, sends
+those images to an agent, and writes schema-validated JSON:
+
+> [!NOTE]
+> Pip installs need the `agent`, `task`, `task-pdf-images`, and `vendors` extras
+> for this example.
+
+```sh
+avalan task run docs/examples/tasks/poc_extraction/image_flow_task.toml \
+    --ephemeral \
+    --pdf docs/examples/tasks/poc_extraction/sample.pdf \
+    --json \
+    --output image.json
+```
+
+The flow keeps the document conversion step explicit before the agent sees the
+files:
+
+```mermaid
+flowchart LR
+    task["image_flow_task.toml<br/>file input: application/pdf"]:::task
+    contract{{"Task contract<br/>limits + privacy"}}:::guard
+    render["render_pages<br/>file_convert: pdf_image<br/>PNG @ 144 dpi"]:::convert
+    extract["extract<br/>agent.toml<br/>vision + JSON schema"]:::agent
+    output[/"invoice.schema.json<br/>line_items JSON"/]:::output
+
+    task --> contract
+    contract --> render
+    render -->|"replace PDF with page images"| extract
+    extract --> output
+
+    classDef task fill:#eef6ff,stroke:#2563eb,color:#0f172a,stroke-width:2px;
+    classDef guard fill:#fff7ed,stroke:#f97316,color:#0f172a,stroke-width:2px;
+    classDef convert fill:#ecfdf5,stroke:#10b981,color:#0f172a,stroke-width:2px;
+    classDef agent fill:#f5f3ff,stroke:#7c3aed,color:#0f172a,stroke-width:2px;
+    classDef output fill:#f8fafc,stroke:#475569,color:#0f172a,stroke-width:2px;
+```
+
 ### 🧭 Next steps
 
 - 📚 Browse [docs/examples](docs/examples/README.md) for runnable scripts across
@@ -153,6 +160,7 @@ asyncio.run(main())
 - 🧪 Jump to [Models](#models) to search and install open models locally.
 - 🤖 Jump to [Agents](#agents) to expose an agent over OpenAI-compatible HTTP,
   MCP, or A2A.
+- 🔁 Jump to [Flows](#flows) and [Tasks](#tasks) for structured automation.
 
 ## 🧪 Models
 
@@ -279,57 +287,6 @@ The output shows the reasoning and the correct final answer:
 │ \boxed{25}                                                            │
 │                                                                       │
 └─ 💻 26 tokens in · 🧮 158 token out · 🌱 ttft: 1.14 s · ⚡ 14.90 t/s ─┘
-```
-
-### DS4 native backend
-
-DS4 is available as a local text-generation backend for DS4-supported
-DeepSeek V4 Flash GGUF files via [pyds4](https://github.com/avalan-ai/pyds4). It is not a generic GGUF backend.
-DS4 opens the GGUF directly from the filesystem and does not require
-`HF_TOKEN`.
-
-```sh
-export DS4_MODEL=/path/to/ds4flash.gguf
-
-printf '%s\n' 'Write a short greeting.' \
-    | avalan model run "ai://local/${DS4_MODEL}?backend=ds4" \
-        --ds4-ctx 4096 \
-        --ds4-native-backend metal \
-        --max-new-tokens 64 \
-        --temperature 0
-```
-
-Use `--ds4-native-backend cuda` on Linux CUDA builds. CPU mode is only a
-debug/reference path. Native DS4 tool calls use the DSML protocol:
-Avalan renders tool schemas, parses completed DSML tool blocks, streams
-argument deltas, and preserves exact raw DSML replay metadata for session
-alignment.
-Use `ai://local//absolute/path.gguf` for absolute paths, or a normal
-`ai://local/relative/path.gguf` URI for paths relative to the current
-directory. See [docs/DS4.md](docs/DS4.md) for URI configuration examples,
-disabled reasoning, agent-tool examples, and integration-test environment
-variables.
-
-#### Tool use
-
-DS4-backed agents can use Avalan tools through the native DSML protocol:
-
-```sh
-printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
-  | avalan agent run \
-      --engine-uri "ai://local/${DS4_MODEL}" \
-      --backend ds4 \
-      --ds4-ctx 4096 \
-      --ds4-native-backend metal \
-      --tool "math.calculator" \
-      --memory-recent \
-      --run-max-new-tokens 8192 \
-      --run-temperature 0 \
-      --name "Tool" \
-      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
-      --stats \
-      --display-events \
-      --display-tools
 ```
 
 ### Modalities
@@ -1701,7 +1658,7 @@ task = """
 Your task is to translate the given gettext template file,
 from the original {{source_language}} to {{destination_language}}.
 """
-instructions = """
+goal_instructions = """
 The text to translate is marked with `msgid`, and it's quoted.
 Your translation should be defined in `msgstr`.
 """
@@ -1740,6 +1697,34 @@ icdiff locale/avalan.pot <(
 ```
 
 ![diff showing what the AI translator agent modified](https://avalan.ai/images/github/agent_gettext_translator.webp)
+
+For shorter agents, define direct prompts instead of building a role/task
+template. This support-reply agent uses a raw `system` prompt, a `developer`
+policy prompt, and a `user` prompt that prefixes each ticket passed to the
+agent:
+
+```toml
+[agent]
+name = "SupportReply"
+system = """
+You are a customer support assistant that drafts clear, empathetic replies.
+"""
+developer = """
+Do not promise refunds, credits, or resolution timelines unless the ticket
+explicitly says they are approved. Ask for one concrete next piece of
+information when the issue cannot be resolved from the ticket.
+"""
+user = """
+Draft a concise support reply for this customer ticket:
+"""
+
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4o-mini"
+
+[run]
+max_new_tokens = 512
+skip_special_tokens = true
+```
 
 There are more agent, NLP, multimodal, audio, and vision examples in the
 [docs/examples](docs/examples/README.md)
@@ -1983,10 +1968,176 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
     avalan model run "ai://openai" --base-url "http://localhost:9001/v1"
 ```
 
+## Flows
+
+Flows are typed DAGs for multi-step AI work. A flow declares its input and
+output contracts, entrypoint, output node, nodes, and edges in TOML, then runs
+the graph directly or as a task target.
+
+Use flows when a workflow needs explicit stages such as conversion,
+classification, extraction, tool calls, or fan-out/fan-in logic. Native flow
+nodes can call agents and task file converters, and Python flows can be built
+directly with `Flow`, `Node`, and Mermaid parsing.
+
+Run a flow directly:
+
+```sh
+avalan flow run docs/examples/tasks/poc_extraction/image_flow.toml \
+    --pdf docs/examples/tasks/poc_extraction/sample.pdf \
+    --json \
+    --output image.json
+```
+
+The tracked [image_flow.toml](docs/examples/tasks/poc_extraction/image_flow.toml)
+example renders a PDF into page images before invoking the extraction agent.
+The simpler [flow.toml](docs/examples/tasks/poc_extraction/flow.toml) variant
+sends the original PDF straight to the agent node.
+
+## Tasks
+
+Tasks turn AI workflows into repeatable units with validated inputs, validated
+outputs, idempotency, limits, artifacts, privacy policy, retries, and
+observability. A task can target an agent, flow, nested task, model, callable,
+or tool, then run directly or be queued through a durable PostgreSQL-backed
+worker.
+
+Validate and run a direct task:
+
+```sh
+avalan task validate docs/examples/tasks/structured_json.task.toml \
+    --input-json '{"question":"What changed?","priority":2}'
+
+avalan task run docs/examples/tasks/structured_json.task.toml \
+    --ephemeral \
+    --input-json '{"question":"What changed?","priority":2}' \
+    --json \
+    --output result.json
+```
+
+Run a flow-backed task with the same file input contract shown in the
+Quickstart:
+
+```sh
+avalan task run docs/examples/tasks/poc_extraction/image_flow_task.toml \
+    --ephemeral \
+    --pdf docs/examples/tasks/poc_extraction/sample.pdf \
+    --json \
+    --output image.json
+```
+
+Use `avalan task enqueue` with `--store-dsn` and `--queue` when work should be
+claimed by task workers instead of executed inline. See
+[docs/examples/tasks](docs/examples/tasks/README.md) for runnable definitions
+and [docs/task_file_delivery.md](docs/task_file_delivery.md) for file input
+delivery rules.
+
+## Installation options
+
+Pip extras are additive, so install the smallest capability set you need.
+Homebrew and Ubuntu packages install the same dependency profile as
+`avalan[agent,server,tool,vendors]`.
+
+```sh
+python3 -m pip install -U avalan
+python3 -m pip install -U "avalan[agent,server,tool,vendors]"
+python3 -m pip install -U "avalan[agent,task,task-pdf-images,vendors]"
+```
+
+The first command is the lean SDK and CLI install. The second is the common
+agent, serving, tool, and hosted-vendor profile used by the main examples. The
+third adds task contracts and PDF-to-image conversion for the flow-backed task
+example in the Quickstart.
+
+Add hardware or backend extras when needed:
+
+- `mlx` or `apple` – Apple Silicon acceleration via MLX / MLX-LM.
+- `nvidia` – Linux + NVIDIA bundle for quantization support and vLLM
+  (vLLM on Python 3.11 through 3.13 while upstream `cuda-tile` is capped).
+- `vllm` – the vLLM runtime without the full NVIDIA bundle
+  (Python 3.11 through 3.13 while upstream `cuda-tile` is capped).
+- `quantization` – 4-bit and 8-bit model loading.
+- `ds4` – native DS4 inference for DS4-supported DeepSeek V4 Flash GGUFs
+  through [pyds4](https://github.com/avalan-ai/pyds4). Production targets are
+  macOS arm64 with Metal and Linux with CUDA; CPU mode is only a
+  debug/reference path.
+
+Task-specific extras include `task` for structured validation,
+`task-pdf-images` for PDF rasterization, `task-documents` for document
+conversion, `task-pgsql` for durable stores and workers, `task-prometheus` for
+metrics, and `task-otel` for traces.
+
+### DS4 native backend
+
+DS4 is available as a local text-generation backend for DS4-supported
+DeepSeek V4 Flash GGUF files via [pyds4](https://github.com/avalan-ai/pyds4).
+It is not a generic GGUF backend. DS4 opens the GGUF directly from the
+filesystem and does not require `HF_TOKEN`.
+
+```sh
+python3 -m pip install -U "avalan[ds4]"
+```
+
+If no [pyds4](https://github.com/avalan-ai/pyds4) wheel is available for your
+platform, build or install the binding first, then install Avalan. See
+[docs/INSTALL.md](docs/INSTALL.md#ds4-native-backend) for supported targets and
+the source-build path, and [docs/DS4.md](docs/DS4.md) for CLI examples and
+current limitations.
+
+```sh
+export DS4_MODEL=/path/to/ds4flash.gguf
+
+printf '%s\n' 'Write a short greeting.' \
+    | avalan model run "ai://local/${DS4_MODEL}?backend=ds4" \
+        --ds4-ctx 4096 \
+        --ds4-native-backend metal \
+        --max-new-tokens 64 \
+        --temperature 0
+```
+
+Use `--ds4-native-backend cuda` on Linux CUDA builds. CPU mode is only a
+debug/reference path. Native DS4 tool calls use the DSML protocol: Avalan
+renders tool schemas, parses completed DSML tool blocks, streams argument
+deltas, and preserves exact raw DSML replay metadata for session alignment.
+Use `ai://local//absolute/path.gguf` for absolute paths, or a normal
+`ai://local/relative/path.gguf` URI for paths relative to the current
+directory.
+
+#### Tool use
+
+DS4-backed agents can use Avalan tools through the native DSML protocol:
+
+```sh
+printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
+  | avalan agent run \
+      --engine-uri "ai://local/${DS4_MODEL}" \
+      --backend ds4 \
+      --ds4-ctx 4096 \
+      --ds4-native-backend metal \
+      --tool "math.calculator" \
+      --memory-recent \
+      --run-max-new-tokens 8192 \
+      --run-temperature 0 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --stats \
+      --display-events \
+      --display-tools
+```
+
+### Source build tips
+
+On macOS, ensure the Xcode command line tools are present and install the build
+dependencies before compiling extras that rely on `sentencepiece`:
+
+```sh
+xcode-select --install
+brew install cmake pkg-config protobuf sentencepiece
+```
+
 ## Documentation & Resources
 
-- [docs/examples](docs/examples/README.md) – runnable scripts and sample agent
-  configurations.
+- [docs/examples](docs/examples/README.md) – runnable scripts and sample agent,
+  flow, and task configurations.
 - [docs/CLI.md](docs/CLI.md) – exhaustive documentation for commands and flags.
 - [docs/INSTALL.md](docs/INSTALL.md) – platform-specific installation notes.
 - [docs/ai_uri.md](docs/ai_uri.md) – the guide to engine URIs and backend

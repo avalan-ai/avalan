@@ -63,6 +63,7 @@ from avalan.model.nlp.text.ds4 import (
     _CPU_WARNING,
     Ds4Model,
     Ds4Worker,
+    _combine_instructions,
     _Ds4DiskKvCache,
     _Ds4GenerationPlan,
 )
@@ -79,6 +80,10 @@ class NativeBackend(StrEnum):
     METAL = "metal"
     CUDA = "cuda"
     CPU = "cpu"
+
+
+def test_combine_instructions_without_system_prompt() -> None:
+    assert _combine_instructions("provider", None) == "provider"
 
 
 class NativeThinkMode(StrEnum):
@@ -1242,6 +1247,44 @@ def test_ds4_system_and_developer_prompts_are_merged(
         )
     ]
     assert response.input_token_count == 4
+    model.close()
+
+
+def test_ds4_provider_instructions_are_prompt_material(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+    model_path = _model_file(tmp_path)
+    model = Ds4Model(str(model_path))
+
+    response = run(
+        model(
+            "hello",
+            instructions="provider text",
+            system_prompt="system text",
+        )
+    )
+    count = model.input_token_count(
+        "hello",
+        instructions="provider text",
+        system_prompt="system text",
+    )
+
+    fake = _latest_fake_engine()
+    assert fake.tokenization_calls[-2:] == [
+        (
+            "encode_chat_prompt",
+            ("provider text\n\nsystem text", "hello"),
+            NativeThinkMode.NONE,
+        ),
+        (
+            "encode_chat_prompt",
+            ("provider text\n\nsystem text", "hello"),
+            NativeThinkMode.NONE,
+        ),
+    ]
+    assert response.input_token_count == 4
+    assert count == 4
     model.close()
 
 

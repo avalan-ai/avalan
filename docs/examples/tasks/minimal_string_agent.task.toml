@@ -1,0 +1,24 @@
+[task]
+name = "minimal_string_agent"
+version = "1"
+description = "Answer a single text prompt."
+
+[input]
+type = "string"
+description = "Prompt text."
+
+[output]
+type = "text"
+description = "Answer text."
+
+[execution]
+type = "agent"
+ref = "agents/basic_answer.toml"
+
+[run]
+timeout_seconds = 120
+
+[limits]
+input_bytes = 4096
+output_bytes = 4096
+total_tokens = 1000

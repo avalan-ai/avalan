@@ -7,7 +7,7 @@ task = """
 Your task is to use your expertise in Python to help the user solve problems,
 improve their code and suggest solutions.
 """
-instructions = """
+goal_instructions = """
 Always output your python code within <llm-code> and </llm-code> tags, without
 any further text, unless you require further information.
 """

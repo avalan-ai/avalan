@@ -27,6 +27,11 @@ instructions = """
 {{ orchestrator.agent_config['instructions'] | indent(4) }}
 """
 {% endif %}
+{% if orchestrator.agent_config.get('goal_instructions') %}
+goal_instructions = """
+{{ orchestrator.agent_config['goal_instructions'] | indent(4) }}
+"""
+{% endif %}
 {% if orchestrator.agent_config.get('user') %}
 user = """
 {{ orchestrator.agent_config['user'] | indent(4) }}

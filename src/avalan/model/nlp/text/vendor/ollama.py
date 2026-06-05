@@ -6,6 +6,8 @@ from .....entities import (
     TransformerEngineSettings,
 )
 from .....model.nlp.text.generation import TextGenerationModel
+from .....model.provider import ProviderFamily
+from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import TextGenerationVendorModel
@@ -13,7 +15,7 @@ from . import TextGenerationVendorModel
 from contextlib import AsyncExitStack
 from dataclasses import replace
 from logging import Logger, getLogger
-from typing import Any, AsyncGenerator, AsyncIterator, cast
+from typing import Any, AsyncIterator, cast
 
 try:
     from ollama import AsyncClient
@@ -24,7 +26,8 @@ except ImportError:  # pragma: no cover - ollama may not be installed
 class OllamaStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[dict[str, Any]]) -> None:
         super().__init__(
-            cast(AsyncIterator[Token | TokenDetail | str], stream)
+            cast(AsyncIterator[Token | TokenDetail | str], stream),
+            provider_family=ProviderFamily.OLLAMA,
         )
 
     async def __anext__(self) -> Token | TokenDetail | str:
@@ -54,9 +57,13 @@ class OllamaClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
+        assert (
+            instructions is None
+        ), "Ollama does not support provider instructions"
         template_messages = self._template_messages(messages)
         if use_async_generator:
             stream = await self._client.chat(
@@ -71,14 +78,11 @@ class OllamaClient(TextGenerationVendor):
                 messages=template_messages,
                 stream=False,
             )
-
-            async def single_gen() -> (
-                AsyncGenerator[Token | TokenDetail | str, None]
-            ):
-                content = response["message"]["content"]
-                yield content if isinstance(content, str) else str(content)
-
-            return single_gen()
+            content = response["message"]["content"]
+            return TextGenerationSingleStream(
+                content if isinstance(content, str) else str(content),
+                provider_family=ProviderFamily.OLLAMA,
+            )
 
 
 class OllamaModel(TextGenerationVendorModel):

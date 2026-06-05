@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -7,7 +9,6 @@ import pytest
 try:
     from psycopg import AsyncConnection, AsyncCursor
     from psycopg.errors import UndefinedFile
-    from psycopg.rows import dict_row
     from psycopg_pool import AsyncConnectionPool
 except ImportError:
     pytest.skip("psycopg pq wrapper is unavailable", allow_module_level=True)
@@ -21,6 +22,7 @@ from avalan.memory.permanent.pgsql import (
     PgsqlMemory,
     PgsqlVectorExtensionError,
 )
+from avalan.pgsql import PsycopgAsyncDatabase
 
 
 @dataclass
@@ -68,6 +70,16 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
         pool.open.assert_awaited_once()
         with self.assertRaises(NotImplementedError):
             await memory.search("q")
+
+    async def test_close_and_context_manager(self):
+        pool = AsyncMock(spec=AsyncConnectionPool)
+        memory = DummyBaseMemory(pool, logger=MagicMock())
+
+        async with memory as opened:
+            self.assertIs(opened, memory)
+
+        pool.open.assert_awaited_once()
+        pool.close.assert_awaited_once()
 
     async def test_fetch_one_found(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
@@ -160,54 +172,73 @@ class BasePgsqlMemoryTestCase(IsolatedAsyncioTestCase):
 
 class PgsqlMemoryTestCase(IsolatedAsyncioTestCase):
     async def test_dsn_prefix_and_configure(self):
-        with patch(
-            "avalan.memory.permanent.pgsql.AsyncConnectionPool",
-            autospec=True,
-        ) as pool_cls:
-            pool_instance = AsyncMock(spec=AsyncConnectionPool)
-            pool_cls.return_value = pool_instance
-            memory = DummyPgsqlMemory(
-                dsn="user@host/db",
-                pool_minimum=1,
-                pool_maximum=2,
-                logger=MagicMock(),
-            )
+        pool_cls = MagicMock()
+        pool_instance = AsyncMock(spec=AsyncConnectionPool)
+        pool_cls.return_value = pool_instance
+        memory = DummyPgsqlMemory(
+            dsn="user@host/db",
+            pool_minimum=1,
+            pool_maximum=2,
+            logger=MagicMock(),
+            module_importer={
+                "psycopg_pool": SimpleNamespace(AsyncConnectionPool=pool_cls)
+            }.__getitem__,
+        )
+        database = cast(PsycopgAsyncDatabase, memory._database)
+        self.assertIs(database.pool, pool_instance)
         pool_cls.assert_called_once()
         called_kwargs = pool_cls.call_args.kwargs
         self.assertEqual(
             called_kwargs["conninfo"], "postgresql://user@host/db"
         )
-        self.assertIs(memory._database, pool_instance)
+        self.assertIs(database.pool, pool_instance)
         self.assertIsNone(memory._composite_types)
 
     async def test_configure_connection(self):
         pool = AsyncMock(spec=AsyncConnectionPool)
-        memory = DummyPgsqlMemory(dsn=None, pool=pool, logger=MagicMock())
+        vector_module = SimpleNamespace(register_vector_async=AsyncMock())
+        type_info = MagicMock()
+        type_module = SimpleNamespace(
+            TypeInfo=SimpleNamespace(fetch=AsyncMock(return_value=type_info))
+        )
+        memory = DummyPgsqlMemory(
+            dsn=None,
+            pool=pool,
+            logger=MagicMock(),
+            module_importer={
+                "pgvector.psycopg": vector_module,
+                "psycopg.types": type_module,
+            }.__getitem__,
+        )
         memory._composite_types = ["ctype"]
         connection = AsyncMock(spec=AsyncConnection)
-        type_info = MagicMock()
         with (
-            patch(
-                "avalan.memory.permanent.pgsql.TypeInfo.fetch",
-                AsyncMock(return_value=type_info),
-            ) as fetch_patch,
             patch.object(
                 memory,
                 "_ensure_vector_extension",
                 AsyncMock(),
             ) as ensure_patch,
-            patch(
-                "avalan.memory.permanent.pgsql.register_vector_async",
-                AsyncMock(),
-            ) as vector_patch,
         ):
             await memory._configure_connection(connection)
-        self.assertIs(connection.row_factory, dict_row)
-        connection.set_autocommit.assert_awaited_once_with(True)
-        fetch_patch.assert_awaited_once_with(connection, "ctype")
+        type_module.TypeInfo.fetch.assert_awaited_once_with(
+            connection,
+            "ctype",
+        )
         type_info.register.assert_called_once_with(connection)
         ensure_patch.assert_awaited_once_with(connection)
-        vector_patch.assert_awaited_once_with(connection)
+        vector_module.register_vector_async.assert_awaited_once_with(
+            connection
+        )
+
+    async def test_borrowed_pool_is_not_closed(self):
+        pool = AsyncMock(spec=AsyncConnectionPool)
+        memory = DummyPgsqlMemory(dsn=None, pool=pool, logger=MagicMock())
+
+        await memory.open()
+        await memory.aclose()
+
+        pool.open.assert_not_called()
+        pool.close.assert_not_called()
 
     async def test_ensure_vector_extension_missing_extension(self):
         pool, connection, cursor = BasePgsqlMemoryTestCase.mock_query(

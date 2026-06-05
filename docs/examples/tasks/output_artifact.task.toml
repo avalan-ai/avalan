@@ -1,0 +1,28 @@
+[task]
+name = "output_artifact"
+version = "1"
+description = "Return generated artifact references."
+
+[input]
+type = "string"
+description = "Artifact request."
+
+[output]
+type = "artifact[]"
+description = "Generated artifact references."
+
+[execution]
+type = "agent"
+ref = "agents/artifact_writer.toml"
+
+[artifact]
+retention_days = 30
+storage = "local"
+max_count = 2
+max_bytes = 2097152
+
+[limits]
+output_bytes = 1024
+artifact_count = 2
+artifact_bytes = 2097152
+total_tokens = 2000

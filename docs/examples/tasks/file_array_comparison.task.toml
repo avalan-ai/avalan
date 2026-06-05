@@ -1,0 +1,30 @@
+[task]
+name = "file_array_comparison"
+version = "1"
+description = "Compare a bounded set of document files."
+
+[input]
+type = "file[]"
+description = "Document file descriptors."
+file_conversions = ["text"]
+mime_types = ["text/plain", "application/pdf"]
+
+[output]
+type = "text"
+description = "Comparison report."
+
+[execution]
+type = "agent"
+ref = "agents/document_reader.toml"
+
+[artifact]
+retention_days = 14
+storage = "local"
+max_count = 5
+max_bytes = 1048576
+
+[limits]
+file_count = 4
+file_bytes = 1048576
+output_bytes = 16384
+total_tokens = 3000

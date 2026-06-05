@@ -1,0 +1,73 @@
+[task]
+name = "invoice_reader"
+version = "2"
+description = "Read an invoice."
+labels = ["finance", "documents"]
+
+[task.annotations]
+owner = "ops"
+
+[input]
+type = "file[]"
+description = "Upload invoices."
+file_conversions = ["markdown", "text"]
+mime_types = ["application/pdf"]
+
+[output]
+type = "json"
+description = "Return invoice fields."
+
+[output.schema]
+type = "object"
+required = ["vendor"]
+
+[output.schema.properties.vendor]
+type = "string"
+
+[execution]
+type = "agent"
+ref = "agents/invoice_reader.toml"
+
+[execution.variables]
+locale = "en-US"
+
+[run]
+mode = "queue"
+timeout_seconds = 180
+idempotency = "input_and_files_hash"
+queue = "documents"
+priority = 2
+concurrency = 4
+
+[retry]
+max_attempts = 3
+backoff = "exponential"
+max_delay_seconds = 60
+jitter = true
+
+[privacy]
+output = "encrypt"
+raw_retention_days = 7
+
+[artifact]
+retention_days = 30
+store_bytes = true
+storage = "local"
+max_count = 5
+max_bytes = 1048576
+encrypt = true
+
+[limits]
+input_bytes = 1024
+file_count = 3
+file_bytes = 2048
+output_bytes = 4096
+artifact_count = 5
+artifact_bytes = 8192
+total_tokens = 1000
+
+[observability]
+sinks = ["pgsql", "prometheus"]
+metrics = true
+trace = false
+capture_events = true

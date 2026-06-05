@@ -117,15 +117,18 @@ class VllmModel(TextGenerationModel):
         developer_prompt: str | None = None,
         tool: ToolManager | None = None,
         chat_template_settings: dict[str, object] | None = None,
+        *,
+        instructions: str | None = None,
     ) -> str:
         inputs = super()._tokenize_input(
             input,
-            system_prompt,
-            developer_prompt,
+            system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
             context=None,
             tensor_format="pt",
             tool=tool,
             chat_template_settings=chat_template_settings,
+            instructions=instructions,
         )
         tokenizer = self._tokenizer
         assert tokenizer is not None
@@ -175,6 +178,7 @@ class VllmModel(TextGenerationModel):
         developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
     ) -> TextGenerationVendorStream | str | AsyncGenerator[str, None]:
         settings = settings or GenerationSettings()
@@ -184,6 +188,7 @@ class VllmModel(TextGenerationModel):
             developer_prompt,
             tool,
             asdict(settings.chat_settings),
+            instructions=instructions,
         )
         generation_settings = replace(settings, do_sample=False)
         if settings.use_async_generator:

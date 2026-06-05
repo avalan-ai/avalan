@@ -113,7 +113,8 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             name="n",
             role="r",
             task="t",
-            instructions="i",
+            instructions="provider",
+            goal_instructions="goal",
             engine_uri="old",
             backend="transformers",
             run_max_new_tokens=5,
@@ -135,7 +136,8 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             name="x",
             role="y",
             task="z",
-            instructions="j",
+            instructions="override_provider",
+            goal_instructions="override_goal",
             engine_uri="new",
             memory_recent=True,
             memory_permanent_message="dsn",
@@ -148,7 +150,13 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
         self.assertEqual(result.call_options["max_new_tokens"], 20)
         self.assertEqual(
             result.agent_config,
-            {"name": "x", "role": "y", "task": "z", "instructions": "j"},
+            {
+                "name": "x",
+                "role": "y",
+                "task": "z",
+                "instructions": "override_provider",
+                "goal_instructions": "override_goal",
+            },
         )
         self.assertEqual(result.memory_permanent_message, "dsn")
         self.assertEqual(

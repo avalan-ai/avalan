@@ -15,6 +15,7 @@ from avalan.entities import (
     MessageContentImage,
     MessageContentText,
     MessageRole,
+    PromptCacheRetention,
     ReasoningEffort,
     ReasoningSettings,
     ReasoningToken,
@@ -24,6 +25,10 @@ from avalan.entities import (
     ToolCallResult,
     ToolCallToken,
     TransformerEngineSettings,
+)
+from avalan.task.usage import (
+    usage_observation_from_response,
+    usage_totals_from_response,
 )
 
 
@@ -163,11 +168,150 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             },
             model="m",
             input=[{"c": 1}],
+            store=False,
             stream=True,
             timeout=None,
         )
-        StreamMock.assert_called_once_with(stream=stream_instance)
+        StreamMock.assert_called_once_with(
+            stream=stream_instance,
+            provider_family="openai",
+        )
         self.assertIs(result, StreamMock.return_value)
+
+    async def test_client_sends_top_level_instructions(self):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=response
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        message = Message(role=MessageRole.USER, content="hi")
+
+        await client(
+            "m",
+            [message],
+            instructions="top-level",
+            use_async_generator=False,
+        )
+
+        kwargs = client._client.responses.create.await_args.kwargs
+        self.assertEqual(kwargs["instructions"], "top-level")
+        self.assertEqual(kwargs["input"], [{"role": "user", "content": "hi"}])
+        self.assertNotIn("top-level", str(kwargs["input"]))
+
+    async def test_responses_payload_combines_instructions_cache_and_options(
+        self,
+    ):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
+        )
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        tool = MagicMock()
+        tool.json_schemas.return_value = [
+            {"type": "function", "function": {"name": "pkg.lookup"}}
+        ]
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="system path"),
+            Message(role=MessageRole.DEVELOPER, content="developer path"),
+            Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(type="text", text="Summarize"),
+                    MessageContentFile(
+                        type="file",
+                        file={
+                            "file_data": "YWJj",
+                            "filename": "report.pdf",
+                        },
+                    ),
+                    MessageContentImage(
+                        type="image_url",
+                        image_url={
+                            "data": "aW1n",
+                            "mime_type": "image/png",
+                            "detail": "high",
+                        },
+                    ),
+                ],
+            ),
+        ]
+        settings = GenerationSettings(
+            max_new_tokens=10,
+            prompt_cache_retention=PromptCacheRetention.EXTENDED_24H,
+            reasoning=ReasoningSettings(effort=ReasoningEffort.HIGH),
+            response_format={"type": "json_object"},
+            stop_strings=["END"],
+        )
+
+        await client(
+            "gpt-5",
+            messages,
+            settings=settings,
+            instructions="top-level policy",
+            tool=tool,
+            use_async_generator=False,
+        )
+
+        create_mock.assert_awaited_once_with(
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
+            model="gpt-5",
+            input=[
+                {"role": "system", "content": "system path"},
+                {"role": "developer", "content": "developer path"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Summarize"},
+                        {
+                            "type": "input_file",
+                            "file_data": "data:application/pdf;base64,YWJj",
+                            "filename": "report.pdf",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,aW1n",
+                            "detail": "high",
+                        },
+                    ],
+                },
+            ],
+            store=False,
+            stream=False,
+            timeout=None,
+            instructions="top-level policy",
+            max_output_tokens=10,
+            text={"format": {"type": "json_object"}, "stop": ["END"]},
+            reasoning={"effort": "high"},
+            prompt_cache_retention="24h",
+            tools=[{"type": "function", "name": "pkg__lookup"}],
+        )
+        self.assertNotIn(
+            "top-level policy", str(create_mock.await_args.kwargs["input"])
+        )
+
+    async def test_rejects_invalid_instructions_before_provider_call(self):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+
+        with self.assertRaisesRegex(AssertionError, "instructions"):
+            await client(
+                "m",
+                [],
+                instructions={"raw": "prompt"},  # type: ignore[arg-type]
+            )
+
+        create_mock.assert_not_awaited()
 
     async def test_client_consumes_tokens(self):
         chunks = [
@@ -202,6 +346,135 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ClientMock.assert_called_once_with(base_url="u", api_key="t")
         self.assertIs(loaded, ClientMock.return_value)
 
+    async def test_stream_records_terminal_usage_after_completion(self):
+        usage = SimpleNamespace(
+            input_tokens=3,
+            input_tokens_details=SimpleNamespace(cached_tokens=1),
+            cache_creation_input_tokens=2,
+            output_tokens=4,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=2),
+            total_tokens=9,
+        )
+        chunks = [
+            SimpleNamespace(type="response.output_text.delta", delta="a"),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(usage=usage),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(chunks))
+
+        token = await stream.__anext__()
+        self.assertIsInstance(token, Token)
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
+        self.assertIs(stream.usage, usage)
+        self.assertEqual(stream.provider_family, "openai")
+        observation = usage_observation_from_response(stream)
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
+        totals = usage_totals_from_response(stream)
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 3)
+        self.assertEqual(totals.cached_input_tokens, 1)
+        self.assertEqual(totals.cache_creation_input_tokens, 2)
+        self.assertEqual(totals.output_tokens, 4)
+        self.assertEqual(totals.reasoning_tokens, 2)
+        self.assertEqual(totals.total_tokens, 9)
+
+    async def test_stream_records_dict_terminal_usage_after_exhaustion(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "usage": {
+                                "input_tokens": 0,
+                                "prompt_tokens_details": {"cached_tokens": 0},
+                                "completion_tokens": 0,
+                                "completion_tokens_details": {
+                                    "reasoning_tokens": 0
+                                },
+                                "total_tokens": 0,
+                            }
+                        },
+                    }
+                ]
+            )
+        )
+
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        observation = usage_observation_from_response(stream)
+        totals = usage_totals_from_response(stream)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 0)
+        self.assertEqual(totals.cached_input_tokens, 0)
+        self.assertIsNone(totals.cache_creation_input_tokens)
+        self.assertEqual(totals.output_tokens, 0)
+        self.assertEqual(totals.reasoning_tokens, 0)
+        self.assertEqual(totals.total_tokens, 0)
+
+    async def test_stream_keeps_null_or_interrupted_usage_unavailable(self):
+        null_usage = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(usage=None),
+                    )
+                ]
+            )
+        )
+        with self.assertRaises(StopAsyncIteration):
+            await null_usage.__anext__()
+        self.assertIsNone(null_usage.usage)
+
+        class FailingIter:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise RuntimeError("provider failure")
+
+        interrupted = self.mod.OpenAIStream(FailingIter())
+        with self.assertRaises(RuntimeError):
+            await interrupted.__anext__()
+        self.assertIsNone(interrupted.usage)
+
+        class FailingAfterUsageIter:
+            def __init__(self):
+                self._count = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                self._count += 1
+                if self._count == 1:
+                    return {
+                        "type": "response.completed",
+                        "response": {"usage": {"input_tokens": 1}},
+                    }
+                raise RuntimeError("provider failure")
+
+        interrupted_after_usage = self.mod.OpenAIStream(
+            FailingAfterUsageIter()
+        )
+        with self.assertRaises(RuntimeError):
+            await interrupted_after_usage.__anext__()
+        self.assertIsNone(interrupted_after_usage.usage)
+
     async def test_client_omits_auth_header_without_api_key(self):
         client = self.mod.OpenAIClient(
             api_key=None, base_url="http://localhost:9001/v1"
@@ -235,6 +508,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             },
             model="default",
             input=[{"c": 1}],
+            store=False,
             stream=False,
             timeout=None,
         )
@@ -254,6 +528,42 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         self.assertIs(loaded, ClientMock.return_value)
 
+    async def test_model_loads_with_azure_api_version(self):
+        with patch.object(self.mod, "OpenAIClient") as ClientMock:
+            settings = TransformerEngineSettings(
+                auto_load_model=False,
+                auto_load_tokenizer=False,
+                access_token="token",
+                base_url=(
+                    "https://tenant.openai.azure.com/openai/deployments/d"
+                ),
+                provider_options={
+                    "azure_api_version": "2025-04-01-preview",
+                },
+            )
+            model = self.mod.OpenAIModel("deployment", settings)
+            loaded = model._load_model()
+
+        ClientMock.assert_called_once_with(
+            base_url="https://tenant.openai.azure.com/openai/deployments/d",
+            api_key="token",
+            azure_api_version="2025-04-01-preview",
+        )
+        self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_model_rejects_invalid_provider_api_version(self):
+        settings = TransformerEngineSettings(
+            auto_load_model=False,
+            auto_load_tokenizer=False,
+            access_token="token",
+            base_url="https://tenant.openai.azure.com/openai/deployments/d",
+            provider_options={"azure_api_version": 20250401},
+        )
+        model = self.mod.OpenAIModel("deployment", settings)
+
+        with self.assertRaises(AssertionError):
+            model._load_model()
+
     async def test_stream_event_types(self):
         events = [
             SimpleNamespace(type="response.output_item.added"),
@@ -261,6 +571,12 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             SimpleNamespace(type="response.reasoning_text.delta", delta="r1"),
             SimpleNamespace(type="response.reasoning_text.delta", delta="r2"),
             SimpleNamespace(type="response.output_item.done"),
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    custom_tool_call=SimpleNamespace(id=object())
+                ),
+            ),
             SimpleNamespace(
                 type="response.output_item.added",
                 item=SimpleNamespace(
@@ -371,7 +687,14 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             top_p=0.8,
             max_new_tokens=10,
             stop_strings=["stop"],
-            response_format={"type": "json_schema"},
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "result",
+                    "schema": {"type": "object"},
+                    "strict": True,
+                },
+            },
         )
         await client(
             "m",
@@ -386,15 +709,234 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             },
             model="m",
             input=[{"c": 1}],
+            store=False,
             stream=True,
             timeout=None,
             max_output_tokens=10,
             temperature=0.5,
             top_p=0.8,
-            text={"stop": ["stop"]},
-            response_format={"type": "json_schema"},
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "result",
+                    "schema": {"type": "object"},
+                    "strict": True,
+                },
+                "stop": ["stop"],
+            },
             tools=[{"type": "function", "name": "pkg__func"}],
         )
+
+    async def test_azure_responses_payload_uses_text_format(self):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
+        )
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url="https://tenant.openai.azure.com/openai/v1/",
+        )
+        client._template_messages = MagicMock(return_value=[{"c": 1}])
+        settings = GenerationSettings(
+            max_new_tokens=20,
+            temperature=0.3,
+            top_p=0.4,
+            stop_strings="END",
+            response_format={"type": "json_object"},
+            reasoning=ReasoningSettings(effort=ReasoningEffort.HIGH),
+        )
+
+        await client(
+            "claims-extractor-prod",
+            [],
+            settings=settings,
+            use_async_generator=False,
+        )
+
+        create_mock.assert_awaited_once_with(
+            extra_headers={
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            },
+            model="claims-extractor-prod",
+            input=[{"c": 1}],
+            store=False,
+            stream=False,
+            timeout=None,
+            max_output_tokens=20,
+            text={"format": {"type": "json_object"}, "stop": "END"},
+            reasoning={"effort": "high"},
+        )
+
+    async def test_azure_legacy_api_version_uses_extra_query(self):
+        response = SimpleNamespace(output=[])
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url="https://tenant.openai.azure.com/openai/deployments/dep",
+            azure_api_version="2025-04-01-preview",
+        )
+        client._template_messages = MagicMock(return_value=[])
+
+        await client("dep", [], use_async_generator=False)
+
+        self.assertEqual(
+            create_mock.await_args.kwargs["extra_query"],
+            {"api-version": "2025-04-01-preview"},
+        )
+
+    async def test_rejects_invalid_responses_options_before_provider_call(
+        self,
+    ):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        invalid_settings = GenerationSettings(
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"schema": {"type": "object"}},
+                "schema": {"type": "object"},
+            }
+        )
+
+        with self.assertRaisesRegex(AssertionError, "ambiguous"):
+            await client("model", [], settings=invalid_settings)
+
+        create_mock.assert_not_awaited()
+
+    async def test_rejects_invalid_prompt_cache_retention_before_provider_call(
+        self,
+    ):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+
+        with self.assertRaisesRegex(AssertionError, "not supported"):
+            await client(
+                "model",
+                [],
+                settings=GenerationSettings(
+                    prompt_cache_retention="forever",
+                ),
+            )
+        with self.assertRaisesRegex(AssertionError, "must be a string"):
+            await client(
+                "model",
+                [],
+                settings=GenerationSettings(
+                    prompt_cache_retention=object(),  # type: ignore[arg-type]
+                ),
+            )
+
+        create_mock.assert_not_awaited()
+
+    async def test_rejects_incompatible_reasoning_effort(self):
+        create_mock = AsyncMock()
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url="https://tenant.openai.azure.com/openai/v1/",
+        )
+        settings = GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+        )
+
+        with self.assertRaisesRegex(AssertionError, "reasoning effort"):
+            await client("deployment", [], settings=settings)
+
+        create_mock.assert_not_awaited()
+
+    def test_response_text_format_normalizes_supported_shapes(self):
+        self.assertEqual(
+            self.mod.OpenAIClient._prompt_cache_retention_config(
+                GenerationSettings(prompt_cache_retention="in_memory")
+            ),
+            "in_memory",
+        )
+        self.assertEqual(
+            self.mod.OpenAIClient._response_text_format({"type": "text"}),
+            {"type": "text"},
+        )
+        self.assertEqual(
+            self.mod.OpenAIClient._response_text_format(
+                {
+                    "type": "json_schema",
+                    "name": "document",
+                    "schema": {"type": "object"},
+                    "strict": False,
+                }
+            ),
+            {
+                "type": "json_schema",
+                "name": "document",
+                "schema": {"type": "object"},
+                "strict": False,
+            },
+        )
+        with self.assertRaisesRegex(AssertionError, "not supported"):
+            self.mod.OpenAIClient._response_text_format({"type": "xml"})
+        with self.assertRaises(AssertionError):
+            self.mod.OpenAIClient._response_text_format(
+                {
+                    "type": "json_schema",
+                    "schema": {"type": "object"},
+                }
+            )
+        with self.assertRaises(AssertionError):
+            self.mod.OpenAIClient._response_text_format(
+                {
+                    "type": "json_schema",
+                    "json_schema": {"name": "bad"},
+                }
+            )
+
+    def test_azure_configuration_validation(self):
+        self.assertFalse(self.mod.OpenAIClient._is_azure_base_url(None))
+
+        with self.assertRaisesRegex(AssertionError, "/openai/v1/"):
+            self.mod.OpenAIClient(
+                api_key="key",
+                base_url=(
+                    "https://tenant.openai.azure.com/openai/deployments/dep"
+                ),
+            )
+
+        try:
+            self.mod.OpenAIClient(
+                api_key="key",
+                base_url=(
+                    "https://tenant.openai.azure.com/openai/v1/"
+                    "?api-version=super-secret"
+                ),
+            )
+        except AssertionError as exc:
+            self.assertIn("query parameters", str(exc))
+            self.assertNotIn("super-secret", str(exc))
+
+        with self.assertRaisesRegex(AssertionError, "api-key"):
+            self.mod.OpenAIClient(
+                api_key=None,
+                base_url="https://tenant.openai.azure.com/openai/v1/",
+            )
+
+        with self.assertRaisesRegex(AssertionError, "only supported"):
+            self.mod.OpenAIClient(
+                api_key="key",
+                base_url="https://api.openai.com/v1",
+                azure_api_version="2025-04-01-preview",
+            )
 
 
 class VendorClientsTestCase(TestCase):
@@ -466,7 +1008,8 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
 
     async def test_response_single_stream(self):
         resp = SimpleNamespace(
-            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])]
+            output=[SimpleNamespace(content=[SimpleNamespace(text="ok")])],
+            usage=SimpleNamespace(input_tokens=1),
         )
         self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
             return_value=resp
@@ -491,6 +1034,7 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
             },
             model="m",
             input=[{"role": "user", "content": "hi"}],
+            store=False,
             stream=False,
             timeout=None,
             temperature=1.0,
@@ -500,7 +1044,59 @@ class NonStreamingResponseTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(response._output_fn, TextGenerationSingleStream)
         self.assertFalse(response._use_async_generator)
+        self.assertEqual(response.usage.input_tokens, 1)
+        self.assertEqual(response.provider_family, "openai")
+        observation = usage_observation_from_response(response)
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
         self.assertEqual(await response.to_str(), "ok")
+
+    async def test_azure_response_usage_preserves_safe_metadata(self):
+        usage = SimpleNamespace(
+            input_tokens=11,
+            input_tokens_details=SimpleNamespace(cached_tokens=4),
+            output_tokens=7,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=3),
+            total_tokens=18,
+            model="private-deployment-name",
+            response_id="private-response-id",
+        )
+        resp = SimpleNamespace(
+            output=[
+                SimpleNamespace(content=[SimpleNamespace(text="azure ok")])
+            ],
+            usage=usage,
+        )
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=resp
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url="https://acct.openai.azure.com/openai/v1/",
+        )
+        response = await client(
+            "private-deployment-name",
+            [Message(role=MessageRole.USER, content="hi")],
+            use_async_generator=False,
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertEqual(response.provider_family, "azure_openai")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata, {"provider_family": "azure_openai"}
+        )
+        self.assertEqual(observation.totals.input_tokens, 11)
+        self.assertEqual(observation.totals.cached_input_tokens, 4)
+        self.assertIsNone(observation.totals.cache_creation_input_tokens)
+        self.assertEqual(observation.totals.output_tokens, 7)
+        self.assertEqual(observation.totals.reasoning_tokens, 3)
+        self.assertEqual(observation.totals.total_tokens, 18)
+        self.assertNotIn("private-deployment-name", str(observation))
+        self.assertNotIn("private-response-id", str(observation))
 
 
 class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
@@ -575,6 +1171,68 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
                 }
             ],
         )
+
+    async def test_image_message_content_preserves_data_url(self):
+        content = MessageContentImage(
+            type="image_url",
+            image_url={
+                "data": "data:image/png;base64,YWJj",
+                "mime_type": "image/png",
+            },
+        )
+        await self._assert_messages(
+            content,
+            [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,YWJj",
+                }
+            ],
+        )
+
+    async def test_image_message_content_rejects_non_image_mime(self):
+        resp = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        create_mock = AsyncMock(return_value=resp)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        message = Message(
+            role=MessageRole.USER,
+            content=MessageContentImage(
+                type="image_url",
+                image_url={"data": "YWJj", "mime_type": "application/pdf"},
+            ),
+        )
+
+        with self.assertRaisesRegex(AssertionError, "image MIME type"):
+            await client("model", [message], use_async_generator=False)
+
+        create_mock.assert_not_awaited()
+
+    async def test_image_message_content_rejects_invalid_mime_type(self):
+        resp = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        create_mock = AsyncMock(return_value=resp)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        message = Message(
+            role=MessageRole.USER,
+            content=MessageContentImage(
+                type="image_url",
+                image_url={"data": "YWJj", "mime_type": object()},
+            ),
+        )
+
+        with self.assertRaisesRegex(AssertionError, "image MIME type"):
+            await client("model", [message], use_async_generator=False)
+
+        create_mock.assert_not_awaited()
 
     async def test_mixed_message_content(self):
         content = [

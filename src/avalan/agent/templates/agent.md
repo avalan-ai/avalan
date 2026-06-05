@@ -20,9 +20,9 @@
     {% endif %}
 {% endblock %}
 
-{% block instructions %}
-    {% if instructions %}
-        {% for instruction in instructions %}
+{% block goal_instructions %}
+    {% if goal_instructions %}
+        {% for instruction in goal_instructions %}
             {{ instruction }}
         {% endfor %}
     {% endif %}

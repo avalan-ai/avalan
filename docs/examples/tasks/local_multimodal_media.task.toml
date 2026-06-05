@@ -1,0 +1,35 @@
+[task]
+name = "local_multimodal_media"
+version = "1"
+description = "Send a bounded image or media file to a local multimodal target."
+labels = ["example", "local", "multimodal"]
+
+[input]
+type = "file"
+description = "Image, audio, or video descriptor."
+mime_types = ["image/png", "image/jpeg", "audio/wav", "video/mp4"]
+
+[output]
+type = "text"
+description = "Media answer."
+
+[execution]
+type = "agent"
+ref = "agents/local_multimodal_reader.toml"
+
+[run]
+mode = "direct"
+timeout_seconds = 180
+idempotency = "input_and_files_hash"
+
+[artifact]
+retention_days = 7
+storage = "local"
+max_count = 2
+max_bytes = 1048576
+
+[limits]
+file_count = 1
+file_bytes = 1048576
+output_bytes = 8192
+total_tokens = 3000

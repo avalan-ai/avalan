@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "line_items"
+  ],
+  "properties": {
+    "line_items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "line_number",
+          "vendor_name",
+          "vendor_address",
+          "customer_name",
+          "customer_address",
+          "invoice_number",
+          "invoice_date",
+          "due_date",
+          "purchase_order",
+          "description",
+          "quantity",
+          "unit_price",
+          "line_amount",
+          "tax_amount",
+          "total_amount",
+          "currency",
+          "notes"
+        ],
+        "properties": {
+          "line_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "vendor_name": {
+            "type": "string"
+          },
+          "vendor_address": {
+            "type": "string"
+          },
+          "customer_name": {
+            "type": "string"
+          },
+          "customer_address": {
+            "type": "string"
+          },
+          "invoice_number": {
+            "type": "string"
+          },
+          "invoice_date": {
+            "$ref": "#/$defs/date_or_empty"
+          },
+          "due_date": {
+            "$ref": "#/$defs/date_or_empty"
+          },
+          "purchase_order": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "quantity": {
+            "$ref": "#/$defs/decimal_or_empty"
+          },
+          "unit_price": {
+            "$ref": "#/$defs/money_or_empty"
+          },
+          "line_amount": {
+            "$ref": "#/$defs/money_or_empty"
+          },
+          "tax_amount": {
+            "$ref": "#/$defs/money_or_empty"
+          },
+          "total_amount": {
+            "$ref": "#/$defs/money_or_empty"
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$|^$"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "date_or_empty": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(0[1-9]|1[0-2])/(0[1-9]|[12][0-9]|3[01])/\\d{4}$"
+        },
+        {
+          "type": "string",
+          "maxLength": 0
+        }
+      ]
+    },
+    "decimal_or_empty": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+        },
+        {
+          "type": "string",
+          "maxLength": 0
+        }
+      ]
+    },
+    "money_or_empty": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]{2})?$"
+        },
+        {
+          "type": "string",
+          "maxLength": 0
+        }
+      ]
+    }
+  }
+}

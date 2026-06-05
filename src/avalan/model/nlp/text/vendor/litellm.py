@@ -1,4 +1,6 @@
 from .....entities import GenerationSettings, Message, Token, TokenDetail
+from .....model.provider import ProviderFamily
+from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -7,27 +9,31 @@ from . import (
     TextGenerationVendorModel,
 )
 
-from typing import Any, AsyncIterator, cast
+from collections.abc import Mapping
+from typing import Any, AsyncGenerator, AsyncIterator
 
 import litellm
 
 
 class LiteLLMStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[Any]) -> None:
-        super().__init__(stream)
+        async def generator() -> (
+            AsyncGenerator[Token | TokenDetail | str, None]
+        ):
+            terminal_usage: object | None = None
+            async for chunk in stream:
+                usage = LiteLLMClient._field(chunk, "usage")
+                if usage is not None:
+                    terminal_usage = usage
+                text = LiteLLMClient._delta_text(chunk)
+                if text is not None:
+                    yield text
+            self._usage = terminal_usage
 
-    async def __anext__(self) -> Token | TokenDetail | str:
-        chunk = await self._generator.__anext__()
-        if isinstance(chunk, dict):
-            choice = chunk.get("choices", [{}])[0]
-            delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
-            text = delta.get("content", "")
-        else:
-            dynamic_chunk = cast(Any, chunk)
-            choice = dynamic_chunk.choices[0]
-            delta = getattr(choice, "delta", None)
-            text = getattr(delta, "content", "") if delta else ""
-        return text
+        super().__init__(
+            generator(),
+            provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+        )
 
 
 class LiteLLMClient(TextGenerationVendor):
@@ -46,9 +52,13 @@ class LiteLLMClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
+        assert (
+            instructions is None
+        ), "LiteLLM does not support provider instructions"
         template_messages = self._template_messages(messages)
         kwargs: dict[str, Any] = dict(
             model=model_id,
@@ -62,13 +72,35 @@ class LiteLLMClient(TextGenerationVendor):
         if use_async_generator:
             return LiteLLMStream(result)
 
-        async def single_gen() -> AsyncIterator[Token | TokenDetail | str]:
-            if isinstance(result, dict):
-                yield result["choices"][0]["message"]["content"]
-            else:
-                yield result.choices[0].message.content or ""
+        return TextGenerationSingleStream(
+            LiteLLMClient._message_text(result) or "",
+            provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+            usage=LiteLLMClient._field(result, "usage"),
+        )
 
-        return single_gen()
+    @staticmethod
+    def _field(value: object, name: str) -> object | None:
+        if isinstance(value, Mapping):
+            return value.get(name)
+        return getattr(value, name, None)
+
+    @staticmethod
+    def _delta_text(chunk: object) -> str | None:
+        choices = LiteLLMClient._field(chunk, "choices")
+        if not isinstance(choices, list) or not choices:
+            return None
+        delta = LiteLLMClient._field(choices[0], "delta")
+        content = LiteLLMClient._field(delta, "content")
+        return content if isinstance(content, str) else None
+
+    @staticmethod
+    def _message_text(response: object) -> str | None:
+        choices = LiteLLMClient._field(response, "choices")
+        if not isinstance(choices, list) or not choices:
+            return None
+        message = LiteLLMClient._field(choices[0], "message")
+        content = LiteLLMClient._field(message, "content")
+        return content if isinstance(content, str) else None
 
 
 class LiteLLMModel(TextGenerationVendorModel):

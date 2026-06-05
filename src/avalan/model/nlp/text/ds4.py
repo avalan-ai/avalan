@@ -90,6 +90,17 @@ _TOKEN_SCORE_MODE_VALUES = {
 _T = TypeVar("_T")
 
 
+def _combine_instructions(
+    instructions: str | None,
+    system_prompt: str | None,
+) -> str | None:
+    if not instructions:
+        return system_prompt
+    if not system_prompt:
+        return instructions
+    return f"{instructions}\n\n{system_prompt}"
+
+
 def _capability_bool(capabilities: object | None, name: str) -> bool | None:
     if capabilities is None:
         return None
@@ -1423,6 +1434,7 @@ class Ds4Model(TextGenerationModel):
         developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         manual_sampling: bool | int = False,
         pick: int | None = None,
         skip_special_tokens: bool = False,
@@ -1431,9 +1443,13 @@ class Ds4Model(TextGenerationModel):
         _ = skip_special_tokens
         generation_settings = settings or GenerationSettings()
         parse_dsml_tools = self._uses_dsml_tools(input, tool)
+        rendered_system_prompt = _combine_instructions(
+            instructions,
+            system_prompt,
+        )
         prompt_tokens = await self._render_prompt_tokens_async(
             input,
-            system_prompt,
+            rendered_system_prompt,
             developer_prompt,
             generation_settings,
             tool=tool,
@@ -1465,12 +1481,18 @@ class Ds4Model(TextGenerationModel):
         input: Input,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
+        *,
+        instructions: str | None = None,
     ) -> int:
         """Return the DS4-rendered prompt token count."""
+        rendered_system_prompt = _combine_instructions(
+            instructions,
+            system_prompt,
+        )
         return len(
             self._render_prompt_tokens(
                 input,
-                system_prompt,
+                rendered_system_prompt,
                 developer_prompt,
                 GenerationSettings(),
                 tool=None,

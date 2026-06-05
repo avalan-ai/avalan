@@ -6,6 +6,8 @@ from .....entities import (
     Token,
     TokenDetail,
 )
+from .....model.provider import ProviderFamily
+from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -26,12 +28,19 @@ class GoogleStream(TextGenerationVendorStream):
         async def generator() -> (
             AsyncGenerator[Token | TokenDetail | str, None]
         ):
+            terminal_usage: object | None = None
             async for chunk in stream:
-                text = chunk.text
+                usage = GoogleClient._field(chunk, "usage_metadata")
+                if usage is None:
+                    usage = GoogleClient._field(chunk, "usageMetadata")
+                if usage is not None:
+                    terminal_usage = usage
+                text = GoogleClient._field(chunk, "text")
                 if isinstance(text, str):
                     yield text
+            self._usage = terminal_usage
 
-        super().__init__(generator())
+        super().__init__(generator(), provider_family=ProviderFamily.GOOGLE)
 
 
 class GoogleClient(TextGenerationVendor):
@@ -46,9 +55,13 @@ class GoogleClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str]:
+        assert (
+            instructions is None
+        ), "Google does not support provider instructions"
         contents = self._template_messages(messages, ["system", "tool"])
         kwargs: dict[str, Any] = {
             "model": model_id,
@@ -68,12 +81,12 @@ class GoogleClient(TextGenerationVendor):
                 **kwargs,
             )
 
-            async def single_gen() -> (
-                AsyncGenerator[Token | TokenDetail | str, None]
-            ):
-                yield response.text or ""
-
-            return single_gen()
+            return TextGenerationSingleStream(
+                response.text or "",
+                provider_family=ProviderFamily.GOOGLE,
+                usage=GoogleClient._field(response, "usage_metadata")
+                or GoogleClient._field(response, "usageMetadata"),
+            )
 
     def _config(
         self,
@@ -233,6 +246,12 @@ class GoogleClient(TextGenerationVendor):
             if isinstance(value, str) and value:
                 return value
         return None
+
+    @staticmethod
+    def _field(value: object, attribute: str) -> object | None:
+        if isinstance(value, dict):
+            return value.get(attribute)
+        return getattr(value, attribute, None)
 
     @staticmethod
     def _file_uri(file: dict[str, Any]) -> str | None:

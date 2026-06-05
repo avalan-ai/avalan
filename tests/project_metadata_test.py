@@ -91,6 +91,117 @@ def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
     }
 
 
+def test_task_extra_declares_jsonschema_dependency() -> None:
+    requirements = _requirements_by_name("task", "jsonschema")
+
+    assert len(requirements) == 1
+    assert requirements[0].specifier == SpecifierSet(">=4.26.0,<5.0.0")
+    assert requirements[0].marker is None
+
+
+def test_task_documents_extra_declares_document_dependencies() -> None:
+    markitdown_requirements = _requirements_by_name(
+        "task-documents",
+        "markitdown",
+    )
+    markdownify_requirements = _requirements_by_name(
+        "task-documents",
+        "markdownify",
+    )
+
+    assert len(markitdown_requirements) == 1
+    assert len(markdownify_requirements) == 1
+    assert markitdown_requirements[0].specifier == SpecifierSet(
+        ">=0.1.2,<0.2.0"
+    )
+    assert markitdown_requirements[0].extras == {"pdf"}
+    assert markdownify_requirements[0].specifier == SpecifierSet(
+        ">=1.1.0,<2.0.0"
+    )
+    assert markdownify_requirements[0].marker is None
+
+    markitdown_marker = markitdown_requirements[0].marker
+
+    assert markitdown_marker is not None
+    assert markitdown_marker.evaluate({"python_version": "3.13"})
+    assert not markitdown_marker.evaluate({"python_version": "3.14"})
+
+
+def test_task_pgsql_extra_declares_postgresql_dependencies() -> None:
+    psycopg_requirements = _requirements_by_name("task-pgsql", "psycopg")
+    binary_requirements = _requirements_by_name(
+        "task-pgsql",
+        "psycopg-binary",
+    )
+
+    assert len(psycopg_requirements) == 1
+    assert len(binary_requirements) == 1
+    assert psycopg_requirements[0].specifier == SpecifierSet(">=3.2.9,<4.0.0")
+    assert psycopg_requirements[0].extras == {"pool"}
+    assert psycopg_requirements[0].marker is None
+    assert binary_requirements[0].specifier == SpecifierSet(">=3.2.9,<4.0.0")
+
+    binary_marker = binary_requirements[0].marker
+
+    assert binary_marker is not None
+    assert binary_marker.evaluate({"python_version": "3.13"})
+    assert not binary_marker.evaluate({"python_version": "3.14"})
+
+
+def test_task_prometheus_extra_declares_prometheus_dependency() -> None:
+    requirements = _requirements_by_name(
+        "task-prometheus",
+        "prometheus-client",
+    )
+
+    assert len(requirements) == 1
+    assert requirements[0].specifier == SpecifierSet(">=0.23.0,<1.0.0")
+    assert requirements[0].marker is None
+
+
+def test_task_otel_extra_declares_opentelemetry_dependency() -> None:
+    requirements = _requirements_by_name(
+        "task-otel",
+        "opentelemetry-sdk",
+    )
+
+    assert len(requirements) == 1
+    assert requirements[0].specifier == SpecifierSet(">=1.41.1,<2.0.0")
+    assert requirements[0].marker is None
+
+
+def test_task_pgsql_extra_omits_migration_dependencies() -> None:
+    optional_deps = _optional_dependencies()
+    task_pgsql_dependencies = {
+        canonicalize_name(Requirement(requirement).name)
+        for requirement in optional_deps["task-pgsql"]
+    }
+
+    assert "alembic" not in task_pgsql_dependencies
+    assert "sqlalchemy" not in task_pgsql_dependencies
+
+
+def test_task_pgsql_extra_omits_memory_vector_dependencies() -> None:
+    optional_deps = _optional_dependencies()
+    task_pgsql_dependencies = {
+        canonicalize_name(Requirement(requirement).name)
+        for requirement in optional_deps["task-pgsql"]
+    }
+
+    assert "pgvector" not in task_pgsql_dependencies
+
+
+def test_memory_extra_omits_migration_dependencies() -> None:
+    optional_deps = _optional_dependencies()
+    memory_dependencies = {
+        canonicalize_name(Requirement(requirement).name)
+        for requirement in optional_deps["memory"]
+    }
+
+    assert "alembic" not in memory_dependencies
+    assert "sqlalchemy" not in memory_dependencies
+
+
 def test_vllm_extras_remain_scoped_below_python_314() -> None:
     optional_deps = _optional_dependencies()
 

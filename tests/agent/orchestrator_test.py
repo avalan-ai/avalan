@@ -101,7 +101,12 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
             Message(role=MessageRole.ASSISTANT, content="25"),
             Message(role=MessageRole.USER, content="and that times two?"),
         ]
-        self.engine_agent.last_prompt = (effective_messages, None, None)
+        self.engine_agent.last_prompt = (
+            effective_messages,
+            None,
+            None,
+            None,
+        )
 
         def response_factory(input_value, *args, **kwargs):
             del args, kwargs
@@ -344,24 +349,113 @@ class OrchestratorUserTransformationOptionsTestCase(unittest.TestCase):
     def test_user_string_transformation(self):
         orchestrator, specification = self._create_orchestrator()
         message = orchestrator._input_messages(specification, "world")
-        self.assertEqual(message.content, b"hello world Bob")
+        self.assertEqual(message.content, "hello world Bob")
 
     def test_user_list_strings_transformation(self):
         orchestrator, specification = self._create_orchestrator()
         result = orchestrator._input_messages(specification, ["world"])
-        self.assertEqual(result, ["world"])
+        self.assertEqual(result, ["hello world Bob"])
 
     def test_user_message_transformation(self):
         orchestrator, specification = self._create_orchestrator()
         msg = self._message("earth")
         message = orchestrator._input_messages(specification, msg)
-        self.assertEqual(message.content, b"hello earth Bob")
+        self.assertEqual(message.content, "hello earth Bob")
 
     def test_user_list_messages_transformation(self):
         orchestrator, specification = self._create_orchestrator()
         msg = self._message("moon")
         messages = orchestrator._input_messages(specification, [msg])
-        self.assertEqual(messages[0].content, b"hello moon Bob")
+        self.assertEqual(messages[0].content, "hello moon Bob")
+
+    def test_user_reference_detection_is_whitespace_aware(self) -> None:
+        self.assertTrue(Orchestrator._user_references_input("{{input}}"))
+        self.assertTrue(Orchestrator._user_references_input("{{ input }}"))
+        self.assertTrue(Orchestrator._user_references_input("{{\n input }}"))
+        self.assertTrue(
+            Orchestrator._user_references_input("{{ input|trim }}")
+        )
+
+    def test_user_reference_detection_rejects_other_variables(self) -> None:
+        self.assertFalse(
+            Orchestrator._user_references_input("{{input_value}}")
+        )
+        self.assertFalse(
+            Orchestrator._user_references_input("{{ user_input }}")
+        )
+
+
+class OrchestratorUserPrefixOptionsTestCase(unittest.TestCase):
+    def _create_orchestrator(self):
+        engine_uri = EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="m",
+            params={},
+        )
+        environment = EngineEnvironment(
+            engine_uri=engine_uri, settings=TransformerEngineSettings()
+        )
+        specification = Specification(template_vars={"tone": "brief"})
+        operation = AgentOperation(
+            specification=specification, environment=environment
+        )
+        orchestrator = Orchestrator(
+            MagicMock(),
+            MagicMock(spec=ModelManager),
+            MagicMock(spec=MemoryManager),
+            MagicMock(spec=ToolManager),
+            MagicMock(spec=EventManager),
+            [operation],
+            user="Answer in a {{tone}} way.",
+        )
+        orchestrator._renderer = Renderer()
+        return orchestrator, specification
+
+    def test_user_prefix_string_input(self) -> None:
+        orchestrator, specification = self._create_orchestrator()
+        message = orchestrator._input_messages(specification, "hello")
+        self.assertEqual(
+            message.content,
+            "Answer in a brief way.\n\nhello",
+        )
+
+    def test_user_prefix_list_string_input(self) -> None:
+        orchestrator, specification = self._create_orchestrator()
+        result = orchestrator._input_messages(specification, ["one", "two"])
+        self.assertEqual(result, ["one", "Answer in a brief way.\n\ntwo"])
+
+    def test_user_prefix_message_input(self) -> None:
+        orchestrator, specification = self._create_orchestrator()
+        message = Message(role=MessageRole.USER, content="hello")
+        result = orchestrator._input_messages(specification, message)
+        self.assertEqual(
+            result.content,
+            "Answer in a brief way.\n\nhello",
+        )
+
+    def test_user_prefix_list_message_input(self) -> None:
+        orchestrator, specification = self._create_orchestrator()
+        messages = [
+            Message(role=MessageRole.USER, content="first"),
+            Message(role=MessageRole.USER, content="second"),
+        ]
+        result = orchestrator._input_messages(specification, messages)
+        self.assertEqual(result[0].content, "first")
+        self.assertEqual(
+            result[1].content,
+            "Answer in a brief way.\n\nsecond",
+        )
+
+    def test_user_prefix_ignores_non_text_message_content(self) -> None:
+        orchestrator, specification = self._create_orchestrator()
+        content = [MessageContentText(type="text", text="nested")]
+        message = Message(role=MessageRole.USER, content=content)
+        result = orchestrator._input_messages(specification, message)
+        self.assertIs(result, message)
 
 
 class OrchestratorUserTemplateTransformationOptionsTestCase(unittest.TestCase):
@@ -426,6 +520,20 @@ class OrchestratorUserTemplateTransformationOptionsTestCase(unittest.TestCase):
         messages = orchestrator._input_messages(specification, [msg])
         self.assertEqual(messages[0].content, "hi earth Ann")
 
+    def test_user_template_ignores_non_text_message_content(self) -> None:
+        orchestrator, specification = self._create_orchestrator()
+        content = [MessageContentText(type="text", text="nested")]
+        message = Message(role=MessageRole.USER, content=content)
+        result = orchestrator._input_messages(specification, message)
+        self.assertIs(result, message)
+
+    def test_replace_last_message_input_without_message_returns_input(
+        self,
+    ) -> None:
+        value = ["plain"]
+        result = Orchestrator._replace_last_message_input(value, "updated")
+        self.assertIs(result, value)
+
 
 class OrchestratorSettingsTemplateVarsUserTestCase(unittest.TestCase):
     def _create_orchestrator(self):
@@ -462,7 +570,7 @@ class OrchestratorSettingsTemplateVarsUserTestCase(unittest.TestCase):
     def test_user_string_transformation(self):
         orchestrator, specification = self._create_orchestrator()
         message = orchestrator._input_messages(specification, "world")
-        self.assertEqual(message.content, b"hello world Bob")
+        self.assertEqual(message.content, "hello world Bob")
 
 
 class OrchestratorSettingsTemplateVarsUserTemplateTestCase(unittest.TestCase):

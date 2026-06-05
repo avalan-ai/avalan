@@ -18,6 +18,18 @@ The CLI offers the following commands, some of them with multiple subcommands:
   * [avalan deploy run](#avalan-deploy-run)
 * [avalan flow](#avalan-flow)
   * [avalan flow run](#avalan-flow-run)
+* [avalan task](#avalan-task)
+  * [avalan task validate](#avalan-task-validate)
+  * [avalan task run](#avalan-task-run)
+  * [avalan task enqueue](#avalan-task-enqueue)
+  * [avalan task inspect](#avalan-task-inspect)
+  * [avalan task usage](#avalan-task-usage)
+  * [avalan task output](#avalan-task-output)
+  * [avalan task events](#avalan-task-events)
+  * [avalan task artifacts](#avalan-task-artifacts)
+  * [avalan task worker](#avalan-task-worker)
+  * [avalan task retention-sweep](#avalan-task-retention-sweep)
+  * [avalan task pgsql](#avalan-task-pgsql)
 * [avalan memory](#avalan-memory)
   * [avalan memory embeddings](#avalan-memory-embeddings)
   * [avalan memory search](#avalan-memory-search)
@@ -272,8 +284,9 @@ plicate}]
                                    [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] --function
                                    {cosine_distance,inner_product,l1_distance,l2_distance,vector_dims,vector_norms} --id ID
                                    [--limit LIMIT] --participant PARTICIPANT --session SESSION [--engine-uri ENGINE_URI]
-                                   [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS] [--system SYSTEM]
-                                   [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
+                                   [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS]
+                                   [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER]
+                                   [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
                                    [--no-memory-recent] [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                                    [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                                    [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
@@ -359,7 +372,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -446,8 +461,9 @@ plicate}]
                         [--skip-load-recent-messages] [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT] [--stats]
                         [--sync] [--tools-confirm] [--tool-format {json,react,bracket,openai,harmony}]
                         [--reasoning-tag {think,channel}] [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK]
-                        [--instructions INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER] [--user USER]
-                        [--user-template USER_TEMPLATE] [--memory-recent] [--no-memory-recent]
+                        [--instructions INSTRUCTIONS] [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM]
+                        [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
+                        [--no-memory-recent]
                         [--memory-permanent-message MEMORY_PERMANENT_MESSAGE] [--memory-permanent MEMORY_PERMANENT]
                         [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                         [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS] [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
@@ -564,7 +580,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -647,7 +665,8 @@ plicate}]
                           [--protocol PROTOCOL] [--reload] [--cors-origin CORS_ORIGIN] [--cors-origin-regex CORS_ORIGIN_REGEX]
                           [--cors-method CORS_METHOD] [--cors-header CORS_HEADER] [--cors-credentials]
                           [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS]
-                          [--system SYSTEM] [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE]
+                          [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER] [--user USER]
+                          [--user-template USER_TEMPLATE]
                           [--memory-recent] [--no-memory-recent] [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                           [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                           [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
@@ -750,7 +769,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -833,7 +854,8 @@ plicate}]
                           [--protocol PROTOCOL] [--reload] [--cors-origin CORS_ORIGIN] [--cors-origin-regex CORS_ORIGIN_REGEX]
                           [--cors-method CORS_METHOD] [--cors-header CORS_HEADER] [--cors-credentials]
                           [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS]
-                          [--system SYSTEM] [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE]
+                          [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER] [--user USER]
+                          [--user-template USER_TEMPLATE]
                           [--memory-recent] [--no-memory-recent] [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                           [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                           [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
@@ -936,7 +958,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -1013,8 +1037,9 @@ plicate}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                          [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--engine-uri ENGINE_URI]
-                         [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS] [--system SYSTEM]
-                         [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
+                         [--name NAME] [--role ROLE] [--task TASK] [--instructions INSTRUCTIONS]
+                         [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM] [--developer DEVELOPER] [--user USER]
+                         [--user-template USER_TEMPLATE] [--memory-recent]
                          [--no-memory-recent] [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
                          [--memory-permanent MEMORY_PERMANENT] [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
                          [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS] [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
@@ -1073,7 +1098,9 @@ inline agent settings:
   --role ROLE           Agent role
   --task TASK           Agent task
   --instructions INSTRUCTIONS
-                        Agent instructions
+                        Provider instructions
+  --goal-instructions GOAL_INSTRUCTIONS
+                        Agent goal instructions
   --system SYSTEM       System prompt
   --developer DEVELOPER
                         Developer prompt
@@ -1558,6 +1585,8 @@ plicate}]
                        [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                        [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                        [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
+                       [--input TASK_INPUT] [--input-json TASK_INPUT_JSON] [--file TASK_FILES]
+                       [--file-mime TASK_FILE_MIME_TYPES] [--pdf TASK_PDF] [--json] [--output TASK_OUTPUT_PATH]
                        flow
 
 Run a given flow
@@ -1604,7 +1633,363 @@ plicate}
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
+  --input TASK_INPUT   Flow input value.
+  --input-json TASK_INPUT_JSON
+                        Flow input JSON value or @file.
+  --file TASK_FILES    Attach a local flow input file as field=path.
+  --file-mime TASK_FILE_MIME_TYPES
+                        Set a flow file MIME hint as field=mime/type.
+  --pdf TASK_PDF       Attach one top-level PDF file input.
+  --json               Print successful flow output as compact JSON.
+  --output TASK_OUTPUT_PATH
+                        Write successful flow output to a JSON file.
 ```
+
+## avalan task
+
+`avalan task` validates task definition TOML files, runs direct tasks, enqueues
+durable tasks, inspects sanitized run state, sweeps expired artifact bytes, and
+manages task PostgreSQL migrations.
+
+```bash
+avalan task validate tasks/example.task.toml
+avalan task run tasks/example.task.toml --ephemeral --input "Summarize this"
+avalan task enqueue tasks/example.task.toml --queue documents --input-json @payload.json
+```
+
+Input flags shared by `validate`, `run`, and `enqueue`:
+
+| Flag | Shape |
+| --- | --- |
+| `--input VALUE` | Single scalar or JSON-shaped value for the task input contract. |
+| `--input-json JSON_OR_@FILE` | JSON input value, or `@path` to read JSON from a file. |
+| `--input-FIELD VALUE` | Field-addressed object input such as `--input-question "What changed?"`. |
+| `--file FIELD=PATH` | Local file descriptor for a file field. |
+| `--file-descriptor FIELD=JSON` | Explicit descriptor JSON for local, artifact, inline, remote, or provider reference inputs. |
+| `--provider-file-id FIELD=PROVIDER:ID` | Provider-owned durable file id. |
+| `--hosted-url FIELD=PROVIDER:URL` | Provider-fetchable hosted URL. |
+| `--object-store-uri FIELD=PROVIDER:URI` | Provider/object-store URI such as `google:gs://bucket/key` or `bedrock:s3://bucket/key`. |
+| `--file-mime FIELD=TYPE` | MIME hint, for example `document=application/pdf`. |
+| `--file-role FIELD=ROLE` | Role hint passed as safe descriptor metadata. |
+| `--file-size FIELD=BYTES` | Size hint used for validation and delivery planning. |
+| `--file-sha256 FIELD=HEX` | Digest hint used for validation and materialization. |
+| `--file-conversion FIELD=NAME[:JSON]` | Conversion request allowed by the task input contract. |
+
+Provider file ids, hosted URLs, and object-store URIs are provider-native
+references. `--file-conversion` applies to local, artifact, inline, or remote
+descriptors and is rejected for provider-native references.
+
+### avalan task validate
+
+Validate a task definition without executing it:
+
+```bash
+avalan task validate tasks/example.task.toml
+```
+
+Validation output aggregates load and contract issues and avoids printing raw
+prompts, outputs, file paths, or sensitive execution references.
+
+### avalan task run
+
+Run a direct-mode task. A durable PostgreSQL store is required unless
+`--ephemeral` is passed for local experimentation:
+
+```bash
+avalan task run docs/examples/tasks/minimal_string_agent.task.toml \
+  --ephemeral \
+  --input "What changed?"
+
+avalan task run docs/examples/tasks/large_direct_file.task.toml \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --file document=docs/examples/playground/invoice.pdf \
+  --file-mime document=application/pdf \
+  --file-conversion document=text
+
+avalan task run docs/examples/tasks/provider_reference_direct.task.toml \
+  --ephemeral \
+  --provider-file-id document=openai:file_abc123 \
+  --file-mime document=application/pdf
+
+avalan task run docs/examples/tasks/structured_json.task.toml \
+  --ephemeral \
+  --input-json '{"question":"What changed?","priority":2}' \
+  --json \
+  --output result.json
+
+poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+
+poetry run avalan task run docs/examples/tasks/poc_extraction/flow_task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+
+poetry run avalan flow run docs/examples/tasks/poc_extraction/flow.toml --pdf ./sample.pdf --json --output extraction.json
+
+poetry run avalan task run docs/examples/tasks/poc_extraction/task.toml \
+  --ephemeral \
+  --file input=./sample.pdf \
+  --file-mime input=application/pdf \
+  --json \
+  --output extraction.json
+```
+
+Use `--store-schema` or `AVALAN_TASK_STORE_SCHEMA` when the task schema is not
+on the default search path. `--json` prints exactly one compact JSON document
+for successful `json`, `object`, and `array` outputs. `--output PATH` writes the
+same structured value atomically as compact JSON with a trailing newline.
+`--pdf PATH` is shorthand for one top-level PDF file input and is equivalent to
+`--file input=PATH --file-mime input=application/pdf`. Direct ephemeral runs
+that materialize local bytes use a temporary artifact root when
+`AVALAN_TASK_ARTIFACT_ROOT` is not configured.
+
+Minimal direct PDF extraction files:
+
+```toml
+# task.toml
+[task]
+name = "pdf_extraction"
+version = "1"
+
+[input]
+type = "file"
+mime_types = ["application/pdf"]
+
+[output]
+type = "object"
+schema_ref = "extraction.schema.json"
+
+[execution]
+type = "agent"
+ref = "agent.toml"
+```
+
+```toml
+# agent.toml
+[agent]
+name = "PDF Extraction"
+system = "Extract one JSON object that matches the configured schema."
+user = "Analyze the attached PDF and return the requested fields."
+
+[engine]
+uri = "ai://env:AZURE_OPENAI_API_KEY@openai/extraction-deployment"
+base_url = "https://tenant.openai.azure.com/openai/v1/"
+
+[run]
+use_async_generator = false
+
+[run.response_format]
+type = "json_schema"
+name = "extraction"
+strict = true
+schema_ref = "extraction.schema.json"
+```
+
+Run it with:
+
+```bash
+poetry run avalan task run task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+```
+
+The optional flow-backed form keeps provider configuration and prompts in the
+agent file while `flow.toml` declares the agent node:
+
+```toml
+[flow]
+name = "pdf_extraction_flow"
+entrypoint = "extract"
+output_node = "extract"
+
+[flow.input]
+name = "input"
+type = "file"
+mime_types = ["application/pdf"]
+
+[flow.output]
+name = "extraction"
+type = "object"
+schema_ref = "extraction.schema.json"
+
+[nodes.extract]
+type = "agent"
+ref = "agent.toml"
+input = "__task_input__"
+```
+
+Run the flow-backed task or the native flow command with the same PDF input:
+
+```bash
+poetry run avalan task run flow_task.toml --ephemeral --pdf ./sample.pdf --json --output extraction.json
+poetry run avalan flow run flow.toml --pdf ./sample.pdf --json --output extraction.json
+```
+
+Task file inputs are run-scoped delivery inputs. They are validated,
+materialized only when needed, and sent through the task file-delivery planner;
+they are not indexed into message memory or document memory unless an explicit
+conversion, retrieval, or map-reduce text strategy is declared.
+
+### avalan task enqueue
+
+Submit a queue-mode task to a durable store:
+
+```bash
+avalan task enqueue docs/examples/tasks/queued_file_task.task.toml \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --queue documents \
+  --file documents=docs/examples/playground/invoice.pdf \
+  --file-mime documents=application/pdf \
+  --file-conversion documents=text \
+  --wait \
+  --wait-timeout 120 \
+  --poll-interval 2
+```
+
+`enqueue` supports `--store-dsn`, `--store-schema`, `--queue`, `--wait`,
+`--wait-timeout`, and `--poll-interval`. Ephemeral storage is rejected for
+queued tasks because workers must reconstruct executable input from durable
+payloads, artifact references, or durable provider references.
+
+### avalan task inspect
+
+Inspect sanitized run state:
+
+```bash
+avalan task inspect RUN_ID --store-dsn "$AVALAN_TASK_STORE_DSN" --after-sequence 0
+```
+
+The snapshot includes run state and sanitized events after the optional
+sequence cursor. It does not print raw prompts, file bytes, file paths, provider
+handles, token text, exception messages, or stack traces.
+
+Direct runs with `--ephemeral` are useful for local output checks only. To
+inspect records after the process exits, run with a durable store or inspect
+the in-memory client from the same SDK process that executed the task.
+
+For live usage smoke, keep inputs, outputs, and summaries in an ignored local
+workspace. Run without `--ephemeral`, capture the run id printed after
+`Task run completed:`, then call `avalan task inspect` and
+`avalan task usage --source exact` against the same durable store. Ephemeral
+runs validate output shape only; SDK smoke can use `InMemoryTaskStore` when
+inspection happens in the same process.
+
+### avalan task usage
+
+Print usage records and rollups for a run:
+
+```bash
+avalan task usage RUN_ID \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --attempt-id ATTEMPT_ID \
+  --source exact
+```
+
+The output contains each usage record with its attempt id, sequence, source,
+counters, privacy-safe metadata, and a `usage_totals` object. The rollup is
+computed from the records returned by the selected filters. Missing counters
+are printed as `null`; reported zero values remain `0`.
+
+Provider usage support:
+
+| Provider family | Non-streaming | Streaming | Exact cache read | Exact cache creation | Exact reasoning | Unavailable fields |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenAI / Azure Responses | Supported from provider usage objects. | Supported from terminal response usage events. | `cached_input_tokens` from provider cache-read details. | `null` unless the provider reports a write counter. | `reasoning_tokens` from provider output-token details. | Cache creation when absent; any malformed or missing counter. |
+| Anthropic | Supported from provider usage objects. | Supported from terminal or cumulative provider usage events. | `cached_input_tokens` from cache-read counters. | `cache_creation_input_tokens` from provider cache-write counters. | `reasoning_tokens` from provider thinking-token details. | Any counter absent from provider usage; visible thinking text is ignored. |
+| Bedrock | Supported from Converse usage metadata. | Supported from terminal Converse stream metadata. | `cached_input_tokens` from cache-read counters. | `cache_creation_input_tokens` from cache-write counters. | `null` unless a model-specific exact field reports it. | General reasoning-token split and malformed counters. |
+| Google / Gemini | Supported from `usage_metadata` / `usageMetadata`. | Supported from terminal stream usage metadata. | `cached_input_tokens` from cached-content counters. | `null` for separately created cached content unless reported by the call. | `reasoning_tokens` from thoughts-token counters. | Cache creation and absent provider fields. |
+| OpenAI-compatible vendors | Supported when the adapter exposes OpenAI-compatible usage shapes. | Supported when the adapter exposes trustworthy terminal usage. | Supported only when provider cache-read details are present. | `null` unless explicitly reported. | Supported only when completion reasoning details are present. | Provider-specific cache or reasoning fields that are not exposed. |
+| Local / estimated vendors | Local token counters are marked `estimated`. | Local stream counters are marked `estimated` only when produced by the local response. | `null`. | `null`. | `null`. | Exact provider cache, cache creation, reasoning, and total-token counters. |
+
+Exact counters are copied only from provider-returned usage metadata. Avalan
+does not infer cache hits, cache writes, reasoning tokens, or provider
+`total_tokens` from prompt size, local tokenization, repeated prompts, latency,
+reasoning settings, or streamed token text.
+
+### avalan task output
+
+Print the sanitized output snapshot for a run:
+
+```bash
+avalan task output RUN_ID --store-dsn "$AVALAN_TASK_STORE_DSN"
+```
+
+### avalan task events
+
+Print sanitized task events:
+
+```bash
+avalan task events RUN_ID \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --attempt-id ATTEMPT_ID \
+  --after-sequence 100
+```
+
+### avalan task artifacts
+
+Print sanitized artifact metadata:
+
+```bash
+avalan task artifacts RUN_ID --store-dsn "$AVALAN_TASK_STORE_DSN"
+```
+
+Artifact inspection reports references and retention state, not raw bytes,
+local storage paths, bucket names, object keys, signed URLs, or credentials.
+
+### avalan task worker
+
+Run a bounded queue worker:
+
+```bash
+avalan task worker \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --queue documents \
+  --worker-id "documents-worker-1" \
+  --lease-seconds 300 \
+  --heartbeat-seconds 30 \
+  --limit 100
+```
+
+`--once` processes at most one available run. `--heartbeat-seconds` must be
+shorter than `--lease-seconds`. Workers need the durable store, HMAC key
+environment, provider credentials required by the referenced agents, and
+`AVALAN_TASK_ARTIFACT_ROOT` when local artifact bytes are used.
+
+### avalan task retention-sweep
+
+Delete expired artifact bytes while keeping sanitized audit metadata:
+
+```bash
+avalan task retention-sweep \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --purpose input \
+  --purpose output \
+  --limit 500
+```
+
+`--purpose` may be `input`, `output`, `converted`, or `intermediate` and can be
+passed more than once. The command requires `AVALAN_TASK_ARTIFACT_ROOT` for the
+local artifact backend.
+
+### avalan task pgsql
+
+Manage PostgreSQL task schema migrations. The command accepts `--dsn` and
+`--schema`, or reads `AVALAN_TASK_PGSQL_DSN` and
+`AVALAN_TASK_PGSQL_SCHEMA` when the options are omitted.
+
+```bash
+avalan task pgsql status
+avalan task pgsql check
+avalan task pgsql migrate head
+avalan task pgsql stamp head
+avalan task pgsql diagnose
+```
+
+The migration commands require Alembic and SQLAlchemy in the environment that
+runs them:
+
+```bash
+python3 -m pip install -U alembic "SQLAlchemy>=2.0.43,<3.0.0"
+```
+
+Diagnostics report whether a DSN is configured, the schema, the migration
+head revision, the version table, and the script location without printing
+raw DSNs or credentials.
 
 ## avalan memory
 

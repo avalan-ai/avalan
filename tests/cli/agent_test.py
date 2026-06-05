@@ -607,7 +607,9 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds.Prompt, "ask", side_effect=["A", "", "uri"]
             ),
-            patch.object(agent_cmds, "get_input", side_effect=["r", "t", "i"]),
+            patch.object(
+                agent_cmds, "get_input", side_effect=["r", "t", "i"]
+            ) as input_patch,
             patch.object(agent_cmds.Confirm, "ask", return_value=True),
             patch.object(agent_cmds, "Environment", return_value=env),
         ):
@@ -622,6 +624,12 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settings.call_options["top_p"], 0.9)
         self.assertFalse(settings.call_options["use_cache"])
         self.assertEqual(settings.call_options["cache_strategy"], "dynamic")
+        self.assertEqual(settings.agent_config["goal_instructions"], "i")
+        self.assertNotIn("instructions", settings.agent_config)
+        self.assertEqual(
+            input_patch.call_args_list[2].args[1],
+            "Agent goal instructions ",
+        )
         self.assertIsInstance(console.print.call_args.args[0], Syntax)
         self.assertIsInstance(console.print.call_args.args[0], Syntax)
 
@@ -630,7 +638,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             name="N",
             role="R",
             task="T",
-            instructions="I",
+            instructions=None,
+            goal_instructions="I",
             memory_recent=True,
             memory_permanent_message="",
             memory_permanent=None,
@@ -684,7 +693,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             name="N",
             role="R",
             task="T",
-            instructions="I",
+            instructions=None,
+            goal_instructions="I",
             memory_recent=True,
             memory_permanent_message="",
             memory_permanent=None,
@@ -739,7 +749,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             name="N",
             role="R",
             task="T",
-            instructions="I",
+            instructions=None,
+            goal_instructions="I",
             memory_recent=True,
             memory_permanent_message="",
             memory_permanent=None,
@@ -791,7 +802,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             name="N",
             role="R",
             task="T",
-            instructions="I",
+            instructions=None,
+            goal_instructions="I",
             memory_recent=True,
             memory_permanent_message="",
             memory_permanent=None,

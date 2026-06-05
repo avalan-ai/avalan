@@ -17,6 +17,7 @@ from .message import (
     TemplateMessageContent,
     TemplateMessageRole,
 )
+from .provider import ProviderFamily, provider_family_value
 from .stream import TextGenerationStream
 
 from abc import ABC
@@ -31,6 +32,7 @@ class TextGenerationVendor(ABC):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream | AsyncIterator[Token | TokenDetail | str]:
@@ -152,11 +154,27 @@ class TextGenerationVendor(ABC):
 
 class TextGenerationVendorStream(TextGenerationStream):
     _generator: AsyncIterator[Token | TokenDetail | str]
+    _provider_family: str | None
+    _usage: object | None
 
     def __init__(
-        self, generator: AsyncIterator[Token | TokenDetail | str]
+        self,
+        generator: AsyncIterator[Token | TokenDetail | str],
+        *,
+        provider_family: ProviderFamily | str | None = None,
+        usage: object | None = None,
     ) -> None:
         self._generator = generator
+        self._provider_family = provider_family_value(provider_family)
+        self._usage = usage
+
+    @property
+    def provider_family(self) -> str | None:
+        return self._provider_family
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
 
     def __call__(
         self, *args: Any, **kwargs: Any

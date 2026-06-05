@@ -44,7 +44,7 @@ from asyncio import (
     wait_for,
 )
 from asyncio.exceptions import CancelledError
-from collections.abc import Awaitable, Iterator
+from collections.abc import Awaitable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import fields
 from enum import StrEnum
@@ -65,10 +65,12 @@ from logging import (
 from os import environ, getenv
 from os.path import join
 from pathlib import Path
+from re import fullmatch
 from signal import SIGINT, default_int_handler
 from signal import signal as set_signal_handler
 from subprocess import run
 from threading import current_thread, main_thread
+from tomllib import TOMLDecodeError
 from tomllib import load as toml_load
 from types import FrameType
 from typing import (
@@ -151,6 +153,20 @@ _INTERRUPT_DRAIN_TIMEOUT = 0.5
 _LOOP_HANDLES_SIGINT = False
 
 
+def _task_run_json_stdout(args: Namespace) -> bool:
+    task_json = (
+        getattr(args, "command", None) == "task"
+        and getattr(args, "task_command", None) == "run"
+        and bool(getattr(args, "task_run_json", False))
+    )
+    flow_json = (
+        getattr(args, "command", None) == "flow"
+        and getattr(args, "flow_command", None) == "run"
+        and bool(getattr(args, "task_run_json", False))
+    )
+    return task_json or flow_json
+
+
 def _default_hf_cache_dir() -> str:
     return getenv("HF_HUB_CACHE") or "~/.cache/huggingface/hub"
 
@@ -228,6 +244,69 @@ class _HFLoggingProxy:
 
 
 hf_logging = _HFLoggingProxy()
+
+
+class _TaskArgumentParser(ArgumentParser):
+    def parse_args(
+        self,
+        args: Sequence[str] | None = None,
+        namespace: Namespace | None = None,
+    ) -> Namespace:
+        parsed, extras = self.parse_known_args(args, namespace)
+        if extras and _consume_task_input_field_args(parsed, extras):
+            return parsed
+        if extras:
+            self.error("unrecognized arguments")
+        return parsed
+
+
+def _consume_task_input_field_args(
+    namespace: Namespace,
+    extras: list[str],
+) -> bool:
+    if getattr(namespace, "command", None) not in {"flow", "task"}:
+        return False
+    if getattr(namespace, "command", None) == "task":
+        if getattr(namespace, "task_command", None) not in {
+            "enqueue",
+            "run",
+            "validate",
+        }:
+            return False
+    elif getattr(namespace, "flow_command", None) != "run":
+        return False
+    fields: list[str] = []
+    index = 0
+    while index < len(extras):
+        token = extras[index]
+        if not token.startswith("--input-") or token == "--input-json":
+            return False
+        field_and_value = token[len("--input-") :]
+        if "=" in field_and_value:
+            field, value = field_and_value.split("=", 1)
+        else:
+            if index + 1 >= len(extras):
+                return False
+            value = extras[index + 1]
+            if value.startswith("--"):
+                return False
+            field = field_and_value
+            index += 1
+        if not _valid_task_input_field(field):
+            return False
+        fields.append(f"{field}={value}")
+        index += 1
+    setattr(namespace, "task_input_fields", tuple(fields))
+    return True
+
+
+def _valid_task_input_field(value: str) -> bool:
+    return bool(
+        fullmatch(
+            r"[A-Za-z][A-Za-z0-9_-]{0,63}" r"(\.[A-Za-z][A-Za-z0-9_-]{0,63})*",
+            value,
+        )
+    )
 
 
 def _transformers_utils_module() -> object | None:
@@ -409,6 +488,102 @@ async def deploy_run(*args: Any, **kwargs: Any) -> Any:
         _load_command("avalan.cli.commands.deploy", "deploy_run"),
     )
     return await command(*args, **kwargs)
+
+
+def flow_run(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_run")(
+        *args, **kwargs
+    )
+
+
+def task_validate(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_validate")(
+        *args, **kwargs
+    )
+
+
+def task_artifacts(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_artifacts")(
+        *args, **kwargs
+    )
+
+
+def task_enqueue(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_enqueue")(
+        *args, **kwargs
+    )
+
+
+def task_events(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_events")(
+        *args, **kwargs
+    )
+
+
+def task_inspect(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_inspect")(
+        *args, **kwargs
+    )
+
+
+def task_usage(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_usage")(
+        *args, **kwargs
+    )
+
+
+def task_output(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_output")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_check(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_check")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_diagnose(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_diagnose")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_migrate(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_migrate")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_stamp(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_stamp")(
+        *args, **kwargs
+    )
+
+
+def task_pgsql_status(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_pgsql_status")(
+        *args, **kwargs
+    )
+
+
+def task_retention_sweep(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_retention_sweep")(
+        *args, **kwargs
+    )
+
+
+def task_run(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_run")(
+        *args, **kwargs
+    )
+
+
+def task_worker(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.task", "task_worker")(
+        *args, **kwargs
+    )
 
 
 async def tokenize(*args: Any, **kwargs: Any) -> Any:
@@ -758,7 +933,7 @@ class CLI:
             help="Weight type to use (defaults to best available)",
         )
 
-        parser = ArgumentParser(
+        parser: ArgumentParser = _TaskArgumentParser(
             description="Avalan CLI", parents=[global_parser]
         )
 
@@ -1318,6 +1493,547 @@ class CLI:
             "flow",
             type=str,
             help="Flow to run",
+        )
+        flow_run_parser.add_argument(
+            "--input",
+            dest="task_input",
+            type=str,
+            default=None,
+            help="Flow input value.",
+        )
+        flow_run_parser.add_argument(
+            "--input-json",
+            dest="task_input_json",
+            type=str,
+            default=None,
+            help="Flow input JSON value or @file.",
+        )
+        flow_run_parser.add_argument(
+            "--file",
+            dest="task_files",
+            action="append",
+            default=None,
+            help="Attach a local flow input file as field=path.",
+        )
+        flow_run_parser.add_argument(
+            "--file-mime",
+            dest="task_file_mime_types",
+            action="append",
+            default=None,
+            help="Set a flow file MIME hint as field=mime/type.",
+        )
+        flow_run_parser.add_argument(
+            "--pdf",
+            dest="task_pdf",
+            type=str,
+            default=None,
+            help="Attach one top-level PDF file input.",
+        )
+        flow_run_parser.add_argument(
+            "--json",
+            dest="task_run_json",
+            action="store_true",
+            help="Print successful flow output as compact JSON.",
+        )
+        flow_run_parser.add_argument(
+            "--output",
+            dest="task_output_path",
+            type=str,
+            default=None,
+            help="Write successful flow output to a JSON file.",
+        )
+
+        # Task command
+        task_parser = command_parsers.add_parser(
+            name="task",
+            description="Manage intelligence tasks",
+            parents=[global_parser],
+        )
+        task_command_parsers = task_parser.add_subparsers(dest="task_command")
+        task_input_parser = ArgumentParser(add_help=False)
+        task_input_parser.add_argument(
+            "--input",
+            dest="task_input",
+            type=str,
+            default=None,
+            help="Task input value.",
+        )
+        task_input_parser.add_argument(
+            "--input-json",
+            dest="task_input_json",
+            type=str,
+            default=None,
+            help="Task input JSON value or @file.",
+        )
+        task_input_parser.add_argument(
+            "--file",
+            dest="task_files",
+            action="append",
+            default=None,
+            help="Attach a local task input file as field=path.",
+        )
+        task_input_parser.add_argument(
+            "--file-descriptor",
+            dest="task_file_descriptors",
+            action="append",
+            default=None,
+            help="Attach an explicit task file descriptor as field=json.",
+        )
+        task_input_parser.add_argument(
+            "--provider-file-id",
+            dest="task_provider_file_ids",
+            action="append",
+            default=None,
+            help="Attach a provider file id as field=provider:reference.",
+        )
+        task_input_parser.add_argument(
+            "--hosted-url",
+            dest="task_hosted_urls",
+            action="append",
+            default=None,
+            help="Attach a provider-hosted URL as field=provider:url.",
+        )
+        task_input_parser.add_argument(
+            "--object-store-uri",
+            dest="task_object_store_uris",
+            action="append",
+            default=None,
+            help="Attach an object-store URI as field=provider:uri.",
+        )
+        task_input_parser.add_argument(
+            "--file-mime",
+            dest="task_file_mime_types",
+            action="append",
+            default=None,
+            help="Set a task file MIME hint as field=mime/type.",
+        )
+        task_input_parser.add_argument(
+            "--file-role",
+            dest="task_file_roles",
+            action="append",
+            default=None,
+            help="Set a task file role hint as field=role.",
+        )
+        task_input_parser.add_argument(
+            "--file-size",
+            dest="task_file_sizes",
+            action="append",
+            default=None,
+            help="Set a task file size hint as field=bytes.",
+        )
+        task_input_parser.add_argument(
+            "--file-sha256",
+            dest="task_file_sha256",
+            action="append",
+            default=None,
+            help="Set a task file SHA-256 digest hint as field=hex.",
+        )
+        task_input_parser.add_argument(
+            "--file-conversion",
+            dest="task_file_conversions",
+            action="append",
+            default=None,
+            help="Request a descriptor conversion as field=name[:json].",
+        )
+        task_validate_parser = task_command_parsers.add_parser(
+            name="validate",
+            description="Validate an intelligence task definition",
+            parents=[global_parser, task_input_parser],
+        )
+        task_validate_parser.add_argument(
+            "definition",
+            type=str,
+            help="Task definition TOML file to validate",
+        )
+        task_run_parser = task_command_parsers.add_parser(
+            name="run",
+            description="Run an intelligence task directly",
+            parents=[global_parser, task_input_parser],
+        )
+        task_run_parser.add_argument(
+            "definition",
+            type=str,
+            help="Task definition TOML file to run",
+        )
+        task_run_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_run_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_run_parser.add_argument(
+            "--ephemeral",
+            action="store_true",
+            help="Use a non-durable in-memory store for this direct run.",
+        )
+        task_run_parser.add_argument(
+            "--json",
+            dest="task_run_json",
+            action="store_true",
+            help="Print successful structured task output as compact JSON.",
+        )
+        task_run_parser.add_argument(
+            "--output",
+            dest="task_output_path",
+            type=str,
+            default=None,
+            help="Write successful structured task output to a JSON file.",
+        )
+        task_run_parser.add_argument(
+            "--pdf",
+            dest="task_pdf",
+            type=str,
+            default=None,
+            help="Attach one top-level PDF file input.",
+        )
+        task_enqueue_parser = task_command_parsers.add_parser(
+            name="enqueue",
+            description="Enqueue an intelligence task run",
+            parents=[global_parser, task_input_parser],
+        )
+        task_enqueue_parser.add_argument(
+            "definition",
+            type=str,
+            help="Task definition TOML file to enqueue",
+        )
+        task_enqueue_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_enqueue_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_enqueue_parser.add_argument(
+            "--queue",
+            type=str,
+            default=None,
+            help="Queue name to submit the task run to.",
+        )
+        task_enqueue_parser.add_argument(
+            "--wait",
+            action="store_true",
+            help="Wait for the enqueued task to finish.",
+        )
+        task_enqueue_parser.add_argument(
+            "--wait-timeout",
+            type=float,
+            default=None,
+            help="Maximum seconds to wait for completion.",
+        )
+        task_enqueue_parser.add_argument(
+            "--poll-interval",
+            type=float,
+            default=1.0,
+            help="Seconds between wait polling attempts.",
+        )
+        task_enqueue_parser.add_argument(
+            "--ephemeral",
+            action="store_true",
+            help="Reject non-durable storage for queued task runs.",
+        )
+        task_inspect_parser = task_command_parsers.add_parser(
+            name="inspect",
+            description="Inspect a task run",
+            parents=[global_parser],
+        )
+        task_inspect_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_inspect_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_inspect_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_inspect_parser.add_argument(
+            "--after-sequence",
+            type=int,
+            default=None,
+            help="Only include events after this sequence.",
+        )
+        task_usage_parser = task_command_parsers.add_parser(
+            name="usage",
+            description="Inspect task run usage",
+            parents=[global_parser],
+        )
+        task_usage_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_usage_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_usage_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_usage_parser.add_argument(
+            "--attempt-id",
+            type=str,
+            default=None,
+            help="Only include usage records for this attempt.",
+        )
+        task_usage_parser.add_argument(
+            "--source",
+            choices=("exact", "estimated", "unavailable"),
+            default=None,
+            help="Only include usage records from this source.",
+        )
+        task_output_parser = task_command_parsers.add_parser(
+            name="output",
+            description="Inspect a task run output",
+            parents=[global_parser],
+        )
+        task_output_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_output_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_output_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_events_parser = task_command_parsers.add_parser(
+            name="events",
+            description="Inspect task run events",
+            parents=[global_parser],
+        )
+        task_events_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_events_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_events_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_events_parser.add_argument(
+            "--attempt-id",
+            type=str,
+            default=None,
+            help="Only include events for this attempt.",
+        )
+        task_events_parser.add_argument(
+            "--after-sequence",
+            type=int,
+            default=None,
+            help="Only include events after this sequence.",
+        )
+        task_artifacts_parser = task_command_parsers.add_parser(
+            name="artifacts",
+            description="Inspect task run artifacts",
+            parents=[global_parser],
+        )
+        task_artifacts_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        task_artifacts_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_artifacts_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_worker_parser = task_command_parsers.add_parser(
+            name="worker",
+            description="Run a task queue worker",
+            parents=[global_parser],
+        )
+        task_worker_parser.add_argument(
+            "--queue",
+            type=str,
+            default="default",
+            help="Task queue name to claim from.",
+        )
+        task_worker_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_worker_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_worker_parser.add_argument(
+            "--worker-id",
+            type=str,
+            default=None,
+            help="Stable worker id for queue claims.",
+        )
+        task_worker_parser.add_argument(
+            "--once",
+            action="store_true",
+            help="Process at most one available task.",
+        )
+        task_worker_parser.add_argument(
+            "--limit",
+            type=int,
+            default=1,
+            help="Maximum task runs to process.",
+        )
+        task_worker_parser.add_argument(
+            "--lease-seconds",
+            type=int,
+            default=300,
+            help="Claim lease duration in seconds.",
+        )
+        task_worker_parser.add_argument(
+            "--heartbeat-seconds",
+            type=float,
+            default=None,
+            help="Optional worker heartbeat interval in seconds.",
+        )
+        task_worker_parser.add_argument(
+            "--ephemeral",
+            action="store_true",
+            help="Reject non-durable storage for task workers.",
+        )
+        task_retention_sweep_parser = task_command_parsers.add_parser(
+            name="retention-sweep",
+            description="Delete expired task artifact bytes",
+            parents=[global_parser],
+        )
+        task_retention_sweep_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        task_retention_sweep_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        task_retention_sweep_parser.add_argument(
+            "--purpose",
+            action="append",
+            choices=("input", "output", "converted", "intermediate"),
+            default=None,
+            help="Artifact purpose to sweep. Can be passed more than once.",
+        )
+        task_retention_sweep_parser.add_argument(
+            "--limit",
+            type=int,
+            default=100,
+            help="Maximum expired artifacts to process.",
+        )
+        task_pgsql_parser = task_command_parsers.add_parser(
+            name="pgsql",
+            description="Manage task PostgreSQL schema migrations",
+            parents=[global_parser],
+        )
+        task_pgsql_command_parsers = task_pgsql_parser.add_subparsers(
+            dest="task_pgsql_command"
+        )
+        task_pgsql_common_parser = ArgumentParser(add_help=False)
+        task_pgsql_common_parser.add_argument(
+            "--dsn",
+            type=str,
+            default=None,
+            help=(
+                "PostgreSQL DSN. Defaults to AVALAN_TASK_PGSQL_DSN when "
+                "omitted."
+            ),
+        )
+        task_pgsql_common_parser.add_argument(
+            "--schema",
+            type=str,
+            default=None,
+            help=(
+                "PostgreSQL schema. Defaults to AVALAN_TASK_PGSQL_SCHEMA "
+                "when omitted."
+            ),
+        )
+        task_pgsql_command_parsers.add_parser(
+            name="status",
+            description="Show the current task PostgreSQL schema revision",
+            parents=[global_parser, task_pgsql_common_parser],
+        )
+        task_pgsql_migrate_parser = task_pgsql_command_parsers.add_parser(
+            name="migrate",
+            description="Apply task PostgreSQL schema migrations",
+            parents=[global_parser, task_pgsql_common_parser],
+        )
+        task_pgsql_migrate_parser.add_argument(
+            "migration_revision",
+            nargs="?",
+            type=str,
+            default="head",
+            help="Migration revision to apply.",
+        )
+        task_pgsql_command_parsers.add_parser(
+            name="check",
+            description="Check task PostgreSQL schema migration status",
+            parents=[global_parser, task_pgsql_common_parser],
+        )
+        task_pgsql_stamp_parser = task_pgsql_command_parsers.add_parser(
+            name="stamp",
+            description="Stamp the task PostgreSQL schema revision",
+            parents=[global_parser, task_pgsql_common_parser],
+        )
+        task_pgsql_stamp_parser.add_argument(
+            "migration_revision",
+            nargs="?",
+            type=str,
+            default="head",
+            help="Migration revision to stamp.",
+        )
+        task_pgsql_command_parsers.add_parser(
+            name="diagnose",
+            description="Print safe task PostgreSQL migration diagnostics",
+            parents=[global_parser, task_pgsql_common_parser],
         )
 
         # Memory command
@@ -2327,7 +3043,14 @@ class CLI:
         group.add_argument("--role", type=str, help="Agent role")
         group.add_argument("--task", type=str, help="Agent task")
         group.add_argument(
-            "--instructions", type=str, help="Agent instructions"
+            "--instructions",
+            type=str,
+            help="Provider instructions",
+        )
+        group.add_argument(
+            "--goal-instructions",
+            type=str,
+            help="Agent goal instructions",
         )
         group.add_argument("--system", type=str, help="System prompt")
         group.add_argument("--developer", type=str, help="Developer prompt")
@@ -2486,6 +3209,16 @@ class CLI:
     def _needs_hf_token(args: Namespace) -> bool:
         """Return ``True`` if the command needs hub authentication."""
         command = args.command
+        if command == "task":
+            engine = CLI._task_agent_engine_uri(args)
+            if not engine:
+                return False
+            engine_uri = ModelManager.parse_uri(engine)
+            if engine_uri.is_local and is_ds4_backend_selected(
+                args, engine_uri
+            ):
+                return False
+            return bool(engine_uri.is_local)
         if command == "model" and (args.model_command or "display") == "run":
             assert isinstance(args.model, str)
             engine_uri = ModelManager.parse_uri(args.model)
@@ -2522,8 +3255,40 @@ class CLI:
         return True
 
     @staticmethod
+    def _task_agent_engine_uri(args: Namespace) -> str | None:
+        task_command = args.task_command or "validate"
+        if task_command not in {"enqueue", "run"}:
+            return None
+        definition = getattr(args, "definition", None)
+        if not isinstance(definition, str):
+            return None
+        try:
+            with open(definition, "rb") as file:
+                task_config = toml_load(file)
+            execution = task_config.get("execution")
+            if not isinstance(execution, dict):
+                return None
+            if execution.get("type") != "agent":
+                return None
+            ref = execution.get("ref")
+            if not isinstance(ref, str):
+                return None
+            agent_path = Path(definition).parent / ref
+            with agent_path.open("rb") as file:
+                agent_config = toml_load(file)
+            engine = agent_config.get("engine")
+            if not isinstance(engine, dict):
+                return None
+            uri = engine.get("uri")
+            return uri if isinstance(uri, str) else None
+        except (OSError, TOMLDecodeError):
+            return None
+
+    @staticmethod
     def _can_use_anonymous_hub(args: Namespace) -> bool:
         command = args.command
+        if command == "task":
+            return (args.task_command or "validate") != "worker"
         if command != "model" or (args.model_command or "display") != "run":
             return False
         assert isinstance(args.model, str)
@@ -2608,6 +3373,7 @@ class CLI:
         hub: HubClient
         if (
             requires_token
+            or bool(args.hf_token)
             or args.login
             or not self._can_use_anonymous_hub(args)
         ):
@@ -2741,7 +3507,7 @@ class CLI:
                 hub.login()
                 user = hub.user()
 
-        if not args.quiet:
+        if not args.quiet and not _task_run_json_stdout(args):
             console.print(
                 theme.welcome(
                     self._site.geturl(),
@@ -2849,6 +3615,62 @@ class CLI:
                 match subcommand:
                     case "run":
                         await deploy_run(args, self._logger)
+            case "flow":
+                subcommand = args.flow_command or "run"
+                match subcommand:
+                    case "run":
+                        if not flow_run(
+                            args,
+                            console,
+                            theme,
+                            hub,
+                            self._logger,
+                        ):
+                            raise SystemExit(1)
+            case "task":
+                subcommand = args.task_command or "validate"
+                match subcommand:
+                    case "artifacts":
+                        task_artifacts(args, console, theme)
+                    case "enqueue":
+                        task_enqueue(args, console, theme, hub, self._logger)
+                    case "events":
+                        task_events(args, console, theme)
+                    case "inspect":
+                        task_inspect(args, console, theme)
+                    case "usage":
+                        task_usage(args, console, theme)
+                    case "output":
+                        task_output(args, console, theme)
+                    case "retention-sweep":
+                        task_retention_sweep(args, console, theme)
+                    case "validate":
+                        if not task_validate(args, console, theme):
+                            raise SystemExit(1)
+                    case "pgsql":
+                        pgsql_subcommand = args.task_pgsql_command or "status"
+                        match pgsql_subcommand:
+                            case "check":
+                                task_pgsql_check(args, console, theme)
+                            case "diagnose":
+                                task_pgsql_diagnose(args, console, theme)
+                            case "migrate":
+                                task_pgsql_migrate(args, console, theme)
+                            case "stamp":
+                                task_pgsql_stamp(args, console, theme)
+                            case "status":
+                                task_pgsql_status(args, console, theme)
+                    case "run":
+                        if not task_run(
+                            args,
+                            console,
+                            theme,
+                            hub,
+                            self._logger,
+                        ):
+                            raise SystemExit(1)
+                    case "worker":
+                        task_worker(args, console, theme, hub, self._logger)
 
             case "tokenizer":
                 await tokenize(args, console, theme, hub, self._logger)

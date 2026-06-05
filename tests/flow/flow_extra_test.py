@@ -96,6 +96,14 @@ invalid
 
         self.assertEqual(cycle_nodes, set())
 
+    def test_queue_guard_rejects_revisited_node(self) -> None:
+        with self.assertRaisesRegex(ValueError, "revisited node"):
+            Flow._assert_unprocessed_queue_node(
+                Node("A"),
+                {"A"},
+                {"A"},
+            )
+
 
 class ConnectionReprTestCase(unittest.TestCase):
     def test_repr(self) -> None:

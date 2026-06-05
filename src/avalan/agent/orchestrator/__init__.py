@@ -37,9 +37,12 @@ from dataclasses import asdict
 from inspect import isawaitable
 from json import dumps
 from logging import Logger
+from re import compile as compile_regex
 from time import perf_counter
 from typing import Any, cast
 from uuid import UUID, uuid4
+
+_INPUT_TEMPLATE_REFERENCE_PATTERN = compile_regex(r"{{\s*input\b")
 
 
 class Orchestrator:
@@ -375,54 +378,123 @@ class Orchestrator:
         if input_type == InputType.TEXT and isinstance(input, str):
             input = Message(role=MessageRole.USER, content=input)
 
-        if self._user_template or self._user:
-            message = (
-                input
-                if isinstance(input, Message)
-                else (
-                    input[-1]
-                    if (
-                        isinstance(input, list)
-                        and input
-                        and isinstance(input[-1], Message)
-                    )
-                    else None
-                )
-            )
-
-            if message and (
-                isinstance(message.content, str)
-                or isinstance(message.content, MessageContentText)
-            ):
-                render_vars = (
-                    specification.template_vars.copy()
-                    if specification.template_vars
-                    else {}
-                )
-                if (
-                    specification.settings
-                    and specification.settings.template_vars
-                ):
-                    render_vars.update(specification.settings.template_vars)
-                message_content = (
-                    message.content.text
-                    if isinstance(message.content, MessageContentText)
-                    else message.content
-                )
-                render_vars.update({"input": message_content})
-                content = (
-                    self._renderer(self._user_template, **render_vars)
-                    if self._user_template
-                    else self._renderer.from_string(
-                        self._user or "", template_vars=render_vars
-                    )
-                )
-                message = Message(role=message.role, content=content)
-
-                if isinstance(input, list):
-                    assert input and isinstance(input[-1], Message)
-                    input[-1] = message
-                else:
-                    input = message
+        if self._user_template:
+            input = self._render_user_template_input(specification, input)
+        elif self._user:
+            input = self._prefix_user_input(specification, input)
 
         return input
+
+    def _prefix_user_input(
+        self, specification: Specification, input: Input
+    ) -> Input:
+        message = self._last_input_message(input)
+        if message is not None:
+            content = self._message_text_content(message)
+            if content is None:
+                return input
+
+            render_vars = self._input_render_vars(specification, content)
+            rendered_user = self._renderer.from_string(
+                self._user or "", template_vars=render_vars
+            )
+            rendered_text = self._rendered_text(rendered_user)
+            message_content = (
+                rendered_text
+                if self._user_references_input(self._user or "")
+                else self._prefix_text(rendered_text, content)
+            )
+            return self._replace_last_message_input(input, message_content)
+
+        if isinstance(input, list) and input and isinstance(input[-1], str):
+            render_vars = self._input_render_vars(specification, input[-1])
+            rendered_user = self._renderer.from_string(
+                self._user or "", template_vars=render_vars
+            )
+            rendered_text = self._rendered_text(rendered_user)
+            input[-1] = (
+                rendered_text
+                if self._user_references_input(self._user or "")
+                else self._prefix_text(rendered_text, input[-1])
+            )
+
+        return input
+
+    def _render_user_template_input(
+        self, specification: Specification, input: Input
+    ) -> Input:
+        message = self._last_input_message(input)
+        if message is None:
+            return input
+
+        content = self._message_text_content(message)
+        if content is None:
+            return input
+
+        render_vars = self._input_render_vars(specification, content)
+        rendered = self._renderer(self._user_template or "", **render_vars)
+        return self._replace_last_message_input(input, rendered)
+
+    @staticmethod
+    def _last_input_message(input: Input) -> Message | None:
+        if isinstance(input, Message):
+            return input
+        if (
+            isinstance(input, list)
+            and input
+            and isinstance(input[-1], Message)
+        ):
+            return input[-1]
+        return None
+
+    @staticmethod
+    def _message_text_content(message: Message) -> str | None:
+        if isinstance(message.content, MessageContentText):
+            return message.content.text
+        if isinstance(message.content, str):
+            return message.content
+        return None
+
+    @staticmethod
+    def _prefix_text(prefix: str, content: str) -> str:
+        prefix = prefix.strip()
+        return f"{prefix}\n\n{content}" if prefix else content
+
+    @staticmethod
+    def _rendered_text(value: str | bytes) -> str:
+        return value.decode("utf-8") if isinstance(value, bytes) else value
+
+    @staticmethod
+    def _user_references_input(user: str) -> bool:
+        return bool(_INPUT_TEMPLATE_REFERENCE_PATTERN.search(user))
+
+    @staticmethod
+    def _replace_last_message_input(
+        input: Input,
+        content: str,
+    ) -> Input:
+        message = Orchestrator._last_input_message(input)
+        if message is None:
+            return input
+
+        replacement = Message(role=message.role, content=content)
+        if isinstance(input, list):
+            assert input and isinstance(input[-1], Message)
+            input[-1] = replacement
+            return input
+        return replacement
+
+    @staticmethod
+    def _input_render_vars(
+        specification: Specification,
+        input_content: str,
+    ) -> dict[str, Any]:
+        render_vars = (
+            specification.template_vars.copy()
+            if specification.template_vars
+            else {}
+        )
+        if specification.settings and specification.settings.template_vars:
+            render_vars.update(specification.settings.template_vars)
+        render_vars.update({"input": input_content})
+        return render_vars

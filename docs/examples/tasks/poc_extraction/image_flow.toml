@@ -1,0 +1,44 @@
+[flow]
+name = "poc_invoice_extraction_image_flow"
+version = "1"
+description = "Extract invoice line items from rendered PDF page images."
+entrypoint = "render_pages"
+output_node = "extract"
+
+[flow.input]
+name = "input"
+type = "file"
+mime_types = ["application/pdf"]
+
+[flow.output]
+name = "extraction"
+type = "object"
+schema_ref = "invoice.schema.json"
+
+[[edges]]
+source = "render_pages"
+target = "extract"
+
+[nodes.render_pages]
+type = "file_convert"
+input = "file"
+output = "files"
+
+[nodes.render_pages.config]
+converter = "pdf_image"
+format = "png"
+dpi = 144
+pages = "1.."
+max_pages = 20
+max_pixels_per_page = 12000000
+max_total_pixels = 120000000
+
+[nodes.extract]
+type = "agent"
+ref = "agent.toml"
+input = "render_pages.files"
+output = "extraction"
+
+[nodes.extract.config]
+files_input = "render_pages.files"
+file_policy = "replace"

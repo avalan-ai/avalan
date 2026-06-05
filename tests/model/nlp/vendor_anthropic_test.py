@@ -27,6 +27,10 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.task.usage import (
+    usage_observation_from_response,
+    usage_totals_from_response,
+)
 
 
 class AsyncIter:
@@ -135,6 +139,150 @@ def test_stream_variants(anthropic_mod):
     btt.assert_called_once_with("tid", "tname", {"x": 1})
 
 
+def test_stream_records_usage_on_message_stop(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield SimpleNamespace(
+            type="message_start",
+            message=SimpleNamespace(
+                usage=SimpleNamespace(
+                    input_tokens=7,
+                    cache_read_input_tokens=2,
+                    cache_creation_input_tokens=3,
+                    cache_creation=SimpleNamespace(
+                        ephemeral_5m_input_tokens=11,
+                        ephemeral_1h_input_tokens=13,
+                    ),
+                )
+            ),
+        )
+        yield mod.RawContentBlockDeltaEvent(SimpleNamespace(thinking="think"))
+        yield SimpleNamespace(type="message_delta", usage=SimpleNamespace())
+        yield SimpleNamespace(
+            type="message_delta",
+            usage={
+                "output_tokens": 5,
+                "output_tokens_details": {"thinking_tokens": 4},
+            },
+        )
+        yield SimpleNamespace(type="message_stop")
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        token = await stream.__anext__()
+        assert stream.usage is None
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        return stream, token
+
+    stream, token = asyncio.run(collect())
+    observation = usage_observation_from_response(stream)
+    totals = usage_totals_from_response(stream)
+
+    assert isinstance(token, ReasoningToken)
+    assert stream.provider_family == "anthropic"
+    assert observation is not None
+    assert observation.metadata == {
+        "provider_family": "anthropic",
+        "cache_creation_ephemeral_5m_input_tokens": 11,
+        "cache_creation_ephemeral_1h_input_tokens": 13,
+    }
+    assert totals is not None
+    assert totals.input_tokens == 7
+    assert totals.cached_input_tokens == 2
+    assert totals.cache_creation_input_tokens == 3
+    assert totals.output_tokens == 5
+    assert totals.reasoning_tokens == 4
+
+
+def test_stream_records_mapping_usage_on_message_stop(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield {
+            "type": "message_delta",
+            "usage": {
+                "input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "output_tokens": 0,
+            },
+        }
+        yield {"type": "message_stop"}
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        return stream
+
+    stream = asyncio.run(collect())
+    totals = usage_totals_from_response(stream)
+
+    assert totals is not None
+    assert totals.input_tokens == 0
+    assert totals.cached_input_tokens == 0
+    assert totals.cache_creation_input_tokens == 0
+    assert totals.output_tokens == 0
+    assert totals.reasoning_tokens is None
+    assert totals.total_tokens is None
+
+
+def test_stream_without_message_stop_drops_cumulative_usage(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield SimpleNamespace(
+            type="message_delta",
+            usage={"input_tokens": 1, "output_tokens": 2},
+        )
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        return stream
+
+    stream = asyncio.run(collect())
+
+    assert stream.usage is None
+    assert usage_totals_from_response(stream) is None
+
+
+def test_stream_failure_before_message_stop_drops_cumulative_usage(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+
+    class FailingIter:
+        def __init__(self):
+            self._count = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            self._count += 1
+            if self._count == 1:
+                return SimpleNamespace(
+                    type="message_delta",
+                    usage={"input_tokens": 1, "output_tokens": 2},
+                )
+            raise RuntimeError("provider failure")
+
+    async def collect():
+        stream = mod.AnthropicStream(FailingIter())
+        with pytest.raises(RuntimeError):
+            await stream.__anext__()
+        return stream
+
+    stream = asyncio.run(collect())
+
+    assert stream.usage is None
+    assert usage_totals_from_response(stream) is None
+
+
 def test_client_call_and_model(anthropic_mod):
     mod, stub = anthropic_mod
     ctx_instance = SimpleNamespace(
@@ -176,6 +324,21 @@ def test_client_call_and_model(anthropic_mod):
         api_key="t", base_url="b", exit_stack=model._exit_stack
     )
     assert loaded is ClientMock.return_value
+
+
+def test_provider_instructions_are_rejected_before_api_call(anthropic_mod):
+    mod, stub = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("key", exit_stack=exit_stack)
+    create_mock = stub.AsyncAnthropic.return_value.messages.create
+    create_mock.reset_mock()
+
+    async def invoke():
+        with pytest.raises(AssertionError, match="provider instructions"):
+            await client("model", [], instructions="private policy")
+
+    asyncio.run(invoke())
+    create_mock.assert_not_called()
 
 
 def test_client_omits_unset_temperature_and_forwards_explicit(
@@ -242,7 +405,8 @@ def test_client_non_stream_tool_messages(anthropic_mod):
                 name="pkg__tool",
                 input={"a": 1},
             ),
-        ]
+        ],
+        usage=SimpleNamespace(input_tokens=2),
     )
 
     stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
@@ -266,6 +430,7 @@ def test_client_non_stream_tool_messages(anthropic_mod):
 
     assert isinstance(stream, TextGenerationSingleStream)
     assert stream.content == "hello<tool_call />"
+    assert stream.usage.input_tokens == 2
     build_token.assert_called_once_with("call1", "pkg__tool", {"a": 1})
 
     create_mock = stub.AsyncAnthropic.return_value.messages.create

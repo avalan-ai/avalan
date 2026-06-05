@@ -12,8 +12,10 @@ from ..entities import (
 from ..event import Event, EventType
 from ..event.manager import EventManager
 from ..memory.manager import MemoryManager
+from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
+from ..task.schema import TaskSchemaResolutionError, resolve_schema_ref
 from ..tool.browser import (
     HAS_BROWSER_DEPENDENCIES,
     BrowserToolSet,
@@ -293,6 +295,45 @@ class OrchestratorLoader:
     def participant_id(self) -> UUID:
         return self._participant_id
 
+    @classmethod
+    def validate_agent_file(cls, path: str) -> dict[str, Any]:
+        if not exists(path):
+            raise FileNotFoundError(path)
+        if not access(path, R_OK):
+            raise PermissionError(path)
+
+        with open(path, "rb") as file:
+            config = load(file)
+
+        config = cls._resolve_agent_config_schema_refs(config, path=path)
+        cls.validate_agent_config(config)
+        return config
+
+    @classmethod
+    def validate_agent_config(cls, config: object) -> None:
+        assert isinstance(
+            config, dict
+        ), "Agent configuration must be a mapping"
+        assert "agent" in config, "No agent section in configuration"
+        assert "engine" in config, "No engine section defined in configuration"
+        assert isinstance(
+            config["agent"], dict
+        ), "Agent section must be a mapping"
+        assert isinstance(
+            config["engine"], dict
+        ), "Engine section must be a mapping"
+        assert (
+            "uri" in config["engine"]
+        ), "No uri defined in engine section of configuration"
+        cls._validate_engine_file_delivery_profile(config["engine"])
+        agent_config = config["agent"]
+        cls._validate_agent_section(agent_config)
+        orchestrator_type = agent_config.get("type")
+        assert orchestrator_type is None or orchestrator_type in ["json"], (
+            f"Unknown type {agent_config['type']} in agent section "
+            + "of configuration"
+        )
+
     async def from_file(
         self,
         path: str,
@@ -314,6 +355,11 @@ class OrchestratorLoader:
         with open(path, "rb") as file:
             config = load(file)
 
+            config = OrchestratorLoader._resolve_agent_config_schema_refs(
+                config,
+                path=path,
+            )
+
             # Validate settings
 
             assert "agent" in config, "No agent section in configuration"
@@ -325,9 +371,7 @@ class OrchestratorLoader:
             ), "No uri defined in engine section of configuration"
 
             agent_config = config["agent"]
-            assert not (
-                "user" in agent_config and "user_template" in agent_config
-            ), "user and user_template are mutually exclusive"
+            self._validate_agent_section(agent_config)
 
             assert (
                 "engine" in config
@@ -338,6 +382,9 @@ class OrchestratorLoader:
 
             uri = uri or config["engine"]["uri"]
             engine_config = config["engine"]
+            OrchestratorLoader._validate_engine_file_delivery_profile(
+                engine_config
+            )
             assert "tools" not in engine_config, (
                 "tools option in [engine] is no longer supported; "
                 "configure tools under [tool.enable]"
@@ -366,6 +413,7 @@ class OrchestratorLoader:
                         ), "tool.enable entries must be strings"
                         enable_tools.append(tool_name)
             engine_config.pop("uri", None)
+            engine_config.pop("file_delivery_profile", None)
             orchestrator_type = (
                 config["agent"]["type"] if "type" in config["agent"] else None
             )
@@ -387,6 +435,10 @@ class OrchestratorLoader:
             )
 
             call_options = config["run"] if "run" in config else None
+            if call_options is not None:
+                assert isinstance(
+                    call_options, dict
+                ), "Run section must be a mapping"
             if call_options and "chat" in call_options:
                 call_options["chat_settings"] = call_options.pop("chat")
             template_vars = (
@@ -718,6 +770,10 @@ class OrchestratorLoader:
                 template_vars=settings.template_vars,
             )
         else:
+            has_direct_prompt = (
+                "system" in settings.agent_config
+                or "developer" in settings.agent_config
+            )
             agent = DefaultOrchestrator(
                 engine_uri,
                 self._logger,
@@ -729,22 +785,20 @@ class OrchestratorLoader:
                 name=settings.agent_config.get("name"),
                 role=(
                     None
-                    if "system" in settings.agent_config
-                    or "developer" in settings.agent_config
+                    if has_direct_prompt
                     else settings.agent_config.get("role")
                 ),
                 task=(
                     None
-                    if "system" in settings.agent_config
-                    or "developer" in settings.agent_config
+                    if has_direct_prompt
                     else settings.agent_config.get("task")
                 ),
-                instructions=(
+                goal_instructions=(
                     None
-                    if "system" in settings.agent_config
-                    or "developer" in settings.agent_config
-                    else settings.agent_config.get("instructions")
+                    if has_direct_prompt
+                    else settings.agent_config.get("goal_instructions")
                 ),
+                instructions=settings.agent_config.get("instructions"),
                 rules=settings.agent_config.get("rules"),
                 system=settings.agent_config.get("system"),
                 developer=settings.agent_config.get("developer"),
@@ -775,13 +829,14 @@ class OrchestratorLoader:
         template_vars: dict[str, Any] | None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
-        if "system" not in agent_config and "developer" not in agent_config:
-            assert (
-                "instructions" in agent_config
-            ), "No instructions defined in agent section of configuration"
+        if (
+            "system" not in agent_config
+            and "developer" not in agent_config
+            and "goal_instructions" in agent_config
+        ):
             assert (
                 "task" in agent_config
-            ), "No task defined in agent section of configuration"
+            ), "agent.goal_instructions requires agent.task"
 
         properties: list[Property] = []
         for property_name in config.get("json", []):
@@ -796,6 +851,9 @@ class OrchestratorLoader:
 
         assert properties, "No properties defined in configuration"
 
+        has_direct_prompt = (
+            "system" in agent_config or "developer" in agent_config
+        )
         agent = JsonOrchestrator(
             engine_uri,
             logger,
@@ -806,21 +864,14 @@ class OrchestratorLoader:
             properties,
             id=agent_id,
             name=agent_config["name"] if "name" in agent_config else None,
-            role=(
+            role=(None if has_direct_prompt else agent_config.get("role")),
+            task=(None if has_direct_prompt else agent_config.get("task")),
+            goal_instructions=(
                 None
-                if "system" in agent_config or "developer" in agent_config
-                else agent_config.get("role")
+                if has_direct_prompt
+                else agent_config.get("goal_instructions")
             ),
-            task=(
-                None
-                if "system" in agent_config or "developer" in agent_config
-                else agent_config.get("task")
-            ),
-            instructions=(
-                None
-                if "system" in agent_config or "developer" in agent_config
-                else agent_config.get("instructions")
-            ),
+            instructions=agent_config.get("instructions"),
             rules=agent_config.get("rules"),
             system=agent_config.get("system"),
             developer=agent_config.get("developer"),
@@ -831,6 +882,138 @@ class OrchestratorLoader:
             template_vars=template_vars,
         )
         return agent
+
+    @staticmethod
+    def _validate_engine_file_delivery_profile(
+        engine_config: dict[str, Any],
+    ) -> None:
+        value = engine_config.get("file_delivery_profile")
+        if value is None:
+            return
+        assert isinstance(
+            value, str
+        ), "engine.file_delivery_profile must be a string"
+        uri = engine_config.get("uri")
+        assert isinstance(uri, str), "engine.uri must be a string"
+        engine_uri = ModelManager.parse_uri(uri)
+        assert (
+            engine_uri.vendor is None
+        ), "engine.file_delivery_profile is only supported for local models"
+        assert value in {
+            profile.value for profile in LocalFileDeliveryProfile
+        }, "engine.file_delivery_profile is not supported"
+
+    @staticmethod
+    def _resolve_agent_config_schema_refs(
+        config: object,
+        *,
+        path: str,
+    ) -> dict[str, Any]:
+        assert isinstance(
+            config, dict
+        ), "Agent configuration must be a mapping"
+        run_config = config.get("run")
+        if run_config is None:
+            return config
+        assert isinstance(run_config, dict), "Run section must be a mapping"
+        response_format = run_config.get("response_format")
+        if response_format is None:
+            return config
+        assert isinstance(
+            response_format, dict
+        ), "run.response_format must be a mapping"
+        run_config = dict(run_config)
+        run_config["response_format"] = (
+            OrchestratorLoader._resolved_response_format(
+                response_format,
+                schema_base_path=path,
+            )
+        )
+        config = dict(config)
+        config["run"] = run_config
+        return config
+
+    @staticmethod
+    def _resolved_response_format(
+        response_format: dict[str, Any],
+        *,
+        schema_base_path: str,
+    ) -> dict[str, Any]:
+        resolved = dict(response_format)
+        OrchestratorLoader._resolve_schema_ref_field(
+            resolved,
+            schema_base_path=schema_base_path,
+            path="run.response_format.schema_ref",
+        )
+        nested = resolved.get("json_schema")
+        if nested is not None:
+            assert isinstance(
+                nested, dict
+            ), "run.response_format.json_schema must be a mapping"
+            nested = dict(nested)
+            OrchestratorLoader._resolve_schema_ref_field(
+                nested,
+                schema_base_path=schema_base_path,
+                path="run.response_format.json_schema.schema_ref",
+            )
+            resolved["json_schema"] = nested
+        return resolved
+
+    @staticmethod
+    def _resolve_schema_ref_field(
+        mapping: dict[str, Any],
+        *,
+        schema_base_path: str,
+        path: str,
+    ) -> None:
+        schema_ref = mapping.get("schema_ref")
+        if schema_ref is None:
+            return
+        assert (
+            "schema" not in mapping
+        ), f"{path} cannot be used with an inline schema"
+        try:
+            schema = resolve_schema_ref(
+                schema_ref,
+                schema_base_path=schema_base_path,
+                path=path,
+            ).schema
+        except TaskSchemaResolutionError as error:
+            raise AssertionError(str(error)) from error
+        mapping["schema"] = schema
+        mapping.pop("schema_ref", None)
+
+    @staticmethod
+    def _validate_agent_section(agent_config: dict[str, Any]) -> None:
+        assert not (
+            "user" in agent_config and "user_template" in agent_config
+        ), "user and user_template are mutually exclusive"
+        assert not (
+            "task" in agent_config
+            and "instructions" in agent_config
+            and "goal_instructions" not in agent_config
+            and "system" not in agent_config
+            and "developer" not in agent_config
+        ), (
+            "agent.instructions is reserved for provider instructions; "
+            "use agent.goal_instructions with agent.task for goal "
+            "instructions"
+        )
+        assert not (
+            "goal_instructions" in agent_config and "task" not in agent_config
+        ), "agent.goal_instructions requires agent.task"
+        for key in (
+            "system",
+            "developer",
+            "instructions",
+            "goal_instructions",
+            "user",
+            "user_template",
+        ):
+            value = agent_config.get(key)
+            assert value is None or isinstance(
+                value, str
+            ), f"agent.{key} must be a string"
 
     @staticmethod
     def _log_wrapper(logger: Logger) -> Callable[..., Any]:

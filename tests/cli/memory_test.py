@@ -1,3 +1,5 @@
+import builtins
+import importlib
 import importlib.machinery
 import sys
 import types
@@ -32,6 +34,39 @@ md_stub.MarkItDown = MagicMock()
 md_stub.DocumentConverterResult = object
 md_stub.__spec__ = importlib.machinery.ModuleSpec("markitdown", loader=None)
 sys.modules.setdefault("markitdown", md_stub)
+
+
+class CliMemoryImportFallbackTestCase(IsolatedAsyncioTestCase):
+    async def test_optional_import_fallbacks_raise_actionable_errors(self):
+        original_import = builtins.__import__
+
+        def guarded_import(
+            name: str,
+            globals=None,
+            locals=None,
+            fromlist=(),
+            level: int = 0,
+        ):
+            if name == "markitdown" or name.endswith(
+                "memory.permanent.pgsql.raw"
+            ):
+                raise ImportError(name)
+            return original_import(name, globals, locals, fromlist, level)
+
+        with (
+            patch("builtins.__import__", guarded_import),
+            patch.dict(sys.modules, {"markitdown": None}),
+        ):
+            module = importlib.reload(memory_cmds)
+
+        self.assertIsNone(module.MarkItDown)
+        with self.assertRaisesRegex(RuntimeError, "markitdown"):
+            module._markitdown()
+        with self.assertRaisesRegex(RuntimeError, "PostgreSQL memory"):
+            await module.PgsqlRawMemory.create_instance()
+
+        sys.modules["markitdown"] = md_stub
+        importlib.reload(memory_cmds)
 
 
 class CliMemoryDocumentIndexTestCase(IsolatedAsyncioTestCase):

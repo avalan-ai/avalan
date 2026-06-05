@@ -1,0 +1,426 @@
+from collections.abc import Mapping
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, main
+
+from pgsql_harness import (
+    drop_task_pgsql_schema,
+    isolated_task_pgsql_schema,
+    real_task_pgsql_dsn,
+    task_pgsql_psycopg_dsn,
+)
+from pytest import importorskip
+
+from avalan.pgsql import (
+    PsycopgAsyncDatabase,
+    PsycopgPoolSettings,
+)
+from avalan.task import (
+    EncryptedPrivacyValue,
+    IdempotencyMode,
+    PrivacyAction,
+    PrivacySanitizer,
+    TaskArtifactPurpose,
+    TaskArtifactRef,
+    TaskArtifactRetention,
+    TaskAttemptState,
+    TaskDefinition,
+    TaskExecutionPayload,
+    TaskExecutionRequest,
+    TaskExecutionTarget,
+    TaskIdempotencyDigest,
+    TaskIdempotencyIdentity,
+    TaskInputContract,
+    TaskKeyPurpose,
+    TaskMetadata,
+    TaskOutputContract,
+    TaskPrivacyPolicy,
+    TaskQueueArtifact,
+    TaskQueueItemState,
+    TaskRetryPolicy,
+    TaskRunPolicy,
+    TaskRunState,
+    TaskTargetContext,
+    TaskTargetRunner,
+    TaskValidationContext,
+    TaskValidationIssue,
+    TaskWorker,
+)
+from avalan.task.queues import PgsqlTaskQueue
+from avalan.task.stores import (
+    PgsqlTaskMigrationSettings,
+    PgsqlTaskStore,
+    task_pgsql_upgrade,
+)
+
+
+class StaticEncryptionProvider:
+    def encrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> EncryptedPrivacyValue:
+        _ = purpose
+        return EncryptedPrivacyValue(
+            ciphertext=b"encrypted:" + value,
+            key_id=key_id or "pgsql-queue",
+            algorithm="test-aead",
+            metadata=context,
+        )
+
+    def decrypt(
+        self,
+        value: bytes,
+        *,
+        purpose: TaskKeyPurpose,
+        key_id: str | None = None,
+        algorithm: str | None = None,
+        context: Mapping[str, str] | None = None,
+    ) -> bytes:
+        _ = purpose, key_id, algorithm, context
+        prefix = b"encrypted:"
+        assert value.startswith(prefix)
+        return value[len(prefix) :]
+
+
+ENCRYPTION_PROVIDER = StaticEncryptionProvider()
+
+
+class RecordingTarget(TaskTargetRunner):
+    def __init__(self, *, failures: int = 0) -> None:
+        self.failures = failures
+        self.inputs: list[object] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        assert isinstance(definition, TaskDefinition)
+        assert isinstance(context, TaskValidationContext)
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        self.inputs.append(context.input_value)
+        await context.check_cancelled()
+        if self.failures:
+            self.failures -= 1
+            raise OSError("private backend path")
+        await context.observe_usage(
+            SimpleNamespace(
+                input_token_count=3,
+                output_token_count=5,
+                total_token_count=8,
+            )
+        )
+        return "safe output"
+
+
+class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        dsn = real_task_pgsql_dsn()
+        if not dsn:
+            self.skipTest("AVALAN_TASK_TEST_POSTGRESQL_DSN is not set")
+        importorskip("alembic")
+        importorskip("psycopg")
+        importorskip("psycopg_pool")
+        importorskip("sqlalchemy")
+        self.dsn = dsn
+        self.schema = isolated_task_pgsql_schema("avalan_task_queue_e2e")
+        task_pgsql_upgrade(
+            PgsqlTaskMigrationSettings(url=dsn, schema=self.schema)
+        )
+        self.database = PsycopgAsyncDatabase(
+            PsycopgPoolSettings(
+                dsn=task_pgsql_psycopg_dsn(dsn),
+                schema=self.schema,
+                application_name="avalan-task-queue-e2e",
+            )
+        )
+        self.store = PgsqlTaskStore(self.database)
+        self.queue = PgsqlTaskQueue(self.database)
+        await self.database.open()
+
+    async def asyncTearDown(self) -> None:
+        database = getattr(self, "database", None)
+        if database is not None:
+            await database.aclose()
+        dsn = getattr(self, "dsn", None)
+        schema = getattr(self, "schema", None)
+        if dsn is not None and schema is not None:
+            await drop_task_pgsql_schema(dsn, schema)
+
+    async def test_worker_completes_pgsql_queue_run(self) -> None:
+        definition_hash = "queue-e2e-success"
+        await self.store.register_definition(
+            _definition(),
+            definition_hash=definition_hash,
+        )
+        submission = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                input_summary="safe input",
+                input_payload=_input_payload("safe input"),
+                queue="pgsql-e2e",
+                metadata={"request": "safe"},
+            ),
+            queue_name="pgsql-e2e",
+            priority=7,
+            queue_metadata={"source": "test"},
+        )
+        target = RecordingTarget()
+        worker = TaskWorker(
+            self.store,
+            self.queue,
+            target=target,
+            worker_id="pgsql-e2e-worker",
+            queue_name="pgsql-e2e",
+            encryption_provider=ENCRYPTION_PROVIDER,
+        )
+
+        result = await worker.process_once()
+        idle = await worker.process_once()
+
+        self.assertTrue(submission.created)
+        self.assertIsNotNone(submission.queue_item)
+        assert submission.queue_item is not None
+        self.assertEqual(
+            submission.queue_item.state,
+            TaskQueueItemState.AVAILABLE,
+        )
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(result.completion)
+        self.assertFalse(idle.processed)
+        assert result.completion is not None
+        run = await self.store.get_run(submission.run.run_id)
+        attempts = await self.store.list_attempts(run.run_id)
+        usage = await self.store.list_usage(run.run_id)
+        depth = await self.queue.depth("pgsql-e2e")
+
+        self.assertEqual(run.state, TaskRunState.SUCCEEDED)
+        assert run.result is not None
+        self.assertEqual(run.result.output_summary, {"privacy": "<redacted>"})
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0].state, TaskAttemptState.SUCCEEDED)
+        self.assertEqual(target.inputs, ["safe input"])
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0].totals.input_tokens, 3)
+        self.assertEqual(usage[0].totals.output_tokens, 5)
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(depth.dead, 0)
+
+    async def test_worker_retries_pgsql_queue_run(self) -> None:
+        definition_hash = "queue-e2e-retry"
+        await self.store.register_definition(
+            _definition(max_attempts=2),
+            definition_hash=definition_hash,
+        )
+        submission = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                input_summary="retry input",
+                input_payload=_input_payload("retry input"),
+                queue="pgsql-e2e",
+            ),
+            queue_name="pgsql-e2e",
+        )
+        target = RecordingTarget(failures=1)
+        worker = TaskWorker(
+            self.store,
+            self.queue,
+            target=target,
+            worker_id="pgsql-e2e-worker",
+            queue_name="pgsql-e2e",
+            encryption_provider=ENCRYPTION_PROVIDER,
+        )
+
+        retry = await worker.process_once()
+        completion = await worker.process_once()
+
+        self.assertTrue(retry.processed)
+        self.assertIsNotNone(retry.retry)
+        assert retry.retry is not None
+        self.assertTrue(retry.retry.retryable)
+        self.assertEqual(retry.retry.run.state, TaskRunState.QUEUED)
+        self.assertEqual(
+            retry.retry.queue_item.state,
+            TaskQueueItemState.AVAILABLE,
+        )
+        self.assertTrue(completion.processed)
+        self.assertIsNotNone(completion.completion)
+        run = await self.store.get_run(submission.run.run_id)
+        attempts = await self.store.list_attempts(run.run_id)
+        usage = await self.store.list_usage(run.run_id)
+
+        self.assertEqual(run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            [attempt.state for attempt in attempts],
+            [
+                TaskAttemptState.FAILED,
+                TaskAttemptState.SUCCEEDED,
+            ],
+        )
+        assert attempts[0].result is not None
+        self.assertNotIn("private", str(attempts[0].result.error))
+        self.assertEqual(target.inputs, ["retry input", "retry input"])
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0].totals.total_tokens, 8)
+
+    async def test_duplicate_submission_returns_pgsql_queue_context(
+        self,
+    ) -> None:
+        definition_hash = "queue-e2e-duplicate"
+        await self.store.register_definition(
+            _definition(),
+            definition_hash=definition_hash,
+        )
+        identity = _identity(definition_hash)
+        artifact = TaskQueueArtifact(
+            ref=TaskArtifactRef(
+                artifact_id="artifact-pgsql-duplicate",
+                store="local",
+                storage_key="runs/duplicate/input.txt",
+                media_type="text/plain",
+                size_bytes=12,
+            ),
+            purpose=TaskArtifactPurpose.INPUT,
+            retention=TaskArtifactRetention(delete_after_days=1),
+            metadata={"safe": "input"},
+        )
+
+        first = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                input_summary="safe duplicate input",
+                input_payload=_input_payload("safe duplicate input"),
+                queue="pgsql-e2e",
+            ),
+            queue_name="pgsql-e2e",
+            idempotency=identity,
+            artifacts=(artifact,),
+        )
+        second = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                input_summary="safe duplicate input",
+                input_payload=_input_payload("safe duplicate input"),
+                queue="pgsql-e2e",
+            ),
+            queue_name="pgsql-e2e",
+            idempotency=identity,
+        )
+        target = RecordingTarget()
+        worker = TaskWorker(
+            self.store,
+            self.queue,
+            target=target,
+            worker_id="pgsql-e2e-worker",
+            queue_name="pgsql-e2e",
+            encryption_provider=ENCRYPTION_PROVIDER,
+        )
+
+        result = await worker.process_once()
+        third = await self.queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                input_summary="safe duplicate input",
+                input_payload=_input_payload("safe duplicate input"),
+                queue="pgsql-e2e",
+            ),
+            queue_name="pgsql-e2e",
+            idempotency=identity,
+        )
+        depth = await self.queue.depth("pgsql-e2e")
+
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertFalse(third.created)
+        self.assertEqual(second.run.run_id, first.run.run_id)
+        self.assertEqual(third.run.run_id, first.run.run_id)
+        self.assertIsNotNone(first.queue_item)
+        self.assertIsNotNone(second.queue_item)
+        self.assertIsNotNone(third.queue_item)
+        assert first.queue_item is not None
+        assert second.queue_item is not None
+        assert third.queue_item is not None
+        self.assertEqual(
+            second.queue_item.queue_item_id,
+            first.queue_item.queue_item_id,
+        )
+        self.assertEqual(
+            second.queue_item.state,
+            TaskQueueItemState.AVAILABLE,
+        )
+        self.assertEqual(
+            third.queue_item.queue_item_id,
+            first.queue_item.queue_item_id,
+        )
+        self.assertEqual(third.queue_item.state, TaskQueueItemState.DONE)
+        self.assertEqual(third.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(second.artifacts), 1)
+        self.assertEqual(
+            second.artifacts[0].artifact_id,
+            "artifact-pgsql-duplicate",
+        )
+        self.assertEqual(
+            second.artifacts[0].purpose, TaskArtifactPurpose.INPUT
+        )
+        self.assertEqual(second.artifacts[0].metadata, {"safe": "input"})
+        self.assertTrue(result.processed)
+        self.assertIsNotNone(result.completion)
+        self.assertEqual(target.inputs, ["safe duplicate input"])
+        self.assertEqual(depth.active, 0)
+        self.assertEqual(depth.dead, 0)
+
+
+def _definition(*, max_attempts: int = 1) -> TaskDefinition:
+    return TaskDefinition(
+        task=TaskMetadata(name="pgsql_queue_e2e", version="1"),
+        input=TaskInputContract.string(),
+        output=TaskOutputContract.text(),
+        execution=TaskExecutionTarget.agent("agent.toml"),
+        run=TaskRunPolicy.queued("pgsql-e2e"),
+        retry=TaskRetryPolicy(max_attempts=max_attempts),
+    )
+
+
+def _input_payload(value: object) -> TaskExecutionPayload:
+    sanitizer = PrivacySanitizer(
+        TaskPrivacyPolicy(raw_retention_days=1),
+        encryption_provider=ENCRYPTION_PROVIDER,
+        raw_storage_allowed=True,
+    )
+    return TaskExecutionPayload(
+        input_value=sanitizer.sanitize_with_action(
+            PrivacyAction.ENCRYPT,
+            value,
+        ),
+    )
+
+
+def _identity(spec_hash: str) -> TaskIdempotencyIdentity:
+    owner = TaskIdempotencyDigest(
+        algorithm="hmac-sha256",
+        digest="a" * 64,
+        key_id="idempotency-v1",
+    )
+    input_digest = TaskIdempotencyDigest(
+        algorithm="hmac-sha256",
+        digest="b" * 64,
+        key_id="idempotency-v1",
+    )
+    return TaskIdempotencyIdentity(
+        identity_key=f"identity-{spec_hash}",
+        task_name="pgsql_queue_e2e",
+        task_version="1",
+        spec_hash=spec_hash,
+        owner_scope=owner,
+        strategy=IdempotencyMode.INPUT_HASH,
+        input=input_digest,
+    )
+
+
+if __name__ == "__main__":
+    main()

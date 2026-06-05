@@ -66,3 +66,36 @@ python3 -m pip install -U "avalan[ds4]"
 
 Use `PYDS4_BACKEND=cuda` for Linux CUDA builds. Local CPU builds are possible
 with `PYDS4_BACKEND=cpu`, but keep them limited to diagnostics.
+
+## Task PostgreSQL migrations
+
+Durable task storage uses PostgreSQL through the `task-pgsql` extra:
+
+```bash
+python3 -m pip install -U "avalan[task-pgsql]"
+```
+
+Task schema migration commands additionally require Alembic and SQLAlchemy in
+the environment that runs them:
+
+```bash
+python3 -m pip install -U alembic "SQLAlchemy>=2.0.43,<3.0.0"
+```
+
+Set `AVALAN_TASK_PGSQL_DSN` before running migration diagnostics, and set
+`AVALAN_TASK_PGSQL_SCHEMA` when using an isolated schema.
+
+Set `AVALAN_TASK_TEST_POSTGRESQL_DSN` to run the env-gated PostgreSQL
+verification tests against an existing test database. Run `make test-pgsql` to
+start a throwaway PostgreSQL container with Docker, create and drop a temporary
+test database, and run the full suite including migration and queue e2e tests.
+Set `AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN` before `make test` to run the same
+temporary database flow against an existing PostgreSQL server. Set
+`AVALAN_TASK_BENCHMARK_POSTGRESQL_DSN` only when running the opt-in EXPLAIN
+benchmark checks.
+
+For durable queue deployments, also configure `AVALAN_TASK_HMAC_KEY_ID`,
+`AVALAN_TASK_HMAC_KEY_B64`, and `AVALAN_TASK_ARTIFACT_ROOT`, then run workers
+under a process supervisor or container restart policy. See
+[Task queue operations](TASK_OPERATIONS.md) for deployment profiles and
+failure-mode runbooks.

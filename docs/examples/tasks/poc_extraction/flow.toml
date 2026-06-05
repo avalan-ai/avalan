@@ -1,0 +1,21 @@
+[flow]
+name = "poc_invoice_extraction_flow"
+version = "1"
+description = "Extract invoice line items from one PDF through a flow."
+entrypoint = "extract"
+output_node = "extract"
+
+[flow.input]
+name = "input"
+type = "file"
+mime_types = ["application/pdf"]
+
+[flow.output]
+name = "extraction"
+type = "object"
+schema_ref = "invoice.schema.json"
+
+[nodes.extract]
+type = "agent"
+ref = "agent.toml"
+input = "__task_input__"

@@ -155,6 +155,50 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         settings = orch.await_args.kwargs["settings"]
         self.assertEqual(settings.reasoning.effort, ReasoningEffort.HIGH)
 
+    async def test_create_response_forwards_text_format(self) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            text={
+                "format": {"type": "json_object"},
+                "stop": ["DONE"],
+            },
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            await self.responses.create_response(req, logger, orch)
+
+        settings = orch.await_args.kwargs["settings"]
+        self.assertEqual(settings.response_format, {"type": "json_object"})
+        self.assertEqual(settings.stop_strings, ["DONE"])
+
+    async def test_create_response_forwards_instructions_separately(
+        self,
+    ) -> None:
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = TextGenerationResponse(
+            lambda: "ok", logger=getLogger(), use_async_generator=False
+        )
+        req = ResponsesRequest(
+            model="m",
+            instructions="top-level",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+
+        with patch("avalan.server.routers.time", return_value=1):
+            await self.responses.create_response(req, logger, orch)
+
+        self.assertEqual(orch.await_args.kwargs["instructions"], "top-level")
+        messages = orch.await_args.args[0]
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].role, MessageRole.USER)
+        self.assertNotIn("top-level", str(messages))
+
     async def test_create_response_uses_orchestrator_model(self) -> None:
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)

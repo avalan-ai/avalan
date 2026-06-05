@@ -1,4 +1,6 @@
-from collections.abc import Callable
+from .types import LooseJsonValue
+
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -42,6 +44,11 @@ class GenerationCacheStrategy(StrEnum):
     QUANTIZED = "quantized"
 
 
+class PromptCacheRetention(StrEnum):
+    IN_MEMORY = "in_memory"
+    EXTENDED_24H = "24h"
+
+
 class Backend(StrEnum):
     TRANSFORMERS = "transformers"
     MLXLM = "mlx"
@@ -49,7 +56,7 @@ class Backend(StrEnum):
     DS4 = "ds4"
 
 
-ToolValue = bool | float | int | str | None | list[Any] | dict[str, Any]
+ToolValue: TypeAlias = LooseJsonValue
 
 Vendor = Literal[
     "anthropic",
@@ -241,6 +248,7 @@ class EngineSettings:
     tokenizer_subfolder: str | None = None
     access_token: str | None = None
     base_url: str | None = None
+    provider_options: dict[str, object] | None = None
     revision: str | None = None
     quantization: QuantizationSettings | None = None
     weight_type: WeightType = "auto"
@@ -340,6 +348,9 @@ class GenerationSettings:
     # (if applicable to the model) to speed up decoding
     use_cache: bool = True
     cache_strategy: GenerationCacheStrategy | None = None
+    # Hosted Responses prompt cache retention. This is intentionally separate
+    # from local transformer key/value cache settings above.
+    prompt_cache_retention: PromptCacheRetention | str | None = None
 
     # Generation output variables --------------------------------------------
     # The number of independently computed returned sequences for each element
@@ -764,6 +775,7 @@ class OperationAudioParameters:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class OperationTextParameters:
     context: str | None = None
+    instructions: str | None = None
     labeled_only: bool | None = None
     language_destination: str | None = None
     language_source: str | None = None
@@ -780,6 +792,7 @@ class OperationTextParameters:
 class OperationVisionParameters:
     path: str
     reference_path: str | None = None
+    instructions: str | None = None
     negative_prompt: str | None = None
     height: int | None = None
     downscale: float | None = 2 / 3
@@ -875,6 +888,7 @@ class ToolCallContext:
     participant_id: UUID | None = None
     session_id: UUID | None = None
     calls: list[ToolCall] | None = None
+    cancellation_checker: Callable[[], Awaitable[None]] | None = None
 
 
 @final

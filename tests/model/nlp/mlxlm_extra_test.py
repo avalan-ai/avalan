@@ -488,6 +488,76 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(resp._kwargs["settings"].do_sample)
         self.assertFalse(resp._use_async_generator)
 
+    async def test_call_forwards_instructions_to_tokenizer(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._model = "m"
+        model._tokenizer = MagicMock()
+        with (
+            patch.object(
+                self.mod.TextGenerationModel,
+                "_tokenize_input",
+                return_value={"input_ids": [[1]]},
+            ) as tok_mock,
+            patch.object(
+                self.mod.MlxLmModel, "_string_output", return_value="out"
+            ),
+        ):
+            await model(
+                "hi",
+                instructions="provider",
+                settings=GenerationSettings(use_async_generator=False),
+            )
+
+        tok_mock.assert_called_once()
+        self.assertEqual(tok_mock.call_args.kwargs["instructions"], "provider")
+
+    async def test_call_tokenizes_non_callable_wrapper(self) -> None:
+        class WrapperLikeTokenizer:
+            chat_template = None
+            bos_token = "<s>"
+
+            def __init__(self) -> None:
+                self.prompts: list[tuple[str, bool]] = []
+
+            def encode(
+                self, prompt: str, *, add_special_tokens: bool
+            ) -> list[int]:
+                self.prompts.append((prompt, add_special_tokens))
+                return [7, 8]
+
+            def decode(
+                self, _token_ids: object, *, skip_special_tokens: bool
+            ) -> str:
+                return "prompt"
+
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        tokenizer = WrapperLikeTokenizer()
+        model._model = "m"
+        model._tokenizer = tokenizer
+        with patch.object(
+            self.mod.MlxLmModel, "_string_output", return_value="out"
+        ) as str_mock:
+            resp = await model(
+                "hi",
+                settings=GenerationSettings(use_async_generator=False),
+            )
+
+        self.assertEqual(tokenizer.prompts, [("None\n\nhi\n", True)])
+        self.assertIs(resp._output_fn, str_mock)
+        self.assertEqual(resp.input_token_count, 2)
+
     def test_supports_sample_generation(self) -> None:
         model = self.mod.MlxLmModel(
             "id",

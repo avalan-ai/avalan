@@ -257,6 +257,7 @@ class MlxLmModel(TextGenerationModel):
         developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         skip_special_tokens: bool = False,
         tensor_format: Literal["pt"] = "pt",
         tool: ToolManager | None = None,
@@ -264,12 +265,13 @@ class MlxLmModel(TextGenerationModel):
         settings = settings or GenerationSettings()
         inputs = super()._tokenize_input(
             input,
-            system_prompt,
-            developer_prompt,
+            system_prompt=system_prompt,
+            developer_prompt=developer_prompt,
             context=None,
             tensor_format=tensor_format,
             tool=tool,
             chat_template_settings=asdict(settings.chat_settings),
+            instructions=instructions,
         )
         generation_settings = replace(settings, do_sample=False)
         output_fn = (

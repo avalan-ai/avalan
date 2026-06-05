@@ -1393,7 +1393,7 @@ def _skill_from_spec(
 ) -> dict[str, Any]:
     goal = getattr(spec, "goal", None)
     goal_task = getattr(goal, "task", None) if goal else None
-    goal_instructions = list(getattr(goal, "instructions", []) or [])
+    goal_instructions = list(getattr(goal, "goal_instructions", []) or [])
 
     description_parts: list[str] = []
     _append_unique(description_parts, tool_description)
@@ -1529,8 +1529,8 @@ def _build_agent_card(
         _append_unique(instructions, getattr(spec, "system_prompt", None))
         _append_unique(instructions, getattr(spec, "developer_prompt", None))
         goal = getattr(spec, "goal", None)
-        if goal and getattr(goal, "instructions", None):
-            for instruction in goal.instructions:
+        if goal and getattr(goal, "goal_instructions", None):
+            for instruction in goal.goal_instructions:
                 _append_unique(instructions, instruction)
 
         default_input_modes.add(_input_mode_for_spec(spec))

@@ -1,6 +1,7 @@
 from contextlib import AsyncExitStack
 from logging import DEBUG, INFO, Logger
 from os import chmod, geteuid
+from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any, Callable
 from unittest import IsolatedAsyncioTestCase, main
@@ -86,12 +87,77 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
                 await loader.from_file(path, agent_id=uuid4())
         await stack.aclose()
 
+    def test_validate_agent_file_permission_error_when_access_denied(self):
+        with NamedTemporaryFile() as tmp:
+            path = tmp.name
+        with (
+            patch("avalan.agent.loader.exists", return_value=True),
+            patch("avalan.agent.loader.access", return_value=False),
+        ):
+            with self.assertRaises(PermissionError):
+                OrchestratorLoader.validate_agent_file(path)
+
+    def test_validate_agent_file_returns_config_and_missing_file(self):
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("""
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+""")
+
+            config = OrchestratorLoader.validate_agent_file(path)
+
+        self.assertEqual(config["engine"]["uri"], "ai://local/model")
+        with self.assertRaises(FileNotFoundError):
+            OrchestratorLoader.validate_agent_file("missing-agent.toml")
+
+    def test_validate_agent_config_rejects_conflicting_user_templates(self):
+        with self.assertRaises(AssertionError):
+            OrchestratorLoader.validate_agent_config(
+                {
+                    "agent": {
+                        "user": "literal",
+                        "user_template": "template",
+                    },
+                    "engine": {"uri": "ai://local/model"},
+                }
+            )
+        with self.assertRaises(AssertionError):
+            OrchestratorLoader.validate_agent_config(
+                {
+                    "agent": {"type": "invalid"},
+                    "engine": {"uri": "ai://local/model"},
+                }
+            )
+
+    def test_validate_agent_config_rejects_non_string_direct_prompts(self):
+        for key in (
+            "system",
+            "developer",
+            "instructions",
+            "goal_instructions",
+            "user",
+            "user_template",
+        ):
+            with self.subTest(key=key):
+                with self.assertRaises(AssertionError):
+                    OrchestratorLoader.validate_agent_config(
+                        {
+                            "agent": {key: 1},
+                            "engine": {"uri": "ai://local/model"},
+                        }
+                    )
+
     async def test_load_default_orchestrator(self):
         config = """
 [agent]
 role = \"assistant\"
 task = \"do\"
-instructions = \"how\"
+goal_instructions = \"how\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -731,7 +797,7 @@ uri = \"ai://local/model\"
 type = \"json\"
 role = \"assistant\"
 task = \"do\"
-instructions = \"how\"
+goal_instructions = \"how\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -1002,6 +1068,83 @@ uri = \"ai://local/model\"
         self.assertIsNone(kwargs["instructions"])
         self.assertIsNone(kwargs["rules"])
 
+    async def test_agent_developer_only(self):
+        config = """
+[agent]
+developer = \"dev\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["developer"], "dev")
+        self.assertIsNone(kwargs["system"])
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertIsNone(kwargs["instructions"])
+
+    async def test_agent_system_and_developer_only(self):
+        config = """
+[agent]
+system = \"sys\"
+developer = \"dev\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["system"], "sys")
+        self.assertEqual(kwargs["developer"], "dev")
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertIsNone(kwargs["instructions"])
+
+    async def test_agent_system_developer_and_user_prompts(self):
+        config = """
+[agent]
+system = \"sys\"
+developer = \"dev\"
+user = \"prefix\"
+role = \"ignored\"
+task = \"ignored\"
+instructions = \"provider\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["system"], "sys")
+        self.assertEqual(kwargs["developer"], "dev")
+        self.assertEqual(kwargs["user"], "prefix")
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertEqual(kwargs["instructions"], "provider")
+
+    async def test_agent_direct_prompt_invalid_type_rejected(self):
+        config = """
+[agent]
+system = 1
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with self.assertRaises(AssertionError):
+            await self._run_loader(config)
+
+    async def test_agent_goal_instructions_invalid_type_rejected(self):
+        config = """
+[agent]
+task = \"do\"
+goal_instructions = 1
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with self.assertRaisesRegex(
+            AssertionError, "agent.goal_instructions must be a string"
+        ):
+            await self._run_loader(config)
+
     async def test_agent_role_task_only(self):
         config = """
 [agent]
@@ -1022,7 +1165,7 @@ uri = \"ai://local/model\"
 [agent]
 role = \"assistant\"
 task = \"do\"
-instructions = \"how\"
+goal_instructions = \"how\"
 rules = [\"r1\", \"r2\"]
 
 [engine]
@@ -1031,9 +1174,40 @@ uri = \"ai://local/model\"
         kwargs = await self._run_loader(config)
         self.assertEqual(kwargs["role"], "assistant")
         self.assertEqual(kwargs["task"], "do")
-        self.assertEqual(kwargs["instructions"], "how")
+        self.assertEqual(kwargs["goal_instructions"], "how")
+        self.assertIsNone(kwargs["instructions"])
         self.assertEqual(kwargs["rules"], ["r1", "r2"])
         self.assertIsNone(kwargs["system"])
+
+    async def test_agent_rejects_old_goal_instructions_field(self):
+        config = """
+[agent]
+role = \"assistant\"
+task = \"do\"
+instructions = \"how\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with self.assertRaisesRegex(
+            AssertionError,
+            "agent.instructions is reserved.*agent.goal_instructions",
+        ):
+            await self._run_loader(config)
+
+    async def test_agent_rejects_goal_instructions_without_task(self):
+        config = """
+[agent]
+role = \"assistant\"
+goal_instructions = \"how\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        with self.assertRaisesRegex(
+            AssertionError, "agent.goal_instructions requires agent.task"
+        ):
+            await self._run_loader(config)
 
     async def test_agent_user_only(self):
         config = """
@@ -1058,6 +1232,22 @@ uri = \"ai://local/model\"
         kwargs = await self._run_loader(config)
         self.assertEqual(kwargs["user_template"], "u.md")
         self.assertIsNone(kwargs.get("user"))
+
+    async def test_agent_provider_instructions_and_user_prompt(self):
+        config = """
+[agent]
+instructions = \"provider\"
+user = \"prefix {{input}}\"
+
+[engine]
+uri = \"ai://local/model\"
+"""
+        kwargs = await self._run_loader(config)
+        self.assertEqual(kwargs["instructions"], "provider")
+        self.assertEqual(kwargs["user"], "prefix {{input}}")
+        self.assertIsNone(kwargs["role"])
+        self.assertIsNone(kwargs["task"])
+        self.assertIsNone(kwargs["goal_instructions"])
 
 
 class LoadJsonOrchestratorVariantsTestCase(IsolatedAsyncioTestCase):
@@ -1152,7 +1342,7 @@ debug_source = \"{debug_path}\"
 [agent]
 role = \"assistant\"
 task = \"do\"
-instructions = \"ins\"
+goal_instructions = \"ins\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -1193,6 +1383,104 @@ value = { type = \"string\", description = \"d\" }
                     {"value": {"type": "string", "description": "d"}},
                 )
         await stack.aclose()
+
+    async def test_file_delivery_profile_hint_is_not_engine_setting(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+file_delivery_profile = \"multimodal\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=uuid4())
+
+                self.assertEqual(result, "orch")
+                settings = lfs_patch.call_args.args[0]
+                self.assertEqual(settings.engine_config, {})
+            await stack.aclose()
+
+    async def test_invalid_file_delivery_profile_hint_rejects(self):
+        for raw_value in ('"binary"', "42"):
+            with self.subTest(raw_value=raw_value):
+                config = f"""
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+file_delivery_profile = {raw_value}
+"""
+                with TemporaryDirectory() as tmp:
+                    path = f"{tmp}/agent.toml"
+                    with open(path, "w", encoding="utf-8") as fh:
+                        fh.write(config)
+
+                    hub = MagicMock(spec=HuggingfaceHub)
+                    logger = MagicMock(spec=Logger)
+                    stack = AsyncExitStack()
+                    loader = OrchestratorLoader(
+                        hub=hub,
+                        logger=logger,
+                        participant_id=uuid4(),
+                        stack=stack,
+                    )
+
+                    with self.assertRaises(AssertionError):
+                        await loader.from_file(path, agent_id=uuid4())
+                    with self.assertRaises(AssertionError):
+                        OrchestratorLoader.validate_agent_file(path)
+                    await stack.aclose()
+
+    async def test_hosted_file_delivery_profile_hint_rejects(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://openai/deployment\"
+file_delivery_profile = \"multimodal\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with self.assertRaisesRegex(AssertionError, "local models"):
+                await loader.from_file(path, agent_id=uuid4())
+            with self.assertRaisesRegex(AssertionError, "local models"):
+                OrchestratorLoader.validate_agent_file(path)
+            await stack.aclose()
 
     async def test_run_chat_settings_from_file(self):
         config = """
@@ -1287,7 +1575,7 @@ effort = \"xhigh\"
 [agent]
 role = \"assistant\"
 task = \"do\"
-instructions = \"how\"
+goal_instructions = \"how\"
 
 [engine]
 uri = \"ai://local/model\"
@@ -1374,7 +1662,7 @@ uri = \"ai://local/model\"
                     participant_id=uuid4(),
                     stack=stack,
                 )
-                result = await loader.from_file(path, agent_id=None)
+                result = await loader.from_file(str(path), agent_id=None)
 
                 self.assertEqual(result, "orch")
                 lfs_patch.assert_awaited_once()
@@ -1489,6 +1777,133 @@ max_new_tokens = 42
                 self.assertEqual(settings.call_options["top_p"], 0.9)
                 self.assertEqual(settings.call_options["top_k"], 5)
                 self.assertEqual(settings.call_options["max_new_tokens"], 42)
+            await stack.aclose()
+
+    async def test_run_response_format_schema_ref_is_resolved(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.response_format]
+type = \"json_schema\"
+name = \"answer\"
+schema_ref = \"schemas/answer.json\"
+strict = true
+"""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schemas"
+            path = root / "agent.toml"
+            schema_dir.mkdir()
+            with open(schema_dir / "answer.json", "w", encoding="utf-8") as fh:
+                fh.write('{"type": "object"}')
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                result = await loader.from_file(path, agent_id=None)
+
+                self.assertEqual(result, "orch")
+                settings = lfs_patch.call_args.args[0]
+                response_format = settings.call_options["response_format"]
+                self.assertEqual(
+                    response_format["schema"],
+                    {"type": "object"},
+                )
+                self.assertNotIn("schema_ref", response_format)
+            await stack.aclose()
+
+    async def test_chat_style_response_format_schema_ref_is_resolved(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.response_format]
+type = \"json_schema\"
+
+[run.response_format.json_schema]
+name = \"answer\"
+schema_ref = \"schemas/answer.json\"
+"""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            schema_dir = root / "schemas"
+            path = root / "agent.toml"
+            schema_dir.mkdir()
+            with open(schema_dir / "answer.json", "w", encoding="utf-8") as fh:
+                fh.write('{"type": "object"}')
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as lfs_patch:
+                stack = AsyncExitStack()
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(str(path), agent_id=None)
+
+                settings = lfs_patch.call_args.args[0]
+                json_schema = settings.call_options["response_format"][
+                    "json_schema"
+                ]
+                self.assertEqual(json_schema["schema"], {"type": "object"})
+                self.assertNotIn("schema_ref", json_schema)
+            await stack.aclose()
+
+    async def test_response_format_schema_ref_rejects_escape_safely(self):
+        config = """
+[agent]
+
+[engine]
+uri = \"ai://local/model\"
+
+[run.response_format]
+type = \"json_schema\"
+name = \"answer\"
+schema_ref = \"../private/answer.json\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with self.assertRaises(AssertionError) as error:
+                await loader.from_file(str(path), agent_id=None)
+
+            self.assertIn(
+                "run.response_format.schema_ref",
+                str(error.exception),
+            )
+            self.assertNotIn("private/answer", str(error.exception))
             await stack.aclose()
 
 
@@ -2061,7 +2476,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             agent_config={
                 "role": "assistant",
                 "task": "do",
-                "instructions": "how",
+                "goal_instructions": "how",
             },
             uri="ai://local/model",
             engine_config={},
@@ -2138,7 +2553,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         agent_config = {
             "role": "assistant",
             "task": "do",
-            "instructions": "how",
+            "goal_instructions": "how",
         }
 
         with patch("avalan.agent.loader.JsonOrchestrator") as orch_patch:

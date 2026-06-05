@@ -3,6 +3,7 @@ from .....entities import (
     Input,
     Message,
     MessageRole,
+    PromptCacheRetention,
     ReasoningEffort,
     ReasoningToken,
     Token,
@@ -10,6 +11,7 @@ from .....entities import (
     ToolCallResult,
     ToolCallToken,
 )
+from .....model.provider import ProviderFamily, provider_string_option
 from .....model.response.text import TextGenerationResponse
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
@@ -25,6 +27,7 @@ from . import (
 from importlib import import_module
 from mimetypes import guess_type
 from typing import Any, AsyncIterator, cast
+from urllib.parse import urlparse
 
 
 class _OmitPlaceholder:  # noqa: D101
@@ -38,12 +41,25 @@ class OpenAIStream(TextGenerationVendorStream):
     _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
 
-    def __init__(self, stream: AsyncIterator[Any]) -> None:
+    def __init__(
+        self,
+        stream: AsyncIterator[Any],
+        *,
+        provider_family: ProviderFamily | str = ProviderFamily.OPENAI,
+    ) -> None:
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_calls: dict[str, dict[str, str | list[str] | None]] = {}
+            terminal_usage: object | None = None
 
             async for event in stream:
-                etype = getattr(event, "type", None)
+                etype = OpenAIClient._response_field(event, "type")
+
+                if etype == "response.completed":
+                    response = OpenAIClient._response_field(event, "response")
+                    usage = OpenAIClient._response_field(response, "usage")
+                    if usage is not None:
+                        terminal_usage = usage
+                    continue
 
                 if etype == "response.output_item.added":
                     item = getattr(event, "item", None)
@@ -127,7 +143,10 @@ class OpenAIStream(TextGenerationVendorStream):
 
                     continue
 
-        super().__init__(generator())
+            if terminal_usage is not None:
+                self._usage = terminal_usage
+
+        super().__init__(generator(), provider_family=provider_family)
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
@@ -135,10 +154,35 @@ class OpenAIStream(TextGenerationVendorStream):
 
 class OpenAIClient(TextGenerationVendor):
     _DEFAULT_MODEL_ID = "default"
+    _REASONING_EFFORTS = frozenset(
+        {
+            ReasoningEffort.MINIMAL,
+            ReasoningEffort.LOW,
+            ReasoningEffort.MEDIUM,
+            ReasoningEffort.HIGH,
+        }
+    )
     _client: Any
+    _extra_query: dict[str, str] | None
+    _is_azure: bool
 
-    def __init__(self, api_key: str | None, base_url: str | None):
+    def __init__(
+        self,
+        api_key: str | None,
+        base_url: str | None,
+        *,
+        azure_api_version: str | None = None,
+    ):
         global Omit
+
+        self._is_azure = self._is_azure_base_url(base_url)
+        self._extra_query = self._azure_extra_query(
+            base_url, azure_api_version
+        )
+        if self._is_azure and api_key is None:
+            raise AssertionError(
+                "Azure OpenAI Responses requires api-key authentication"
+            )
 
         openai_module = import_module("openai")
         async_openai_type = getattr(openai_module, "AsyncOpenAI")
@@ -160,11 +204,13 @@ class OpenAIClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         timeout: int | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str] | TextGenerationSingleStream:
         template_messages = self._template_messages(messages)
+        use_reasoning_profile = self._uses_reasoning_profile(model_id)
         kwargs: dict[str, Any] = {
             "extra_headers": {
                 "X-Title": "Avalan",
@@ -172,23 +218,38 @@ class OpenAIClient(TextGenerationVendor):
             },
             "model": model_id or self._DEFAULT_MODEL_ID,
             "input": template_messages,
+            "store": False,
             "stream": use_async_generator,
             "timeout": timeout,
         }
+        if instructions is not None:
+            assert isinstance(
+                instructions, str
+            ), "OpenAI Responses instructions must be a string"
+            kwargs["instructions"] = instructions
+        if self._extra_query is not None:
+            kwargs["extra_query"] = self._extra_query
         if settings:
             if settings.max_new_tokens is not None:
                 kwargs["max_output_tokens"] = settings.max_new_tokens
-            if settings.temperature is not None:
+            if settings.temperature is not None and not use_reasoning_profile:
                 kwargs["temperature"] = settings.temperature
-            if settings.top_p is not None:
+            if settings.top_p is not None and not use_reasoning_profile:
                 kwargs["top_p"] = settings.top_p
-            if settings.stop_strings is not None:
-                kwargs["text"] = {"stop": settings.stop_strings}
-            if settings.response_format is not None:
-                kwargs["response_format"] = settings.response_format
-            reasoning = OpenAIClient._reasoning_config(settings)
+            text = OpenAIClient._text_config(settings)
+            if text:
+                kwargs["text"] = text
+            reasoning = OpenAIClient._reasoning_config(
+                settings,
+                restricted=use_reasoning_profile,
+            )
             if reasoning:
                 kwargs["reasoning"] = reasoning
+            prompt_cache_retention = (
+                OpenAIClient._prompt_cache_retention_config(settings)
+            )
+            if prompt_cache_retention is not None:
+                kwargs["prompt_cache_retention"] = prompt_cache_retention
         if tool:
             schemas = OpenAIClient._tool_schemas(tool)
             if schemas:
@@ -196,10 +257,25 @@ class OpenAIClient(TextGenerationVendor):
         client_stream = await self._client.responses.create(**kwargs)
 
         if use_async_generator:
-            return OpenAIStream(stream=client_stream)
+            return OpenAIStream(
+                stream=client_stream,
+                provider_family=self._usage_provider_family,
+            )
 
         content = OpenAIClient._non_stream_response_content(client_stream)
-        return TextGenerationSingleStream(content)
+        return TextGenerationSingleStream(
+            content,
+            provider_family=self._usage_provider_family,
+            usage=OpenAIClient._response_field(client_stream, "usage"),
+        )
+
+    @property
+    def _usage_provider_family(self) -> ProviderFamily:
+        return (
+            ProviderFamily.AZURE_OPENAI
+            if self._is_azure
+            else ProviderFamily.OPENAI
+        )
 
     def _template_messages(
         self,
@@ -255,13 +331,162 @@ class OpenAIClient(TextGenerationVendor):
     @staticmethod
     def _reasoning_config(
         settings: GenerationSettings,
+        *,
+        restricted: bool = False,
     ) -> dict[str, str] | None:
         effort = settings.reasoning.effort
-        if effort is None:
+        if effort is None or effort == ReasoningEffort.NONE:
             return None
         if effort == ReasoningEffort.MAX:
             effort = ReasoningEffort.XHIGH
+        if restricted and effort not in OpenAIClient._REASONING_EFFORTS:
+            raise AssertionError(
+                "OpenAI Responses reasoning effort is not supported"
+            )
         return {"effort": effort.value}
+
+    @staticmethod
+    def _text_config(settings: GenerationSettings) -> dict[str, Any]:
+        text: dict[str, Any] = {}
+        if settings.response_format is not None:
+            text["format"] = OpenAIClient._response_text_format(
+                settings.response_format
+            )
+        if settings.stop_strings is not None:
+            text["stop"] = settings.stop_strings
+        return text
+
+    @staticmethod
+    def _prompt_cache_retention_config(
+        settings: GenerationSettings,
+    ) -> str | None:
+        retention = settings.prompt_cache_retention
+        if retention is None:
+            return None
+        if isinstance(retention, PromptCacheRetention):
+            return retention.value
+        assert isinstance(
+            retention, str
+        ), "OpenAI prompt cache retention must be a string"
+        assert retention in {
+            item.value for item in PromptCacheRetention
+        }, "OpenAI prompt cache retention is not supported"
+        return retention
+
+    @staticmethod
+    def _response_text_format(
+        response_format: dict[str, Any],
+    ) -> dict[str, Any]:
+        assert isinstance(response_format, dict)
+        format_type = response_format.get("type")
+        match format_type:
+            case "text" | "json_object":
+                return {"type": format_type}
+            case "json_schema":
+                return OpenAIClient._json_schema_format(response_format)
+            case _:
+                raise AssertionError(
+                    "OpenAI Responses response format is not supported"
+                )
+
+    @staticmethod
+    def _json_schema_format(
+        response_format: dict[str, Any],
+    ) -> dict[str, Any]:
+        has_chat_schema = "json_schema" in response_format
+        has_responses_schema = "schema" in response_format
+        if has_chat_schema == has_responses_schema:
+            raise AssertionError(
+                "OpenAI Responses json_schema format is ambiguous"
+            )
+        if has_chat_schema:
+            return OpenAIClient._chat_json_schema_format(response_format)
+        return OpenAIClient._responses_json_schema_format(response_format)
+
+    @staticmethod
+    def _chat_json_schema_format(
+        response_format: dict[str, Any],
+    ) -> dict[str, Any]:
+        json_schema = response_format["json_schema"]
+        assert isinstance(json_schema, dict)
+        schema = json_schema.get("schema")
+        assert isinstance(schema, dict)
+        name = json_schema.get("name") or schema.get("title") or "response"
+        assert isinstance(name, str) and name
+        output: dict[str, Any] = {
+            "type": "json_schema",
+            "name": name,
+            "schema": schema,
+        }
+        if "strict" in json_schema:
+            strict = json_schema["strict"]
+            assert isinstance(strict, bool)
+            output["strict"] = strict
+        return output
+
+    @staticmethod
+    def _responses_json_schema_format(
+        response_format: dict[str, Any],
+    ) -> dict[str, Any]:
+        schema = response_format["schema"]
+        name = response_format.get("name")
+        assert isinstance(schema, dict)
+        assert isinstance(name, str) and name
+        output: dict[str, Any] = {
+            "type": "json_schema",
+            "name": name,
+            "schema": schema,
+        }
+        if "strict" in response_format:
+            strict = response_format["strict"]
+            assert isinstance(strict, bool)
+            output["strict"] = strict
+        return output
+
+    @staticmethod
+    def _is_azure_base_url(base_url: str | None) -> bool:
+        if not isinstance(base_url, str):
+            return False
+        host = urlparse(base_url).hostname or ""
+        return host.endswith(".openai.azure.com") or host.endswith(
+            ".cognitiveservices.azure.com"
+        )
+
+    @staticmethod
+    def _azure_extra_query(
+        base_url: str | None,
+        azure_api_version: str | None,
+    ) -> dict[str, str] | None:
+        is_azure = OpenAIClient._is_azure_base_url(base_url)
+        parsed = urlparse(base_url or "")
+        if is_azure and parsed.query:
+            raise AssertionError(
+                "Azure OpenAI base_url must not include query parameters"
+            )
+        if azure_api_version is None:
+            if is_azure and not parsed.path.rstrip("/").endswith("/openai/v1"):
+                raise AssertionError(
+                    "Azure OpenAI Responses base_url must end with /openai/v1/"
+                )
+            return None
+        assert isinstance(azure_api_version, str) and azure_api_version.strip()
+        if not is_azure:
+            raise AssertionError(
+                "azure_api_version is only supported for Azure OpenAI"
+            )
+        return {"api-version": azure_api_version}
+
+    def _uses_reasoning_profile(self, model_id: str) -> bool:
+        normalized = (model_id or self._DEFAULT_MODEL_ID).lower()
+        return (
+            self._is_azure
+            or normalized.startswith("gpt-5")
+            or (
+                len(normalized) > 1
+                and normalized[0] == "o"
+                and normalized[1].isdigit()
+            )
+        )
 
     @staticmethod
     def _content_block(block: dict[str, Any]) -> dict[str, Any]:
@@ -336,7 +561,10 @@ class OpenAIClient(TextGenerationVendor):
         elif isinstance(image_url, str):
             payload["image_url"] = image_url
         elif isinstance(image_data, str):
-            payload["image_url"] = f"data:{mime_type};base64,{image_data}"
+            payload["image_url"] = OpenAIClient._image_data_url(
+                image_data,
+                mime_type,
+            )
         else:
             raise AssertionError(
                 "OpenAI image blocks require file_id, url, or data"
@@ -345,6 +573,18 @@ class OpenAIClient(TextGenerationVendor):
         if isinstance(detail, str):
             payload["detail"] = detail
         return payload
+
+    @staticmethod
+    def _image_data_url(image_data: str, mime_type: object) -> str:
+        if image_data.startswith("data:"):
+            return image_data
+        assert isinstance(
+            mime_type, str
+        ), "OpenAI image blocks require an image MIME type"
+        assert mime_type.startswith(
+            "image/"
+        ), "OpenAI image blocks require an image MIME type"
+        return f"data:{mime_type};base64,{image_data}"
 
     @staticmethod
     def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
@@ -369,40 +609,43 @@ class OpenAIClient(TextGenerationVendor):
 
     @staticmethod
     def _non_stream_response_content(response: object) -> str:
-        def _get(value: object, attribute: str) -> object | None:
-            if isinstance(value, dict):
-                return value.get(attribute)
-            return getattr(value, attribute, None)
-
         parts: list[str] = []
-        output = _get(response, "output")
+        output = OpenAIClient._response_field(response, "output")
         if not isinstance(output, list):
             return "".join(parts)
 
         for item in output:
-            item_type = _get(item, "type")
-            contents = _get(item, "content")
+            item_type = OpenAIClient._response_field(item, "type")
+            contents = OpenAIClient._response_field(item, "content")
             if not isinstance(contents, list):
                 contents = []
 
             if item_type in {None, "message", "output_text"}:
                 for content in contents:
-                    text = _get(content, "text")
+                    text = OpenAIClient._response_field(content, "text")
                     if isinstance(text, str):
                         parts.append(text)
                 continue
 
             if item_type in {"tool_call", "function_call"}:
-                call = _get(item, "call") or item
-                function = _get(call, "function") or call
+                call = OpenAIClient._response_field(item, "call") or item
+                function = (
+                    OpenAIClient._response_field(call, "function") or call
+                )
                 token = TextGenerationVendor.build_tool_call_token(
-                    _get(call, "id"),
-                    _get(function, "name"),
-                    _get(function, "arguments"),
+                    OpenAIClient._response_field(call, "id"),
+                    OpenAIClient._response_field(function, "name"),
+                    OpenAIClient._response_field(function, "arguments"),
                 )
                 parts.append(token.token)
 
         return "".join(parts)
+
+    @staticmethod
+    def _response_field(value: object, attribute: str) -> object | None:
+        if isinstance(value, dict):
+            return value.get(attribute)
+        return getattr(value, attribute, None)
 
 
 class OpenAINonStreamingResponse(TextGenerationResponse):
@@ -438,10 +681,17 @@ class OpenAIModel(TextGenerationVendorModel):
         self,
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._settings.base_url or self._settings.access_token
-        return OpenAIClient(
-            base_url=self._settings.base_url,
-            api_key=self._settings.access_token,
+        azure_api_version = provider_string_option(
+            self._settings.provider_options,
+            "azure_api_version",
         )
+        client_kwargs: dict[str, str | None] = {
+            "api_key": self._settings.access_token,
+            "base_url": self._settings.base_url,
+        }
+        if azure_api_version is not None:
+            client_kwargs["azure_api_version"] = azure_api_version
+        return OpenAIClient(**client_kwargs)
 
     async def __call__(
         self,
@@ -450,6 +700,7 @@ class OpenAIModel(TextGenerationVendorModel):
         developer_prompt: str | None = None,
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
     ) -> TextGenerationResponse:
         generation_settings = settings or GenerationSettings()
@@ -458,6 +709,7 @@ class OpenAIModel(TextGenerationVendorModel):
             self._model_id,
             messages,
             generation_settings,
+            instructions=instructions,
             tool=tool,
             use_async_generator=generation_settings.use_async_generator,
         )

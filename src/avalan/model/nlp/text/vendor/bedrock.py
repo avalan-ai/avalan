@@ -13,6 +13,7 @@ from .....entities import (
     ToolCallResult,
     ToolCallToken,
 )
+from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
@@ -108,8 +109,27 @@ class BedrockStream(TextGenerationVendorStream):
     def __init__(self, events: AsyncIterator[Any]):
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
+            message_stopped = False
+            terminal_usage: object | None = None
 
             async for event in events:
+                metadata = _get(event, "metadata")
+                usage = (
+                    metadata.get("usage")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                if usage is not None:
+                    terminal_usage = usage
+                    continue
+
+                if _get(event, "messageStop"):
+                    message_stopped = True
+                    continue
+
+                if message_stopped:
+                    continue
+
                 content_start = _get(event, "contentBlockStart")
                 if content_start:
                     block_index = content_start.get("contentBlockIndex")
@@ -206,10 +226,10 @@ class BedrockStream(TextGenerationVendorStream):
                         yield token
                     continue
 
-                if _get(event, "messageStop"):
-                    break
+            if terminal_usage is not None:
+                self._usage = terminal_usage
 
-        super().__init__(generator())
+        super().__init__(generator(), provider_family=ProviderFamily.BEDROCK)
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
@@ -253,9 +273,13 @@ class BedrockClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> AsyncIterator[Token | TokenDetail | str] | TextGenerationSingleStream:
+        assert (
+            instructions is None
+        ), "Amazon Bedrock does not support provider instructions"
         client = await self._client_instance()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])
@@ -291,7 +315,14 @@ class BedrockClient(TextGenerationVendor):
                 return BedrockStream(events=events)
 
             response = await client.converse(**payload)
-            return TextGenerationSingleStream(self._response_text(response))
+            usage = (
+                response.get("usage") if isinstance(response, dict) else None
+            )
+            return TextGenerationSingleStream(
+                self._response_text(response),
+                provider_family=ProviderFamily.BEDROCK,
+                usage=usage,
+            )
         except Exception as error:
             if self._is_invalid_model_identifier_error(error):
                 self._raise_invalid_model_identifier(model_id, error)

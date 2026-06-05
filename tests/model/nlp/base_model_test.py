@@ -8,6 +8,7 @@ import torch
 from avalan.entities import (
     GenerationCacheStrategy,
     GenerationSettings,
+    PromptCacheRetention,
     TransformerEngineSettings,
 )
 from avalan.model.nlp import BaseNLPModel, inference_mode
@@ -113,6 +114,7 @@ class BaseNLPModelGenerateTestCase(TestCase):
         settings = GenerationSettings(
             use_cache=False,
             cache_strategy=GenerationCacheStrategy.MAMBA,
+            prompt_cache_retention=PromptCacheRetention.EXTENDED_24H,
         )
         with patch(
             "avalan.model.nlp.inference_mode", return_value=nullcontext()
@@ -125,3 +127,4 @@ class BaseNLPModelGenerateTestCase(TestCase):
             kwargs["cache_implementation"],
             GenerationCacheStrategy.MAMBA,
         )
+        self.assertNotIn("prompt_cache_retention", kwargs)

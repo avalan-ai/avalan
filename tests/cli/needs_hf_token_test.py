@@ -1,6 +1,7 @@
 import unittest
 from argparse import Namespace
-from tempfile import NamedTemporaryFile
+from pathlib import Path
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -104,6 +105,183 @@ class NeedsHfTokenTestCase(unittest.TestCase):
     def test_agent_missing_engine_defaults_true(self):
         args = Namespace(command="agent", agent_command="serve")
         self.assertTrue(CLI._needs_hf_token(args))
+
+    def test_task_command_does_not_need_token(self):
+        args = Namespace(command="task", task_command="validate")
+
+        self.assertFalse(CLI._needs_hf_token(args))
+
+    def test_task_run_local_agent_requires_token(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents = root / "agents"
+            agents.mkdir()
+            (agents / "local.toml").write_text(
+                '[engine]\nuri = "ai://local/private-model"',
+                encoding="utf-8",
+            )
+            task = root / "task.toml"
+            task.write_text(
+                '[execution]\ntype = "agent"\nref = "agents/local.toml"',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                command="task",
+                task_command="run",
+                definition=str(task),
+            )
+            with patch.object(
+                ModelManager,
+                "parse_uri",
+                return_value=SimpleNamespace(is_local=True, params={}),
+            ) as parse_patch:
+                self.assertTrue(CLI._needs_hf_token(args))
+        parse_patch.assert_called_once_with("ai://local/private-model")
+
+    def test_task_enqueue_remote_agent_does_not_need_token(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents = root / "agents"
+            agents.mkdir()
+            (agents / "remote.toml").write_text(
+                '[engine]\nuri = "ai://openai/gpt-4o-mini"',
+                encoding="utf-8",
+            )
+            task = root / "task.toml"
+            task.write_text(
+                '[execution]\ntype = "agent"\nref = "agents/remote.toml"',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                command="task",
+                task_command="enqueue",
+                definition=str(task),
+            )
+            with patch.object(
+                ModelManager,
+                "parse_uri",
+                return_value=SimpleNamespace(is_local=False, params={}),
+            ) as parse_patch:
+                self.assertFalse(CLI._needs_hf_token(args))
+        parse_patch.assert_called_once_with("ai://openai/gpt-4o-mini")
+
+    def test_task_run_local_ds4_agent_does_not_need_token(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents = root / "agents"
+            agents.mkdir()
+            (agents / "ds4.toml").write_text(
+                '[engine]\nuri = "ai://local/./model.gguf?backend=ds4"',
+                encoding="utf-8",
+            )
+            task = root / "task.toml"
+            task.write_text(
+                '[execution]\ntype = "agent"\nref = "agents/ds4.toml"',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                command="task",
+                task_command="run",
+                definition=str(task),
+                backend="transformers",
+            )
+            with patch.object(
+                ModelManager,
+                "parse_uri",
+                return_value=SimpleNamespace(
+                    is_local=True, params={"backend": "ds4"}
+                ),
+            ) as parse_patch:
+                self.assertFalse(CLI._needs_hf_token(args))
+        parse_patch.assert_called_once_with(
+            "ai://local/./model.gguf?backend=ds4"
+        )
+
+    def test_task_run_missing_agent_defers_to_task_validation(self):
+        with TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task.toml"
+            task.write_text(
+                '[execution]\ntype = "agent"\nref = "agents/missing.toml"',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                command="task",
+                task_command="run",
+                definition=str(task),
+            )
+            with patch.object(ModelManager, "parse_uri") as parse_patch:
+                self.assertFalse(CLI._needs_hf_token(args))
+        parse_patch.assert_not_called()
+
+    def test_task_agent_engine_uri_rejects_missing_definition_argument(self):
+        args = Namespace(command="task", task_command="run")
+
+        self.assertIsNone(CLI._task_agent_engine_uri(args))
+
+    def test_task_agent_engine_uri_rejects_missing_execution_section(self):
+        with TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task.toml"
+            task.write_text("[task]\nname = 'example'", encoding="utf-8")
+            args = Namespace(
+                command="task",
+                task_command="run",
+                definition=str(task),
+            )
+
+            self.assertIsNone(CLI._task_agent_engine_uri(args))
+
+    def test_task_agent_engine_uri_rejects_non_agent_target(self):
+        with TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task.toml"
+            task.write_text(
+                '[execution]\ntype = "flow"\nref = "flows/example.toml"',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                command="task",
+                task_command="run",
+                definition=str(task),
+            )
+
+            self.assertIsNone(CLI._task_agent_engine_uri(args))
+
+    def test_task_agent_engine_uri_rejects_missing_agent_ref(self):
+        with TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task.toml"
+            task.write_text(
+                '[execution]\ntype = "agent"',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                command="task",
+                task_command="run",
+                definition=str(task),
+            )
+
+            self.assertIsNone(CLI._task_agent_engine_uri(args))
+
+    def test_task_agent_engine_uri_rejects_missing_engine_section(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agents = root / "agents"
+            agents.mkdir()
+            (agents / "missing_engine.toml").write_text(
+                "[agent]\nrole = 'assistant'",
+                encoding="utf-8",
+            )
+            task = root / "task.toml"
+            task.write_text(
+                '[execution]\ntype = "agent"\n'
+                'ref = "agents/missing_engine.toml"',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                command="task",
+                task_command="run",
+                definition=str(task),
+            )
+
+            self.assertIsNone(CLI._task_agent_engine_uri(args))
 
     def test_agent_proxy_remote_no_token(self):
         args = Namespace(

@@ -142,6 +142,7 @@ class ImageTextToTextModel(ImageToTextModel):
         settings: GenerationSettings | None = None,
         width: int | None = None,
         *,
+        instructions: str | None = None,
         skip_special_tokens: bool = True,
         tensor_format: Literal["pt"] = "pt",
     ) -> str:
@@ -158,6 +159,13 @@ class ImageTextToTextModel(ImageToTextModel):
             image = image.resize((width, height), Image.Resampling.LANCZOS)
 
         messages = []
+        if instructions:
+            messages.append(
+                {
+                    "role": str(MessageRole.SYSTEM),
+                    "content": [{"type": "text", "text": instructions}],
+                }
+            )
         if system_prompt:
             messages.append(
                 {

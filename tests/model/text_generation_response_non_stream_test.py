@@ -4,18 +4,33 @@ from unittest import IsolatedAsyncioTestCase
 from avalan.entities import GenerationSettings, Token
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import TextGenerationSingleStream
+from avalan.task.usage import UsageSource, usage_observation_from_response
 
 
 class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
     async def test_str_prefetches_single_stream(self) -> None:
         settings = GenerationSettings()
+        usage = {"input_tokens": 2}
+        stream = TextGenerationSingleStream(
+            "hello",
+            provider_family="openai",
+            usage=usage,
+        )
         response = TextGenerationResponse(
-            lambda **_: TextGenerationSingleStream("hello"),
+            stream,
             logger=getLogger("response"),
             generation_settings=settings,
             settings=settings,
             use_async_generator=False,
         )
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(response.usage, usage)
+        self.assertEqual(response.provider_family, "openai")
+        self.assertFalse(response.is_async_generator)
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
         self.assertEqual(str(response), "hello")
         self.assertEqual(response.output_token_count, len("hello"))
         response._ensure_non_stream_prefetched()
@@ -32,6 +47,70 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
         response._buffer.write("prefilled")
         text = await response.to_str()
         self.assertEqual(text, "")
+
+    async def test_to_json_preserves_returned_single_stream_usage(
+        self,
+    ) -> None:
+        settings = GenerationSettings()
+        usage = {
+            "input_tokens": 2,
+            "output_tokens": 1,
+            "total_tokens": 3,
+        }
+        response = TextGenerationResponse(
+            lambda **_: TextGenerationSingleStream(
+                '{"ok": true}',
+                provider_family="openai",
+                usage=usage,
+            ),
+            logger=getLogger("response-single-stream-json"),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=False,
+        )
+
+        self.assertEqual(await response.to_json(), '{"ok": true}')
+        observation = usage_observation_from_response(response)
+
+        self.assertEqual(response.usage, usage)
+        self.assertEqual(response.provider_family, "openai")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.totals.input_tokens, 2)
+        self.assertEqual(observation.totals.output_tokens, 1)
+        self.assertEqual(observation.totals.total_tokens, 3)
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
+
+    async def test_to_json_drops_malformed_returned_single_stream_usage(
+        self,
+    ) -> None:
+        settings = GenerationSettings()
+        response = TextGenerationResponse(
+            lambda **_: TextGenerationSingleStream(
+                '{"ok": false}',
+                provider_family="openai",
+                usage={
+                    "input_tokens": "private prompt",
+                    "output_tokens": -1,
+                    "total_tokens": True,
+                },
+            ),
+            logger=getLogger("response-single-stream-json-invalid-usage"),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=False,
+        )
+
+        self.assertEqual(await response.to_json(), '{"ok": false}')
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.source, UsageSource.ESTIMATED)
+        self.assertEqual(observation.totals.input_tokens, 0)
+        self.assertEqual(observation.totals.output_tokens, 13)
+        self.assertIsNone(observation.totals.total_tokens)
+        self.assertEqual(observation.metadata, {"provider_family": "openai"})
 
     async def test_prefetch_handles_token_instances(self) -> None:
         settings = GenerationSettings()
@@ -55,6 +134,7 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
             settings=settings,
             use_async_generator=False,
         )
+        self.assertIsNone(response.provider_family)
         self.assertIn("generic", str(response))
 
     async def test_streaming_str_and_prefetch_guard(self) -> None:

@@ -599,7 +599,7 @@ description = "Classes Without Boilerplate"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\" or extra == \"vendors\") or extra == \"server\" or extra == \"litellm\" or extra == \"vendors\""
+markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\" or extra == \"vendors\") or extra == \"server\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"task\""
 files = [
     {file = "attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373"},
     {file = "attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11"},
@@ -630,7 +630,7 @@ description = "Screen-scraping library"
 optional = true
 python-versions = ">=3.7.0"
 groups = ["main"]
-markers = "extra == \"memory\""
+markers = "extra == \"memory\" or extra == \"task-documents\""
 files = [
     {file = "beautifulsoup4-4.14.2-py3-none-any.whl", hash = "sha256:5ef6fa3a8cbece8488d66985560f97ed091e22bbc4e9c2338508a9d5de6d4515"},
     {file = "beautifulsoup4-4.14.2.tar.gz", hash = "sha256:2a98ab9f944a11acee9cc848508ec28d9228abfd522ef0fad6a02a72e0ded69e"},
@@ -1216,7 +1216,7 @@ description = "Colored terminal output for Python's logging module"
 optional = true
 python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
 groups = ["main"]
-markers = "python_version < \"3.14\" and extra == \"memory\""
+markers = "python_version < \"3.14\" and (extra == \"memory\" or extra == \"task-documents\")"
 files = [
     {file = "coloredlogs-15.0.1-py2.py3-none-any.whl", hash = "sha256:612ee75c546f53e92e70049c9dbfcc18c935a2b9a53b66085ce9ef6a6e5c0934"},
     {file = "coloredlogs-15.0.1.tar.gz", hash = "sha256:7c991aa71a4577af2f82600d8f8f3a89f936baeaf9b50a9c197da014e5bf16b0"},
@@ -3366,7 +3366,7 @@ description = "Read metadata from Python packages"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\") or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\")"
+markers = "python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\") or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or extra == \"task-otel\""
 files = [
     {file = "importlib_metadata-8.7.0-py3-none-any.whl", hash = "sha256:e5dd1551894c77868a30651cef00984d50e1002d06942a7101d34870c5f02afd"},
     {file = "importlib_metadata-8.7.0.tar.gz", hash = "sha256:d13b81ad223b890aa16c5471f2ac3056cf76c5f10f82d6f9292f0b415f389000"},
@@ -3632,22 +3632,22 @@ files = [
 
 [[package]]
 name = "jsonschema"
-version = "4.25.1"
+version = "4.26.0"
 description = "An implementation of JSON Schema validation for Python"
 optional = true
-python-versions = ">=3.9"
+python-versions = ">=3.10"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\") or extra == \"server\" or extra == \"litellm\""
+markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\") or extra == \"server\" or extra == \"litellm\" or extra == \"task\""
 files = [
-    {file = "jsonschema-4.25.1-py3-none-any.whl", hash = "sha256:3fba0169e345c7175110351d456342c364814cfcf3b964ba4587f22915230a63"},
-    {file = "jsonschema-4.25.1.tar.gz", hash = "sha256:e4a9655ce0da0c0b67a085847e00a3a51449e1157f4f75e9fb5aa545e122eb85"},
+    {file = "jsonschema-4.26.0-py3-none-any.whl", hash = "sha256:d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce"},
+    {file = "jsonschema-4.26.0.tar.gz", hash = "sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326"},
 ]
 
 [package.dependencies]
 attrs = ">=22.2.0"
 jsonschema-specifications = ">=2023.3.6"
 referencing = ">=0.28.4"
-rpds-py = ">=0.7.1"
+rpds-py = ">=0.25.0"
 
 [package.extras]
 format = ["fqdn", "idna", "isoduration", "jsonpointer (>1.13)", "rfc3339-validator", "rfc3987", "uri-template", "webcolors (>=1.11)"]
@@ -3661,7 +3661,7 @@ description = "The JSON Schema meta-schemas and vocabularies, exposed as a Regis
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\") or extra == \"server\" or extra == \"litellm\""
+markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\") or extra == \"server\" or extra == \"litellm\" or extra == \"task\""
 files = [
     {file = "jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe"},
     {file = "jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d"},
@@ -5595,7 +5595,7 @@ description = "OpenTelemetry Python API"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\""
+markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\" or extra == \"task-otel\""
 files = [
     {file = "opentelemetry_api-1.41.1-py3-none-any.whl", hash = "sha256:a22df900e75c76dc08440710e51f52f1aa6b451b429298896023e60db5b3139f"},
     {file = "opentelemetry_api-1.41.1.tar.gz", hash = "sha256:0ad1814d73b875f84494387dae86ce0b12c68556331ce6ce8fe789197c949621"},
@@ -5720,7 +5720,7 @@ description = "OpenTelemetry Python SDK"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\""
+markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\" or extra == \"task-otel\""
 files = [
     {file = "opentelemetry_sdk-1.41.1-py3-none-any.whl", hash = "sha256:edee379c126c1bce952b0c812b48fe8ff35b30df0eecf17e98afa4d598b7d85d"},
     {file = "opentelemetry_sdk-1.41.1.tar.gz", hash = "sha256:724b615e1215b5aeacda0abb8a6a8922c9a1853068948bd0bd225a56d0c792e6"},
@@ -5742,7 +5742,7 @@ description = "OpenTelemetry Semantic Conventions"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\""
+markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\" or extra == \"task-otel\""
 files = [
     {file = "opentelemetry_semantic_conventions-0.62b1-py3-none-any.whl", hash = "sha256:cf506938103d331fbb78eded0d9788095f7fd59016f2bda813c3324e5a74a93c"},
     {file = "opentelemetry_semantic_conventions-0.62b1.tar.gz", hash = "sha256:c5cc6e04a7f8c7cdd30be2ed81499fa4e75bfbd52c9cb70d40af1f9cd3619802"},
@@ -6100,7 +6100,7 @@ description = "Python client for the Prometheus monitoring system."
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\""
+markers = "python_version <= \"3.13\" and (extra == \"vllm\" or extra == \"nvidia\") and platform_system == \"Linux\" or extra == \"task-prometheus\""
 files = [
     {file = "prometheus_client-0.23.1-py3-none-any.whl", hash = "sha256:dd1913e6e76b59cfe44e7a4b83e01afc9873c1bdfd2ed8739f1e76aeca115f99"},
     {file = "prometheus_client-0.23.1.tar.gz", hash = "sha256:6ae8f9081eaaaf153a2e959d2e6c4f4fb57b12ef76c8c7980202f1e57b48b2ce"},
@@ -6334,7 +6334,7 @@ description = "PostgreSQL database adapter for Python"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"memory\""
+markers = "extra == \"memory\" or extra == \"task-pgsql\""
 files = [
     {file = "psycopg-3.2.9-py3-none-any.whl", hash = "sha256:01a8dadccdaac2123c916208c96e06631641c0566b22005493f09663c7a8d3b6"},
     {file = "psycopg-3.2.9.tar.gz", hash = "sha256:2fbb46fcd17bc81f993f28c47f1ebea38d66ae97cc2dbc3cad73b37cefbff700"},
@@ -6362,7 +6362,7 @@ description = "PostgreSQL database adapter for Python -- C optimisation distribu
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "python_version < \"3.14\" and extra == \"memory\" and implementation_name != \"pypy\""
+markers = "python_version < \"3.14\" and (extra == \"memory\" or extra == \"task-pgsql\") and implementation_name != \"pypy\""
 files = [
     {file = "psycopg_binary-3.2.9-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:528239bbf55728ba0eacbd20632342867590273a9bacedac7538ebff890f1093"},
     {file = "psycopg_binary-3.2.9-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e4978c01ca4c208c9d6376bd585e2c0771986b76ff7ea518f6d2b51faece75e8"},
@@ -6438,7 +6438,7 @@ description = "Connection Pool for Psycopg"
 optional = true
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"memory\""
+markers = "extra == \"memory\" or extra == \"task-pgsql\""
 files = [
     {file = "psycopg_pool-3.2.6-py3-none-any.whl", hash = "sha256:5887318a9f6af906d041a0b1dc1c60f8f0dda8340c2572b74e10907b51ed5da7"},
     {file = "psycopg_pool-3.2.6.tar.gz", hash = "sha256:0f92a7817719517212fbfe2fd58b8c35c1850cdd2a80d36b581ba2085d9148e5"},
@@ -7092,6 +7092,40 @@ image = ["Pillow (>=8.0.0)"]
 
 
 [[package]]
+name = "pypdfium2"
+version = "5.9.0"
+description = "Python bindings to PDFium"
+optional = true
+python-versions = ">=3.6"
+groups = ["main"]
+markers = "extra == \"task-pdf-images\""
+files = [
+    {file = "pypdfium2-5.9.0-py3-none-android_23_arm64_v8a.whl", hash = "sha256:91914837c4a4285b3e0724a84eca8079363db7475acbcab405933d1807785664"},
+    {file = "pypdfium2-5.9.0-py3-none-android_23_armeabi_v7a.whl", hash = "sha256:90610d352f050b065b703f3a46602a852fce7dd8787300c8c7a472485b644d8f"},
+    {file = "pypdfium2-5.9.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:6c4fbe3a7190b329c526358fb2855d797f7b74b5ecfc61d19657ef20bcebc108"},
+    {file = "pypdfium2-5.9.0-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:e93f0cf440169a3e445e6fbd06c803877e7418f3e13254287875cb67f208bb5a"},
+    {file = "pypdfium2-5.9.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1d902e03dff5efd51d93cd23d3e55bde53802fa6207bcd0e455239518859a069"},
+    {file = "pypdfium2-5.9.0-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:6cf38d7ad3575947b82384869f2ab69ba345eb21d83118d25db3e83f967b0421"},
+    {file = "pypdfium2-5.9.0-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:77f7479a28b43aa658735e3ce79cfd1fccd5d42db035c21bb4c26e8bd7e280e5"},
+    {file = "pypdfium2-5.9.0-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:07e6ba170d577eabf60dbba701d051c64318dd029d38ca5907d83ae1a66fe779"},
+    {file = "pypdfium2-5.9.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7ce3a3dd23ec0adaa079d8be54565ba2aa2f6060e76a4989cd42dabc163d74ee"},
+    {file = "pypdfium2-5.9.0-py3-none-manylinux_2_27_s390x.manylinux_2_28_s390x.whl", hash = "sha256:ae177938f5cf95a275db25a4f8553e2ebd954ecda2f9bc84848ba4b027ce438f"},
+    {file = "pypdfium2-5.9.0-py3-none-manylinux_2_38_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:ffe49edde2ac86f28ca7e58f565255a442f38a7508fff31b79a55f508f25a31e"},
+    {file = "pypdfium2-5.9.0-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:b7b760bc2957ecf73c274af6ed8b168a2dcb328ac0a0f7ed6123cd92f6e7c9c9"},
+    {file = "pypdfium2-5.9.0-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:7cdc8e5d2f8d82add1e4f70a4fbe5f3b33c17f301ebde38c669fd7f78a7d032c"},
+    {file = "pypdfium2-5.9.0-py3-none-musllinux_1_2_i686.whl", hash = "sha256:38a058dbd4929acaf0ab9171179eb86c24d8c6655a6836006796105a9f200890"},
+    {file = "pypdfium2-5.9.0-py3-none-musllinux_1_2_ppc64le.whl", hash = "sha256:1894511a0e862e7ec5679f3a6dc43ac72c4ef92c7ca438357203913e8634a643"},
+    {file = "pypdfium2-5.9.0-py3-none-musllinux_1_2_riscv64.whl", hash = "sha256:040f5513b808db705d4878f57e2bf0b9dc6e6a0ad8d765c36cf62febf3933b28"},
+    {file = "pypdfium2-5.9.0-py3-none-musllinux_1_2_s390x.whl", hash = "sha256:f4991ae39bcea757552579bba4aebfaedb71c96dd35c2292f957b8ac9132f1ff"},
+    {file = "pypdfium2-5.9.0-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:25ff1a5abd08ff9e87f62e5dac114ea95647c257fbbdbe029be8db71a6d7650b"},
+    {file = "pypdfium2-5.9.0-py3-none-win32.whl", hash = "sha256:b0057dc8c2033584dc3e61afb5f23a135dab52b081695b435e27f9b7b074c605"},
+    {file = "pypdfium2-5.9.0-py3-none-win_amd64.whl", hash = "sha256:06508c33b9772cf3878e48364c6e14c70cefc18a3abd6983ac9f338da9305275"},
+    {file = "pypdfium2-5.9.0-py3-none-win_arm64.whl", hash = "sha256:565ddfc98795fd2f6054b544ee9791d7b9032f9cf77a57891b6e501fafd0ef3f"},
+    {file = "pypdfium2-5.9.0.tar.gz", hash = "sha256:db1274bd27844db6fda17ef1dbcd0026c47d357437058d838e98060c0da9e92e"},
+]
+
+
+[[package]]
 name = "pyreadline3"
 version = "3.5.4"
 description = "A python implementation of GNU readline."
@@ -7540,7 +7574,7 @@ description = "JSON Referencing + Python"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\") or extra == \"server\" or extra == \"litellm\""
+markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\") or extra == \"server\" or extra == \"litellm\" or extra == \"task\""
 files = [
     {file = "referencing-0.36.2-py3-none-any.whl", hash = "sha256:e8699adbbf8b5c7de96d8ffa0eb5c158b3beafce084968e2ea8bb08c6794dcd0"},
     {file = "referencing-0.36.2.tar.gz", hash = "sha256:df2e89862cd09deabbdba16944cc3f10feb6b3e6f18e902f7cc25609a34775aa"},
@@ -7899,7 +7933,7 @@ description = "Python bindings to Rust's persistent data structures (rpds)"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\") or extra == \"server\" or extra == \"litellm\""
+markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"server\" or extra == \"litellm\") or extra == \"server\" or extra == \"litellm\" or extra == \"task\""
 files = [
     {file = "rpds_py-0.27.1-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:68afeec26d42ab3b47e541b272166a0b4400313946871cba3ed3a4fc0cab1cef"},
     {file = "rpds_py-0.27.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:74e5b2f7bb6fa38b1b10546d27acbacf2a022a8b5543efb06cfebc72a59c85be"},
@@ -10345,7 +10379,7 @@ description = "Backport of pathlib-compatible object wrapper for zip files"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\") or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\")"
+markers = "python_version == \"3.11\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\") or extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or python_version == \"3.11\" and (extra == \"litellm\" or extra == \"vendors\" or extra == \"vision\" or extra == \"secrets\") or extra == \"task-otel\""
 files = [
     {file = "zipp-3.23.0-py3-none-any.whl", hash = "sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e"},
     {file = "zipp-3.23.0.tar.gz", hash = "sha256:a07157588a12518c9d4034df3fbbee09c814741a33ff63c05fa29d26a2404166"},
@@ -10375,6 +10409,12 @@ nvidia = ["bitsandbytes", "vllm"]
 quantization = ["bitsandbytes"]
 secrets = ["boto3", "keyring"]
 server = ["fastapi", "mcp", "pydantic", "uvicorn"]
+task = ["jsonschema"]
+task-documents = ["markdownify", "markitdown"]
+task-otel = ["opentelemetry-sdk"]
+task-pdf-images = ["pypdfium2"]
+task-pgsql = ["psycopg", "psycopg-binary"]
+task-prometheus = ["prometheus-client"]
 tool = ["SQLAlchemy", "aiomysql", "asyncpg", "matplotlib", "sqlglot", "sympy"]
 translation = ["protobuf", "sentencepiece"]
 vendors = ["aioboto3", "anthropic", "diffusers", "google-genai", "openai", "pillow", "safetensors"]
@@ -10385,4 +10425,4 @@ youtube = ["youtube-transcript-api"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "934c8a3c7eb62c06218b786daf9d3bf61d1ea19b6400e8fde340f4e07fa5f6ec"
+content-hash = "6867a2ebdc1136cbb0c563265516ac3399b334eaf26f58ed33865cb4a581c197"

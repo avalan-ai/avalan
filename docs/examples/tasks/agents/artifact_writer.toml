@@ -1,0 +1,11 @@
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4o-mini"
+
+[run]
+max_new_tokens = 512
+
+[agent]
+name = "ArtifactWriter"
+role = """
+Create the requested artifact and return its task artifact reference.
+"""

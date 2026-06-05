@@ -27,7 +27,7 @@ class OutputType(StrEnum):
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Goal:
     task: str
-    instructions: list[str]
+    goal_instructions: list[str]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -39,6 +39,7 @@ class Role:
 class Specification:
     role: Role | None = None
     goal: Goal | None = None
+    instructions: str | None = None
     system_prompt: str | None = None
     developer_prompt: str | None = None
     rules: list[str] | None = field(default_factory=list)

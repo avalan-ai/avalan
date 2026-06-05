@@ -6,17 +6,20 @@ from ....memory.permanent import (
     RecordNotFoundException,
     RecordNotSavedException,
 )
+from ....pgsql import (
+    ModuleImporter,
+    PgsqlConnection,
+    PgsqlCursor,
+    PgsqlDatabase,
+    PsycopgAsyncDatabase,
+    PsycopgPoolSettings,
+)
 
+from importlib import import_module
+from inspect import isawaitable
 from logging import Logger
 from time import perf_counter
 from typing import Any, Literal, TypeVar, cast, overload
-
-from pgvector.psycopg import register_vector_async
-from psycopg import AsyncConnection, AsyncCursor
-from psycopg.errors import UndefinedFile
-from psycopg.rows import dict_row
-from psycopg.types import TypeInfo
-from psycopg_pool import AsyncConnectionPool
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -28,24 +31,45 @@ class PgsqlVectorExtensionError(RuntimeError):
 
 
 class BasePgsqlMemory(MemoryStore[T]):
-    _database: AsyncConnectionPool[Any]
+    _database: PgsqlDatabase
     _logger: Logger
 
-    def __init__(
-        self, database: AsyncConnectionPool[Any], logger: Logger
-    ) -> None:
+    def __init__(self, database: PgsqlDatabase, logger: Logger) -> None:
         self._database = database
         self._logger = logger
 
     async def open(self) -> None:
         await self._database.open()
 
+    async def aclose(self) -> None:
+        aclose = getattr(self._database, "aclose", None)
+        if aclose is not None:
+            result = aclose()
+        else:
+            close = getattr(self._database, "close", None)
+            result = close() if close is not None else None
+        if isawaitable(result):
+            await result
+
+    async def __aenter__(self) -> "BasePgsqlMemory[T]":
+        await self.open()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        await self.aclose()
+        return None
+
     async def search(self, query: str) -> list[T] | None:
         raise NotImplementedError()
 
     async def _execute(
         self,
-        cursor: AsyncCursor[Any],
+        cursor: PgsqlCursor,
         query: str,
         parameters: QueryParams | None,
     ) -> None:
@@ -90,7 +114,8 @@ class BasePgsqlMemory(MemoryStore[T]):
                 result = await cursor.fetchone()
                 await cursor.close()
                 row = dict(result) if result is not None else None
-                return row[field] if row else None
+                value = row[field] if row else None
+                return value if value is None else str(value)
 
     async def _has_one(self, query: str, parameters: QueryParams) -> bool:
         async with self._database.connection() as connection:
@@ -144,11 +169,12 @@ class BasePgsqlMemory(MemoryStore[T]):
 
 class PgsqlMemory(BasePgsqlMemory[T]):
     _composite_types: list[str] | None
+    _module_importer: ModuleImporter
 
     @classmethod
     async def create_instance_from_pool(
         cls,
-        pool: AsyncConnectionPool[Any],
+        pool: PgsqlDatabase,
         *,
         logger: Logger,
         **kwargs: Any,
@@ -160,13 +186,16 @@ class PgsqlMemory(BasePgsqlMemory[T]):
         self,
         dsn: str | None,
         logger: Logger,
-        pool: AsyncConnectionPool[Any] | None = None,
+        pool: PgsqlDatabase | None = None,
         composite_types: list[str] | None = None,
         pool_minimum: int | None = None,
         pool_maximum: int | None = None,
+        schema: str | None = None,
+        module_importer: ModuleImporter = import_module,
         **kwargs: Any,
     ) -> None:
         self._composite_types = composite_types
+        self._module_importer = module_importer
         if pool is None:
             assert dsn is not None
             assert pool_minimum is not None
@@ -174,42 +203,58 @@ class PgsqlMemory(BasePgsqlMemory[T]):
             assert pool_minimum > 0
             assert pool_maximum > pool_minimum
 
-        if pool:
-            super().__init__(database=pool, logger=logger)
+        if pool is not None:
+            database = PsycopgAsyncDatabase(
+                PsycopgPoolSettings(
+                    pool=pool,
+                    module_importer=module_importer,
+                    configure_connection=self._configure_connection,
+                )
+            )
+            super().__init__(database=database, logger=logger)
         else:
             assert dsn is not None
             assert pool_minimum is not None
             assert pool_maximum is not None
-            if "//" not in dsn:
-                dsn = f"postgresql://{dsn}"
-
-            database = AsyncConnectionPool(
-                min_size=pool_minimum,
-                max_size=pool_maximum,
-                conninfo=dsn,
-                configure=self._configure_connection,
-                open=False,
+            database = PsycopgAsyncDatabase(
+                PsycopgPoolSettings(
+                    dsn=dsn,
+                    pool_minimum=pool_minimum,
+                    pool_maximum=pool_maximum,
+                    schema=schema,
+                    module_importer=module_importer,
+                    configure_connection=self._configure_connection,
+                )
             )
             super().__init__(database=database, logger=logger)
 
-    async def _configure_connection(
-        self, connection: AsyncConnection[Any]
-    ) -> None:
-        connection.row_factory = cast(Any, dict_row)
-        await connection.set_autocommit(True)
+    async def _configure_connection(self, connection: PgsqlConnection) -> None:
         if self._composite_types:
+            types_module = cast(
+                Any,
+                self._module_importer("psycopg.types"),
+            )
             for composite_type_name in self._composite_types:
-                composite_type = await TypeInfo.fetch(
+                composite_type = await types_module.TypeInfo.fetch(
                     connection, composite_type_name
                 )
                 if composite_type:
                     composite_type.register(connection)
         await self._ensure_vector_extension(connection)
-        await register_vector_async(connection)
+        vector_module = cast(
+            Any,
+            self._module_importer("pgvector.psycopg"),
+        )
+        await vector_module.register_vector_async(connection)
 
     async def _ensure_vector_extension(
-        self, connection: AsyncConnection[Any]
+        self, connection: PgsqlConnection
     ) -> None:
+        errors_module = cast(Any, self._module_importer("psycopg.errors"))
+        undefined_file_error = cast(
+            type[BaseException],
+            errors_module.UndefinedFile,
+        )
         async with connection.cursor() as cursor:
             await cursor.execute("""
                 SELECT EXISTS (
@@ -230,7 +275,7 @@ class PgsqlMemory(BasePgsqlMemory[T]):
             try:
                 await cursor.execute("SELECT '[0]'::vector")
                 await cursor.fetchone()
-            except UndefinedFile as exc:
+            except undefined_file_error as exc:
                 raise PgsqlVectorExtensionError(
                     "PostgreSQL `vector` extension is registered in the "
                     "database, but the server cannot load the pgvector "
@@ -238,6 +283,13 @@ class PgsqlMemory(BasePgsqlMemory[T]):
                     "and recreate the extension before using permanent "
                     "memory."
                 ) from exc
+
+    def _vector(self, value: object) -> object:
+        vector_module = cast(
+            Any,
+            self._module_importer("pgvector.psycopg"),
+        )
+        return vector_module.Vector(value)
 
     @staticmethod
     @overload

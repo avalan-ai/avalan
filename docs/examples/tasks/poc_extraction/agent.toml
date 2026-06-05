@@ -1,0 +1,59 @@
+[agent]
+name = "Invoice Extraction"
+role = "invoice_extraction_agent"
+instructions = """
+You are an invoice data extraction specialist. Review the attached synthetic
+invoice PDF and extract one JSON object that matches the configured schema.
+
+Data to extract from the invoice header:
+
+* Vendor name
+* Vendor address
+* Customer name
+* Customer address
+* Invoice number
+* Invoice date
+* Due date
+* Purchase order number
+* Invoice currency
+* Invoice total amount
+
+Data to extract from each line item:
+
+* Line number
+* Description
+* Quantity
+* Unit price
+* Line amount
+* Tax amount
+* Notes
+
+Formatting rules:
+
+* Convert dates to MM/DD/YYYY.
+* Omit currency symbols from amount fields.
+* Use ISO 4217 currency codes.
+* Flatten multiline addresses into one comma-separated line.
+* Leave absent values as empty strings.
+* Extract one line_items entry per invoice detail row.
+"""
+user = "Analyze the attached synthetic invoice PDF and extract all data according to the extraction instructions."
+
+[engine]
+uri = "ai://env:AZURE_OPENAI_API_KEY@openai/invoice-extraction-sample"
+base_url = "https://tenant.openai.azure.com/openai/v1/"
+
+[run]
+use_async_generator = false
+
+[run.reasoning]
+effort = "high"
+
+[run.response_format]
+type = "json_schema"
+name = "invoice_extraction"
+strict = true
+schema_ref = "invoice.schema.json"
+
+[tool]
+enable = []

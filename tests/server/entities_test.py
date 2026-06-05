@@ -11,6 +11,9 @@ from avalan.server.entities import (
     ChatMessage,
     ContentFile,
     ContentText,
+    EngineRequest,
+    ResponseFormatJSONSchema,
+    ResponsesRequest,
 )
 
 
@@ -98,3 +101,135 @@ class ChatEntitiesTestCase(TestCase):
         self.assertEqual(data["choices"][0]["message"]["content"], "ok")
         json_str = resp.model_dump_json()
         self.assertIn('"chat.completion"', json_str)
+
+    def test_engine_request_requires_uri_or_database(self) -> None:
+        self.assertEqual(
+            EngineRequest(uri="ai://local/model").uri,
+            "ai://local/model",
+        )
+        self.assertEqual(EngineRequest(database="main").database, "main")
+        with self.assertRaises(ValidationError):
+            EngineRequest()
+
+    def test_json_schema_response_format_accepts_chat_shape(self) -> None:
+        response_format = ResponseFormatJSONSchema(
+            type="json_schema",
+            json_schema={
+                "name": "document",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"title": "Value", "type": "string"}
+                    },
+                },
+            },
+        )
+
+        assert response_format.json_schema is not None
+        self.assertEqual(response_format.json_schema.name, "document")
+        self.assertIsNone(response_format.schema_)
+
+    def test_json_schema_response_format_accepts_responses_shape(
+        self,
+    ) -> None:
+        response_format = ResponseFormatJSONSchema(
+            type="json_schema",
+            name="document",
+            schema={
+                "type": "object",
+                "properties": {"value": {"title": "Value", "type": "string"}},
+            },
+            strict=False,
+        )
+
+        dumped = response_format.model_dump(by_alias=True, exclude_none=True)
+        self.assertEqual(
+            dumped,
+            {
+                "type": "json_schema",
+                "name": "document",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"title": "Value", "type": "string"}
+                    },
+                },
+                "strict": False,
+            },
+        )
+
+    def test_json_schema_response_format_rejects_ambiguous_shapes(
+        self,
+    ) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"value": {"title": "Value", "type": "string"}},
+        }
+        with self.assertRaises(ValidationError):
+            ResponseFormatJSONSchema(type="json_schema")
+        with self.assertRaises(ValidationError):
+            ResponseFormatJSONSchema(
+                type="json_schema",
+                json_schema={"schema": schema},
+                schema=schema,
+            )
+        with self.assertRaises(ValidationError):
+            ResponseFormatJSONSchema(
+                type="json_schema",
+                json_schema={"schema": schema},
+                strict=True,
+            )
+        with self.assertRaises(ValidationError):
+            ResponseFormatJSONSchema(
+                type="json_schema",
+                name="",
+                schema=schema,
+            )
+
+    def test_responses_request_accepts_text_format(self) -> None:
+        req = ResponsesRequest(
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            text={
+                "format": {"type": "json_object"},
+                "stop": ["DONE"],
+            },
+        )
+
+        assert req.text is not None
+        assert req.text.format is not None
+        self.assertEqual(req.text.stop, ["DONE"])
+        self.assertEqual(req.text.format.type, "json_object")
+
+    def test_responses_request_accepts_string_input(self) -> None:
+        req = ResponsesRequest(
+            input="summarize this",
+            instructions="top-level guidance",
+        )
+
+        self.assertEqual(req.instructions, "top-level guidance")
+        self.assertEqual(len(req.messages), 1)
+        self.assertEqual(req.messages[0].role, MessageRole.USER)
+        self.assertEqual(req.messages[0].content, "summarize this")
+
+    def test_responses_request_rejects_non_string_instructions(self) -> None:
+        with self.assertRaises(ValidationError):
+            ResponsesRequest(input="hi", instructions={"raw": "prompt"})
+
+    def test_responses_request_rejects_invalid_input_shape(self) -> None:
+        with self.assertRaises(ValidationError):
+            ResponsesRequest(input={"role": "user", "content": "hi"})
+
+    def test_responses_request_rejects_ambiguous_text_aliases(self) -> None:
+        message = ChatMessage(role=MessageRole.USER, content="hi")
+        with self.assertRaises(ValidationError):
+            ResponsesRequest(
+                input=[message],
+                response_format={"type": "json_object"},
+                text={"format": {"type": "json_object"}},
+            )
+        with self.assertRaises(ValidationError):
+            ResponsesRequest(
+                input=[message],
+                stop="END",
+                text={"stop": "DONE"},
+            )

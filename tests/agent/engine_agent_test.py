@@ -90,11 +90,14 @@ class EngineAgentPropertyTestCase(IsolatedAsyncioTestCase):
         self.event_manager.trigger.assert_not_called()
 
     async def test_input_token_count_with_prompt(self):
-        self.agent._last_prompt = ("hi", "sys", None)
+        self.agent._last_prompt = ("hi", "inst", "sys", None)
         result = await self.agent.input_token_count()
         self.assertEqual(result, 3)
         self.engine.input_token_count.assert_called_once_with(
-            "hi", system_prompt="sys", developer_prompt=None
+            "hi",
+            instructions="inst",
+            system_prompt="sys",
+            developer_prompt=None,
         )
         called_types = [
             c.args[0].type for c in self.event_manager.trigger.await_args_list
@@ -201,6 +204,27 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
             task.operation.generation_settings, replace(settings, top_p=0.7)
         )
         self.assertIs(task.context, context)
+
+    async def test_run_keeps_instructions_distinct_from_messages(self):
+        agent, _engine, _memory, manager = self._make_agent()
+        message = Message(role=MessageRole.USER, content="hi")
+        context = self._make_context(message)
+
+        await agent._run(
+            context,
+            message,
+            instructions="provider instructions",
+            system_prompt="system prompt",
+            developer_prompt="developer prompt",
+        )
+
+        task = manager.await_args.args[0]
+        text = task.operation.parameters["text"]
+        self.assertEqual(text.instructions, "provider instructions")
+        self.assertEqual(text.system_prompt, "system prompt")
+        self.assertEqual(text.developer_prompt, "developer prompt")
+        self.assertEqual(task.operation.input, [message])
+        self.assertNotIn("provider instructions", str(task.operation.input))
 
     async def test_run_kwargs_only_with_previous_response(self):
         last_response = TextGenerationResponse(
@@ -332,7 +356,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         task = manager.await_args.args[0]
         self.assertEqual(task.operation.input, [message])
         self.assertIs(task.context, child_context)
-        self.assertEqual(agent.last_prompt, ([message], None, None))
+        self.assertEqual(agent.last_prompt, ([message], None, None, None))
         self.assertEqual(agent._last_output, "out")
 
     async def test_sync_messages_appends_last_output_when_memory_enabled(

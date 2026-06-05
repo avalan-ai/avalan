@@ -35,6 +35,8 @@ class InputTokenCountModel(Protocol):
         input: Input,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
+        *,
+        instructions: str | None = None,
     ) -> int: ...
 
 
@@ -51,7 +53,15 @@ class EngineAgent(ABC):
     _model_manager: ModelManager
     _engine_uri: EngineUri
     _last_output: TextGenerationResponse | None = None
-    _last_prompt: tuple[Input, str | None, str | None] | None = None
+    _last_prompt: (
+        tuple[
+            Input,
+            str | None,
+            str | None,
+            str | None,
+        ]
+        | None
+    ) = None
 
     @abstractmethod
     def _prepare_call(self, context: ModelCallContext) -> Any:
@@ -78,7 +88,9 @@ class EngineAgent(ABC):
         return self._last_output
 
     @property
-    def last_prompt(self) -> tuple[Input, str | None, str | None] | None:
+    def last_prompt(
+        self,
+    ) -> tuple[Input, str | None, str | None, str | None] | None:
         return self._last_prompt
 
     async def input_token_count(self) -> int | None:
@@ -96,8 +108,9 @@ class EngineAgent(ABC):
         count_model = cast(InputTokenCountModel, self._model)
         count = count_model.input_token_count(
             self._last_prompt[0],
-            system_prompt=self._last_prompt[1],
-            developer_prompt=self._last_prompt[2],
+            instructions=self._last_prompt[1],
+            system_prompt=self._last_prompt[2],
+            developer_prompt=self._last_prompt[3],
         )
         await self._event_manager.trigger(
             Event(
@@ -195,10 +208,11 @@ class EngineAgent(ABC):
         self,
         context: ModelCallContext,
         input: Input,
-        *args: object,
-        settings: GenerationSettings | None = None,
+        instructions: str | None = None,
         system_prompt: str | None = None,
         developer_prompt: str | None = None,
+        *args: object,
+        settings: GenerationSettings | None = None,
         skip_special_tokens: bool = True,
         **kwargs: Any,
     ) -> TextGenerationResponse:
@@ -288,7 +302,12 @@ class EngineAgent(ABC):
             input_value = [rm.message for rm in self._memory.recent_messages]
 
         # Have model generate output from input
-        self._last_prompt = (input_value, system_prompt, developer_prompt)
+        self._last_prompt = (
+            input_value,
+            instructions,
+            system_prompt,
+            developer_prompt,
+        )
 
         operation = Operation(
             generation_settings=settings,
@@ -296,6 +315,7 @@ class EngineAgent(ABC):
             modality=Modality.TEXT_GENERATION,
             parameters=OperationParameters(
                 text=OperationTextParameters(
+                    instructions=instructions,
                     system_prompt=system_prompt,
                     developer_prompt=developer_prompt,
                     skip_special_tokens=skip_special_tokens,
@@ -311,6 +331,7 @@ class EngineAgent(ABC):
                     "model_type": self._model.model_type,
                     "model_id": self._model.model_id,
                     "input": input_value,
+                    "instructions": instructions,
                     "system_prompt": system_prompt,
                     "developer_prompt": developer_prompt,
                     "settings": settings,
@@ -335,6 +356,7 @@ class EngineAgent(ABC):
                     "model_type": self._model.model_type,
                     "model_id": self._model.model_id,
                     "input": input_value,
+                    "instructions": instructions,
                     "system_prompt": system_prompt,
                     "developer_prompt": developer_prompt,
                     "settings": settings,

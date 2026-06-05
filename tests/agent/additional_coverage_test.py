@@ -158,7 +158,7 @@ class JsonSpecificationCoverageTestCase(unittest.TestCase):
         spec = JsonSpecification(
             output=props,
             role="r",
-            goal=Goal(task="t", instructions=[]),
+            goal=Goal(task="t", goal_instructions=[]),
         )
         self.assertEqual(spec.template_vars["output_properties"], props)
         self.assertEqual(spec.role, Role(persona=["r"]))

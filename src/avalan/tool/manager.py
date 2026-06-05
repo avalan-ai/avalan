@@ -176,6 +176,8 @@ class ToolManager:
         if not tool:
             return None
 
+        await _check_cancelled(context)
+
         if self._settings.filters:
             for f in self._settings.filters:
                 filter_namespace: str | None = None
@@ -190,6 +192,8 @@ class ToolManager:
                 if modified is not None:
                     assert isinstance(modified, tuple) and len(modified) == 2
                     call, context = modified
+
+        await _check_cancelled(context)
 
         is_native_tool = isinstance(tool, Tool)
 
@@ -240,3 +244,8 @@ class ToolManager:
                 error=exc,
                 message=str(exc),
             )
+
+
+async def _check_cancelled(context: ToolCallContext) -> None:
+    if context.cancellation_checker is not None:
+        await context.cancellation_checker()

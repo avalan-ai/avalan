@@ -1,0 +1,11 @@
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4o-mini"
+
+[run]
+max_new_tokens = 256
+
+[agent]
+name = "BasicAnswer"
+role = """
+Answer the task input concisely.
+"""

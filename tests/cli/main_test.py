@@ -4,6 +4,7 @@ import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from contextlib import ExitStack
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Event as ThreadEvent
 from time import perf_counter
 from types import SimpleNamespace
@@ -11,7 +12,11 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from avalan.cli import CommandAbortException
-from avalan.cli.__main__ import CLI
+from avalan.cli.__main__ import (
+    CLI,
+    _consume_task_input_field_args,
+    _task_run_json_stdout,
+)
 
 
 def _collect_progs(parser: ArgumentParser) -> list[str]:
@@ -37,6 +42,21 @@ def _find_parser(parser: ArgumentParser, prog: str) -> ArgumentParser:
             if isinstance(action, _SubParsersAction):
                 stack.extend(action.choices.values())
     raise AssertionError(f"Parser {prog!r} was not found.")
+
+
+def _find_parser_with_suffix(
+    parser: ArgumentParser,
+    prog_suffix: str,
+) -> ArgumentParser:
+    stack = [parser]
+    while stack:
+        candidate = stack.pop()
+        if candidate.prog.endswith(prog_suffix):
+            return candidate
+        for action in candidate._actions:
+            if isinstance(action, _SubParsersAction):
+                stack.extend(action.choices.values())
+    raise AssertionError(f"Parser ending with {prog_suffix!r} was not found.")
 
 
 class CliInitTestCase(TestCase):
@@ -96,6 +116,197 @@ class CliParallelOptionTestCase(TestCase):
             ]
         )
         self.assertEqual(args.parallel_count, 5)
+
+
+class CliTaskOptionTestCase(TestCase):
+    def test_task_validate_argument(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "task",
+                "validate",
+                "tasks/example.task.toml",
+            ]
+        )
+
+        self.assertEqual(args.command, "task")
+        self.assertEqual(args.task_command, "validate")
+        self.assertEqual(args.definition, "tasks/example.task.toml")
+
+    def test_task_pgsql_migrate_argument(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "task",
+                "pgsql",
+                "migrate",
+                "--dsn",
+                "postgresql://localhost/tasks",
+                "head",
+            ]
+        )
+
+        self.assertEqual(args.command, "task")
+        self.assertEqual(args.task_command, "pgsql")
+        self.assertEqual(args.task_pgsql_command, "migrate")
+        self.assertEqual(args.dsn, "postgresql://localhost/tasks")
+        self.assertEqual(args.migration_revision, "head")
+
+    def test_task_shell_subcommand_arguments(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        cases = [
+            (
+                ["task", "run", "tasks/example.task.toml"],
+                {
+                    "task_command": "run",
+                    "definition": "tasks/example.task.toml",
+                },
+            ),
+            (
+                ["task", "enqueue", "tasks/example.task.toml"],
+                {
+                    "task_command": "enqueue",
+                    "definition": "tasks/example.task.toml",
+                },
+            ),
+            (
+                ["task", "inspect", "run-123"],
+                {"task_command": "inspect", "run_id": "run-123"},
+            ),
+            (
+                [
+                    "task",
+                    "usage",
+                    "run-123",
+                    "--attempt-id",
+                    "attempt-1",
+                    "--source",
+                    "exact",
+                ],
+                {
+                    "task_command": "usage",
+                    "run_id": "run-123",
+                    "attempt_id": "attempt-1",
+                    "source": "exact",
+                },
+            ),
+            (
+                ["task", "output", "run-123"],
+                {"task_command": "output", "run_id": "run-123"},
+            ),
+            (
+                ["task", "events", "run-123"],
+                {"task_command": "events", "run_id": "run-123"},
+            ),
+            (
+                ["task", "artifacts", "run-123"],
+                {"task_command": "artifacts", "run_id": "run-123"},
+            ),
+            (
+                ["task", "worker", "--queue", "documents"],
+                {"task_command": "worker", "queue": "documents"},
+            ),
+            (
+                [
+                    "task",
+                    "retention-sweep",
+                    "--store-dsn",
+                    "postgresql://localhost/tasks",
+                    "--purpose",
+                    "input",
+                    "--purpose",
+                    "output",
+                    "--limit",
+                    "25",
+                ],
+                {
+                    "task_command": "retention-sweep",
+                    "store_dsn": "postgresql://localhost/tasks",
+                    "purpose": ["input", "output"],
+                    "limit": 25,
+                },
+            ),
+        ]
+
+        for argv, expected in cases:
+            with self.subTest(argv=argv):
+                args = cli._parser.parse_args(argv)
+
+            self.assertEqual(args.command, "task")
+            for name, value in expected.items():
+                self.assertEqual(getattr(args, name), value)
+
+    def test_flow_run_arguments(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "flow",
+                "run",
+                "flows/report.toml",
+                "--input-json",
+                '{"answer":"ok"}',
+                "--file",
+                "document=sample.pdf",
+                "--file-mime",
+                "document=application/pdf",
+                "--json",
+                "--output",
+                "result.json",
+            ]
+        )
+
+        self.assertEqual(args.command, "flow")
+        self.assertEqual(args.flow_command, "run")
+        self.assertEqual(args.flow, "flows/report.toml")
+        self.assertEqual(args.task_input_json, '{"answer":"ok"}')
+        self.assertEqual(args.task_files, ["document=sample.pdf"])
+        self.assertEqual(
+            args.task_file_mime_types,
+            ["document=application/pdf"],
+        )
+        self.assertTrue(args.task_run_json)
+        self.assertEqual(args.task_output_path, "result.json")
+
+    def test_flow_run_consumes_dynamic_input_fields(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        args = cli._parser.parse_args(
+            [
+                "flow",
+                "run",
+                "flow.toml",
+                "--input-name",
+                "Ada",
+            ]
+        )
+
+        self.assertEqual(args.command, "flow")
+        self.assertEqual(args.flow_command, "run")
+        self.assertEqual(args.task_input_fields, ("name=Ada",))
+
+    def test_flow_non_run_does_not_consume_dynamic_input_fields(self) -> None:
+        namespace = Namespace(command="flow", flow_command="inspect")
+
+        self.assertFalse(
+            _consume_task_input_field_args(
+                namespace,
+                ["--input-name", "Ada"],
+            )
+        )
 
 
 class CliModelRunOptionTestCase(TestCase):
@@ -213,11 +424,11 @@ class CliModelRunOptionTestCase(TestCase):
         with patch.object(sys, "argv", ["prog"]):
             cli = CLI(logger)
 
-        model_run_help = _find_parser(
-            cli._parser, "prog model run"
+        model_run_help = _find_parser_with_suffix(
+            cli._parser, " model run"
         ).format_help()
-        agent_run_help = _find_parser(
-            cli._parser, "prog agent run"
+        agent_run_help = _find_parser_with_suffix(
+            cli._parser, " agent run"
         ).format_help()
 
         for option in (
@@ -773,6 +984,54 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.commands.model",
                 "model_uninstall",
             ),
+            (
+                "task_artifacts",
+                "avalan.cli.commands.task",
+                "task_artifacts",
+            ),
+            (
+                "task_enqueue",
+                "avalan.cli.commands.task",
+                "task_enqueue",
+            ),
+            ("task_events", "avalan.cli.commands.task", "task_events"),
+            ("task_inspect", "avalan.cli.commands.task", "task_inspect"),
+            ("task_usage", "avalan.cli.commands.task", "task_usage"),
+            ("task_output", "avalan.cli.commands.task", "task_output"),
+            ("task_validate", "avalan.cli.commands.task", "task_validate"),
+            (
+                "task_pgsql_check",
+                "avalan.cli.commands.task",
+                "task_pgsql_check",
+            ),
+            (
+                "task_pgsql_diagnose",
+                "avalan.cli.commands.task",
+                "task_pgsql_diagnose",
+            ),
+            (
+                "task_pgsql_migrate",
+                "avalan.cli.commands.task",
+                "task_pgsql_migrate",
+            ),
+            (
+                "task_pgsql_stamp",
+                "avalan.cli.commands.task",
+                "task_pgsql_stamp",
+            ),
+            (
+                "task_pgsql_status",
+                "avalan.cli.commands.task",
+                "task_pgsql_status",
+            ),
+            (
+                "task_retention_sweep",
+                "avalan.cli.commands.task",
+                "task_retention_sweep",
+            ),
+            ("task_run", "avalan.cli.commands.task", "task_run"),
+            ("task_worker", "avalan.cli.commands.task", "task_worker"),
+            ("flow_run", "avalan.cli.commands.flow", "flow_run"),
         ]
         for wrapper_name, module_name, function_name in commands:
             command.reset_mock()
@@ -871,6 +1130,54 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             deploy_run_mock = stack.enter_context(
                 patch("avalan.cli.__main__.deploy_run", AsyncMock())
             )
+            flow_run_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_run")
+            )
+            task_artifacts_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_artifacts")
+            )
+            task_enqueue_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_enqueue")
+            )
+            task_events_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_events")
+            )
+            task_inspect_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_inspect")
+            )
+            task_usage_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_usage")
+            )
+            task_output_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_output")
+            )
+            task_validate_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_validate")
+            )
+            task_pgsql_check_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_check")
+            )
+            task_pgsql_diagnose_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_diagnose")
+            )
+            task_pgsql_migrate_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_migrate")
+            )
+            task_pgsql_stamp_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_stamp")
+            )
+            task_pgsql_status_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_pgsql_status")
+            )
+            task_retention_sweep_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_retention_sweep")
+            )
+            task_run_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_run")
+            )
+            task_worker_mock = stack.enter_context(
+                patch("avalan.cli.__main__.task_worker")
+            )
             tokenize_mock = stack.enter_context(
                 patch("avalan.cli.__main__.tokenize", AsyncMock())
             )
@@ -892,6 +1199,22 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("model", "search", model_search),
                 ("model", "uninstall", model_uninstall),
                 ("deploy", "run", deploy_run_mock),
+                ("flow", "run", flow_run_mock),
+                ("task", "artifacts", task_artifacts_mock),
+                ("task", "enqueue", task_enqueue_mock),
+                ("task", "events", task_events_mock),
+                ("task", "inspect", task_inspect_mock),
+                ("task", "usage", task_usage_mock),
+                ("task", "output", task_output_mock),
+                ("task", "validate", task_validate_mock),
+                ("task", "pgsql:check", task_pgsql_check_mock),
+                ("task", "pgsql:diagnose", task_pgsql_diagnose_mock),
+                ("task", "pgsql:migrate", task_pgsql_migrate_mock),
+                ("task", "pgsql:stamp", task_pgsql_stamp_mock),
+                ("task", "pgsql:status", task_pgsql_status_mock),
+                ("task", "retention-sweep", task_retention_sweep_mock),
+                ("task", "run", task_run_mock),
+                ("task", "worker", task_worker_mock),
                 ("tokenizer", None, tokenize_mock),
             ]
             for cmd, subcmd, fn in scenarios:
@@ -915,9 +1238,159 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                     args.model_command = subcmd
                 elif cmd == "deploy":
                     args.deploy_command = subcmd
+                elif cmd == "flow":
+                    args.flow_command = subcmd
+                elif cmd == "task":
+                    if subcmd and subcmd.startswith("pgsql:"):
+                        args.task_command = "pgsql"
+                        args.task_pgsql_command = subcmd.split(":", 1)[1]
+                    else:
+                        args.task_command = subcmd
                 await self.cli._main(args, theme, console, hub)
                 self.assertTrue(fn.called)
                 fn.reset_mock()
+
+    async def test_task_validate_failure_exits_nonzero(self):
+        args = Namespace(
+            command="task",
+            task_command="validate",
+            verbose=None,
+            quiet=True,
+            login=False,
+            hf_token=None,
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        console = MagicMock()
+        hub = MagicMock(domain="hf")
+        with (
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("avalan.cli.__main__.Confirm.ask", return_value=False),
+            patch("avalan.cli.__main__.find_spec", return_value=None),
+            patch("avalan.cli.__main__.logger_replace"),
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch(
+                "avalan.cli.__main__.task_validate",
+                return_value=False,
+            ) as task_validate_mock,
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                await self.cli._main(args, theme, console, hub)
+
+        self.assertEqual(exit_context.exception.code, 1)
+        task_validate_mock.assert_called_once_with(args, console, theme)
+
+    async def test_task_run_failure_exits_nonzero(self):
+        args = Namespace(
+            command="task",
+            task_command="run",
+            verbose=None,
+            quiet=True,
+            login=False,
+            hf_token=None,
+            task_run_json=False,
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        console = MagicMock()
+        hub = MagicMock(domain="hf")
+        with (
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("avalan.cli.__main__.Confirm.ask", return_value=False),
+            patch("avalan.cli.__main__.find_spec", return_value=None),
+            patch("avalan.cli.__main__.logger_replace"),
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch(
+                "avalan.cli.__main__.task_run",
+                return_value=False,
+            ) as task_run_mock,
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                await self.cli._main(args, theme, console, hub)
+
+        self.assertEqual(exit_context.exception.code, 1)
+        task_run_mock.assert_called_once_with(
+            args,
+            console,
+            theme,
+            hub,
+            self.cli._logger,
+        )
+
+    async def test_flow_run_failure_exits_nonzero(self):
+        args = Namespace(
+            command="flow",
+            flow_command="run",
+            verbose=None,
+            quiet=True,
+            login=False,
+            hf_token=None,
+            task_run_json=False,
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        console = MagicMock()
+        hub = MagicMock(domain="hf")
+        with (
+            patch("avalan.cli.__main__.has_input", return_value=True),
+            patch("avalan.cli.__main__.Confirm.ask", return_value=False),
+            patch("avalan.cli.__main__.find_spec", return_value=None),
+            patch("avalan.cli.__main__.logger_replace"),
+            patch("avalan.cli.__main__.filterwarnings"),
+            patch(
+                "avalan.cli.__main__.flow_run",
+                return_value=False,
+            ) as flow_run_mock,
+        ):
+            with self.assertRaises(SystemExit) as exit_context:
+                await self.cli._main(args, theme, console, hub)
+
+        self.assertEqual(exit_context.exception.code, 1)
+        flow_run_mock.assert_called_once_with(
+            args,
+            console,
+            theme,
+            hub,
+            self.cli._logger,
+        )
+
+    def test_task_run_json_stdout_predicate(self):
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="task",
+                    task_command="run",
+                    task_run_json=True,
+                )
+            )
+        )
+        self.assertFalse(
+            _task_run_json_stdout(
+                Namespace(
+                    command="task",
+                    task_command="run",
+                    task_run_json=False,
+                )
+            )
+        )
+        self.assertFalse(
+            _task_run_json_stdout(
+                Namespace(
+                    command="task",
+                    task_command="validate",
+                    task_run_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="run",
+                    task_run_json=True,
+                )
+            )
+        )
 
 
 class CliMainLoginTestCase(IsolatedAsyncioTestCase):
@@ -968,7 +1441,10 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         from logging import getLogger
 
         self.logger = getLogger("cli-additional-test")
-        with patch.object(sys, "argv", ["prog"]):
+        with (
+            patch.dict("os.environ", {"HF_TOKEN": ""}),
+            patch.object(sys, "argv", ["prog"]),
+        ):
             self.cli = CLI(self.logger)
 
     def test_add_tool_settings_arguments(self):
@@ -1200,6 +1676,11 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(CLI._can_use_anonymous_hub(args))
 
+    def test_can_use_anonymous_hub_for_task_command(self):
+        args = Namespace(command="task", task_command="validate")
+
+        self.assertTrue(CLI._can_use_anonymous_hub(args))
+
     async def test_call_uses_anonymous_hub_for_remote_model_run(self):
         captured_hub = None
 
@@ -1275,6 +1756,64 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertIsNotNone(captured_hub)
         self.assertEqual(captured_hub.cache_dir, "~/.cache/huggingface/hub")
         hub_class.assert_not_called()
+
+    async def test_call_preserves_explicit_hf_token_for_task_command(self):
+        captured_hub = None
+
+        async def capture_main(args, theme, console, hub):
+            nonlocal captured_hub
+            del args, theme, console
+            captured_hub = hub
+
+        with TemporaryDirectory() as tmp:
+            task = Path(tmp) / "task.toml"
+            task.write_text("", encoding="utf-8")
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "prog",
+                        "task",
+                        "validate",
+                        str(task),
+                        "--hf-token",
+                        "task-token",
+                    ],
+                ),
+                patch(
+                    "avalan.cli.__main__.translation",
+                    return_value=SimpleNamespace(
+                        gettext=lambda s: s, ngettext=lambda s, p, n: s
+                    ),
+                ),
+                patch(
+                    "avalan.cli.__main__.FancyTheme",
+                    return_value=MagicMock(get_styles=lambda: {}),
+                ),
+                patch(
+                    "avalan.cli.__main__.Console",
+                    return_value=MagicMock(),
+                ),
+                patch.object(CLI, "_needs_hf_token", return_value=False),
+                patch(
+                    "avalan.cli.__main__._huggingface_hub_class"
+                ) as hub_class,
+                patch.object(
+                    CLI,
+                    "_main",
+                    AsyncMock(side_effect=capture_main),
+                ),
+            ):
+                await self.cli()
+
+        self.assertIsNotNone(captured_hub)
+        hub_class.return_value.assert_called_once_with(
+            "task-token",
+            "~/.cache/huggingface/hub",
+            self.logger,
+        )
+        self.assertEqual(captured_hub, hub_class.return_value.return_value)
 
 
 class CliMainFunctionTestCase(TestCase):

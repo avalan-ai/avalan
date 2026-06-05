@@ -14,6 +14,7 @@ from .....entities import (
     ToolCallResult,
     ToolCallToken,
 )
+from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
 from .....utils import to_json
@@ -26,20 +27,76 @@ from . import (
     _decode_text_file_data,
 )
 
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator, cast
 
 from anthropic import APIStatusError, AsyncAnthropic
 from anthropic.types import RawContentBlockDeltaEvent, RawMessageStopEvent
 
+_ANTHROPIC_USAGE_KEYS = (
+    "input_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+    "cache_creation",
+    "output_tokens",
+    "output_tokens_details",
+)
+
+
+def _field(value: object, attribute: str) -> object | None:
+    if isinstance(value, Mapping):
+        return value.get(attribute)
+    return getattr(value, attribute, None)
+
+
+def _anthropic_event_usage(event: object) -> object | None:
+    for value in (event, _field(event, "message"), _field(event, "delta")):
+        if value is None:
+            continue
+        usage = _field(value, "usage")
+        if usage is not None:
+            return usage
+    return None
+
+
+def _usage_mapping(usage: object) -> dict[str, object]:
+    if isinstance(usage, Mapping):
+        return {
+            key: value
+            for key, value in usage.items()
+            if isinstance(key, str) and value is not None
+        }
+    return {
+        key: value
+        for key in _ANTHROPIC_USAGE_KEYS
+        if (value := getattr(usage, key, None)) is not None
+    }
+
+
+def _merge_usage(left: object | None, right: object) -> object | None:
+    right_value = _usage_mapping(right)
+    if not right_value:
+        return left
+    if left is None:
+        return right_value
+    return {**_usage_mapping(left), **right_value}
+
 
 class AnthropicStream(TextGenerationVendorStream):
     def __init__(self, events: AsyncIterator[object]):
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
+            cumulative_usage: object | None = None
 
             async for event in events:
-                etype = getattr(event, "type", None)
+                etype = _field(event, "type")
+                event_usage = _anthropic_event_usage(event)
+                if event_usage is not None:
+                    cumulative_usage = _merge_usage(
+                        cumulative_usage,
+                        event_usage,
+                    )
 
                 if etype == "content_block_start":
                     cb = getattr(event, "content_block", None)
@@ -112,9 +169,14 @@ class AnthropicStream(TextGenerationVendorStream):
                     isinstance(event, RawMessageStopEvent)
                     or etype == "message_stop"
                 ):
+                    if cumulative_usage is not None:
+                        self._usage = cumulative_usage
                     break
 
-        super().__init__(cast(AsyncIterator[str | ToolCallToken], generator()))
+        super().__init__(
+            cast(AsyncIterator[str | ToolCallToken], generator()),
+            provider_family=ProviderFamily.ANTHROPIC,
+        )
 
     async def __anext__(self) -> str | ToolCallToken:
         return cast(str | ToolCallToken, await self._generator.__anext__())
@@ -146,9 +208,13 @@ class AnthropicClient(TextGenerationVendor):
         messages: list[Message],
         settings: GenerationSettings | None = None,
         *,
+        instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationVendorStream:
+        assert (
+            instructions is None
+        ), "Anthropic does not support provider instructions"
         settings = settings or GenerationSettings()
         system_prompt = self._system_prompt(messages)
         template_messages = self._template_messages(messages, ["system"])
@@ -179,7 +245,11 @@ class AnthropicClient(TextGenerationVendor):
             content = self._non_stream_response_content(response)
             return cast(
                 TextGenerationVendorStream,
-                TextGenerationSingleStream(content),
+                TextGenerationSingleStream(
+                    content,
+                    provider_family=ProviderFamily.ANTHROPIC,
+                    usage=getattr(response, "usage", None),
+                ),
             )
         except Exception as error:
             AnthropicClient._translate_api_error(model_id, error)
