@@ -16,6 +16,7 @@ from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from itertools import count
+from json import dumps
 from math import isfinite
 from re import fullmatch
 from types import MappingProxyType
@@ -161,6 +162,14 @@ class UsageObservationEntry:
         ), "sequence must be an integer"
         assert self.sequence > 0, "sequence must be positive"
         assert isinstance(self.observation, UsageObservation)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _UsageItemIdentity:
+    usage_call_key: str
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.usage_call_key, "usage_call_key")
 
 
 class UsageResponse(Protocol):
@@ -767,7 +776,10 @@ def _usage_observation_entries_from_usage_items(
             continue
         entries.append(
             UsageObservationEntry(
-                response=_usage_item_identity_response(response, usage),
+                response=_usage_item_identity_response(
+                    usage,
+                    totals,
+                ),
                 sequence=sequence,
                 observation=UsageObservation(
                     source=UsageSource.EXACT,
@@ -780,10 +792,30 @@ def _usage_observation_entries_from_usage_items(
     return tuple(entries)
 
 
-def _usage_item_identity_response(response: object, usage: object) -> object:
+def _usage_item_identity_response(
+    usage: object,
+    totals: UsageTotals,
+) -> object:
     if _explicit_usage_call_key(usage) is not None:
         return usage
-    return response
+    return _UsageItemIdentity(
+        usage_call_key=_usage_item_content_call_key(usage, totals)
+    )
+
+
+def _usage_item_content_call_key(
+    usage: object,
+    totals: UsageTotals,
+) -> str:
+    return dumps(
+        {
+            "metadata": dict(_usage_metadata_from_response(usage, usage)),
+            "totals": dict(_usage_totals_snapshot(totals)),
+        },
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _aggregate_usage_observations(

@@ -1167,8 +1167,85 @@ class UsageTotalsTest(TestCase):
         )
 
         self.assertEqual(usage_id, replayed_usage_id)
-        self.assertNotEqual(unkeyed_usage_id, replayed_unkeyed_usage_id)
+        self.assertEqual(unkeyed_usage_id, replayed_unkeyed_usage_id)
+        self.assertNotEqual(usage_id, unkeyed_usage_id)
         self.assertNotIn("private-provider-call", usage_id)
+
+    def test_public_usage_items_use_safe_content_identity(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            usage=(
+                {
+                    "input_tokens": 1,
+                    "output_tokens": 2,
+                    "total_tokens": 3,
+                    "provider_family": "azure_openai",
+                    "raw_response_id": "private-response-one",
+                },
+            )
+        )
+        replayed = MultiCallUsageResponse(
+            usage=(
+                {
+                    "input_tokens": 1,
+                    "output_tokens": 2,
+                    "total_tokens": 3,
+                    "provider_family": "azure_openai",
+                    "raw_response_id": "private-response-two",
+                },
+            )
+        )
+
+        entries = usage_module.usage_observation_entries_from_response(
+            response
+        )
+        replayed_entries = (
+            usage_module.usage_observation_entries_from_response(replayed)
+        )
+
+        usage_id = stable_usage_id_for_response(
+            entries[0].response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=entries[0].sequence,
+        )
+        replayed_usage_id = stable_usage_id_for_response(
+            replayed_entries[0].response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=replayed_entries[0].sequence,
+        )
+
+        self.assertEqual(usage_id, replayed_usage_id)
+        self.assertNotIn("private-response-one", usage_id)
+        self.assertNotIn("private-response-two", usage_id)
+
+    def test_repeated_usage_items_remain_distinct_by_sequence(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            usage=(
+                {"input_tokens": 1, "provider_family": "openai"},
+                {"input_tokens": 1, "provider_family": "openai"},
+            )
+        )
+
+        entries = usage_module.usage_observation_entries_from_response(
+            response
+        )
+        usage_ids = tuple(
+            stable_usage_id_for_response(
+                entry.response,
+                run_id="run-1",
+                attempt_id="attempt-1",
+                sequence=entry.sequence,
+            )
+            for entry in entries
+        )
+
+        self.assertEqual(len(entries), 2)
+        self.assertNotEqual(usage_ids[0], usage_ids[1])
 
     def test_callable_usage_responses_are_supported(self) -> None:
         response = CallableUsageResponses(
@@ -2176,6 +2253,62 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.input_tokens, 3)
         self.assertEqual(totals.total_tokens, 8)
         self.assertNotIn("private-provider-call", records[0].usage_id)
+
+    async def test_record_response_usage_deduplicates_unkeyed_item_replay(
+        self,
+    ) -> None:
+        response = MultiCallUsageResponse(
+            usage=(
+                {
+                    "input_tokens": 3,
+                    "output_tokens": 5,
+                    "total_tokens": 8,
+                    "provider_family": "azure_openai",
+                    "raw_response_id": "private-response-one",
+                },
+            )
+        )
+        replayed = MultiCallUsageResponse(
+            usage=(
+                {
+                    "input_tokens": 3,
+                    "output_tokens": 5,
+                    "total_tokens": 8,
+                    "provider_family": "azure_openai",
+                    "raw_response_id": "private-response-two",
+                },
+            )
+        )
+
+        await record_response_usage(
+            None,
+            store=self.store,
+            response=response,
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+        )
+        await record_response_usage(
+            None,
+            store=self.store,
+            response=replayed,
+            run_id=self.run.run_id,
+            attempt_id=self.attempt.attempt_id,
+        )
+
+        records = await self.store.list_usage(self.run.run_id)
+        totals = await self.store.usage_totals(self.run.run_id)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].source, UsageSource.EXACT)
+        self.assertEqual(records[0].totals.input_tokens, 3)
+        self.assertEqual(records[0].totals.output_tokens, 5)
+        self.assertEqual(records[0].totals.total_tokens, 8)
+        self.assertEqual(totals.input_tokens, 3)
+        self.assertEqual(totals.output_tokens, 5)
+        self.assertEqual(totals.total_tokens, 8)
+        rendered = str(records) + str(totals)
+        self.assertNotIn("private-response-one", rendered)
+        self.assertNotIn("private-response-two", rendered)
 
     async def test_stable_usage_id_prevents_duplicate_records(self) -> None:
         usage_id = stable_usage_id(
