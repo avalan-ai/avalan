@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from types import MappingProxyType, SimpleNamespace
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import patch
 
 import avalan.task.usage as usage_module
 from avalan.task import (
@@ -1472,6 +1473,47 @@ class UsageTotalsTest(TestCase):
         self.assertNotEqual(usage_id, other_usage_id)
         self.assertTrue(usage_id.startswith("usage-"))
         self.assertNotIn("private-response-id", usage_id)
+
+    def test_stable_usage_id_for_response_handles_untracked_id_collision(
+        self,
+    ) -> None:
+        first_response = {
+            "usage": {
+                "input_tokens": 3,
+                "raw_response_id": "private-first-response",
+            }
+        }
+        second_response = {
+            "usage": {
+                "input_tokens": 5,
+                "raw_response_id": "private-second-response",
+            }
+        }
+
+        with patch.object(usage_module, "id", return_value=7, create=True):
+            first_usage_id = stable_usage_id_for_response(
+                first_response,
+                run_id="run-1",
+                attempt_id="attempt-1",
+                sequence=1,
+            )
+            replayed_first_usage_id = stable_usage_id_for_response(
+                first_response,
+                run_id="run-1",
+                attempt_id="attempt-1",
+                sequence=1,
+            )
+            second_usage_id = stable_usage_id_for_response(
+                second_response,
+                run_id="run-1",
+                attempt_id="attempt-1",
+                sequence=1,
+            )
+
+        self.assertEqual(first_usage_id, replayed_first_usage_id)
+        self.assertNotEqual(first_usage_id, second_usage_id)
+        self.assertNotIn("private-first-response", first_usage_id)
+        self.assertNotIn("private-second-response", second_usage_id)
 
 
 class UsageStoreTest(IsolatedAsyncioTestCase):

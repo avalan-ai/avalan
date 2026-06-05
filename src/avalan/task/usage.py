@@ -67,6 +67,7 @@ USAGE_METADATA_KEYS = (
 _LOCAL_USAGE_CALL_KEY_ATTRIBUTE = "_avalan_usage_call_key"
 _LOCAL_USAGE_CALL_KEY_COUNTER = count(1)
 _LOCAL_USAGE_CALL_KEYS: WeakKeyDictionary[object, str] = WeakKeyDictionary()
+_LOCAL_UNTRACKED_USAGE_CALL_KEYS: dict[int, list[tuple[object, str]]] = {}
 
 
 def _empty_metadata() -> TaskUsageMetadata:
@@ -584,10 +585,16 @@ def _weak_usage_call_key(response: object) -> str | None:
 
 
 def _local_usage_call_key_for_untracked_object(response: object) -> str:
-    key = f"local:id:{id(response)}"
+    response_id = id(response)
+    bucket = _LOCAL_UNTRACKED_USAGE_CALL_KEYS.setdefault(response_id, [])
+    for tracked_response, key in bucket:
+        if tracked_response is response:
+            return key
+    key = f"local:untracked:{next(_LOCAL_USAGE_CALL_KEY_COUNTER)}"
     try:
         _LOCAL_USAGE_CALL_KEYS[response] = key
     except TypeError:
+        bucket.append((response, key))
         return key
     return key
 
