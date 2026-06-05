@@ -152,6 +152,14 @@ class UsageObservingTarget:
         return "short summary"
 
 
+class DuplicateUsageObservingTarget(UsageObservingTarget):
+    async def __call__(self, context: TaskTargetContext) -> object:
+        self.contexts.append(context)
+        await context.observe_usage(self.response)
+        await context.observe_usage(self.response)
+        return "short summary"
+
+
 class CountingUsageResponse:
     input_token_count = 3
     output_token_count = 5
@@ -675,6 +683,26 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(totals.input_tokens, 7)
         self.assertEqual(totals.output_tokens, 8)
         self.assertEqual(totals.total_tokens, 15)
+
+    async def test_observe_usage_deduplicates_reobserved_response(
+        self,
+    ) -> None:
+        target = DuplicateUsageObservingTarget(CountingUsageResponse())
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-deduplicate",
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+        records = await self.store.list_usage(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].sequence, 1)
+        self.assertEqual(records[0].totals.input_tokens, 3)
+        self.assertEqual(records[0].totals.output_tokens, 5)
 
     async def test_observe_usage_drops_malformed_nested_provider_call(
         self,

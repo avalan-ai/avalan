@@ -355,6 +355,9 @@ from .usage import freeze_usage_metadata as freeze_usage_metadata
 from .usage import freeze_usage_value as freeze_usage_value
 from .usage import stable_usage_id as stable_usage_id
 from .usage import (
+    stable_usage_id_for_response as stable_usage_id_for_response,
+)
+from .usage import (
     usage_observation_from_response as usage_observation_from_response,
 )
 from .usage import (

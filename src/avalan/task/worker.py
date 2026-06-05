@@ -53,7 +53,11 @@ from .target import (
     TaskTargetRunner,
     TaskValidationContext,
 )
-from .usage import UsageRecord, usage_observations_from_response
+from .usage import (
+    UsageRecord,
+    stable_usage_id_for_response,
+    usage_observations_from_response,
+)
 from .validation import (
     TaskValidationCategory,
     TaskValidationError,
@@ -687,12 +691,21 @@ class TaskWorker:
         run: TaskRun,
         attempt: TaskAttempt,
     ) -> None:
-        for observation in usage_observations_from_response(response):
+        for sequence, observation in enumerate(
+            usage_observations_from_response(response),
+            start=1,
+        ):
             usage_record: UsageRecord | None = None
             try:
                 usage_record = await self._store.append_usage(
                     run.run_id,
                     attempt_id=attempt.attempt_id,
+                    usage_id=stable_usage_id_for_response(
+                        response,
+                        run_id=run.run_id,
+                        attempt_id=attempt.attempt_id,
+                        sequence=sequence,
+                    ),
                     source=observation.source,
                     totals=observation.totals,
                     metadata=observation.metadata,

@@ -290,11 +290,19 @@ def attach_response_usage_recorder(
         if recorded:
             return
         recorded = True
-        for observation in usage_observations_from_response(response):
+        observations = usage_observations_from_response(response)
+        for sequence, observation in enumerate(observations, start=1):
             await store.append_usage(
                 run_id,
                 attempt_id=attempt_id,
-                usage_id=usage_id,
+                usage_id=_usage_record_id(
+                    response,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    sequence=sequence,
+                    usage_id=usage_id,
+                    observation_count=len(observations),
+                ),
                 source=source or observation.source,
                 totals=observation.totals,
                 metadata=(
@@ -338,6 +346,23 @@ def stable_usage_id(
     return f"usage-{digest.hexdigest()}"
 
 
+def stable_usage_id_for_response(
+    response: object,
+    *,
+    run_id: str,
+    attempt_id: str | None,
+    sequence: int,
+) -> str:
+    assert isinstance(sequence, int), "sequence must be an integer"
+    assert not isinstance(sequence, bool), "sequence must be an integer"
+    assert sequence > 0, "sequence must be positive"
+    return stable_usage_id(
+        run_id=run_id,
+        attempt_id=attempt_id,
+        call_key=f"{_usage_call_key(response)}:{sequence}",
+    )
+
+
 def _sum_counter(
     records: tuple[UsageRecord, ...],
     field_name: str,
@@ -353,6 +378,56 @@ def _sum_counter(
     if not observed:
         return None
     return total
+
+
+def _usage_record_id(
+    response: object,
+    *,
+    run_id: str,
+    attempt_id: str | None,
+    sequence: int,
+    usage_id: str | None,
+    observation_count: int,
+) -> str:
+    if usage_id is None:
+        return stable_usage_id_for_response(
+            response,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            sequence=sequence,
+        )
+    if observation_count == 1:
+        return usage_id
+    return stable_usage_id(
+        run_id=run_id,
+        attempt_id=attempt_id,
+        call_key=f"{usage_id}:{sequence}",
+    )
+
+
+def _usage_call_key(response: object) -> str:
+    explicit = _explicit_usage_call_key(response)
+    if explicit is not None:
+        return _hashed_call_key("explicit", explicit)
+    return f"object:{id(response)}"
+
+
+def _explicit_usage_call_key(response: object) -> str | None:
+    for attribute in (
+        "usage_call_key",
+        "usage_identity",
+        "usage_key",
+        "usage_id",
+    ):
+        value = getattr(response, attribute, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _hashed_call_key(prefix: str, value: str) -> str:
+    digest = sha256(value.encode("utf-8")).hexdigest()
+    return f"{prefix}:{digest}"
 
 
 def _counter_value(totals: UsageTotals, field_name: str) -> int | None:

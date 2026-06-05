@@ -26,6 +26,7 @@ from avalan.task import (
     freeze_usage_metadata,
     freeze_usage_value,
     stable_usage_id,
+    stable_usage_id_for_response,
     usage_observation_from_response,
     usage_observations_from_response,
     usage_totals_from_response,
@@ -874,6 +875,43 @@ class UsageTotalsTest(TestCase):
         with self.assertRaises(AssertionError):
             stable_usage_id(run_id="run-1", attempt_id=None, call_key="")
 
+    def test_stable_usage_id_for_response_hashes_explicit_key(self) -> None:
+        response = SimpleNamespace(
+            usage_call_key="private-provider-response-id",
+            usage={"input_tokens": 1},
+        )
+
+        usage_id = stable_usage_id_for_response(
+            response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        same_usage_id = stable_usage_id_for_response(
+            response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=1,
+        )
+        next_usage_id = stable_usage_id_for_response(
+            response,
+            run_id="run-1",
+            attempt_id="attempt-1",
+            sequence=2,
+        )
+
+        self.assertEqual(usage_id, same_usage_id)
+        self.assertNotEqual(usage_id, next_usage_id)
+        self.assertTrue(usage_id.startswith("usage-"))
+        self.assertNotIn("private-provider-response-id", usage_id)
+        with self.assertRaises(AssertionError):
+            stable_usage_id_for_response(
+                response,
+                run_id="run-1",
+                attempt_id="attempt-1",
+                sequence=0,
+            )
+
 
 class UsageStoreTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
@@ -920,6 +958,55 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
             records[0].metadata["provider_family"],
             UsageProviderFamily.LOCAL.value,
         )
+
+    async def test_response_callback_uses_explicit_single_usage_id(
+        self,
+    ) -> None:
+        response = FakeConsumedResponse()
+
+        self.assertTrue(
+            attach_response_usage_recorder(
+                response,
+                store=self.store,
+                run_id=self.run.run_id,
+                attempt_id=self.attempt.attempt_id,
+                usage_id="usage-explicit",
+            )
+        )
+        await response.consume()
+
+        records = await self.store.list_usage(self.run.run_id)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].usage_id, "usage-explicit")
+        self.assertEqual(records[0].totals.input_tokens, 3)
+
+    async def test_response_callback_splits_explicit_multi_usage_id(
+        self,
+    ) -> None:
+        response = FakeConsumedResponse(input_token_count=None)
+        response.usage = (
+            {"input_tokens": 1},
+            {"output_tokens": 2},
+        )
+
+        self.assertTrue(
+            attach_response_usage_recorder(
+                response,
+                store=self.store,
+                run_id=self.run.run_id,
+                attempt_id=self.attempt.attempt_id,
+                usage_id="private-explicit-id",
+            )
+        )
+        await response.consume()
+
+        records = await self.store.list_usage(self.run.run_id)
+        self.assertEqual(len(records), 2)
+        self.assertNotEqual(records[0].usage_id, records[1].usage_id)
+        self.assertNotIn("private-explicit-id", records[0].usage_id)
+        self.assertNotIn("private-explicit-id", records[1].usage_id)
+        self.assertEqual(records[0].totals.input_tokens, 1)
+        self.assertEqual(records[1].totals.output_tokens, 2)
 
     async def test_usage_records_are_filtered_and_aggregated(self) -> None:
         other_attempt = await self._failed_attempt_then_new_attempt()

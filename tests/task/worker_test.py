@@ -1915,6 +1915,41 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(totals.output_tokens, 9)
         self.assertEqual(totals.total_tokens, 15)
 
+    async def test_record_usage_deduplicates_reobserved_response(
+        self,
+    ) -> None:
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+        )
+        attempt = await self.store.create_attempt(self.run.run_id)
+        response = SimpleNamespace(input_token_count=2, output_token_count=3)
+
+        await worker._record_usage(
+            response,
+            definition=self.definition,
+            run=self.run,
+            attempt=attempt,
+        )
+        await worker._record_usage(
+            response,
+            definition=self.definition,
+            run=self.run,
+            attempt=attempt,
+        )
+
+        records = await self.store.list_usage(self.run.run_id)
+        totals = await self.store.usage_totals(self.run.run_id)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].sequence, 1)
+        self.assertEqual(records[0].totals.input_tokens, 2)
+        self.assertEqual(records[0].totals.output_tokens, 3)
+        self.assertEqual(totals.input_tokens, 2)
+        self.assertEqual(totals.output_tokens, 3)
+
     async def test_process_once_reports_no_work(self) -> None:
         self.queue.item = None
         worker = TaskWorker(
