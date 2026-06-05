@@ -37,7 +37,9 @@ _ANTHROPIC_USAGE_KEYS = (
     "input_tokens",
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
+    "cache_creation",
     "output_tokens",
+    "output_tokens_details",
 )
 
 
@@ -170,7 +172,10 @@ class AnthropicStream(TextGenerationVendorStream):
                         self._usage = cumulative_usage
                     break
 
-        super().__init__(cast(AsyncIterator[str | ToolCallToken], generator()))
+        super().__init__(
+            cast(AsyncIterator[str | ToolCallToken], generator()),
+            provider_family="anthropic",
+        )
 
     async def __anext__(self) -> str | ToolCallToken:
         return cast(str | ToolCallToken, await self._generator.__anext__())
@@ -240,7 +245,9 @@ class AnthropicClient(TextGenerationVendor):
             return cast(
                 TextGenerationVendorStream,
                 TextGenerationSingleStream(
-                    content, usage=getattr(response, "usage", None)
+                    content,
+                    provider_family="anthropic",
+                    usage=getattr(response, "usage", None),
                 ),
             )
         except Exception as error:

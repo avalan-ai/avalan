@@ -127,6 +127,9 @@ class PrometheusObservabilitySinkTest(IsolatedAsyncioTestCase):
                 output_tokens=5,
             ),
             metadata={
+                "provider_family": "anthropic",
+                "cache_creation_ephemeral_5m_input_tokens": 3,
+                "cache_creation_ephemeral_1h_input_tokens": 4,
                 "user_id": "private-user",
                 "filename": "private.txt",
                 "raw_model_id": "provider/model-private",
@@ -178,6 +181,8 @@ class PrometheusObservabilitySinkTest(IsolatedAsyncioTestCase):
         exported = str(factory.counters)
         self.assertNotIn("run-private", exported)
         self.assertNotIn("attempt-private", exported)
+        self.assertNotIn("anthropic", exported)
+        self.assertNotIn("ephemeral", exported)
         self.assertNotIn("private prompt", exported)
         self.assertNotIn("raw-model-private", exported)
         self.assertNotIn("private-user", exported)

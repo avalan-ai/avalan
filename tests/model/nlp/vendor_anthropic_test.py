@@ -27,7 +27,10 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
-from avalan.task.usage import usage_totals_from_response
+from avalan.task.usage import (
+    usage_observation_from_response,
+    usage_totals_from_response,
+)
 
 
 class AsyncIter:
@@ -142,19 +145,26 @@ def test_stream_records_usage_on_message_stop(anthropic_mod):
     async def agen():
         yield SimpleNamespace(
             type="message_start",
-            message={
-                "usage": {
-                    "input_tokens": 7,
-                    "cache_read_input_tokens": 2,
-                    "cache_creation_input_tokens": 3,
-                }
-            },
+            message=SimpleNamespace(
+                usage=SimpleNamespace(
+                    input_tokens=7,
+                    cache_read_input_tokens=2,
+                    cache_creation_input_tokens=3,
+                    cache_creation=SimpleNamespace(
+                        ephemeral_5m_input_tokens=11,
+                        ephemeral_1h_input_tokens=13,
+                    ),
+                )
+            ),
         )
         yield mod.RawContentBlockDeltaEvent(SimpleNamespace(thinking="think"))
         yield SimpleNamespace(type="message_delta", usage=SimpleNamespace())
         yield SimpleNamespace(
             type="message_delta",
-            usage={"output_tokens": 5},
+            usage={
+                "output_tokens": 5,
+                "output_tokens_details": {"thinking_tokens": 4},
+            },
         )
         yield SimpleNamespace(type="message_stop")
 
@@ -167,15 +177,23 @@ def test_stream_records_usage_on_message_stop(anthropic_mod):
         return stream, token
 
     stream, token = asyncio.run(collect())
+    observation = usage_observation_from_response(stream)
     totals = usage_totals_from_response(stream)
 
     assert isinstance(token, ReasoningToken)
+    assert stream.provider_family == "anthropic"
+    assert observation is not None
+    assert observation.metadata == {
+        "provider_family": "anthropic",
+        "cache_creation_ephemeral_5m_input_tokens": 11,
+        "cache_creation_ephemeral_1h_input_tokens": 13,
+    }
     assert totals is not None
     assert totals.input_tokens == 7
     assert totals.cached_input_tokens == 2
     assert totals.cache_creation_input_tokens == 3
     assert totals.output_tokens == 5
-    assert totals.reasoning_tokens is None
+    assert totals.reasoning_tokens == 4
 
 
 def test_stream_records_mapping_usage_on_message_stop(anthropic_mod):

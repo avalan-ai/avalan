@@ -23,7 +23,10 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
-from avalan.task.usage import usage_totals_from_response
+from avalan.task.usage import (
+    usage_observation_from_response,
+    usage_totals_from_response,
+)
 
 
 class AsyncIter:
@@ -300,6 +303,17 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
                         "cacheWriteInputTokens": 2,
                         "outputTokens": 7,
                         "totalTokens": 12,
+                        "reasoning": {"text": "private thinking text"},
+                        "cacheDetails": {
+                            "cacheRead": {
+                                "ephemeral5mInputTokens": 3,
+                                "ephemeral1hInputTokens": 4,
+                            },
+                            "cacheWrite": {
+                                "ephemeral5mInputTokens": 5,
+                                "ephemeral1hInputTokens": 6,
+                            },
+                        },
                     }
                 }
             },
@@ -312,8 +326,22 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(stream.usage)
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+        observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
+        self.assertEqual(stream.provider_family, "bedrock")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata,
+            {
+                "provider_family": "bedrock",
+                "cache_creation_ephemeral_5m_input_tokens": 5,
+                "cache_creation_ephemeral_1h_input_tokens": 6,
+                "cache_read_ephemeral_5m_input_tokens": 3,
+                "cache_read_ephemeral_1h_input_tokens": 4,
+            },
+        )
         self.assertIsNotNone(totals)
         assert totals is not None
         self.assertEqual(totals.input_tokens, 5)
@@ -322,6 +350,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(totals.output_tokens, 7)
         self.assertIsNone(totals.reasoning_tokens)
         self.assertEqual(totals.total_tokens, 12)
+        self.assertNotIn("private thinking text", str(observation))
 
     async def test_stream_defers_usage_until_metadata_stream_exhausts(self):
         events = [
@@ -642,6 +671,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
 
         text = await result.__anext__()
         self.assertEqual(text, "hello world")
+        self.assertEqual(result.provider_family, "bedrock")
         self.assertEqual(result.usage, {"inputTokens": 3})
         self.client.converse.assert_awaited_once()
         await exit_stack.aclose()

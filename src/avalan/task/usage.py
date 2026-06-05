@@ -48,7 +48,13 @@ USAGE_COUNTER_NAMES = (
     "reasoning_tokens",
     "total_tokens",
 )
-USAGE_METADATA_KEYS = ("provider_family",)
+USAGE_METADATA_KEYS = (
+    "provider_family",
+    "cache_creation_ephemeral_5m_input_tokens",
+    "cache_creation_ephemeral_1h_input_tokens",
+    "cache_read_ephemeral_5m_input_tokens",
+    "cache_read_ephemeral_1h_input_tokens",
+)
 
 
 def _empty_metadata() -> TaskUsageMetadata:
@@ -168,10 +174,19 @@ def freeze_usage_metadata(
     if value is None:
         return _empty_metadata()
     assert isinstance(value, Mapping), "metadata must be a mapping"
+    metadata: dict[str, TaskUsageValue] = {}
     provider_family = _provider_family_value(value.get("provider_family"))
-    if provider_family is None:
+    if provider_family is not None:
+        metadata["provider_family"] = provider_family.value
+    for key in USAGE_METADATA_KEYS:
+        if key == "provider_family":
+            continue
+        counter = _counter_from_value(value.get(key))
+        if counter is not None:
+            metadata[key] = counter
+    if not metadata:
         return _empty_metadata()
-    return MappingProxyType({"provider_family": provider_family.value})
+    return MappingProxyType(metadata)
 
 
 def freeze_usage_value(value: object) -> TaskUsageValue:
@@ -552,6 +567,7 @@ _PROVIDER_COUNTER_PATHS: CounterPathMap = {
         ("reasoningTokens",),
         ("thoughtsTokenCount",),
         ("thoughts_token_count",),
+        ("output_tokens_details", "thinking_tokens"),
         ("output_tokens_details", "reasoning_tokens"),
         ("completion_tokens_details", "reasoning_tokens"),
     ),
@@ -572,6 +588,49 @@ _RESPONSE_COUNTER_PATHS: CounterPathMap = {
     "total_tokens": (("total_token_count",),),
 }
 
+_USAGE_METADATA_COUNTER_PATHS: CounterPathMap = {
+    "cache_creation_ephemeral_5m_input_tokens": (
+        ("cache_creation_ephemeral_5m_input_tokens",),
+        ("cacheCreationEphemeral5mInputTokens",),
+        ("cache_creation", "ephemeral_5m_input_tokens"),
+        ("cacheCreation", "ephemeral5mInputTokens"),
+        ("cacheCreation", "ephemeral_5m_input_tokens"),
+        ("cache_details", "cache_creation", "ephemeral_5m_input_tokens"),
+        ("cache_details", "cache_write", "ephemeral_5m_input_tokens"),
+        ("cacheDetails", "cacheCreation", "ephemeral5mInputTokens"),
+        ("cacheDetails", "cacheWrite", "ephemeral5mInputTokens"),
+    ),
+    "cache_creation_ephemeral_1h_input_tokens": (
+        ("cache_creation_ephemeral_1h_input_tokens",),
+        ("cacheCreationEphemeral1hInputTokens",),
+        ("cache_creation", "ephemeral_1h_input_tokens"),
+        ("cacheCreation", "ephemeral1hInputTokens"),
+        ("cacheCreation", "ephemeral_1h_input_tokens"),
+        ("cache_details", "cache_creation", "ephemeral_1h_input_tokens"),
+        ("cache_details", "cache_write", "ephemeral_1h_input_tokens"),
+        ("cacheDetails", "cacheCreation", "ephemeral1hInputTokens"),
+        ("cacheDetails", "cacheWrite", "ephemeral1hInputTokens"),
+    ),
+    "cache_read_ephemeral_5m_input_tokens": (
+        ("cache_read_ephemeral_5m_input_tokens",),
+        ("cacheReadEphemeral5mInputTokens",),
+        ("cache_read", "ephemeral_5m_input_tokens"),
+        ("cacheRead", "ephemeral5mInputTokens"),
+        ("cacheRead", "ephemeral_5m_input_tokens"),
+        ("cache_details", "cache_read", "ephemeral_5m_input_tokens"),
+        ("cacheDetails", "cacheRead", "ephemeral5mInputTokens"),
+    ),
+    "cache_read_ephemeral_1h_input_tokens": (
+        ("cache_read_ephemeral_1h_input_tokens",),
+        ("cacheReadEphemeral1hInputTokens",),
+        ("cache_read", "ephemeral_1h_input_tokens"),
+        ("cacheRead", "ephemeral1hInputTokens"),
+        ("cacheRead", "ephemeral_1h_input_tokens"),
+        ("cache_details", "cache_read", "ephemeral_1h_input_tokens"),
+        ("cacheDetails", "cacheRead", "ephemeral1hInputTokens"),
+    ),
+}
+
 
 def _usage_container(response: object) -> object | None:
     for attribute in ("usage", "usage_metadata", "usageMetadata"):
@@ -585,15 +644,26 @@ def _usage_metadata_from_response(
     response: object,
     usage: object | None,
 ) -> TaskUsageMetadata:
+    metadata: dict[str, object] = {}
     for value in (response, usage):
         if value is None:
             continue
         provider_family = _provider_family_value(
             _value_at_path(value, ("provider_family",))
         )
-        if provider_family is not None:
-            return freeze_usage_metadata({"provider_family": provider_family})
-    return _empty_metadata()
+        if provider_family is not None and "provider_family" not in metadata:
+            metadata["provider_family"] = provider_family
+        for key, counter in _usage_metadata_counters_from_value(value).items():
+            metadata.setdefault(key, counter)
+    return freeze_usage_metadata(metadata)
+
+
+def _usage_metadata_counters_from_value(value: object) -> dict[str, int]:
+    return {
+        name: counter
+        for name, paths in _USAGE_METADATA_COUNTER_PATHS.items()
+        if (counter := _counter_from_paths(value, paths)) is not None
+    }
 
 
 def _usage_totals_from_value(

@@ -228,7 +228,7 @@ class BedrockStream(TextGenerationVendorStream):
             if terminal_usage is not None:
                 self._usage = terminal_usage
 
-        super().__init__(generator())
+        super().__init__(generator(), provider_family="bedrock")
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
@@ -318,7 +318,9 @@ class BedrockClient(TextGenerationVendor):
                 response.get("usage") if isinstance(response, dict) else None
             )
             return TextGenerationSingleStream(
-                self._response_text(response), usage=usage
+                self._response_text(response),
+                provider_family="bedrock",
+                usage=usage,
             )
         except Exception as error:
             if self._is_invalid_model_identifier_error(error):

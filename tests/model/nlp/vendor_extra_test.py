@@ -23,7 +23,10 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
-from avalan.task.usage import usage_totals_from_response
+from avalan.task.usage import (
+    usage_observation_from_response,
+    usage_totals_from_response,
+)
 
 
 class AsyncIter:
@@ -270,7 +273,16 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
                             return_value=AsyncIter([SimpleNamespace(text="s")])
                         ),
                         generate_content=AsyncMock(
-                            return_value=SimpleNamespace(text="r")
+                            return_value=SimpleNamespace(
+                                text="r",
+                                usage_metadata=SimpleNamespace(
+                                    promptTokenCount=6,
+                                    cachedContentTokenCount=2,
+                                    candidatesTokenCount=4,
+                                    thoughtsTokenCount=1,
+                                    totalTokenCount=10,
+                                ),
+                            )
                         ),
                     )
                 )
@@ -312,7 +324,14 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
 
         gen = await client("m", msgs, use_async_generator=False)
         out = [t async for t in gen]
+        totals = usage_totals_from_response(gen)
         self.assertEqual(out, ["r"])
+        self.assertEqual(gen.provider_family, "google")
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 6)
+        self.assertEqual(totals.cached_input_tokens, 2)
+        self.assertEqual(totals.reasoning_tokens, 1)
         client._client.aio.models.generate_content.assert_awaited_once()
 
         stream = self.mod.GoogleStream(AsyncIter([SimpleNamespace(text="x")]))
@@ -352,8 +371,13 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(stream.usage)
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+        observation = usage_observation_from_response(stream)
         totals = usage_totals_from_response(stream)
 
+        self.assertEqual(stream.provider_family, "google")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.metadata, {"provider_family": "google"})
         self.assertIsNotNone(totals)
         assert totals is not None
         self.assertEqual(totals.input_tokens, 4)

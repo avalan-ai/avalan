@@ -870,7 +870,11 @@ class PgsqlStoreContractTest(
                 reasoning_tokens=7,
                 total_tokens=8,
             ),
-            metadata={"provider_family": UsageProviderFamily.OPENAI},
+            metadata={
+                "provider_family": UsageProviderFamily.ANTHROPIC,
+                "cache_creation_ephemeral_5m_input_tokens": 11,
+                "cache_creation_ephemeral_1h_input_tokens": 13,
+            },
         )
         second_usage = await self.store.append_usage(
             run.run_id,
@@ -941,7 +945,15 @@ class PgsqlStoreContractTest(
         self.assertEqual(len(sequence_queries), 3)
         self.assertEqual(
             usage.metadata["provider_family"],
-            UsageProviderFamily.OPENAI.value,
+            UsageProviderFamily.ANTHROPIC.value,
+        )
+        self.assertEqual(
+            usage.metadata["cache_creation_ephemeral_5m_input_tokens"],
+            11,
+        )
+        self.assertEqual(
+            usage.metadata["cache_creation_ephemeral_1h_input_tokens"],
+            13,
         )
         usage_row = self.database.usage[usage.usage_id]
         self.assertEqual(usage_row["cache_creation_input_tokens"], 2)

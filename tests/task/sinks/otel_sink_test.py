@@ -171,6 +171,9 @@ class OpenTelemetryObservabilitySinkTest(IsolatedAsyncioTestCase):
                 output_tokens=5,
             ),
             metadata={
+                "provider_family": "google",
+                "cache_read_ephemeral_5m_input_tokens": 3,
+                "cache_read_ephemeral_1h_input_tokens": 4,
                 "user_id": "private-user",
                 "filename": "private.txt",
                 "raw_model_id": "provider/model-private",
@@ -230,6 +233,8 @@ class OpenTelemetryObservabilitySinkTest(IsolatedAsyncioTestCase):
         exported = f"{tracer.spans}{meter.counters}"
         self.assertNotIn("run-private", exported)
         self.assertNotIn("attempt-private", exported)
+        self.assertNotIn("google", exported)
+        self.assertNotIn("ephemeral", exported)
         self.assertNotIn("private-user", exported)
         self.assertNotIn("private.txt", exported)
 

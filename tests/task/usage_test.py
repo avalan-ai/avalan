@@ -96,6 +96,10 @@ class FakeProviderResponse(FakeConsumedResponse):
             provider_family=UsageProviderFamily.OPENAI,
             input_tokens_details=SimpleNamespace(cached_tokens=1),
             cache_creation_input_tokens=2,
+            cache_creation=SimpleNamespace(
+                ephemeral_5m_input_tokens=6,
+                ephemeral_1h_input_tokens=8,
+            ),
             output_tokens=4,
             output_tokens_details={"reasoning_tokens": 5},
             total_tokens=99,
@@ -146,7 +150,16 @@ class UsageTotalsTest(TestCase):
                 "total_tokens",
             ),
         )
-        self.assertEqual(USAGE_METADATA_KEYS, ("provider_family",))
+        self.assertEqual(
+            USAGE_METADATA_KEYS,
+            (
+                "provider_family",
+                "cache_creation_ephemeral_5m_input_tokens",
+                "cache_creation_ephemeral_1h_input_tokens",
+                "cache_read_ephemeral_5m_input_tokens",
+                "cache_read_ephemeral_1h_input_tokens",
+            ),
+        )
 
     def test_response_usage_preserves_unavailable_counters_as_none(
         self,
@@ -341,6 +354,187 @@ class UsageTotalsTest(TestCase):
                 total_tokens=12,
             ),
         )
+
+    def test_anthropic_usage_preserves_cache_and_thinking_details(
+        self,
+    ) -> None:
+        response = SimpleNamespace(
+            provider_family="anthropic",
+            usage={
+                "input_tokens": 7,
+                "cache_read_input_tokens": 2,
+                "cache_creation_input_tokens": 3,
+                "output_tokens": 5,
+                "output_tokens_details": {"thinking_tokens": 4},
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 11,
+                    "ephemeral_1h_input_tokens": 13,
+                    "cache_key": "private-cache-key",
+                },
+            },
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.source, UsageSource.EXACT)
+        self.assertEqual(
+            observation.totals,
+            UsageTotals(
+                input_tokens=7,
+                cached_input_tokens=2,
+                cache_creation_input_tokens=3,
+                output_tokens=5,
+                reasoning_tokens=4,
+            ),
+        )
+        self.assertEqual(
+            observation.metadata,
+            {
+                "provider_family": UsageProviderFamily.ANTHROPIC.value,
+                "cache_creation_ephemeral_5m_input_tokens": 11,
+                "cache_creation_ephemeral_1h_input_tokens": 13,
+            },
+        )
+        self.assertNotIn("private-cache-key", str(observation))
+
+    def test_bedrock_usage_preserves_cache_write_and_details_metadata(
+        self,
+    ) -> None:
+        response = SimpleNamespace(
+            provider_family="bedrock",
+            usage={
+                "inputTokens": 10,
+                "cacheReadInputTokens": 1,
+                "cache_write_input_tokens": 2,
+                "outputTokens": 8,
+                "totalTokens": 18,
+                "reasoning": {"text": "private visible reasoning"},
+                "cacheDetails": {
+                    "cacheRead": {
+                        "ephemeral5mInputTokens": 4,
+                        "ephemeral1hInputTokens": 5,
+                    },
+                    "cacheWrite": {
+                        "ephemeral5mInputTokens": 6,
+                        "ephemeral1hInputTokens": 7,
+                    },
+                    "cacheHandle": "private-cache-handle",
+                },
+            },
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.totals,
+            UsageTotals(
+                input_tokens=10,
+                cached_input_tokens=1,
+                cache_creation_input_tokens=2,
+                output_tokens=8,
+                total_tokens=18,
+            ),
+        )
+        self.assertIsNone(observation.totals.reasoning_tokens)
+        self.assertEqual(
+            observation.metadata,
+            {
+                "provider_family": UsageProviderFamily.BEDROCK.value,
+                "cache_creation_ephemeral_5m_input_tokens": 6,
+                "cache_creation_ephemeral_1h_input_tokens": 7,
+                "cache_read_ephemeral_5m_input_tokens": 4,
+                "cache_read_ephemeral_1h_input_tokens": 5,
+            },
+        )
+        self.assertNotIn("private visible reasoning", str(observation))
+        self.assertNotIn("private-cache-handle", str(observation))
+
+    def test_google_usage_preserves_snake_and_camel_metadata(self) -> None:
+        camel = usage_totals_from_response(
+            SimpleNamespace(
+                provider_family="google",
+                usageMetadata={
+                    "promptTokenCount": 4,
+                    "cachedContentTokenCount": 1,
+                    "candidatesTokenCount": 3,
+                    "thoughtsTokenCount": 2,
+                    "totalTokenCount": 9,
+                },
+            )
+        )
+        snake = usage_totals_from_response(
+            SimpleNamespace(
+                provider_family="google",
+                usage_metadata={
+                    "prompt_token_count": 5,
+                    "cached_content_token_count": 2,
+                    "candidates_token_count": 4,
+                    "thoughts_token_count": 1,
+                    "total_token_count": 11,
+                },
+            )
+        )
+
+        self.assertEqual(
+            camel,
+            UsageTotals(
+                input_tokens=4,
+                cached_input_tokens=1,
+                output_tokens=3,
+                reasoning_tokens=2,
+                total_tokens=9,
+            ),
+        )
+        self.assertEqual(
+            snake,
+            UsageTotals(
+                input_tokens=5,
+                cached_input_tokens=2,
+                output_tokens=4,
+                reasoning_tokens=1,
+                total_tokens=11,
+            ),
+        )
+
+    def test_provider_usage_does_not_infer_from_hints(
+        self,
+    ) -> None:
+        response = SimpleNamespace(
+            provider_family="anthropic",
+            usage={
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "output_tokens_details": {"thinking_tokens": "private text"},
+                "thinking": {"budget_tokens": 9000},
+                "reasoning_effort": "high",
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 3,
+                    "ephemeral_1h_input_tokens": True,
+                },
+                "latency_ms": 1,
+            },
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.totals,
+            UsageTotals(input_tokens=1, output_tokens=2),
+        )
+        self.assertEqual(
+            observation.metadata,
+            {
+                "provider_family": UsageProviderFamily.ANTHROPIC.value,
+                "cache_creation_ephemeral_5m_input_tokens": 3,
+            },
+        )
+        self.assertNotIn("private text", str(observation))
 
     def test_text_response_counts_are_estimated(self) -> None:
         observation = usage_observation_from_response(FakeConsumedResponse())
@@ -598,6 +792,13 @@ class UsageTotalsTest(TestCase):
         metadata = freeze_usage_metadata(
             {
                 "provider_family": "azure_openai",
+                "cache_creation_ephemeral_5m_input_tokens": 3,
+                "cache_creation_ephemeral_1h_input_tokens": 4,
+                "cache_read_ephemeral_5m_input_tokens": 5,
+                "cache_read_ephemeral_1h_input_tokens": 6,
+                "cacheCreationEphemeral5mInputTokens": 99,
+                "cache_read_ephemeral_5m_input_tokens_bad": 7,
+                "cache_read_ephemeral_1h_input_tokens_bad": -1,
                 "raw_model_id": "private-deployment",
                 "headers": {"authorization": "private-token"},
                 "request_id": "private-response-id",
@@ -613,7 +814,13 @@ class UsageTotalsTest(TestCase):
         self.assertEqual(empty, {})
         self.assertEqual(
             metadata,
-            {"provider_family": UsageProviderFamily.AZURE_OPENAI.value},
+            {
+                "provider_family": UsageProviderFamily.AZURE_OPENAI.value,
+                "cache_creation_ephemeral_5m_input_tokens": 3,
+                "cache_creation_ephemeral_1h_input_tokens": 4,
+                "cache_read_ephemeral_5m_input_tokens": 5,
+                "cache_read_ephemeral_1h_input_tokens": 6,
+            },
         )
         self.assertEqual(invalid_metadata, {})
         self.assertIsNone(freeze_usage_value(None))
@@ -769,6 +976,14 @@ class UsageStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             records[0].metadata["provider_family"],
             UsageProviderFamily.OPENAI.value,
+        )
+        self.assertEqual(
+            records[0].metadata["cache_creation_ephemeral_5m_input_tokens"],
+            6,
+        )
+        self.assertEqual(
+            records[0].metadata["cache_creation_ephemeral_1h_input_tokens"],
+            8,
         )
 
     async def test_stable_usage_id_prevents_duplicate_records(self) -> None:

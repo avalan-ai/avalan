@@ -77,9 +77,34 @@ reasoning counters from other fields.
 Stores may receive a stable usage id for a provider call; repeated observations
 with the same id return the existing record instead of incrementing counters.
 Distinct provider calls must use distinct ids. Usage metadata is allowlisted to
-low-cardinality `provider_family` values and drops raw provider objects, model
+low-cardinality `provider_family` values and numeric cache TTL buckets:
+`cache_creation_ephemeral_5m_input_tokens`,
+`cache_creation_ephemeral_1h_input_tokens`,
+`cache_read_ephemeral_5m_input_tokens`, and
+`cache_read_ephemeral_1h_input_tokens`. It drops raw provider objects, model
 ids, deployment names, endpoints, headers, request ids, response ids, cache
 handles, filenames, paths, and unknown nested fields.
+
+Anthropic `input_tokens` is the provider-reported uncached input count.
+When Anthropic reports all three fields, total input for cache analysis is
+`input_tokens + cache_creation_input_tokens + cached_input_tokens`. Anthropic
+cache-creation TTL buckets remain metadata only; they do not replace or
+derive `cache_creation_input_tokens`.
+
+Bedrock cache write fields such as `cacheWriteInputTokens` and
+`cache_write_input_tokens` map to `cache_creation_input_tokens`. Bedrock
+reasoning tokens remain unavailable unless a model returns an explicit exact
+reasoning counter; visible reasoning text, signatures, redacted content, and
+reasoning configuration are not counters.
+
+Google/Gemini usage maps `promptTokenCount` or `prompt_token_count` to
+`input_tokens`, `candidatesTokenCount` or `candidates_token_count` to
+`output_tokens`, `totalTokenCount` or `total_token_count` to `total_tokens`,
+`thoughtsTokenCount` or `thoughts_token_count` to `reasoning_tokens`, and
+`cachedContentTokenCount` or `cached_content_token_count` to
+`cached_input_tokens`. Google prompt token counts may include cached content;
+the cached-content counter is the cached subset and is not cache-write cost for
+separately created cached content.
 
 Task events use a single `task_events` table with a unique `(run_id,
 sequence)` constraint and indexes for incremental run and attempt inspection.
