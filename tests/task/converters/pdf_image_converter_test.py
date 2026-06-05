@@ -590,6 +590,66 @@ class PdfImageFileConverterTest(IsolatedAsyncioTestCase):
             str(error.exception), "PDF image dimensions are unavailable"
         )
 
+    async def test_converter_rejects_non_positive_image_dimensions(
+        self,
+    ) -> None:
+        converter = PdfImageFileConverter()
+        cases = (
+            FakePdfiumModule(page_count=1, image_size=(0, 200)),
+            FakePdfiumModule(page_count=1, image_size=(100, -1)),
+        )
+
+        for module in cases:
+            with self.subTest(size=module.document.pages[0].image.size):
+                with patch(
+                    "avalan.task.converters.pdf_image.import_module",
+                    return_value=module,
+                ):
+                    with self.assertRaises(TaskFileConversionError) as error:
+                        await converter.convert_pages(
+                            b"%PDF-private",
+                            source_media_type="application/pdf",
+                            options={"format": "png"},
+                        )
+
+                image = module.document.pages[0].image
+                self.assertEqual(
+                    str(error.exception),
+                    "PDF image dimensions are unavailable",
+                )
+                self.assertEqual(image.saves, ())
+                self.assertTrue(image.closed)
+                self.assertTrue(module.document.pages[0].closed)
+                self.assertTrue(module.document.closed)
+                self.assertNotIn("%PDF-private", str(error.exception))
+
+    async def test_converter_rejects_non_positive_fallback_dimensions(
+        self,
+    ) -> None:
+        converter = PdfImageFileConverter()
+        module = FakePdfiumModule(page_count=1)
+        image = cast(Any, module.document.pages[0].image)
+        image.size = None
+        image.width = 640
+        image.height = 0
+
+        with patch(
+            "avalan.task.converters.pdf_image.import_module",
+            return_value=module,
+        ):
+            with self.assertRaises(TaskFileConversionError) as error:
+                await converter.convert_pages(
+                    b"%PDF-private",
+                    source_media_type="application/pdf",
+                    options={"format": "png"},
+                )
+
+        self.assertEqual(
+            str(error.exception), "PDF image dimensions are unavailable"
+        )
+        self.assertEqual(image.saves, ())
+        self.assertNotIn("%PDF-private", str(error.exception))
+
     async def test_converter_rejects_non_pdf_media_type_before_backend(
         self,
     ) -> None:

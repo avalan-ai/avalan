@@ -420,10 +420,17 @@ def _image_dimensions(image: Any) -> tuple[int, int]:
         and isinstance(size[0], int)
         and isinstance(size[1], int)
     ):
-        return cast(tuple[int, int], size)
+        dimensions = cast(tuple[int, int], size)
+        if dimensions[0] > 0 and dimensions[1] > 0:
+            return dimensions
     width = getattr(image, "width", None)
     height = getattr(image, "height", None)
-    if isinstance(width, int) and isinstance(height, int):
+    if (
+        isinstance(width, int)
+        and isinstance(height, int)
+        and width > 0
+        and height > 0
+    ):
         return width, height
     raise TaskFileConversionError("PDF image dimensions are unavailable")
 
