@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 from avalan.task import (
     EncryptedPrivacyValue,
+    ObservabilitySinkHealth,
     ObservabilitySinkType,
     PrivacyAction,
     PrivacySanitizer,
@@ -65,6 +66,7 @@ from avalan.task import (
     TaskWorker,
     TaskWorkerShutdown,
     UsageSource,
+    UsageTotals,
 )
 from avalan.task.error import classify_task_error
 from avalan.task.idempotency import TaskIdempotencyIdentity
@@ -127,6 +129,41 @@ class UsageTextOutput(str):
     @property
     def usage_responses(self) -> tuple[object, ...]:
         return self._usage_responses
+
+
+class RecordingUsageSink:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+        self.usage_totals: list[UsageTotals] = []
+
+    async def record_event(self, event: object) -> None:
+        self.events.append(event)
+
+    async def record_usage(
+        self,
+        *,
+        run_id: str,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        self.usage_totals.append(totals)
+
+    def health(self) -> ObservabilitySinkHealth:
+        return ObservabilitySinkHealth(
+            name="recording",
+            event_count=len(self.events),
+            usage_count=len(self.usage_totals),
+        )
+
+    @property
+    def usage_event_count(self) -> int:
+        return sum(
+            1
+            for event in self.events
+            if type(event).__name__ == "SanitizedTaskUsageEvent"
+        )
 
 
 class WaitingTarget(FakeTarget):
@@ -2029,12 +2066,14 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
     async def test_record_usage_deduplicates_reobserved_response(
         self,
     ) -> None:
+        sink = RecordingUsageSink()
         worker = TaskWorker(
             self.store,
             cast(object, self.queue),
             target=FakeTarget(),
             worker_id="worker-1",
             clock=lambda: self.now,
+            observability_sink=sink,
         )
         attempt = await self.store.create_attempt(self.run.run_id)
         response = SimpleNamespace(input_token_count=2, output_token_count=3)
@@ -2060,6 +2099,39 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.output_tokens, 3)
         self.assertEqual(totals.input_tokens, 2)
         self.assertEqual(totals.output_tokens, 3)
+        self.assertEqual(len(sink.usage_totals), 1)
+        self.assertEqual(sink.usage_event_count, 1)
+
+    async def test_record_usage_conflict_does_not_emit_sink_usage(
+        self,
+    ) -> None:
+        sink = RecordingUsageSink()
+        worker = TaskWorker(
+            self.store,
+            cast(object, self.queue),
+            target=FakeTarget(),
+            worker_id="worker-1",
+            clock=lambda: self.now,
+            observability_sink=sink,
+        )
+        attempt = await self.store.create_attempt(self.run.run_id)
+
+        with patch.object(
+            self.store,
+            "append_usage",
+            side_effect=TaskStoreConflictError("private usage conflict"),
+        ):
+            await worker._record_usage(
+                SimpleNamespace(input_token_count=2, output_token_count=3),
+                definition=self.definition,
+                run=self.run,
+                attempt=attempt,
+            )
+
+        records = await self.store.list_usage(self.run.run_id)
+        self.assertEqual(records, ())
+        self.assertEqual(sink.usage_totals, [])
+        self.assertEqual(sink.usage_event_count, 0)
 
     async def test_process_once_reports_no_work(self) -> None:
         self.queue.item = None

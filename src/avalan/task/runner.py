@@ -49,7 +49,7 @@ from .observability import (
     ObservabilitySink,
     TaskEventPipeline,
     TaskSanitizedEventObserver,
-    record_observability_usage,
+    record_response_usage,
 )
 from .privacy import (
     EncryptionProvider,
@@ -81,11 +81,7 @@ from .target import (
     TaskTargetRunner,
     TaskValidationContext,
 )
-from .usage import (
-    UsageRecord,
-    stable_usage_id_for_response,
-    usage_observations_from_response,
-)
+from .usage import usage_observations_from_response
 from .validation import (
     TaskValidationCategory,
     TaskValidationError,
@@ -1214,36 +1210,13 @@ class DirectTaskRunner:
         run: TaskRun,
         attempt: TaskAttempt,
     ) -> None:
-        for sequence, observation in enumerate(
-            usage_observations_from_response(response),
-            start=1,
-        ):
-            usage_record: UsageRecord | None = None
-            try:
-                usage_record = await self._store.append_usage(
-                    run.run_id,
-                    attempt_id=attempt.attempt_id,
-                    usage_id=stable_usage_id_for_response(
-                        response,
-                        run_id=run.run_id,
-                        attempt_id=attempt.attempt_id,
-                        sequence=sequence,
-                    ),
-                    source=observation.source,
-                    totals=observation.totals,
-                    metadata=observation.metadata,
-                )
-            except Exception:
-                pass
-            await record_observability_usage(
-                self._observability_sink_for(definition),
-                run_id=run.run_id,
-                attempt_id=attempt.attempt_id,
-                source=observation.source,
-                totals=observation.totals,
-                metadata=observation.metadata,
-                record=usage_record,
-            )
+        await record_response_usage(
+            self._observability_sink_for(definition),
+            store=self._store,
+            response=response,
+            run_id=run.run_id,
+            attempt_id=attempt.attempt_id,
+        )
 
     def _observability_sink_for(
         self,

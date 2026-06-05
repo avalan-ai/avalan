@@ -174,6 +174,14 @@ class TaskUsageStore(Protocol):
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord: ...
 
+    async def list_usage(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str | None = None,
+        source: UsageSource | None = None,
+    ) -> tuple[UsageRecord, ...]: ...
+
 
 def freeze_usage_metadata(
     value: Mapping[str, object] | None,

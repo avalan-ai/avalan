@@ -10,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase, main
 from avalan.task import (
     DirectTaskRunner,
     HmacProvider,
+    ObservabilitySinkHealth,
     PrivacyAction,
     PrivacySanitizer,
     RetryBackoff,
@@ -174,6 +175,41 @@ class EmptyThenReturnedUsageTarget:
 class CountingUsageResponse:
     input_token_count = 3
     output_token_count = 5
+
+
+class RecordingUsageSink:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+        self.usage_totals: list[UsageTotals] = []
+
+    async def record_event(self, event: object) -> None:
+        self.events.append(event)
+
+    async def record_usage(
+        self,
+        *,
+        run_id: str,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        self.usage_totals.append(totals)
+
+    def health(self) -> ObservabilitySinkHealth:
+        return ObservabilitySinkHealth(
+            name="recording",
+            event_count=len(self.events),
+            usage_count=len(self.usage_totals),
+        )
+
+    @property
+    def usage_event_count(self) -> int:
+        return sum(
+            1
+            for event in self.events
+            if type(event).__name__ == "SanitizedTaskUsageEvent"
+        )
 
 
 class MultiCallUsageResponse:
@@ -387,6 +423,20 @@ class FailingUsageStore(InMemoryTaskStore):
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord:
         raise RuntimeError("private usage store failure")
+
+
+class ConflictingUsageStore(InMemoryTaskStore):
+    async def append_usage(
+        self,
+        run_id: str,
+        *,
+        source: UsageSource,
+        totals: UsageTotals,
+        attempt_id: str | None = None,
+        usage_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> UsageRecord:
+        raise TaskStoreConflictError("private usage conflict")
 
 
 class SystemExitRunner(DirectTaskRunner):
@@ -723,12 +773,14 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
     async def test_observe_usage_deduplicates_reobserved_response(
         self,
     ) -> None:
+        sink = RecordingUsageSink()
         target = DuplicateUsageObservingTarget(CountingUsageResponse())
         runner = DirectTaskRunner(
             self.store,
             target=cast(TaskDirectTarget, target),
             hmac_provider=self.hmac_provider,
             definition_hash=lambda task: "hash-usage-deduplicate",
+            observability_sink=sink,
         )
 
         result = await runner.run(definition(), input_value="private prompt")
@@ -739,6 +791,8 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].sequence, 1)
         self.assertEqual(records[0].totals.input_tokens, 3)
         self.assertEqual(records[0].totals.output_tokens, 5)
+        self.assertEqual(len(sink.usage_totals), 1)
+        self.assertEqual(sink.usage_event_count, 1)
 
     async def test_observe_usage_drops_malformed_nested_provider_call(
         self,
@@ -940,6 +994,27 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
             target.contexts[0].execution.run_id, result.run.run_id
         )
         self.assertEqual(await store.list_usage(result.run.run_id), ())
+
+    async def test_usage_store_conflict_does_not_emit_sink_usage(
+        self,
+    ) -> None:
+        store = ConflictingUsageStore()
+        sink = RecordingUsageSink()
+        target = UsageObservingTarget(CountingUsageResponse())
+        runner = DirectTaskRunner(
+            store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-store-conflict",
+            observability_sink=sink,
+        )
+
+        result = await runner.run(definition(), input_value="private prompt")
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(await store.list_usage(result.run.run_id), ())
+        self.assertEqual(sink.usage_totals, [])
+        self.assertEqual(sink.usage_event_count, 0)
 
     async def test_fake_target_failure_records_safe_failure(self) -> None:
         runner = DirectTaskRunner(

@@ -37,6 +37,7 @@ from avalan.task import (
     record_observability_event,
     record_observability_usage,
 )
+from avalan.task.observability import record_response_usage
 from avalan.task.stores import InMemoryTaskStore
 
 
@@ -140,6 +141,17 @@ class FailingSink(ObservabilitySink):
 
     def health(self) -> ObservabilitySinkHealth:
         return ObservabilitySinkHealth(name="failing")
+
+
+class ListFailingUsageStore(InMemoryTaskStore):
+    async def list_usage(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str | None = None,
+        source: UsageSource | None = None,
+    ) -> tuple[UsageRecord, ...]:
+        raise RuntimeError("private usage list failure")
 
 
 def definition() -> TaskDefinition:
@@ -289,6 +301,33 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(sink.usages, [])
         self.assertEqual(len(sink.events), 1)
         self.assertEqual(sink.events[0].category, TaskEventCategory.USAGE)
+
+    async def test_response_usage_helper_records_when_dedup_list_fails(
+        self,
+    ) -> None:
+        store = ListFailingUsageStore()
+        await store.register_definition(
+            definition(),
+            definition_hash="hash-list-failure",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-list-failure")
+        )
+        sink = RecordingSink()
+
+        await record_response_usage(
+            sink,
+            store=store,
+            response=FakeUsageResponse(),
+            run_id=run.run_id,
+        )
+
+        records = await InMemoryTaskStore.list_usage(store, run.run_id)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].totals.input_tokens, 3)
+        self.assertEqual(records[0].totals.output_tokens, 4)
+        self.assertEqual(len(sink.usages), 1)
+        self.assertEqual(len(sink.events), 1)
 
     async def test_runner_success_survives_sink_failures(self) -> None:
         store = InMemoryTaskStore()

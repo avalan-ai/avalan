@@ -13,7 +13,16 @@ from .event import (
     sanitize_raw_task_event_closed,
 )
 from .privacy import PrivacySanitizer
-from .usage import UsageRecord, UsageSource, UsageTotals
+from .store import TaskStoreConflictError
+from .usage import (
+    TaskUsageStore,
+    UsageObservation,
+    UsageRecord,
+    UsageSource,
+    UsageTotals,
+    stable_usage_id_for_response,
+    usage_observations_from_response,
+)
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -238,6 +247,94 @@ async def record_observability_usage(
         )
     except Exception:
         return
+
+
+async def record_response_usage(
+    sink: ObservabilitySink | None,
+    *,
+    store: TaskUsageStore,
+    response: object,
+    run_id: str,
+    attempt_id: str | None = None,
+) -> None:
+    observations = usage_observations_from_response(response)
+    if not observations:
+        return
+    recorded_usage_ids = await _recorded_usage_ids(
+        store,
+        run_id=run_id,
+        attempt_id=attempt_id,
+    )
+    for sequence, observation in enumerate(observations, start=1):
+        usage_id = stable_usage_id_for_response(
+            response,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            sequence=sequence,
+        )
+        if usage_id in recorded_usage_ids:
+            continue
+        await _record_response_usage_observation(
+            sink,
+            store=store,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            usage_id=usage_id,
+            observation=observation,
+        )
+        recorded_usage_ids.add(usage_id)
+
+
+async def _recorded_usage_ids(
+    store: TaskUsageStore,
+    *,
+    run_id: str,
+    attempt_id: str | None,
+) -> set[str]:
+    try:
+        return {
+            record.usage_id
+            for record in await store.list_usage(
+                run_id,
+                attempt_id=attempt_id,
+            )
+        }
+    except Exception:
+        return set()
+
+
+async def _record_response_usage_observation(
+    sink: ObservabilitySink | None,
+    *,
+    store: TaskUsageStore,
+    run_id: str,
+    attempt_id: str | None,
+    usage_id: str,
+    observation: UsageObservation,
+) -> None:
+    usage_record: UsageRecord | None = None
+    try:
+        usage_record = await store.append_usage(
+            run_id,
+            attempt_id=attempt_id,
+            usage_id=usage_id,
+            source=observation.source,
+            totals=observation.totals,
+            metadata=observation.metadata,
+        )
+    except TaskStoreConflictError:
+        return
+    except Exception:
+        pass
+    await record_observability_usage(
+        sink,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        source=observation.source,
+        totals=observation.totals,
+        metadata=observation.metadata,
+        record=usage_record,
+    )
 
 
 async def _notify_observer(
