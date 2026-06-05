@@ -23,6 +23,7 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.task.usage import usage_totals_from_response
 
 
 class AsyncIter:
@@ -329,6 +330,71 @@ class GoogleTestCase(IsolatedAsyncioTestCase):
             loaded = model._load_model()
         ClientMock.assert_called_once_with(api_key="tok")
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_stream_records_usage_metadata_after_full_consumption(self):
+        usage = SimpleNamespace(
+            promptTokenCount=4,
+            cachedContentTokenCount=1,
+            candidatesTokenCount=3,
+            thoughtsTokenCount=2,
+            totalTokenCount=9,
+        )
+        stream = self.mod.GoogleStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(text="x"),
+                    SimpleNamespace(text=None, usage_metadata=usage),
+                ]
+            )
+        )
+
+        self.assertEqual(await stream.__anext__(), "x")
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        totals = usage_totals_from_response(stream)
+
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 4)
+        self.assertEqual(totals.cached_input_tokens, 1)
+        self.assertEqual(totals.output_tokens, 3)
+        self.assertEqual(totals.reasoning_tokens, 2)
+        self.assertEqual(totals.total_tokens, 9)
+
+    async def test_stream_supports_camel_usage_metadata_and_none(self):
+        stream = self.mod.GoogleStream(
+            AsyncIter(
+                [
+                    {
+                        "text": None,
+                        "usageMetadata": {
+                            "promptTokenCount": 0,
+                            "candidatesTokenCount": 0,
+                            "totalTokenCount": 0,
+                        },
+                    }
+                ]
+            )
+        )
+
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        totals = usage_totals_from_response(stream)
+
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 0)
+        self.assertEqual(totals.output_tokens, 0)
+        self.assertEqual(totals.total_tokens, 0)
+
+        no_usage = self.mod.GoogleStream(
+            AsyncIter([SimpleNamespace(text=None)])
+        )
+        with self.assertRaises(StopAsyncIteration):
+            await no_usage.__anext__()
+        self.assertIsNone(no_usage.usage)
+        self.assertIsNone(usage_totals_from_response(no_usage))
 
     async def test_provider_instructions_are_rejected_before_api_call(self):
         client = self.mod.GoogleClient("k")

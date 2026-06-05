@@ -27,6 +27,7 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.task.usage import usage_totals_from_response
 
 
 class AsyncIter:
@@ -133,6 +134,67 @@ def test_stream_variants(anthropic_mod):
     assert out[3].token == "txt"
     assert out[4] == "call"
     btt.assert_called_once_with("tid", "tname", {"x": 1})
+
+
+def test_stream_records_usage_on_message_stop(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield SimpleNamespace(
+            type="message_start",
+            message={
+                "usage": {
+                    "input_tokens": 7,
+                    "cache_read_input_tokens": 2,
+                }
+            },
+        )
+        yield mod.RawContentBlockDeltaEvent(SimpleNamespace(thinking="think"))
+        yield SimpleNamespace(type="message_delta", usage=SimpleNamespace())
+        yield SimpleNamespace(
+            type="message_delta",
+            usage={"output_tokens": 5},
+        )
+        yield SimpleNamespace(type="message_stop")
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        token = await stream.__anext__()
+        assert stream.usage is None
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        return stream, token
+
+    stream, token = asyncio.run(collect())
+    totals = usage_totals_from_response(stream)
+
+    assert isinstance(token, ReasoningToken)
+    assert totals is not None
+    assert totals.input_tokens == 7
+    assert totals.cached_input_tokens == 2
+    assert totals.output_tokens == 5
+    assert totals.reasoning_tokens is None
+
+
+def test_stream_without_message_stop_drops_cumulative_usage(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield SimpleNamespace(
+            type="message_delta",
+            usage={"input_tokens": 1, "output_tokens": 2},
+        )
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        with pytest.raises(StopAsyncIteration):
+            await stream.__anext__()
+        return stream
+
+    stream = asyncio.run(collect())
+
+    assert stream.usage is None
+    assert usage_totals_from_response(stream) is None
 
 
 def test_client_call_and_model(anthropic_mod):

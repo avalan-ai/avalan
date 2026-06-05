@@ -108,8 +108,26 @@ class BedrockStream(TextGenerationVendorStream):
     def __init__(self, events: AsyncIterator[Any]):
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
+            message_stopped = False
 
             async for event in events:
+                metadata = _get(event, "metadata")
+                usage = (
+                    metadata.get("usage")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                if usage is not None:
+                    self._usage = usage
+                    continue
+
+                if _get(event, "messageStop"):
+                    message_stopped = True
+                    continue
+
+                if message_stopped:
+                    continue
+
                 content_start = _get(event, "contentBlockStart")
                 if content_start:
                     block_index = content_start.get("contentBlockIndex")
@@ -205,9 +223,6 @@ class BedrockStream(TextGenerationVendorStream):
                         )
                         yield token
                     continue
-
-                if _get(event, "messageStop"):
-                    break
 
         super().__init__(generator())
 

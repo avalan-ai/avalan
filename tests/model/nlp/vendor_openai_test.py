@@ -339,6 +339,58 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         ClientMock.assert_called_once_with(base_url="u", api_key="t")
         self.assertIs(loaded, ClientMock.return_value)
 
+    async def test_stream_records_terminal_usage_after_completion(self):
+        usage = SimpleNamespace(
+            input_tokens=3,
+            input_tokens_details=SimpleNamespace(cached_tokens=1),
+            output_tokens=4,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=2),
+            total_tokens=9,
+        )
+        chunks = [
+            SimpleNamespace(type="response.output_text.delta", delta="a"),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(usage=usage),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(chunks))
+
+        token = await stream.__anext__()
+        self.assertIsInstance(token, Token)
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
+        self.assertIs(stream.usage, usage)
+
+    async def test_stream_keeps_null_or_interrupted_usage_unavailable(self):
+        null_usage = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(usage=None),
+                    )
+                ]
+            )
+        )
+        with self.assertRaises(StopAsyncIteration):
+            await null_usage.__anext__()
+        self.assertIsNone(null_usage.usage)
+
+        class FailingIter:
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                raise RuntimeError("provider failure")
+
+        interrupted = self.mod.OpenAIStream(FailingIter())
+        with self.assertRaises(RuntimeError):
+            await interrupted.__anext__()
+        self.assertIsNone(interrupted.usage)
+
     async def test_client_omits_auth_header_without_api_key(self):
         client = self.mod.OpenAIClient(
             api_key=None, base_url="http://localhost:9001/v1"

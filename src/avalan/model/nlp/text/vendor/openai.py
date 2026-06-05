@@ -47,6 +47,13 @@ class OpenAIStream(TextGenerationVendorStream):
             async for event in stream:
                 etype = getattr(event, "type", None)
 
+                if etype == "response.completed":
+                    response = OpenAIClient._response_field(event, "response")
+                    usage = OpenAIClient._response_field(response, "usage")
+                    if usage is not None:
+                        self._usage = usage
+                    continue
+
                 if etype == "response.output_item.added":
                     item = getattr(event, "item", None)
                     if item:

@@ -22,6 +22,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    cast,
 )
 
 OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
@@ -164,7 +165,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
     @property
     def usage(self) -> object | None:
-        return getattr(self._output_fn, "usage", None)
+        usage = getattr(self._output_fn, "usage", None)
+        if usage is not None:
+            return cast(object, usage)
+        return cast(object | None, getattr(self._output, "usage", None))
 
     @property
     def is_async_generator(self) -> bool:

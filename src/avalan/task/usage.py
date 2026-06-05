@@ -517,6 +517,7 @@ _PROVIDER_COUNTER_PATHS: CounterPathMap = {
         ("input_tokens",),
         ("input_token_count",),
         ("inputTokens",),
+        ("promptTokenCount",),
         ("prompt_tokens",),
         ("prompt_token_count",),
     ),
@@ -526,6 +527,7 @@ _PROVIDER_COUNTER_PATHS: CounterPathMap = {
         ("cache_read_input_tokens",),
         ("cacheReadInputTokens",),
         ("cached_content_token_count",),
+        ("cachedContentTokenCount",),
         ("input_tokens_details", "cached_tokens"),
         ("prompt_tokens_details", "cached_tokens"),
     ),
@@ -533,11 +535,14 @@ _PROVIDER_COUNTER_PATHS: CounterPathMap = {
         ("cache_creation_input_tokens",),
         ("cache_creation_input_token_count",),
         ("cacheCreationInputTokens",),
+        ("cache_write_input_tokens",),
+        ("cacheWriteInputTokens",),
     ),
     "output_tokens": (
         ("output_tokens",),
         ("output_token_count",),
         ("outputTokens",),
+        ("candidatesTokenCount",),
         ("completion_tokens",),
         ("candidates_token_count",),
     ),
@@ -545,6 +550,7 @@ _PROVIDER_COUNTER_PATHS: CounterPathMap = {
         ("reasoning_tokens",),
         ("reasoning_token_count",),
         ("reasoningTokens",),
+        ("thoughtsTokenCount",),
         ("thoughts_token_count",),
         ("output_tokens_details", "reasoning_tokens"),
         ("completion_tokens_details", "reasoning_tokens"),
@@ -553,6 +559,7 @@ _PROVIDER_COUNTER_PATHS: CounterPathMap = {
         ("total_tokens",),
         ("total_token_count",),
         ("totalTokens",),
+        ("totalTokenCount",),
     ),
 }
 
@@ -567,7 +574,7 @@ _RESPONSE_COUNTER_PATHS: CounterPathMap = {
 
 
 def _usage_container(response: object) -> object | None:
-    for attribute in ("usage", "usage_metadata"):
+    for attribute in ("usage", "usage_metadata", "usageMetadata"):
         value = _value_at_path(response, (attribute,))
         if value is not None:
             return value

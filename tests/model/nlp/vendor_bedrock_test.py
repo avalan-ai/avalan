@@ -23,6 +23,7 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.task.usage import usage_totals_from_response
 
 
 class AsyncIter:
@@ -274,6 +275,53 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         )
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+        self.assertIsNone(stream.usage)
+
+    async def test_stream_records_usage_from_terminal_metadata(self):
+        events = [
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": {"text": "hi"}},
+                }
+            },
+            {"messageStop": {"reason": "done"}},
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": {"text": "ignored"}},
+                }
+            },
+            {
+                "metadata": {
+                    "usage": {
+                        "inputTokens": 5,
+                        "cacheReadInputTokens": 1,
+                        "cacheWriteInputTokens": 2,
+                        "outputTokens": 7,
+                        "totalTokens": 12,
+                    }
+                }
+            },
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(events))
+
+        token = await stream.__anext__()
+        self.assertIsInstance(token, Token)
+        self.assertEqual(token.token, "hi")
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        totals = usage_totals_from_response(stream)
+
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 5)
+        self.assertEqual(totals.cached_input_tokens, 1)
+        self.assertEqual(totals.cache_creation_input_tokens, 2)
+        self.assertEqual(totals.output_tokens, 7)
+        self.assertIsNone(totals.reasoning_tokens)
+        self.assertEqual(totals.total_tokens, 12)
 
     async def test_client_stream_invocation(self):
         self.client.converse_stream.return_value = {"stream": AsyncIter([])}

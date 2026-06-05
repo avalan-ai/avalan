@@ -4,6 +4,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import GenerationSettings, ReasoningSettings
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.vendor import TextGenerationVendorStream
 
 
 @dataclass
@@ -43,3 +44,38 @@ class TextGenerationResponseAdditionalTestCase(IsolatedAsyncioTestCase):
             tokens.append(t)
 
         self.assertEqual(tokens, ["<think>", "a", "</think>"])
+
+    async def test_usage_reads_completed_output_stream(self):
+        usage = {"input_tokens": 2, "output_tokens": 1}
+
+        class UsageStream(TextGenerationVendorStream):
+            def __init__(self) -> None:
+                async def gen():
+                    yield "ok"
+                    self._usage = usage
+
+                super().__init__(gen())
+
+            async def __anext__(self):
+                return await self._generator.__anext__()
+
+        class StreamFactory:
+            def __init__(self) -> None:
+                self.stream = UsageStream()
+
+            def __call__(self, **_: object) -> UsageStream:
+                return self.stream
+
+        settings = GenerationSettings()
+        factory = StreamFactory()
+        resp = TextGenerationResponse(
+            factory,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        self.assertIsNone(resp.usage)
+        self.assertEqual(await resp.to_str(), "ok")
+        self.assertEqual(resp.usage, usage)

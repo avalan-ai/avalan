@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import (
+    GenerationSettings,
     Message,
     MessageContentFile,
     MessageContentImage,
@@ -23,6 +24,7 @@ from avalan.entities import (
 )
 from avalan.event import Event, EventType
 from avalan.flow import Flow, FlowDefinitionLoader
+from avalan.model.response.text import TextGenerationResponse
 from avalan.task import (
     HASHED_MARKER,
     PrivacyAction,
@@ -607,6 +609,58 @@ class ProviderFakeResponse:
 
     async def to_str(self) -> str:
         return self.text
+
+
+class TerminalUsageStream:
+    def __init__(self) -> None:
+        self.usage: object | None = None
+        self._done = False
+
+    def __call__(self, **_: object) -> "TerminalUsageStream":
+        self.usage = None
+        self._done = False
+        return self
+
+    def __aiter__(self) -> "TerminalUsageStream":
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._done:
+            self._done = True
+            return "public stream summary"
+        self.usage = {
+            "input_tokens": 8,
+            "cached_input_tokens": 3,
+            "cache_creation_input_tokens": 2,
+            "output_tokens": 5,
+            "reasoning_tokens": 1,
+            "total_tokens": 13,
+        }
+        raise StopAsyncIteration
+
+
+class StreamingUsageTarget(TaskTargetRunner):
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        _ = definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> object:
+        await context.check_cancelled()
+        settings = GenerationSettings()
+        response = TextGenerationResponse(
+            TerminalUsageStream(),
+            logger=getLogger("avalan.tests.task.streaming_usage"),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        output = await response.to_str()
+        await context.observe_usage(response)
+        return output
 
 
 class ProviderFakeClient:
@@ -3049,6 +3103,54 @@ capture_events = false
         self.assertNotIn("summary.txt", persisted_artifacts)
         self.assertNotIn("private-token-text", inspection_value)
         self.assertNotIn("token_id", inspection_value)
+
+    async def test_completed_streaming_usage_records_exact_totals(
+        self,
+    ) -> None:
+        definition = TaskDefinition(
+            task=TaskMetadata(name="streaming_summary", version="1"),
+            input=TaskInputContract.string(),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agents/summarizer.toml"),
+            run=TaskRunPolicy.direct(timeout_seconds=60),
+            observability=TaskObservabilityPolicy(
+                metrics=True,
+                trace=False,
+                capture_events=False,
+            ),
+        )
+        store = InMemoryTaskStore(
+            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC)
+        )
+        client = TaskClient(
+            store,
+            target=StreamingUsageTarget(),
+            hmac_provider=StaticHmacProvider(),
+            definition_hash=lambda task: "streaming-usage-e2e",
+            clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        result = await client.run(
+            definition,
+            input_value="private prompt",
+        )
+        inspection = await client.inspect(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "public stream summary")
+        self.assertEqual(len(inspection.usage), 1)
+        self.assertEqual(inspection.usage[0].source, UsageSource.EXACT)
+        self.assertEqual(inspection.usage_totals.input_tokens, 8)
+        self.assertEqual(inspection.usage_totals.cached_input_tokens, 3)
+        self.assertEqual(
+            inspection.usage_totals.cache_creation_input_tokens,
+            2,
+        )
+        self.assertEqual(inspection.usage_totals.output_tokens, 5)
+        self.assertEqual(inspection.usage_totals.reasoning_tokens, 1)
+        self.assertEqual(inspection.usage_totals.total_tokens, 13)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private prompt", inspection_value)
 
     async def test_loaded_file_task_accessors_filter_safe_records(
         self,

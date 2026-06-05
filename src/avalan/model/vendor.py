@@ -153,11 +153,20 @@ class TextGenerationVendor(ABC):
 
 class TextGenerationVendorStream(TextGenerationStream):
     _generator: AsyncIterator[Token | TokenDetail | str]
+    _usage: object | None
 
     def __init__(
-        self, generator: AsyncIterator[Token | TokenDetail | str]
+        self,
+        generator: AsyncIterator[Token | TokenDetail | str],
+        *,
+        usage: object | None = None,
     ) -> None:
         self._generator = generator
+        self._usage = usage
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
 
     def __call__(
         self, *args: Any, **kwargs: Any

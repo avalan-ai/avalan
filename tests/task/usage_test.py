@@ -199,6 +199,51 @@ class UsageTotalsTest(TestCase):
             ),
         )
 
+    def test_streaming_vendor_usage_aliases_are_preserved(self) -> None:
+        google = usage_totals_from_response(
+            SimpleNamespace(
+                usageMetadata={
+                    "promptTokenCount": 4,
+                    "cachedContentTokenCount": 1,
+                    "candidatesTokenCount": 3,
+                    "thoughtsTokenCount": 2,
+                    "totalTokenCount": 9,
+                }
+            )
+        )
+        bedrock = usage_totals_from_response(
+            SimpleNamespace(
+                usage={
+                    "inputTokens": 5,
+                    "cacheReadInputTokens": 1,
+                    "cacheWriteInputTokens": 2,
+                    "outputTokens": 7,
+                    "totalTokens": 12,
+                }
+            )
+        )
+
+        self.assertEqual(
+            google,
+            UsageTotals(
+                input_tokens=4,
+                cached_input_tokens=1,
+                output_tokens=3,
+                reasoning_tokens=2,
+                total_tokens=9,
+            ),
+        )
+        self.assertEqual(
+            bedrock,
+            UsageTotals(
+                input_tokens=5,
+                cached_input_tokens=1,
+                cache_creation_input_tokens=2,
+                output_tokens=7,
+                total_tokens=12,
+            ),
+        )
+
     def test_text_response_counts_are_estimated(self) -> None:
         observation = usage_observation_from_response(FakeConsumedResponse())
 
