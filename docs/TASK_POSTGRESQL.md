@@ -106,6 +106,19 @@ Google/Gemini usage maps `promptTokenCount` or `prompt_token_count` to
 the cached-content counter is the cached subset and is not cache-write cost for
 separately created cached content.
 
+Provider compatibility follows this matrix:
+
+| Provider family | Usage source |
+| --- | --- |
+| `openai`, `azure_openai` | Provider-reported OpenAI Responses `usage` fields. Cache, reasoning, and total counters are exact only when returned by the provider. |
+| `openai_compatible` | Provider-returned OpenAI-compatible `usage` fields. Cache and reasoning counters are unavailable unless the adapter response includes compatible detail fields. |
+| `anthropic` | Provider-reported message usage. Cache creation, cache read, and TTL bucket fields are preserved when Anthropic returns them. |
+| `bedrock` | Provider-reported metadata usage. Cache write fields map to cache creation; reasoning remains unavailable unless an explicit counter is returned. |
+| `google` | Provider `usage_metadata` or `usageMetadata` fields. Cached content is tracked as a cached subset, not cache creation cost. |
+| `hugging_face` | Provider-returned OpenAI-compatible `usage` fields when present. Otherwise exact usage remains unavailable. |
+| `ollama`, `local` | Local token counters remain estimated. Exact cache, cache creation, reasoning, and provider total counters remain unavailable unless explicit provider metadata is returned through a supported adapter. |
+| `other` | Exact counters require explicit provider usage metadata that matches supported field names; otherwise usage is unavailable or estimated from Avalan counters. |
+
 Task events use a single `task_events` table with a unique `(run_id,
 sequence)` constraint and indexes for incremental run and attempt inspection.
 This layout is the default profile for deployments that keep retained task

@@ -680,13 +680,36 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
         StreamMock.assert_called_once_with(stream_obj)
         self.assertIs(result, StreamMock.return_value)
 
+        usage = {
+            "prompt_tokens": 6,
+            "prompt_tokens_details": {"cached_tokens": 2},
+            "completion_tokens": 4,
+            "completion_tokens_details": {"reasoning_tokens": 1},
+            "total_tokens": 10,
+        }
         resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="r"))]
+            choices=[SimpleNamespace(message=SimpleNamespace(content="r"))],
+            usage=usage,
         )
         self.client.chat_completion = AsyncMock(return_value=resp)
         gen = await hf_client("m", msgs, settings, use_async_generator=False)
         out = [t async for t in gen]
+        observation = usage_observation_from_response(gen)
+        totals = usage_totals_from_response(gen)
         self.assertEqual(out, ["r"])
+        self.assertEqual(gen.provider_family, "hugging_face")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata, {"provider_family": "hugging_face"}
+        )
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 6)
+        self.assertEqual(totals.cached_input_tokens, 2)
+        self.assertEqual(totals.output_tokens, 4)
+        self.assertEqual(totals.reasoning_tokens, 1)
+        self.assertEqual(totals.total_tokens, 10)
 
         stream = self.mod.HuggingfaceStream(
             AsyncIter(
@@ -714,6 +737,79 @@ class HuggingfaceTestCase(IsolatedAsyncioTestCase):
             loaded = model._load_model()
         ClientMock.assert_called_once_with(api_key="tok", base_url="url")
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_stream_records_usage_after_full_consumption(self):
+        usage = {
+            "prompt_tokens": 5,
+            "prompt_tokens_details": {"cached_tokens": 1},
+            "completion_tokens": 3,
+            "completion_tokens_details": {"reasoning_tokens": 2},
+            "total_tokens": 8,
+        }
+        stream = self.mod.HuggingfaceStream(
+            AsyncIter(
+                [
+                    {"choices": [{"delta": {"content": "x"}}]},
+                    {"usage": usage},
+                ]
+            )
+        )
+
+        self.assertEqual(await stream.__anext__(), "x")
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        observation = usage_observation_from_response(stream)
+        totals = usage_totals_from_response(stream)
+
+        self.assertEqual(stream.provider_family, "hugging_face")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata, {"provider_family": "hugging_face"}
+        )
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 5)
+        self.assertEqual(totals.cached_input_tokens, 1)
+        self.assertEqual(totals.output_tokens, 3)
+        self.assertEqual(totals.reasoning_tokens, 2)
+        self.assertEqual(totals.total_tokens, 8)
+
+    async def test_malformed_usage_is_unavailable(self):
+        hf_client = self.mod.HuggingfaceClient("k", base_url="b")
+        msgs = [Message(role=MessageRole.USER, content="hi")]
+        resp = {
+            "choices": [{"message": {"content": "bad"}}],
+            "usage": {
+                "prompt_tokens": "private prompt",
+                "completion_tokens": -1,
+                "total_tokens": True,
+                "provider_family": "private-provider",
+            },
+        }
+        self.client.chat_completion = AsyncMock(return_value=resp)
+
+        gen = await hf_client("m", msgs, use_async_generator=False)
+        out = [t async for t in gen]
+
+        self.assertEqual(out, ["bad"])
+        self.assertEqual(gen.provider_family, "hugging_face")
+        self.assertIsNone(usage_observation_from_response(gen))
+        self.assertIsNone(usage_totals_from_response(gen))
+
+        self.client.chat_completion = AsyncMock(
+            return_value={
+                "usage": {"prompt_tokens": "private prompt"},
+            }
+        )
+        empty_gen = await hf_client("m", msgs, use_async_generator=False)
+        empty_out = [t async for t in empty_gen]
+
+        self.assertEqual(empty_out, [""])
+        self.assertEqual(empty_gen.provider_family, "hugging_face")
+        self.assertIsNone(usage_observation_from_response(empty_gen))
+        self.assertIsNone(usage_totals_from_response(empty_gen))
 
 
 class OllamaTestCase(IsolatedAsyncioTestCase):
@@ -750,18 +846,34 @@ class OllamaTestCase(IsolatedAsyncioTestCase):
         self.assertIs(result, StreamMock.return_value)
 
         client._client.chat = AsyncMock(
-            return_value={"message": {"content": "x"}}
+            return_value={
+                "message": {"content": "x"},
+                "prompt_eval_count": 5,
+                "eval_count": 3,
+            }
         )
         gen = await client("m", msgs, use_async_generator=False)
         out = [t async for t in gen]
         self.assertEqual(out, ["x"])
+        self.assertEqual(gen.provider_family, "ollama")
+        self.assertIsNone(usage_observation_from_response(gen))
+        self.assertIsNone(usage_totals_from_response(gen))
 
         stream = self.mod.OllamaStream(
-            AsyncIter([{"message": {"content": "a"}}])
+            AsyncIter(
+                [
+                    {"message": {"content": "a"}},
+                    {"prompt_eval_count": 5, "eval_count": 3},
+                ]
+            )
         )
         self.assertEqual(await stream.__anext__(), "a")
+        self.assertEqual(await stream.__anext__(), "")
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+        self.assertEqual(stream.provider_family, "ollama")
+        self.assertIsNone(usage_observation_from_response(stream))
+        self.assertIsNone(usage_totals_from_response(stream))
 
         with patch.object(self.mod, "OllamaClient") as ClientMock:
             settings = TransformerEngineSettings(
@@ -877,11 +989,36 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         StreamMock.assert_called_once_with(stream_obj)
         self.assertIs(result, StreamMock.return_value)
 
-        resp = {"choices": [{"message": {"content": "r"}}]}
+        resp = {
+            "choices": [{"message": {"content": "r"}}],
+            "usage": {
+                "prompt_tokens": 7,
+                "prompt_tokens_details": {"cached_tokens": 2},
+                "completion_tokens": 4,
+                "completion_tokens_details": {"reasoning_tokens": 1},
+                "total_tokens": 11,
+            },
+        }
         self.stub.acompletion = AsyncMock(return_value=resp)
         gen = await client("m", msgs, use_async_generator=False)
         out = [t async for t in gen]
+        observation = usage_observation_from_response(gen)
+        totals = usage_totals_from_response(gen)
         self.assertEqual(out, ["r"])
+        self.assertEqual(gen.provider_family, "openai_compatible")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata,
+            {"provider_family": "openai_compatible"},
+        )
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 7)
+        self.assertEqual(totals.cached_input_tokens, 2)
+        self.assertEqual(totals.output_tokens, 4)
+        self.assertEqual(totals.reasoning_tokens, 1)
+        self.assertEqual(totals.total_tokens, 11)
 
         stream = self.mod.LiteLLMStream(
             AsyncIter([{"choices": [{"delta": {"content": "x"}}]}])
@@ -901,6 +1038,45 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
             loaded = model._load_model()
         ClientMock.assert_called_once_with(api_key="t", base_url="u")
         self.assertIs(loaded, ClientMock.return_value)
+
+    async def test_stream_records_usage_after_full_consumption(self):
+        usage = {
+            "prompt_tokens": 5,
+            "prompt_tokens_details": {"cached_tokens": 1},
+            "completion_tokens": 4,
+            "completion_tokens_details": {"reasoning_tokens": 2},
+            "total_tokens": 9,
+        }
+        stream = self.mod.LiteLLMStream(
+            AsyncIter(
+                [
+                    {"choices": [{"delta": {"content": "x"}}]},
+                    {"usage": usage},
+                ]
+            )
+        )
+
+        self.assertEqual(await stream.__anext__(), "x")
+        self.assertIsNone(stream.usage)
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+        observation = usage_observation_from_response(stream)
+        totals = usage_totals_from_response(stream)
+
+        self.assertEqual(stream.provider_family, "openai_compatible")
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata,
+            {"provider_family": "openai_compatible"},
+        )
+        self.assertIsNotNone(totals)
+        assert totals is not None
+        self.assertEqual(totals.input_tokens, 5)
+        self.assertEqual(totals.cached_input_tokens, 1)
+        self.assertEqual(totals.output_tokens, 4)
+        self.assertEqual(totals.reasoning_tokens, 2)
+        self.assertEqual(totals.total_tokens, 9)
 
     async def test_streaming_object_chunk(self):
         client = self.mod.LiteLLMClient(api_key="k", base_url="b")
@@ -926,6 +1102,39 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         gen = await client("m", msgs, use_async_generator=False)
         out = [t async for t in gen]
         self.assertEqual(out, ["r"])
+
+    async def test_malformed_usage_is_unavailable(self):
+        client = self.mod.LiteLLMClient(api_key="k", base_url="b")
+        msgs = [Message(role=MessageRole.USER, content="hi")]
+        resp = {
+            "choices": [{"message": {"content": "bad"}}],
+            "usage": {
+                "prompt_tokens": "private prompt",
+                "completion_tokens": -1,
+                "total_tokens": True,
+                "provider_family": "private-provider",
+            },
+        }
+        self.stub.acompletion = AsyncMock(return_value=resp)
+
+        gen = await client("m", msgs, use_async_generator=False)
+        out = [t async for t in gen]
+
+        self.assertEqual(out, ["bad"])
+        self.assertEqual(gen.provider_family, "openai_compatible")
+        self.assertIsNone(usage_observation_from_response(gen))
+        self.assertIsNone(usage_totals_from_response(gen))
+
+        self.stub.acompletion = AsyncMock(
+            return_value={"usage": {"prompt_tokens": "private prompt"}}
+        )
+        empty_gen = await client("m", msgs, use_async_generator=False)
+        empty_out = [t async for t in empty_gen]
+
+        self.assertEqual(empty_out, [""])
+        self.assertEqual(empty_gen.provider_family, "openai_compatible")
+        self.assertIsNone(usage_observation_from_response(empty_gen))
+        self.assertIsNone(usage_totals_from_response(empty_gen))
 
 
 if __name__ == "__main__":

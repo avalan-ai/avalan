@@ -134,6 +134,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
         result = self._output_fn(*self._args, **self._kwargs)
         if isinstance(result, TextGenerationSingleStream):
+            self._output = result
             result_content: str | Token | TokenDetail = result.content
             text = (
                 result_content.token

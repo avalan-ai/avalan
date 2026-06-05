@@ -10,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+from avalan.agent.orchestrator.orchestrators.json import JsonOrchestratorOutput
 from avalan.entities import (
     Message,
     MessageContentFile,
@@ -3539,6 +3540,132 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertIsNone(usage[0].totals.total_tokens)
         self.assertEqual(usage[0].attempt_id, result.attempt.attempt_id)
         self.assertEqual(event_manager.listeners, [])
+
+    async def test_direct_runner_records_exact_usage_from_json_output(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+goal_instructions = "Be brief."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            store = InMemoryTaskStore()
+            loader = FakeLoader(
+                response=JsonOrchestratorOutput(
+                    '{"answer":"ok"}',
+                    usage={
+                        "input_tokens": 7,
+                        "cached_input_tokens": 2,
+                        "cache_creation_input_tokens": 1,
+                        "output_tokens": 3,
+                        "reasoning_tokens": 1,
+                        "total_tokens": 10,
+                        "provider_family": "openai",
+                        "raw_response_id": "private-response-id",
+                    },
+                )
+            )
+            runner = DirectTaskRunner(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-json-usage-hash",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.object(
+                        schema={"type": "object"}
+                    ),
+                    output=TaskOutputContract.object(
+                        schema={"type": "object"}
+                    ),
+                ),
+                input_value={"question": "status"},
+            )
+            usage = await store.list_usage(result.run.run_id)
+            totals = await store.usage_totals(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, {"answer": "ok"})
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0].source, UsageSource.EXACT)
+        self.assertEqual(usage[0].totals.cached_input_tokens, 2)
+        self.assertEqual(usage[0].totals.cache_creation_input_tokens, 1)
+        self.assertEqual(usage[0].totals.reasoning_tokens, 1)
+        self.assertEqual(usage[0].metadata, {"provider_family": "openai"})
+        self.assertNotIn("private-response-id", str(usage[0].metadata))
+        self.assertEqual(totals.input_tokens, 7)
+        self.assertEqual(totals.output_tokens, 3)
+        self.assertEqual(totals.total_tokens, 10)
+
+    async def test_direct_runner_records_usage_on_json_parse_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agent_path = root / "agents" / "valid.toml"
+            agent_path.parent.mkdir()
+            agent_path.write_text(
+                """
+[agent]
+name = "Valid"
+task = "Answer"
+goal_instructions = "Be brief."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+                encoding="utf-8",
+            )
+            store = InMemoryTaskStore()
+            loader = FakeLoader(
+                response=JsonOrchestratorOutput(
+                    "private invalid json",
+                    usage={
+                        "input_tokens": 4,
+                        "output_tokens": 2,
+                        "total_tokens": 6,
+                        "provider_family": "openai",
+                        "raw_body": "private provider body",
+                    },
+                )
+            )
+            runner = DirectTaskRunner(
+                store,
+                target=AgentTaskTargetRunner(loader, ref_base=root),
+                hmac_provider=StaticHmacProvider(),
+                definition_hash=lambda task: "agent-json-failure-usage-hash",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    output=TaskOutputContract.object(schema={"type": "object"})
+                ),
+                input_value="private prompt",
+            )
+            usage = await store.list_usage(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(len(usage), 1)
+        self.assertEqual(usage[0].source, UsageSource.EXACT)
+        self.assertEqual(usage[0].totals.input_tokens, 4)
+        self.assertEqual(usage[0].totals.output_tokens, 2)
+        self.assertEqual(usage[0].totals.total_tokens, 6)
+        self.assertEqual(usage[0].metadata, {"provider_family": "openai"})
+        self.assertNotIn("private invalid json", str(result.run.result))
+        self.assertNotIn("private provider body", str(usage[0].metadata))
 
     async def test_direct_runner_maps_materialized_file_to_agent_message(
         self,

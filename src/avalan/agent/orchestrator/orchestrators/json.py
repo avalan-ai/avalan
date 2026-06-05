@@ -41,6 +41,31 @@ class Property:
     description: str | None = None
 
 
+class JsonOrchestratorOutput(str):
+    _usage: object | None
+    _usage_responses: tuple[object, ...]
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        usage: object | None = None,
+        usage_responses: tuple[object, ...] = (),
+    ) -> "JsonOrchestratorOutput":
+        output = str.__new__(cls, value)
+        output._usage = usage
+        output._usage_responses = usage_responses
+        return output
+
+    @property
+    def usage(self) -> object | None:
+        return self._usage
+
+    @property
+    def usage_responses(self) -> tuple[object, ...]:
+        return self._usage_responses
+
+
 class JsonSpecification(Specification):
     def __init__(
         self,
@@ -170,4 +195,20 @@ class JsonOrchestrator(Orchestrator):
 
     async def __call__(self, input: Input, **kwargs: Any) -> str:
         text_response = await super().__call__(input, **kwargs)
-        return await text_response.to_json()
+        output = await text_response.to_json()
+        return JsonOrchestratorOutput(
+            output,
+            usage=text_response.usage,
+            usage_responses=_usage_responses_from(text_response),
+        )
+
+
+def _usage_responses_from(response: object) -> tuple[object, ...]:
+    usage_responses = getattr(response, "usage_responses", None)
+    if callable(usage_responses):
+        usage_responses = usage_responses()
+    if isinstance(usage_responses, tuple):
+        return usage_responses
+    if isinstance(usage_responses, list):
+        return tuple(usage_responses)
+    return ()
