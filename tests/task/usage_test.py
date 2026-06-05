@@ -440,6 +440,123 @@ class UsageTotalsTest(TestCase):
         )
         self.assertNotIn("private-deployment-name", str(observation))
 
+    def test_provider_usage_preserves_zero_and_drops_hostile_values(
+        self,
+    ) -> None:
+        response = SimpleNamespace(
+            provider_family="openai",
+            usage={
+                "input_tokens": None,
+                "promptTokenCount": float("nan"),
+                "cached_input_tokens": False,
+                "cache_creation_input_tokens": -1,
+                "output_tokens": 0,
+                "reasoning_tokens": 1.5,
+                "total_tokens": "0",
+                "input_tokens_details": {
+                    "cached_tokens": object(),
+                    "unknown": {"nested": "private nested body"},
+                },
+                "output_tokens_details": {
+                    "reasoning_tokens": float("inf"),
+                    "signature": "private reasoning signature",
+                },
+                "headers": {"authorization": "Bearer private-provider-key"},
+                "response_metadata": {"id": "private-response-id"},
+            },
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(observation.source, UsageSource.EXACT)
+        self.assertEqual(
+            observation.totals,
+            UsageTotals(output_tokens=0),
+        )
+        self.assertEqual(
+            observation.metadata,
+            {"provider_family": UsageProviderFamily.OPENAI.value},
+        )
+        rendered = str(observation)
+        self.assertNotIn("private nested body", rendered)
+        self.assertNotIn("private reasoning signature", rendered)
+        self.assertNotIn("private-provider-key", rendered)
+        self.assertNotIn("private-response-id", rendered)
+
+    def test_usage_metadata_drops_adversarial_privacy_sentinels(
+        self,
+    ) -> None:
+        sentinels = (
+            "private system instructions",
+            "private user prompt",
+            "private token text",
+            "private reasoning text",
+            "private reasoning signature",
+            "private redacted blob",
+            "private PDF bytes",
+            "private image bytes",
+            "data:application/pdf;base64,private",
+            "data:image/png;base64,private",
+            "private-file.pdf",
+            "/private/tmp/private-file.pdf",
+            "../private/path",
+            "private-cache-key",
+            "private-cache-handle",
+            "private-request-id",
+            "private-response-id",
+            "private-azure-deployment",
+            "private-region",
+            "https://private-endpoint.example/openai/v1/",
+            "Bearer private-provider-key",
+            "private/raw-model-id",
+            "private provider error body",
+        )
+        response = SimpleNamespace(
+            provider_family="azure_openai",
+            usage={
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "total_tokens": 3,
+                "prompt": sentinels[0],
+                "user_prompt": sentinels[1],
+                "token_text": sentinels[2],
+                "reasoning": {
+                    "text": sentinels[3],
+                    "signature": sentinels[4],
+                    "redacted": sentinels[5],
+                },
+                "file_data": sentinels[8],
+                "image_url": sentinels[9],
+                "filename": sentinels[10],
+                "path": sentinels[11],
+                "cache_key": sentinels[13],
+                "cache_handle": sentinels[14],
+                "request_id": sentinels[15],
+                "response_id": sentinels[16],
+                "deployment": sentinels[17],
+                "region": sentinels[18],
+                "endpoint": sentinels[19],
+                "headers": {"authorization": sentinels[20]},
+                "model": sentinels[21],
+                "error": {"body": sentinels[22]},
+            },
+        )
+
+        observation = usage_observation_from_response(response)
+
+        self.assertIsNotNone(observation)
+        assert observation is not None
+        self.assertEqual(
+            observation.metadata,
+            {"provider_family": UsageProviderFamily.AZURE_OPENAI.value},
+        )
+        rendered = str(observation)
+        for sentinel in sentinels:
+            with self.subTest(sentinel=sentinel):
+                self.assertNotIn(sentinel, rendered)
+
     def test_streaming_vendor_usage_aliases_are_preserved(self) -> None:
         google = usage_totals_from_response(
             SimpleNamespace(

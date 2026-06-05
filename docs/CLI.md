@@ -1885,6 +1885,22 @@ counters, privacy-safe metadata, and a `usage_totals` object. The rollup is
 computed from the records returned by the selected filters. Missing counters
 are printed as `null`; reported zero values remain `0`.
 
+Provider usage support:
+
+| Provider family | Non-streaming | Streaming | Exact cache read | Exact cache creation | Exact reasoning | Unavailable fields |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenAI / Azure Responses | Supported from provider usage objects. | Supported from terminal response usage events. | `cached_input_tokens` from provider cache-read details. | `null` unless the provider reports a write counter. | `reasoning_tokens` from provider output-token details. | Cache creation when absent; any malformed or missing counter. |
+| Anthropic | Supported from provider usage objects. | Supported from terminal or cumulative provider usage events. | `cached_input_tokens` from cache-read counters. | `cache_creation_input_tokens` from provider cache-write counters. | `reasoning_tokens` from provider thinking-token details. | Any counter absent from provider usage; visible thinking text is ignored. |
+| Bedrock | Supported from Converse usage metadata. | Supported from terminal Converse stream metadata. | `cached_input_tokens` from cache-read counters. | `cache_creation_input_tokens` from cache-write counters. | `null` unless a model-specific exact field reports it. | General reasoning-token split and malformed counters. |
+| Google / Gemini | Supported from `usage_metadata` / `usageMetadata`. | Supported from terminal stream usage metadata. | `cached_input_tokens` from cached-content counters. | `null` for separately created cached content unless reported by the call. | `reasoning_tokens` from thoughts-token counters. | Cache creation and absent provider fields. |
+| OpenAI-compatible vendors | Supported when the adapter exposes OpenAI-compatible usage shapes. | Supported when the adapter exposes trustworthy terminal usage. | Supported only when provider cache-read details are present. | `null` unless explicitly reported. | Supported only when completion reasoning details are present. | Provider-specific cache or reasoning fields that are not exposed. |
+| Local / estimated vendors | Local token counters are marked `estimated`. | Local stream counters are marked `estimated` only when produced by the local response. | `null`. | `null`. | `null`. | Exact provider cache, cache creation, reasoning, and total-token counters. |
+
+Exact counters are copied only from provider-returned usage metadata. Avalan
+does not infer cache hits, cache writes, reasoning tokens, or provider
+`total_tokens` from prompt size, local tokenization, repeated prompts, latency,
+reasoning settings, or streamed token text.
+
 ### avalan task output
 
 Print the sanitized output snapshot for a run:
