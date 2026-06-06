@@ -63,6 +63,26 @@ class FlowExtraExecutionTestCase(IsolatedAsyncioTestCase):
 
         self.assertIn("cycle", str(context.exception))
 
+    async def test_execute_async_reports_unprocessed_reachable_nodes(
+        self,
+    ) -> None:
+        class CycleBlindFlow(Flow):
+            def _detect_cycle_nodes(self, start_nodes: list[Node]) -> set[str]:
+                return set()
+
+        flow = CycleBlindFlow()
+        flow.add_node(Node("A", func=lambda _: 1))
+        flow.add_node(Node("B", func=lambda _: 2))
+        flow.add_node(Node("C", func=lambda _: 3))
+        flow.add_connection("A", "B")
+        flow.add_connection("B", "C")
+        flow.add_connection("C", "B")
+
+        with self.assertRaises(ValueError) as context:
+            await flow.execute_async()
+
+        self.assertIn("cycle", str(context.exception))
+
     async def test_resolve_start_nodes_with_unknown_node_inputs(self) -> None:
         flow = Flow()
         flow.add_node(Node("A"))
@@ -101,11 +121,50 @@ class FlowExtraExecutionTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(cycle_nodes, set())
 
+    def test_detect_cycle_nodes_excludes_acyclic_ancestors(self) -> None:
+        flow = Flow()
+        flow.add_node(Node("A"))
+        flow.add_node(Node("B"))
+        flow.add_node(Node("C"))
+        flow.add_connection("A", "B")
+        flow.add_connection("B", "C")
+        flow.add_connection("C", "B")
+
+        cycle_nodes = flow._detect_cycle_nodes([flow.nodes["A"]])
+
+        self.assertEqual(cycle_nodes, {"B", "C"})
+
+    async def test_execute_async_cycle_error_excludes_acyclic_ancestors(
+        self,
+    ) -> None:
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: 1))
+        flow.add_node(Node("B", func=lambda _: 2))
+        flow.add_node(Node("C", func=lambda _: 3))
+        flow.add_connection("A", "B")
+        flow.add_connection("B", "C")
+        flow.add_connection("C", "B")
+
+        with self.assertRaises(ValueError) as context:
+            await flow.execute_async()
+
+        self.assertEqual(
+            str(context.exception), "Flow contains a cycle involving: B, C"
+        )
+
     def test_queue_guard_rejects_revisited_node(self) -> None:
         with self.assertRaisesRegex(ValueError, "revisited node"):
             Flow._assert_unprocessed_queue_node(
                 Node("A"),
                 {"A"},
+                {"A"},
+            )
+
+    def test_queue_guard_rejects_unreachable_node(self) -> None:
+        with self.assertRaisesRegex(ValueError, "revisited node"):
+            Flow._assert_unprocessed_queue_node(
+                Node("B"),
+                set(),
                 {"A"},
             )
 

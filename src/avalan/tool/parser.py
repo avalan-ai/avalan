@@ -428,15 +428,18 @@ class ToolCallParser:
     def tool_call_status(
         self, buffer: str, *, final: bool = False
     ) -> "ToolCallParser.ToolCallBufferStatus":
+        status_buffer = self._without_markdown_fenced_blocks(buffer)
         status: ToolCallParser.ToolCallBufferStatus
         if self._tool_format is ToolFormat.DSML:
-            dsml_status = self._dsml_tool_call_status(buffer)
+            dsml_status = self._dsml_tool_call_status(status_buffer)
             if dsml_status is not self.ToolCallBufferStatus.NONE:
                 status = dsml_status
                 return self._final_tool_call_status(buffer, status, final)
+        if not status_buffer:
+            return self.ToolCallBufferStatus.NONE
 
         start = ["<tool_call", "<tool ", "<tool>"]
-        end = ["</tool_call>", "</tool>", "/>", "<|call|>"]
+        end = ["</tool_call>", "</tool>", "<|call|>"]
         if self._tool_format is ToolFormat.HARMONY:
             start.extend(
                 [
@@ -448,21 +451,161 @@ class ToolCallParser:
             )
             end.append("<|channel|>final<|message|>")
         max_len = max(len(s) for s in start)
-        tail = buffer[-max_len:]
+        tail = status_buffer[-max_len:]
         for s in start:
             if s.startswith(tail) and tail != s:
                 status = self.ToolCallBufferStatus.PREFIX
                 return self._final_tool_call_status(buffer, status, final)
-        for s in start:
-            idx = buffer.rfind(s)
-            if idx != -1:
-                after = buffer[idx + len(s) :]
-                if any(e in after for e in end):
-                    status = self.ToolCallBufferStatus.CLOSED
-                    return self._final_tool_call_status(buffer, status, final)
-                status = self.ToolCallBufferStatus.OPEN
+        latest_start = self._latest_tool_start(status_buffer, start)
+        if latest_start is not None:
+            idx, marker = latest_start
+            after = status_buffer[idx + len(marker) :]
+            if self._has_unquoted_tool_end(after, end) or (
+                self._opening_tool_tag_is_self_closing(marker, after)
+                and not self._has_unclosed_tool_start_before(
+                    status_buffer, idx, start, end
+                )
+            ):
+                status = self.ToolCallBufferStatus.CLOSED
                 return self._final_tool_call_status(buffer, status, final)
+            status = self.ToolCallBufferStatus.OPEN
+            return self._final_tool_call_status(buffer, status, final)
         return self.ToolCallBufferStatus.NONE
+
+    @classmethod
+    def _latest_tool_start(
+        cls, text: str, start_markers: list[str]
+    ) -> tuple[int, str] | None:
+        latest: tuple[int, str] | None = None
+        for marker in start_markers:
+            index = text.rfind(marker)
+            while index != -1:
+                if not cls._index_is_inside_quoted_text(text, index) and (
+                    latest is None
+                    or index > latest[0]
+                    or (index == latest[0] and len(marker) > len(latest[1]))
+                ):
+                    latest = (index, marker)
+                    break
+                index = text.rfind(marker, 0, index)
+        return latest
+
+    @classmethod
+    def _has_unquoted_tool_end(cls, text: str, end_markers: list[str]) -> bool:
+        for marker in end_markers:
+            index = text.find(marker)
+            while index != -1:
+                if not cls._index_is_inside_quoted_text(text, index):
+                    return True
+                index = text.find(marker, index + 1)
+        return False
+
+    @staticmethod
+    def _index_is_inside_quoted_text(text: str, index: int) -> bool:
+        quote: str | None = None
+        escaped = False
+        for position, character in enumerate(text[:index]):
+            if escaped:
+                escaped = False
+                continue
+            if quote is not None and character == "\\":
+                escaped = True
+                continue
+            if character not in ("'", '"'):
+                continue
+            if character == "'" and not ToolCallParser._is_quote_delimiter(
+                text, position
+            ):
+                continue
+            if quote is None:
+                quote = character
+            elif quote == character:
+                quote = None
+        return quote is not None
+
+    @staticmethod
+    def _is_quote_delimiter(text: str, position: int) -> bool:
+        return (
+            position == 0
+            or not text[position - 1].isalnum()
+            or position + 1 == len(text)
+            or not text[position + 1].isalnum()
+        )
+
+    @staticmethod
+    def _opening_tool_tag_is_self_closing(
+        start_marker: str, after_start: str
+    ) -> bool:
+        if start_marker not in {"<tool_call", "<tool "}:
+            return False
+
+        tag_end = ToolCallParser._tag_end_index(after_start, 0)
+        if tag_end == -1:
+            return False
+
+        return after_start[: tag_end + 1].rstrip().endswith("/>")
+
+    @staticmethod
+    def _tag_end_index(text: str, start: int) -> int:
+        quote: str | None = None
+        escaped = False
+        for index, character in enumerate(text[start:], start=start):
+            if escaped:
+                escaped = False
+                continue
+            if quote is not None:
+                if character == "\\":
+                    escaped = True
+                elif (
+                    character == quote
+                    and ToolCallParser._attribute_tail_is_valid(
+                        text, index + 1
+                    )
+                ):
+                    quote = None
+                continue
+            if character in ("'", '"'):
+                quote = character
+                continue
+            if character == ">":
+                return index
+        return -1
+
+    def _has_unclosed_tool_start_before(
+        self,
+        buffer: str,
+        index: int,
+        start_markers: list[str],
+        end_markers: list[str],
+    ) -> bool:
+        last_end = self._last_tool_end_before(buffer, index, end_markers)
+        for marker in start_markers:
+            start_index = buffer.find(marker, last_end + 1)
+            while start_index != -1 and start_index < index:
+                if not self._index_is_inside_quoted_text(buffer, start_index):
+                    after_start = buffer[start_index + len(marker) :]
+                    if not self._opening_tool_tag_is_self_closing(
+                        marker, after_start
+                    ):
+                        return True
+                start_index = buffer.find(marker, start_index + 1)
+        return False
+
+    @staticmethod
+    def _last_tool_end_before(
+        buffer: str, index: int, end_markers: list[str]
+    ) -> int:
+        last_end = -1
+        for marker in end_markers:
+            marker_index = buffer.rfind(marker, 0, index)
+            while marker_index != -1:
+                if not ToolCallParser._index_is_inside_quoted_text(
+                    buffer, marker_index
+                ):
+                    last_end = max(last_end, marker_index + len(marker))
+                    break
+                marker_index = buffer.rfind(marker, 0, marker_index)
+        return last_end
 
     def stream_buffer_diagnostics(
         self, buffer: str
@@ -481,6 +624,11 @@ class ToolCallParser:
 
         outcome = self.parse(buffer)
         if outcome.diagnostics:
+            if status is self.ToolCallBufferStatus.MALFORMED:
+                return [
+                    self._diagnostic_with_stream_status(diagnostic, status)
+                    for diagnostic in outcome.diagnostics
+                ]
             return outcome.diagnostics
         if status is self.ToolCallBufferStatus.MALFORMED:
             return [
@@ -508,6 +656,29 @@ class ToolCallParser:
             if not outcome.calls:
                 return self.ToolCallBufferStatus.MALFORMED
         return status
+
+    @staticmethod
+    def _diagnostic_with_stream_status(
+        diagnostic: ToolCallDiagnostic,
+        status: "ToolCallParser.ToolCallBufferStatus",
+    ) -> ToolCallDiagnostic:
+        details = diagnostic.details.copy()
+        details.setdefault("stream_status", status.name.lower())
+        return ToolCallDiagnostic(
+            id=diagnostic.id,
+            call_id=diagnostic.call_id,
+            requested_name=diagnostic.requested_name,
+            canonical_name=diagnostic.canonical_name,
+            status=diagnostic.status,
+            code=diagnostic.code,
+            stage=diagnostic.stage,
+            message=diagnostic.message,
+            retryable=diagnostic.retryable,
+            details=details,
+            started_at=diagnostic.started_at,
+            finished_at=diagnostic.finished_at,
+            duration_ms=diagnostic.duration_ms,
+        )
 
     def _dsml_tool_call_status(
         self, buffer: str
@@ -886,11 +1057,18 @@ class ToolCallParser:
 
     def _tag_failure_diagnostics(self, text: str) -> list[ToolCallDiagnostic]:
         text = self._without_markdown_fenced_blocks(text)
-        if "<tool_call" not in text and "<tool " not in text:
+        if (
+            self._find_unquoted_marker(text, "<tool_call", 0) == -1
+            and self._find_unquoted_marker(text, "<tool ", 0) == -1
+            and self._find_unquoted_marker(text, "<tool>", 0) == -1
+        ):
             return []
 
         diagnostics: list[ToolCallDiagnostic] = []
         payloads = self._tag_payloads(text)
+        if not payloads:
+            return [self._malformed_call_diagnostic()]
+
         for payload in payloads:
             diagnostic = self._payload_diagnostic(payload)
             if diagnostic is not None:
@@ -1342,6 +1520,11 @@ class ToolCallParser:
         )
 
     def _tag_payloads(self, text: str) -> list[Any]:
+        body_payloads = self._tag_body_payloads(text)
+        self_closing_payloads = self._self_closing_tag_payloads(text)
+        if body_payloads:
+            return body_payloads + self_closing_payloads
+
         payloads: list[Any] = []
         try:
             root = ElementTree.fromstring(f"<root>{text}</root>")
@@ -1357,21 +1540,166 @@ class ToolCallParser:
         except ElementTree.ParseError:
             pass
 
-        payload_patterns = (
-            r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
-            r"<tool_call\s+name=\"([^\"]+)\"\s*>(.*?)</tool_call>",
-            r"<tool\s+name=\"([^\"]+)\"\s*>(.*?)</tool>",
-            r"<tool_call\s+name=\"([^\"]+)\"\s+arguments='([^']*)'\s*/>",
-        )
-        for pattern in payload_patterns:
-            for match in finditer(pattern, text, DOTALL):
-                if match.lastindex == 1:
-                    payloads.append(self._deserialize_payload(match.group(1)))
+        return self_closing_payloads
+
+    def _tag_body_payloads(self, text: str) -> list[Any]:
+        payloads: list[Any] = []
+        for start_marker, end_marker in (
+            ("<tool_call", "</tool_call>"),
+            ("<tool ", "</tool>"),
+            ("<tool>", "</tool>"),
+        ):
+            index = self._find_unquoted_marker(text, start_marker, 0)
+            while index != -1:
+                tag_end = self._tag_end_index(text, index)
+                if tag_end == -1:
+                    break
+                opening = text[index : tag_end + 1]
+                close_index = self._find_unquoted_marker(
+                    text, end_marker, tag_end + 1
+                )
+                if close_index == -1:
+                    index = text.find(start_marker, tag_end + 1)
                     continue
-                name = match.group(1)
-                arguments = self._deserialize_payload(match.group(2))
-                payloads.append({"name": name, "arguments": arguments})
+                if not opening.rstrip().endswith("/>"):
+                    payloads.append(
+                        self._tag_body_payload(
+                            opening,
+                            text[tag_end + 1 : close_index],
+                        )
+                    )
+                index = self._find_unquoted_marker(
+                    text, start_marker, close_index + len(end_marker)
+                )
         return payloads
+
+    def _tag_body_payload(self, opening: str, body: str) -> Any:
+        name = self._tag_attribute(opening, "name")
+        if name is not None:
+            arguments = self._deserialize_json_payload(body)
+            return {"name": name, "arguments": arguments}
+        try:
+            return self._deserialize_payload(body)
+        except Exception:
+            return None
+
+    def _self_closing_tag_payloads(self, text: str) -> list[Any]:
+        payloads: list[Any] = []
+        for start_marker in ("<tool_call", "<tool "):
+            index = self._find_unquoted_marker(text, start_marker, 0)
+            while index != -1:
+                tag_end = self._tag_end_index(text, index)
+                if tag_end == -1:
+                    break
+                opening = text[index : tag_end + 1]
+                if opening.rstrip().endswith("/>"):
+                    name = self._tag_attribute(opening, "name")
+                    if name is not None:
+                        arguments_text = self._tag_attribute(
+                            opening, "arguments"
+                        )
+                        arguments = (
+                            self._deserialize_tag_payload(arguments_text)
+                            if arguments_text is not None
+                            else None
+                        )
+                        payloads.append({"name": name, "arguments": arguments})
+                index = self._find_unquoted_marker(
+                    text, start_marker, tag_end + 1
+                )
+        return payloads
+
+    def _deserialize_tag_payload(self, text: str) -> Any:
+        try:
+            return self._deserialize_payload(text)
+        except Exception:
+            return None
+
+    @classmethod
+    def _tag_attribute(cls, opening: str, name: str) -> str | None:
+        index = opening.find(name)
+        while index != -1:
+            after_name = index + len(name)
+            if cls._tag_attribute_name_matches(opening, index, after_name):
+                equals_index = cls._skip_spaces(opening, after_name)
+                if (
+                    equals_index < len(opening)
+                    and opening[equals_index] == "="
+                ):
+                    value_index = cls._skip_spaces(opening, equals_index + 1)
+                    if value_index < len(opening) and opening[value_index] in (
+                        "'",
+                        '"',
+                    ):
+                        close_index = cls._tag_attribute_close_index(
+                            opening,
+                            value_index + 1,
+                            opening[value_index],
+                        )
+                        if close_index != -1:
+                            return opening[value_index + 1 : close_index]
+            index = opening.find(name, after_name)
+        return None
+
+    @staticmethod
+    def _tag_attribute_name_matches(
+        opening: str,
+        index: int,
+        after_name: int,
+    ) -> bool:
+        before_ok = index == 0 or opening[index - 1].isspace()
+        after_ok = after_name == len(opening) or (
+            opening[after_name].isspace() or opening[after_name] == "="
+        )
+        return before_ok and after_ok
+
+    @staticmethod
+    def _skip_spaces(text: str, index: int) -> int:
+        while index < len(text) and text[index].isspace():
+            index += 1
+        return index
+
+    @staticmethod
+    def _tag_attribute_close_index(
+        opening: str, start: int, quote: str
+    ) -> int:
+        escaped = False
+        for index, character in enumerate(opening[start:], start=start):
+            if escaped:
+                escaped = False
+                continue
+            if character == "\\":
+                escaped = True
+                continue
+            if character == quote and ToolCallParser._attribute_tail_is_valid(
+                opening, index + 1
+            ):
+                return index
+        return -1
+
+    @staticmethod
+    def _attribute_tail_is_valid(text: str, index: int) -> bool:
+        index = ToolCallParser._skip_spaces(text, index)
+        if index >= len(text) or text.startswith((">", "/>"), index):
+            return True
+        if not (text[index].isalpha() or text[index] in {"_", ":"}):
+            return False
+        index += 1
+        while index < len(text) and (
+            text[index].isalnum() or text[index] in {"_", ":", ".", "-"}
+        ):
+            index += 1
+        index = ToolCallParser._skip_spaces(text, index)
+        return index < len(text) and text[index] == "="
+
+    @classmethod
+    def _find_unquoted_marker(cls, text: str, marker: str, start: int) -> int:
+        index = text.find(marker, start)
+        while index != -1:
+            if not cls._index_is_inside_quoted_text(text, index):
+                return index
+            index = text.find(marker, index + 1)
+        return -1
 
     def _tag_payload_from_element(self, element: ElementTree.Element) -> Any:
         name = element.attrib.get("name")
