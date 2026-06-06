@@ -449,6 +449,33 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         calls = self.manager.get_calls("no tools here")
         self.assertIsNone(calls)
 
+    async def test_get_calls_preserves_current_tuple_format_none(self):
+        cases = (
+            (
+                ToolFormat.JSON,
+                '{"tool": "calculator", "arguments": {"expression": "1"}}',
+            ),
+            (
+                ToolFormat.REACT,
+                'Action: calculator\nAction Input: {"expression": "2"}',
+            ),
+            (ToolFormat.BRACKET, "[calculator](3)"),
+            (
+                ToolFormat.OPENAI,
+                '{"name": "calculator", "arguments": {"expression": "4"}}',
+            ),
+        )
+
+        for tool_format, text in cases:
+            with self.subTest(tool_format=tool_format):
+                manager = ToolManager.create_instance(
+                    enable_tools=["calculator"],
+                    available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+                    settings=ToolManagerSettings(tool_format=tool_format),
+                )
+
+                self.assertIsNone(manager.get_calls(text))
+
     async def test_call_with_tool(self):
         text = (
             '<tool_call>{"name": "calculator", '
@@ -716,6 +743,18 @@ class ToolManagerExtraCallTestCase(IsolatedAsyncioTestCase):
     async def test_call_name_not_found(self):
         call = ToolCall(id=_uuid4(), name="missing", arguments={})
         result = await self.manager(call, context=ToolCallContext())
+        self.assertIsNone(result)
+
+    async def test_call_alias_still_returns_none_without_canonical_name(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id=_uuid4(), name="sum", arguments={"a": 1, "b": 2})
+
+        result = await manager(call, context=ToolCallContext())
+
         self.assertIsNone(result)
 
     async def test_aenter_no_toolsets(self):

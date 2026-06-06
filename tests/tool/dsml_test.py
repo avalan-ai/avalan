@@ -252,6 +252,34 @@ class DsmlToolsTestCase(TestCase):
             ),
         )
 
+    def test_parser_dsml_returns_tool_call_list(self):
+        text = (
+            "<think>Use calculator.</think>I will calculate.\n\n"
+            "<｜DSML｜tool_calls>\n"
+            '<｜DSML｜invoke name="math.calculator">\n'
+            '<｜DSML｜parameter name="expression" string="true">'
+            "2 + 2"
+            "</｜DSML｜parameter>\n"
+            "</｜DSML｜invoke>\n"
+            "</｜DSML｜tool_calls>"
+        )
+        call_id = _uuid4()
+        parser = ToolCallParser(tool_format=ToolFormat.DSML)
+
+        with patch("avalan.tool.dsml.uuid4", return_value=call_id):
+            parsed = parser(text)
+
+        self.assertEqual(
+            parsed,
+            [
+                ToolCall(
+                    id=f"ds4_tool_{call_id.hex}",
+                    name="math.calculator",
+                    arguments={"expression": "2 + 2"},
+                )
+            ],
+        )
+
     def test_parse_accepts_short_marker_and_plain_xml_fallback(self):
         short = (
             "<DSML｜tool_calls>"

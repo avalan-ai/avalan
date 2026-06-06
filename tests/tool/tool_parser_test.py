@@ -72,6 +72,46 @@ class ToolCallParserFormatTestCase(TestCase):
         )
         self.assertEqual(parser(text), ("calculator", {"expression": "3"}))
 
+    def test_current_tuple_formats_do_not_return_tool_call_objects(self):
+        cases = (
+            (
+                ToolFormat.JSON,
+                '{"tool": "calculator", "arguments": {"expression": "1"}}',
+            ),
+            (
+                ToolFormat.REACT,
+                'Action: calculator\nAction Input: {"expression": "2"}',
+            ),
+            (ToolFormat.BRACKET, "[calculator](3)"),
+            (
+                ToolFormat.OPENAI,
+                '{"name": "calculator", "arguments": {"expression": "4"}}',
+            ),
+        )
+
+        for tool_format, text in cases:
+            with self.subTest(tool_format=tool_format):
+                parsed = ToolCallParser(tool_format=tool_format)(text)
+
+                self.assertIsInstance(parsed, tuple)
+                self.assertEqual(len(parsed), 2)
+                self.assertIsInstance(parsed[0], str)
+                self.assertNotIsInstance(parsed, list)
+
+    def test_json_non_object_arguments_keep_current_tuple_shape(self):
+        parser = ToolCallParser(tool_format=ToolFormat.JSON)
+
+        parsed = parser('{"tool": "calculator", "arguments": ["1 + 1"]}')
+
+        self.assertEqual(parsed, ("calculator", ["1 + 1"]))
+
+    def test_openai_json_non_object_arguments_are_rejected(self):
+        parser = ToolCallParser(tool_format=ToolFormat.OPENAI)
+
+        parsed = parser('{"name": "calculator", "arguments": ["1 + 1"]}')
+
+        self.assertIsNone(parsed)
+
 
 class ToolCallParserHarmonyTestCase(TestCase):
     def test_multiple_with_commentary(self):
