@@ -5,7 +5,9 @@ from unittest import TestCase, main
 from uuid import uuid4
 
 from avalan.entities import (
+    PreparedToolCall,
     ToolCall,
+    ToolCallContext,
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
@@ -326,6 +328,80 @@ class ToolDescriptorTestCase(TestCase):
                 valid.update(kwargs)
                 with self.assertRaises(AssertionError):
                     ToolDescriptor(**valid)
+
+
+class PreparedToolCallTestCase(TestCase):
+    def test_fields_are_stable(self):
+        self.assertEqual(
+            [field.name for field in fields(PreparedToolCall)],
+            ["call", "callable", "descriptor", "arguments", "context"],
+        )
+
+    def test_create_prepared_tool_call(self):
+        def calculator(expression: str) -> str:
+            return expression
+
+        call = ToolCall(
+            id="call-1",
+            name="calculator",
+            arguments={"expression": "1"},
+        )
+        descriptor = ToolDescriptor(name="calculator", callable=calculator)
+        context = ToolCallContext()
+
+        prepared = PreparedToolCall(
+            call=call,
+            callable=calculator,
+            descriptor=descriptor,
+            arguments={"expression": "1"},
+            context=context,
+        )
+
+        self.assertEqual(prepared.call, call)
+        self.assertIs(prepared.callable, calculator)
+        self.assertEqual(prepared.descriptor, descriptor)
+        self.assertEqual(prepared.arguments, {"expression": "1"})
+        self.assertEqual(prepared.context, context)
+
+    def test_rejects_invalid_values(self):
+        def calculator(expression: str) -> str:
+            return expression
+
+        call = ToolCall(
+            id="call-1",
+            name="calculator",
+            arguments={"expression": "1"},
+        )
+        descriptor = ToolDescriptor(name="calculator", callable=calculator)
+        valid = {
+            "call": call,
+            "callable": calculator,
+            "descriptor": descriptor,
+            "arguments": {"expression": "1"},
+            "context": ToolCallContext(),
+        }
+        invalid_cases = (
+            {"call": "call"},
+            {"callable": "calculator"},
+            {"descriptor": "descriptor"},
+            {"arguments": [("expression", "1")]},
+            {"context": "context"},
+            {
+                "call": ToolCall(
+                    id="call-1",
+                    name="other",
+                    arguments={"expression": "1"},
+                )
+            },
+            {"arguments": {"expression": "2"}},
+        )
+
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                candidate = dict(valid)
+                candidate.update(kwargs)
+                with self.assertRaises(AssertionError):
+                    PreparedToolCall(**candidate)
 
 
 class ToolNameResolutionTestCase(TestCase):

@@ -1,4 +1,5 @@
 from ..entities import (
+    PreparedToolCall,
     ToolCall,
     ToolCallContext,
     ToolCallDiagnostic,
@@ -186,19 +187,12 @@ class ToolManager:
             self._tools.get(resolution.canonical_name) if self._tools else None
         )
         assert tool is not None
-        try:
-            signature(tool).bind(**arguments)
-        except TypeError as exc:
-            return ToolCallDiagnostic(
-                id=uuid4(),
-                call_id=call.id,
-                requested_name=call.name,
-                canonical_name=resolution.canonical_name,
-                code=ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
-                stage=ToolCallDiagnosticStage.VALIDATE,
-                message=str(exc),
-            )
-        return None
+        return self._validate_tool_arguments(
+            call=call,
+            canonical_name=resolution.canonical_name,
+            tool=tool,
+            arguments=arguments,
+        )
 
     def __init__(
         self,
@@ -445,6 +439,58 @@ class ToolManager:
         calls = self._parser.parse(text).calls
         return calls or None
 
+    async def prepare_call(
+        self, call: ToolCall, context: ToolCallContext
+    ) -> PreparedToolCall | ToolCallDiagnostic:
+        """Return a prepared execution plan or a diagnostic."""
+        assert call
+
+        history = context.calls or []
+
+        if self._settings.avoid_repetition and history:
+            last = history[-1]
+            if last.name == call.name and last.arguments == call.arguments:
+                return self._diagnostic(
+                    call=call,
+                    code=ToolCallDiagnosticCode.REPEATED_CALL,
+                    stage=ToolCallDiagnosticStage.GUARD,
+                    message="Tool call repeats the previous call.",
+                )
+
+        if (
+            self._settings.maximum_depth is not None
+            and len(history) + 1 > self._settings.maximum_depth
+        ):
+            return self._diagnostic(
+                call=call,
+                code=ToolCallDiagnosticCode.MAXIMUM_DEPTH,
+                stage=ToolCallDiagnosticStage.GUARD,
+                message="Tool call exceeds the maximum depth.",
+            )
+
+        await _check_cancelled(context)
+
+        prepared = self._prepare_resolved_call(
+            call,
+            context,
+            validate=False,
+        )
+        if isinstance(prepared, ToolCallDiagnostic):
+            return prepared
+
+        call, context = self._apply_filters(prepared.call, prepared.context)
+        await _check_cancelled(context)
+
+        return self._prepare_resolved_call(call, context)
+
+    async def execute_prepared_call(
+        self, prepared: PreparedToolCall
+    ) -> ToolCallResult | ToolCallError:
+        """Execute a prepared call without rerunning preparation."""
+        assert isinstance(prepared, PreparedToolCall)
+        await _check_cancelled(prepared.context)
+        return await self._execute_prepared_call(prepared)
+
     async def __aenter__(self) -> "ToolManager":
         if self._toolsets:
             for i, toolset in enumerate(self._toolsets):
@@ -499,56 +545,172 @@ class ToolManager:
 
         await _check_cancelled(context)
 
-        if self._settings.filters:
-            for f in self._settings.filters:
-                filter_namespace: str | None = None
-                if isinstance(f, ToolFilter):
-                    filter_func = f.func
-                    filter_namespace = f.namespace
-                else:
-                    filter_func = f
-                if not matches_tool_namespace(call.name, filter_namespace):
-                    continue
-                modified = filter_func(call, context)
-                if modified is not None:
-                    assert isinstance(modified, tuple) and len(modified) == 2
-                    call, context = modified
+        call, context = self._apply_filters(call, context)
 
         await _check_cancelled(context)
 
-        is_native_tool = isinstance(tool, Tool)
+        prepared = PreparedToolCall(
+            call=call,
+            callable=tool,
+            descriptor=self._legacy_descriptor(call.name, tool),
+            arguments=call.arguments or {},
+            context=context,
+        )
+        return await self._execute_prepared_call(prepared)
 
-        try:
-            result = (
-                await tool(**call.arguments, context=context)
-                if is_native_tool and call.arguments
-                else (
-                    await tool(context=context)
-                    if is_native_tool
-                    else (
-                        await tool(*call.arguments.values())
-                        if call.arguments
-                        else tool()
-                    )
-                )
+    def _prepare_resolved_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+        *,
+        validate: bool = True,
+    ) -> PreparedToolCall | ToolCallDiagnostic:
+        resolution = self.resolve_tool_name(call.name)
+        if resolution.diagnostic_code is not None:
+            return self._resolution_diagnostic(call, resolution)
+        assert resolution.canonical_name is not None
+
+        arguments = call.arguments or {}
+        if not isinstance(arguments, dict):
+            return self._diagnostic(
+                call=call,
+                canonical_name=resolution.canonical_name,
+                code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+                stage=ToolCallDiagnosticStage.VALIDATE,
+                message="Tool call arguments must be an object.",
             )
 
-            if self._settings.transformers:
-                for t in self._settings.transformers:
-                    transformer_namespace: str | None = None
-                    if isinstance(t, ToolTransformer):
-                        transformer_func = t.func
-                        transformer_namespace = t.namespace
-                    else:
-                        transformer_func = t
-                    if not matches_tool_namespace(
-                        call.name,
-                        transformer_namespace,
-                    ):
-                        continue
-                    transformed = transformer_func(call, context, result)
-                    if transformed is not None:
-                        result = transformed
+        descriptor = self._descriptors[resolution.canonical_name]
+        tool = descriptor.callable
+        assert tool is not None
+        prepared_call = ToolCall(
+            id=call.id,
+            name=resolution.canonical_name,
+            arguments=arguments,
+        )
+        if validate:
+            diagnostic = self._validate_tool_arguments(
+                call=prepared_call,
+                canonical_name=resolution.canonical_name,
+                tool=tool,
+                arguments=arguments,
+                context=context,
+            )
+            if diagnostic is not None:
+                return diagnostic
+        return PreparedToolCall(
+            call=prepared_call,
+            callable=tool,
+            descriptor=descriptor,
+            arguments=arguments,
+            context=context,
+        )
+
+    def _resolution_diagnostic(
+        self, call: ToolCall, resolution: ToolNameResolution
+    ) -> ToolCallDiagnostic:
+        assert resolution.diagnostic_code is not None
+        return ToolCallDiagnostic(
+            id=uuid4(),
+            call_id=call.id,
+            requested_name=call.name,
+            canonical_name=resolution.canonical_name,
+            code=resolution.diagnostic_code,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message=f"Tool '{call.name}' is {resolution.status.value}.",
+            details={"candidates": cast(Any, resolution.candidates)},
+        )
+
+    def _diagnostic(
+        self,
+        *,
+        call: ToolCall,
+        code: ToolCallDiagnosticCode,
+        stage: ToolCallDiagnosticStage,
+        message: str,
+        canonical_name: str | None = None,
+    ) -> ToolCallDiagnostic:
+        return ToolCallDiagnostic(
+            id=uuid4(),
+            call_id=call.id,
+            requested_name=call.name,
+            canonical_name=canonical_name,
+            code=code,
+            stage=stage,
+            message=message,
+        )
+
+    def _validate_tool_arguments(
+        self,
+        *,
+        call: ToolCall,
+        canonical_name: str,
+        tool: Callable[..., Any],
+        arguments: dict[str, Any],
+        context: ToolCallContext | None = None,
+    ) -> ToolCallDiagnostic | None:
+        try:
+            if isinstance(tool, Tool):
+                signature(tool.__call__).bind(
+                    **arguments,
+                    context=context or ToolCallContext(),
+                )
+            else:
+                signature(tool).bind(**arguments)
+        except TypeError as exc:
+            return ToolCallDiagnostic(
+                id=uuid4(),
+                call_id=call.id,
+                requested_name=call.name,
+                canonical_name=canonical_name,
+                code=ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+                stage=ToolCallDiagnosticStage.VALIDATE,
+                message=str(exc),
+            )
+        return None
+
+    def _apply_filters(
+        self, call: ToolCall, context: ToolCallContext
+    ) -> tuple[ToolCall, ToolCallContext]:
+        if not self._settings.filters:
+            return call, context
+
+        for f in self._settings.filters:
+            filter_namespace: str | None = None
+            if isinstance(f, ToolFilter):
+                filter_func = f.func
+                filter_namespace = f.namespace
+            else:
+                filter_func = f
+            if not matches_tool_namespace(call.name, filter_namespace):
+                continue
+            modified = filter_func(call, context)
+            if modified is not None:
+                assert isinstance(modified, tuple) and len(modified) == 2
+                call, context = modified
+        return call, context
+
+    def _legacy_descriptor(
+        self, name: str, tool: Callable[..., Any]
+    ) -> ToolDescriptor:
+        descriptor = self._descriptors.get(name)
+        if descriptor is not None and descriptor.callable is tool:
+            return descriptor
+        return ToolDescriptor(
+            name=name,
+            callable=tool,
+            aliases=[],
+        )
+
+    async def _execute_prepared_call(
+        self, prepared: PreparedToolCall
+    ) -> ToolCallResult | ToolCallError:
+        call = prepared.call
+        context = prepared.context
+        tool = prepared.callable
+        try:
+            result = await self._dispatch_tool(tool, call, context)
+            result = self._apply_transformers(call, context, result)
 
             return ToolCallResult(
                 id=uuid4(),
@@ -566,6 +728,47 @@ class ToolManager:
                 error=exc,
                 message=str(exc),
             )
+
+    async def _dispatch_tool(
+        self,
+        tool: Callable[..., Any],
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> Any:
+        is_native_tool = isinstance(tool, Tool)
+        arguments = call.arguments or {}
+        if is_native_tool and arguments:
+            return await tool(**arguments, context=context)
+        if is_native_tool:
+            return await tool(context=context)
+        if arguments:
+            return await tool(*arguments.values())
+        return tool()
+
+    def _apply_transformers(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+        result: Any,
+    ) -> Any:
+        if not self._settings.transformers:
+            return result
+        for t in self._settings.transformers:
+            transformer_namespace: str | None = None
+            if isinstance(t, ToolTransformer):
+                transformer_func = t.func
+                transformer_namespace = t.namespace
+            else:
+                transformer_func = t
+            if not matches_tool_namespace(
+                call.name,
+                transformer_namespace,
+            ):
+                continue
+            transformed = transformer_func(call, context, result)
+            if transformed is not None:
+                result = transformed
+        return result
 
 
 async def _check_cancelled(context: ToolCallContext) -> None:
