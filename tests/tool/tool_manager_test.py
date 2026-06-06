@@ -21,6 +21,7 @@ from avalan.entities import (
     ToolProviderArgumentsMode,
     ToolTransformer,
 )
+from avalan.model.vendor import TextGenerationVendor
 from avalan.tool import Tool, ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.math import CalculatorTool
@@ -323,6 +324,122 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(resolution.canonical_name, "adder")
         self.assertEqual(resolution.candidates, ["adder"])
 
+    def test_resolve_tool_name_exact_canonical_wins_before_alias(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "sum"],
+            available_toolsets=[ToolSet(tools=[DummyAdder(), DummySum()])],
+            settings=ToolManagerSettings(),
+        )
+
+        resolution = manager.resolve_tool_name("sum")
+
+        self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
+        self.assertEqual(resolution.canonical_name, "sum")
+        self.assertEqual(resolution.candidates, ["sum"])
+
+    def test_resolve_tool_name_strips_one_functions_prefix(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+
+        exact = manager.resolve_tool_name("functions.adder")
+        alias = manager.resolve_tool_name("functions.sum")
+        unknown = manager.resolve_tool_name("functions.functions.adder")
+
+        self.assertIs(exact.status, ToolNameResolutionStatus.EXACT)
+        self.assertEqual(exact.canonical_name, "adder")
+        self.assertIs(alias.status, ToolNameResolutionStatus.ALIAS)
+        self.assertEqual(alias.canonical_name, "adder")
+        self.assertIs(unknown.status, ToolNameResolutionStatus.UNKNOWN)
+
+    def test_resolve_tool_name_decodes_only_provider_originated_names(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.adder"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[DummyAdder()])
+            ],
+            settings=ToolManagerSettings(),
+        )
+        encoded = TextGenerationVendor.encode_tool_name("math.adder")
+
+        without_provenance = manager.resolve_tool_name(encoded)
+        with_provenance = manager.resolve_tool_name(
+            encoded,
+            provider_originated=True,
+        )
+
+        self.assertIs(
+            without_provenance.status, ToolNameResolutionStatus.UNKNOWN
+        )
+        self.assertIs(with_provenance.status, ToolNameResolutionStatus.EXACT)
+        self.assertEqual(with_provenance.canonical_name, "math.adder")
+        self.assertEqual(with_provenance.requested_name, encoded)
+
+    def test_resolve_tool_name_provider_origin_plain_name(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+
+        resolution = manager.resolve_tool_name(
+            "adder",
+            provider_originated=True,
+        )
+
+        self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
+        self.assertEqual(resolution.canonical_name, "adder")
+
+    def test_resolve_tool_name_rejects_invalid_provider_origin_name(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            settings=ToolManagerSettings(),
+        )
+
+        invalid_names = ("pkg.tool", "avl_notbase64")
+        for name in invalid_names:
+            with self.subTest(name=name):
+                with self.assertRaises(AssertionError):
+                    manager.resolve_tool_name(
+                        name,
+                        provider_originated=True,
+                    )
+
+    def test_resolve_tool_name_alias_recovery_uses_enabled_tools_only(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder()]),
+                ToolSet(namespace="disabled", tools=[DummyAdderAlt()]),
+            ],
+            settings=ToolManagerSettings(),
+        )
+
+        resolution = manager.resolve_tool_name("sum")
+
+        self.assertIs(resolution.status, ToolNameResolutionStatus.ALIAS)
+        self.assertEqual(resolution.canonical_name, "adder")
+        self.assertEqual(resolution.candidates, ["adder"])
+
+    def test_resolve_tool_name_disabled_alias_is_not_recovered(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+
+        resolution = manager.resolve_tool_name("sum")
+
+        self.assertIs(resolution.status, ToolNameResolutionStatus.DISABLED)
+        self.assertIsNone(resolution.canonical_name)
+        self.assertEqual(resolution.candidates, ["adder"])
+        self.assertIs(
+            resolution.diagnostic_code,
+            ToolCallDiagnosticCode.DISABLED_TOOL,
+        )
+
     def test_resolve_tool_name_rejects_empty_name(self):
         manager = ToolManager.create_instance(
             enable_tools=[],
@@ -423,6 +540,12 @@ class DummyAdderAlt(DummyAdder):
     def __init__(self) -> None:
         self.__name__ = "adder_alt"
         self.aliases = ["sum"]
+
+
+class DummySum(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "sum"
+        self.aliases = []
 
 
 class InvalidAliasesTool(DummyAdder):

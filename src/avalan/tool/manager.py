@@ -19,7 +19,8 @@ from .json_schema import get_json_schema
 from .parser import ToolCallParser
 
 from asyncio import CancelledError, wait_for
-from base64 import urlsafe_b64encode
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from binascii import Error as BinasciiError
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from copy import deepcopy
@@ -101,19 +102,27 @@ class ToolManager:
             return None
         return self._descriptors.get(resolution.canonical_name)
 
-    def resolve_tool_name(self, name: str) -> ToolNameResolution:
+    def resolve_tool_name(
+        self, name: str, *, provider_originated: bool = False
+    ) -> ToolNameResolution:
         """Resolve a requested tool name against enabled tools."""
         assert isinstance(name, str)
         assert name.strip(), "name must not be empty"
-        if self._tools and name in self._tools:
+        assert isinstance(provider_originated, bool)
+
+        canonical_request = self._canonical_requested_name(
+            name,
+            provider_originated=provider_originated,
+        )
+        if self._tools and canonical_request in self._tools:
             return ToolNameResolution(
                 requested_name=name,
                 status=ToolNameResolutionStatus.EXACT,
-                canonical_name=name,
-                candidates=[name],
+                canonical_name=canonical_request,
+                candidates=[canonical_request],
             )
 
-        aliases = self._aliases.get(name, [])
+        aliases = self._aliases.get(canonical_request, [])
         if len(aliases) == 1:
             return ToolNameResolution(
                 requested_name=name,
@@ -130,12 +139,17 @@ class ToolManager:
             )
 
         if (
-            name in self._available_tool_names
-            or name in self._available_aliases
+            canonical_request in self._available_tool_names
+            or canonical_request in self._available_aliases
         ):
+            candidates = self._available_aliases.get(
+                canonical_request,
+                [canonical_request],
+            )
             return ToolNameResolution(
                 requested_name=name,
                 status=ToolNameResolutionStatus.DISABLED,
+                candidates=candidates,
                 diagnostic_code=ToolCallDiagnosticCode.DISABLED_TOOL,
             )
 
@@ -387,6 +401,40 @@ class ToolManager:
             return tool_name
         encoded = urlsafe_b64encode(tool_name.encode()).decode().rstrip("=")
         return f"{cls._PROVIDER_TOOL_NAME_PREFIX}{encoded}"
+
+    @classmethod
+    def _canonical_requested_name(
+        cls, name: str, *, provider_originated: bool
+    ) -> str:
+        requested_name = (
+            cls._decode_provider_tool_name(name)
+            if provider_originated
+            else name
+        )
+        return requested_name.removeprefix("functions.")
+
+    @classmethod
+    def _decode_provider_tool_name(cls, tool_name: str) -> str:
+        assert tool_name.strip(), "tool name must not be empty"
+        assert cls._PROVIDER_TOOL_NAME_PATTERN.fullmatch(
+            tool_name
+        ), "provider tool name is invalid"
+
+        if not tool_name.startswith(cls._PROVIDER_TOOL_NAME_PREFIX):
+            return tool_name
+
+        payload = tool_name[len(cls._PROVIDER_TOOL_NAME_PREFIX) :]
+        assert payload, "provider tool name is missing encoded content"
+        padding = "=" * (-len(payload) % 4)
+        try:
+            decoded = urlsafe_b64decode(f"{payload}{padding}").decode()
+        except (BinasciiError, UnicodeDecodeError) as exc:
+            raise AssertionError("provider tool name is malformed") from exc
+        assert decoded.strip(), "decoded tool name must not be empty"
+        assert (
+            cls._encode_provider_tool_name(decoded) == tool_name
+        ), "provider tool name is malformed"
+        return decoded
 
     def is_potential_tool_call(self, buffer: str, token_str: str) -> bool:
         """Proxy :meth:`ToolCallParser.is_potential_tool_call`."""
