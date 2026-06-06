@@ -189,6 +189,14 @@ class ToolCallDiagnosticStatus(StrEnum):
     NON_EXECUTED = "non_executed"
 
 
+class ToolNameResolutionStatus(StrEnum):
+    EXACT = "exact"
+    ALIAS = "alias"
+    AMBIGUOUS = "ambiguous"
+    UNKNOWN = "unknown"
+    DISABLED = "disabled"
+
+
 class ToolManagerExecutionMode(StrEnum):
     LEGACY = "legacy"
     OUTCOMES = "outcomes"
@@ -682,6 +690,42 @@ ToolCallOutcome: TypeAlias = (
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ToolDescriptor:
+    name: str
+    aliases: list[str] = field(default_factory=list)
+    schema: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        _assert_optional_tool_name(self.name, "name")
+        assert isinstance(self.aliases, list)
+        for alias in self.aliases:
+            _assert_optional_tool_name(alias, "alias")
+        if self.schema is not None:
+            assert isinstance(self.schema, dict)
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolNameResolution:
+    requested_name: str
+    status: ToolNameResolutionStatus
+    canonical_name: str | None = None
+    candidates: list[str] = field(default_factory=list)
+    diagnostic_code: ToolCallDiagnosticCode | None = None
+
+    def __post_init__(self) -> None:
+        _assert_optional_tool_name(self.requested_name, "requested_name")
+        _assert_optional_tool_name(self.canonical_name, "canonical_name")
+        assert isinstance(self.status, ToolNameResolutionStatus)
+        assert isinstance(self.candidates, list)
+        for candidate in self.candidates:
+            _assert_optional_tool_name(candidate, "candidate")
+        if self.diagnostic_code is not None:
+            assert isinstance(self.diagnostic_code, ToolCallDiagnosticCode)
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class Message:
     role: MessageRole
     thinking: str | None = ""
@@ -991,6 +1035,7 @@ class ReasoningToken(Token):
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallToken(Token):
     call: ToolCall | None = None
+    provider_name: str | None = None
 
 
 @final

@@ -291,7 +291,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             text={"format": {"type": "json_object"}, "stop": ["END"]},
             reasoning={"effort": "high"},
             prompt_cache_retention="24h",
-            tools=[{"type": "function", "name": "pkg__lookup"}],
+            tools=[{"type": "function", "name": "avl_cGtnLmxvb2t1cA"}],
         )
         self.assertNotIn(
             "top-level policy", str(create_mock.await_args.kwargs["input"])
@@ -620,11 +620,11 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         t5 = await stream.__anext__()
         self.assertIsInstance(t5, ToolCallToken)
         self.assertEqual(t5.call.id, "c1")
-        self.assertEqual(t5.call.name, "pkg.func")
+        self.assertEqual(t5.call.name, "pkg__func")
         self.assertEqual(t5.call.arguments, {})
         self.assertEqual(
             t5.token,
-            '<tool_call>{"name": "pkg.func", "arguments": {}, "id":'
+            '<tool_call>{"name": "pkg__func", "arguments": {}, "id":'
             ' "c1"}</tool_call>',
         )
         t6 = await stream.__anext__()
@@ -666,7 +666,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(t3.call.arguments, {})
         t4 = await stream.__anext__()
         self.assertEqual(t4.call.id, "c3")
-        self.assertEqual(t4.call.name, "pkg.f")
+        self.assertEqual(t4.call.name, "pkg__f")
         self.assertEqual(t4.call.arguments, {"p": 1})
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
@@ -724,7 +724,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 },
                 "stop": ["stop"],
             },
-            tools=[{"type": "function", "name": "pkg__func"}],
+            tools=[{"type": "function", "name": "avl_cGtnLmZ1bmM"}],
         )
 
     async def test_azure_responses_payload_uses_text_format(self):
@@ -1493,7 +1493,7 @@ class TemplateAndToolSchemaTestCase(TestCase):
             [
                 {
                     "type": "function_call",
-                    "name": "pkg__func",
+                    "name": "avl_cGtnLmZ1bmM",
                     "call_id": "c1",
                     "arguments": '{"a": 1}',
                 },
@@ -1504,7 +1504,7 @@ class TemplateAndToolSchemaTestCase(TestCase):
                 },
                 {
                     "type": "function_call",
-                    "name": "pkg__func2",
+                    "name": "avl_cGtnLmZ1bmMy",
                     "call_id": "c2",
                     "arguments": "null",
                 },
@@ -1539,7 +1539,7 @@ class TemplateAndToolSchemaTestCase(TestCase):
             [
                 {
                     "type": "function_call",
-                    "name": "pkg__func",
+                    "name": "avl_cGtnLmZ1bmM",
                     "call_id": str(call_id),
                     "arguments": (
                         '{"entity_id": "11111111-1111-1111-1111-111111111111"}'
@@ -1572,7 +1572,7 @@ class TemplateAndToolSchemaTestCase(TestCase):
             [
                 {
                     "type": "function_call",
-                    "name": "pkg__func",
+                    "name": "avl_cGtnLmZ1bmM",
                     "call_id": "c1",
                     "arguments": '{"a": 1}',
                 },

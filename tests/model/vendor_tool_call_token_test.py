@@ -9,7 +9,7 @@ class VendorBuildToolCallTokenTestCase(TestCase):
     def test_build_tool_call_token_from_string_json(self) -> None:
         token = TextGenerationVendor.build_tool_call_token(
             call_id="1",
-            tool_name="pkg__tool",
+            tool_name=TextGenerationVendor.encode_tool_name("pkg.tool"),
             arguments='{"a": 1}',
         )
         expected = ToolCallToken(
@@ -18,6 +18,23 @@ class VendorBuildToolCallTokenTestCase(TestCase):
                 ' 1}, "id": "1"}</tool_call>'
             ),
             call=ToolCall(id="1", name="pkg.tool", arguments={"a": 1}),
+            provider_name="avl_cGtnLnRvb2w",
+        )
+        self.assertEqual(token, expected)
+
+    def test_build_tool_call_token_preserves_plain_provider_name(self) -> None:
+        token = TextGenerationVendor.build_tool_call_token(
+            call_id="1",
+            tool_name="pkg__tool",
+            arguments='{"a": 1}',
+        )
+        expected = ToolCallToken(
+            token=(
+                '<tool_call>{"name": "pkg__tool", "arguments": {"a":'
+                ' 1}, "id": "1"}</tool_call>'
+            ),
+            call=ToolCall(id="1", name="pkg__tool", arguments={"a": 1}),
+            provider_name="pkg__tool",
         )
         self.assertEqual(token, expected)
 
@@ -30,6 +47,7 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         expected = ToolCallToken(
             token='<tool_call>{"name": "tool", "arguments": {}}</tool_call>',
             call=ToolCall(id=None, name="tool", arguments={}),
+            provider_name="tool",
         )
         self.assertEqual(token, expected)
 
@@ -61,5 +79,14 @@ class VendorBuildToolCallTokenTestCase(TestCase):
                 f'"id": "{call_id}"}}</tool_call>'
             ),
             call=ToolCall(id=str(call_id), name="tool", arguments={"b": 2}),
+            provider_name="tool",
         )
         self.assertEqual(token, expected)
+
+    def test_build_tool_call_token_rejects_invalid_provider_name(self) -> None:
+        with self.assertRaises(AssertionError):
+            TextGenerationVendor.build_tool_call_token(
+                call_id="1",
+                tool_name="pkg.tool",
+                arguments={},
+            )

@@ -728,7 +728,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(templated), 1)
         self.assertEqual(templated[0]["role"], "assistant")
         tool_block = templated[0]["content"][-1]["toolUse"]
-        self.assertEqual(tool_block["name"], "pkg__tool")
+        self.assertEqual(tool_block["name"], "avl_cGtnLnRvb2w")
         self.assertEqual(tool_block["toolUseId"], "c1")
 
     def test_format_content_image_base64(self):
@@ -934,7 +934,7 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         config = client._tool_config(tool_manager)
         self.assertEqual(
             config["tools"][0]["toolSpec"]["name"],
-            "pkg__tool",
+            "avl_cGtnLnRvb2w",
         )
 
     def test_model_loads_client(self):
