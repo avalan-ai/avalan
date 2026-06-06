@@ -117,6 +117,28 @@ class ToolCallParserFormatTestCase(TestCase):
 
         self.assertIsNone(parsed)
 
+    def test_configured_text_limit_keeps_legacy_none_shape(self):
+        parser = ToolCallParser(
+            tool_format=ToolFormat.JSON,
+            maximum_text_size=4,
+        )
+
+        parsed = parser('{"tool": "calculator", "arguments": {}}')
+
+        self.assertIsNone(parsed)
+
+    def test_rejects_invalid_resource_limits(self):
+        invalid_cases = (
+            {"maximum_text_size": 0},
+            {"maximum_payload_depth": -1},
+            {"maximum_payload_size": True},
+        )
+
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ToolCallParser(**kwargs)
+
 
 class ToolCallParserParseOutcomeTestCase(TestCase):
     def test_parse_normalizes_tuple_formats(self):
@@ -294,6 +316,76 @@ class ToolCallParserParseOutcomeTestCase(TestCase):
                 self.assertEqual(
                     diagnostic.stage, ToolCallDiagnosticStage.PARSE
                 )
+
+    def test_parse_reports_text_size_limit(self):
+        parser = ToolCallParser(
+            tool_format=ToolFormat.JSON,
+            maximum_text_size=4,
+        )
+
+        outcome = parser.parse('{"tool": "calculator", "arguments": {}}')
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        diagnostic = outcome.diagnostics[0]
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.MAXIMUM_SIZE)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.PARSE)
+        self.assertEqual(diagnostic.details["limit"], 4)
+
+    def test_parse_reports_argument_depth_limit(self):
+        cases = (
+            (
+                ToolFormat.JSON,
+                (
+                    '{"tool": "calculator", "arguments": '
+                    '{"payload": {"value": 1}}}'
+                ),
+            ),
+            (
+                None,
+                (
+                    '<tool_call>{"name": "calculator", "arguments": '
+                    '{"payload": {"value": 1}}}</tool_call>'
+                ),
+            ),
+        )
+
+        for tool_format, text in cases:
+            with self.subTest(tool_format=tool_format):
+                parser = ToolCallParser(
+                    tool_format=tool_format,
+                    maximum_payload_depth=1,
+                )
+
+                outcome = parser.parse(text)
+
+                self.assertEqual(outcome.calls, [])
+                self.assertEqual(len(outcome.diagnostics), 1)
+                diagnostic = outcome.diagnostics[0]
+                self.assertIs(
+                    diagnostic.code, ToolCallDiagnosticCode.MAXIMUM_DEPTH
+                )
+                self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.PARSE)
+                self.assertEqual(diagnostic.requested_name, "calculator")
+                self.assertEqual(diagnostic.details["limit"], 1)
+
+    def test_parse_reports_argument_size_limit(self):
+        parser = ToolCallParser(
+            tool_format=ToolFormat.JSON,
+            maximum_payload_size=8,
+        )
+
+        outcome = parser.parse(
+            '{"tool": "calculator", "arguments": {"payload": "large"}}'
+        )
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        diagnostic = outcome.diagnostics[0]
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.MAXIMUM_SIZE)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.PARSE)
+        self.assertEqual(diagnostic.requested_name, "calculator")
+        self.assertEqual(diagnostic.details["limit"], 8)
 
     def test_parse_returns_empty_outcome_for_plain_text(self):
         for tool_format in (None, ToolFormat.JSON):

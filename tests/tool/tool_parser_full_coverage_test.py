@@ -9,6 +9,7 @@ from avalan.entities import (
     MessageRole,
     ToolCall,
     ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolFormat,
 )
 from avalan.tool.parser import ToolCallParser
@@ -494,6 +495,67 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             diagnostic.code,
             ToolCallDiagnosticCode.MALFORMED_CALL,
         )
+
+    def test_payload_diagnostic_applies_resource_limits(self):
+        parser = ToolCallParser(maximum_payload_size=4)
+
+        diagnostic = parser._payload_diagnostic(
+            {
+                "id": "call-1",
+                "name": "calculator",
+                "arguments": {"expression": "large"},
+            }
+        )
+
+        self.assertIsNotNone(diagnostic)
+        assert diagnostic is not None
+        self.assertEqual(diagnostic.call_id, "call-1")
+        self.assertEqual(diagnostic.requested_name, "calculator")
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MAXIMUM_SIZE,
+        )
+
+    def test_resource_limit_helper_accepts_payload_within_limits(self):
+        diagnostic = ToolCallParser.resource_limit_diagnostic(
+            value={"items": [1, None, True, False, "ok"]},
+            maximum_depth=2,
+            maximum_size=32,
+            stage=ToolCallDiagnosticStage.VALIDATE,
+            call_id="call-1",
+            requested_name="calculator",
+            canonical_name="math.calculator",
+        )
+
+        self.assertIsNone(diagnostic)
+
+    def test_resource_limit_helper_counts_empty_containers(self):
+        self.assertEqual(ToolCallParser._value_depth({}), 1)
+        self.assertEqual(ToolCallParser._value_depth([]), 1)
+
+    def test_resource_limit_helper_rejects_invalid_stage(self):
+        with self.assertRaises(AssertionError):
+            ToolCallParser.resource_limit_diagnostic(
+                value={},
+                maximum_depth=None,
+                maximum_size=None,
+                stage=cast(Any, "validate"),
+            )
+
+    def test_resource_limit_helper_rejects_invalid_limits(self):
+        invalid_cases = (
+            {"maximum_depth": 0, "maximum_size": None},
+            {"maximum_depth": None, "maximum_size": True},
+        )
+
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ToolCallParser.resource_limit_diagnostic(
+                        value={},
+                        stage=ToolCallDiagnosticStage.VALIDATE,
+                        **kwargs,
+                    )
 
 
 if __name__ == "__main__":

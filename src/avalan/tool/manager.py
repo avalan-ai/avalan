@@ -62,6 +62,15 @@ class ToolManager:
         parser = ToolCallParser(
             eos_token=settings.eos_token if settings else None,
             tool_format=settings.tool_format if settings else None,
+            maximum_payload_depth=(
+                settings.maximum_parser_payload_depth if settings else None
+            ),
+            maximum_payload_size=(
+                settings.maximum_parser_payload_size if settings else None
+            ),
+            maximum_text_size=(
+                settings.maximum_parser_input_size if settings else None
+            ),
         )
         return cls(
             available_toolsets=available_toolsets,
@@ -185,6 +194,14 @@ class ToolManager:
                 stage=ToolCallDiagnosticStage.VALIDATE,
                 message="Tool call arguments must be an object.",
             )
+
+        diagnostic = self._validate_argument_limits(
+            call=call,
+            canonical_name=resolution.canonical_name,
+            arguments=arguments,
+        )
+        if diagnostic is not None:
+            return diagnostic
 
         assert resolution.canonical_name is not None
         tool = (
@@ -631,6 +648,14 @@ class ToolManager:
                 message="Tool call arguments must be an object.",
             )
 
+        diagnostic = self._validate_argument_limits(
+            call=call,
+            canonical_name=resolution.canonical_name,
+            arguments=arguments,
+        )
+        if diagnostic is not None:
+            return diagnostic
+
         descriptor = self._descriptors[resolution.canonical_name]
         tool = descriptor.callable
         assert tool is not None
@@ -745,6 +770,23 @@ class ToolManager:
                 message=str(exc),
             )
         return None
+
+    def _validate_argument_limits(
+        self,
+        *,
+        call: ToolCall,
+        canonical_name: str | None,
+        arguments: dict[str, Any],
+    ) -> ToolCallDiagnostic | None:
+        return ToolCallParser.resource_limit_diagnostic(
+            value=arguments,
+            maximum_depth=self._settings.maximum_argument_depth,
+            maximum_size=self._settings.maximum_argument_size,
+            stage=ToolCallDiagnosticStage.VALIDATE,
+            call_id=call.id,
+            requested_name=call.name,
+            canonical_name=canonical_name,
+        )
 
     def _validate_arguments_schema(
         self,

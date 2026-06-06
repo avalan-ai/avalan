@@ -167,6 +167,7 @@ class ToolCallDiagnosticCode(StrEnum):
     FILTER_SUPPRESSED = "tool_call.filter_suppressed"
     USER_REJECTED = "tool_call.user_rejected"
     REPEATED_CALL = "tool_call.repeated"
+    MAXIMUM_SIZE = "tool_call.maximum_size"
     MAXIMUM_DEPTH = "tool_call.maximum_depth"
     CANCELLED = "tool_call.cancelled"
     TIMEOUT = "tool_call.timeout"
@@ -1163,6 +1164,11 @@ class ToolManagerSettings:
     tool_format: ToolFormat | None = None
     avoid_repetition: bool = False
     maximum_depth: int | None = None
+    maximum_argument_depth: int | None = None
+    maximum_argument_size: int | None = None
+    maximum_parser_input_size: int | None = None
+    maximum_parser_payload_depth: int | None = None
+    maximum_parser_payload_size: int | None = None
     execution_mode: ToolManagerExecutionMode = ToolManagerExecutionMode.LEGACY
     missing_call_mode: ToolManagerMissingCallMode = (
         ToolManagerMissingCallMode.LEGACY_NONE
@@ -1193,6 +1199,19 @@ class ToolManagerSettings:
     ) = None
 
     def __post_init__(self) -> None:
+        for limit in (
+            self.maximum_depth,
+            self.maximum_argument_depth,
+            self.maximum_argument_size,
+            self.maximum_parser_input_size,
+            self.maximum_parser_payload_depth,
+            self.maximum_parser_payload_size,
+        ):
+            assert limit is None or (
+                isinstance(limit, int)
+                and not isinstance(limit, bool)
+                and limit > 0
+            )
         assert isinstance(self.execution_mode, ToolManagerExecutionMode)
         assert isinstance(self.missing_call_mode, ToolManagerMissingCallMode)
         assert isinstance(self.parser_return_mode, ToolParserReturnMode)

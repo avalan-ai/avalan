@@ -66,6 +66,7 @@ class ToolCallDiagnosticTestCase(TestCase):
                 "tool_call.filter_suppressed",
                 "tool_call.user_rejected",
                 "tool_call.repeated",
+                "tool_call.maximum_size",
                 "tool_call.maximum_depth",
                 "tool_call.cancelled",
                 "tool_call.timeout",
