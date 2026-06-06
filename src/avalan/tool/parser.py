@@ -34,6 +34,20 @@ _MARKDOWN_FENCED_BLOCK_PATTERN = compile(
     r"^[ \t]*(?P=fence)[ \t]*$",
     DOTALL | MULTILINE,
 )
+_MARKDOWN_FENCED_BLOCK_CAPTURE_PATTERN = compile(
+    r"^[ \t]*(?P<fence>`{3,}|~{3,})[^\n\r]*(?:\r?\n)"
+    r"(?P<content>.*?)"
+    r"^[ \t]*(?P=fence)[ \t]*$",
+    DOTALL | MULTILINE,
+)
+_XML_NAME_PREFIX_PATTERN = compile(r"<(/?)([A-Za-z_][\w.-]*):")
+
+
+@dataclass(frozen=True, slots=True)
+class _RecoveryPayload:
+    span: tuple[int, int]
+    payload: Any
+    recovery_format: ToolCallRecoveryFormat
 
 
 class ToolCallParser:
@@ -107,6 +121,8 @@ class ToolCallParser:
                 calls = None
         if not calls:
             calls = self._parse_tag(text)
+        if not calls:
+            calls = self._parse_recovery(text)
         return calls
 
     def parse(self, text: str) -> ToolCallParseOutcome:
@@ -710,6 +726,7 @@ class ToolCallParser:
 
         if not diagnostics:
             diagnostics = self._tag_failure_diagnostics(text)
+        diagnostics.extend(self._recovery_failure_diagnostics(text))
         return diagnostics
 
     def _text_exceeds_limit(self, text: str) -> bool:
@@ -830,6 +847,360 @@ class ToolCallParser:
     @staticmethod
     def _without_markdown_fenced_blocks(text: str) -> str:
         return _MARKDOWN_FENCED_BLOCK_PATTERN.sub("", text)
+
+    def _parse_recovery(self, text: str) -> list[ToolCall] | None:
+        tool_calls: list[ToolCall] = []
+        for recovered in self._recovery_payloads(text):
+            parsed = self._tool_call_from_payload(recovered.payload)
+            if parsed is not None:
+                tool_calls.append(parsed)
+        return tool_calls if tool_calls else None
+
+    def _recovery_failure_diagnostics(
+        self, text: str
+    ) -> list[ToolCallDiagnostic]:
+        diagnostics: list[ToolCallDiagnostic] = []
+        candidates = self._recovery_payloads(text)
+        for recovered in candidates:
+            diagnostic = self._payload_recovery_diagnostic(
+                recovered.payload, recovered.recovery_format
+            )
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
+
+        if not candidates:
+            for recovery_format in self._recovery_formats:
+                if self._has_recovery_marker(text, recovery_format):
+                    diagnostics.append(
+                        self._malformed_call_diagnostic(
+                            recovery_format=recovery_format
+                        )
+                    )
+        return diagnostics
+
+    def _recovery_payloads(self, text: str) -> list[_RecoveryPayload]:
+        recovered: list[_RecoveryPayload] = []
+        seen_payloads: set[tuple[tuple[int, int], str]] = set()
+        for recovery_format in self._recovery_formats:
+            for payload in self._recovery_payloads_for_format(
+                text, recovery_format
+            ):
+                key = (payload.span, repr(payload.payload))
+                if key in seen_payloads:
+                    continue
+                seen_payloads.add(key)
+                recovered.append(payload)
+        return sorted(recovered, key=lambda payload: payload.span)
+
+    def _recovery_payloads_for_format(
+        self,
+        text: str,
+        recovery_format: ToolCallRecoveryFormat,
+    ) -> list[_RecoveryPayload]:
+        match recovery_format:
+            case ToolCallRecoveryFormat.TOOL_CALL_BLOCK:
+                return self._tool_call_block_payloads(
+                    text, recovery_format=recovery_format
+                )
+            case ToolCallRecoveryFormat.MINIMAX_XML:
+                return self._xml_recovery_payloads(
+                    text,
+                    recovery_format=recovery_format,
+                    names={"invoke", "tool_call"},
+                )
+            case ToolCallRecoveryFormat.TOOL_CODE:
+                return self._tool_code_payloads(
+                    text, recovery_format=recovery_format
+                )
+            case ToolCallRecoveryFormat.BROAD_XML:
+                return self._xml_recovery_payloads(
+                    text,
+                    recovery_format=recovery_format,
+                    names={"function", "function_call", "invoke"},
+                )
+            case ToolCallRecoveryFormat.DSML_LEAKAGE:
+                return self._xml_recovery_payloads(
+                    text,
+                    recovery_format=recovery_format,
+                    names={"invoke"},
+                )
+            case ToolCallRecoveryFormat.FENCED:
+                return self._fenced_recovery_payloads(text)
+
+    @staticmethod
+    def _has_recovery_marker(
+        text: str, recovery_format: ToolCallRecoveryFormat
+    ) -> bool:
+        match recovery_format:
+            case ToolCallRecoveryFormat.TOOL_CALL_BLOCK:
+                return "[TOOL_CALL]" in text
+            case ToolCallRecoveryFormat.MINIMAX_XML:
+                return any(
+                    marker in text
+                    for marker in ("<invoke", ":invoke", "<tool_call")
+                )
+            case ToolCallRecoveryFormat.TOOL_CODE:
+                return "<tool_code" in text
+            case ToolCallRecoveryFormat.BROAD_XML:
+                return any(
+                    marker in text
+                    for marker in ("<function", "<invoke", ":invoke")
+                )
+            case ToolCallRecoveryFormat.DSML_LEAKAGE:
+                return "DSML" in text and "invoke" in text
+            case ToolCallRecoveryFormat.FENCED:
+                return (
+                    _MARKDOWN_FENCED_BLOCK_CAPTURE_PATTERN.search(text)
+                    is not None
+                )
+
+    def _tool_call_block_payloads(
+        self,
+        text: str,
+        *,
+        recovery_format: ToolCallRecoveryFormat,
+    ) -> list[_RecoveryPayload]:
+        payloads: list[_RecoveryPayload] = []
+        pattern = compile(
+            r"\[TOOL_CALL\](?P<payload>.*?)\[/TOOL_CALL\]",
+            DOTALL,
+        )
+        for match in pattern.finditer(text):
+            payloads.append(
+                _RecoveryPayload(
+                    span=match.span(),
+                    payload=self._deserialize_payload(match.group("payload")),
+                    recovery_format=recovery_format,
+                )
+            )
+        return payloads
+
+    def _tool_code_payloads(
+        self,
+        text: str,
+        *,
+        recovery_format: ToolCallRecoveryFormat,
+    ) -> list[_RecoveryPayload]:
+        payloads: list[_RecoveryPayload] = []
+        pattern = compile(
+            r"<tool_code[^>]*>(?P<payload>.*?)</tool_code>",
+            DOTALL,
+        )
+        for match in pattern.finditer(text):
+            payload = self._deserialize_payload(match.group("payload"))
+            if payload is None:
+                payload = self._function_call_payload(match.group("payload"))
+            payloads.append(
+                _RecoveryPayload(
+                    span=match.span(),
+                    payload=payload,
+                    recovery_format=recovery_format,
+                )
+            )
+        return payloads
+
+    def _fenced_recovery_payloads(self, text: str) -> list[_RecoveryPayload]:
+        payloads: list[_RecoveryPayload] = []
+        for match in _MARKDOWN_FENCED_BLOCK_CAPTURE_PATTERN.finditer(text):
+            content = match.group("content")
+            direct_payload = self._deserialize_payload(content)
+            if direct_payload is not None:
+                payloads.append(
+                    _RecoveryPayload(
+                        span=match.span(),
+                        payload=direct_payload,
+                        recovery_format=ToolCallRecoveryFormat.FENCED,
+                    )
+                )
+                continue
+            nested_payloads = (
+                self._tool_call_block_payloads(
+                    content,
+                    recovery_format=ToolCallRecoveryFormat.FENCED,
+                )
+                + self._tool_code_payloads(
+                    content,
+                    recovery_format=ToolCallRecoveryFormat.FENCED,
+                )
+                + self._xml_recovery_payloads(
+                    content,
+                    recovery_format=ToolCallRecoveryFormat.FENCED,
+                    names={
+                        "function",
+                        "function_call",
+                        "invoke",
+                        "tool_call",
+                    },
+                )
+            )
+            if nested_payloads:
+                payloads.extend(
+                    _RecoveryPayload(
+                        span=match.span(),
+                        payload=nested.payload,
+                        recovery_format=ToolCallRecoveryFormat.FENCED,
+                    )
+                    for nested in nested_payloads
+                )
+                continue
+            payloads.append(
+                _RecoveryPayload(
+                    span=match.span(),
+                    payload=None,
+                    recovery_format=ToolCallRecoveryFormat.FENCED,
+                )
+            )
+        return payloads
+
+    def _xml_recovery_payloads(
+        self,
+        text: str,
+        *,
+        recovery_format: ToolCallRecoveryFormat,
+        names: set[str],
+    ) -> list[_RecoveryPayload]:
+        payloads: list[_RecoveryPayload] = []
+        name_pattern = "|".join(sorted(names))
+        pattern = compile(
+            rf"<(?:[A-Za-z_][\w.-]*:)?(?P<tag>{name_pattern})\b[^>]*>"
+            rf".*?</(?:[A-Za-z_][\w.-]*:)?(?P=tag)>",
+            DOTALL,
+        )
+        for match in pattern.finditer(text):
+            payloads.append(
+                _RecoveryPayload(
+                    span=match.span(),
+                    payload=self._xml_payload(match.group(0)),
+                    recovery_format=recovery_format,
+                )
+            )
+        return payloads
+
+    def _xml_payload(self, text: str) -> Any:
+        xml_text = _XML_NAME_PREFIX_PATTERN.sub(r"<\1", text)
+        try:
+            root = ElementTree.fromstring(xml_text)
+        except ElementTree.ParseError:
+            return None
+
+        tag = self._xml_local_name(root.tag)
+        if tag in {"function", "function_call", "invoke"}:
+            return self._xml_named_payload(root)
+        if tag == "tool_call":
+            return self._xml_tool_call_payload(root)
+        return None
+
+    def _xml_named_payload(self, element: ElementTree.Element) -> Any:
+        name = element.attrib.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return None
+
+        arguments = self._xml_arguments(element)
+        if arguments is None:
+            return None
+        return {"name": name, "arguments": arguments}
+
+    def _xml_tool_call_payload(self, element: ElementTree.Element) -> Any:
+        name = element.attrib.get("name")
+        if isinstance(name, str) and name.strip():
+            arguments = None
+            raw_payload = self._deserialize_payload(element.text or "")
+            if isinstance(raw_payload, dict):
+                arguments = raw_payload
+            else:
+                arguments = self._xml_arguments(element)
+            if arguments is None:
+                return None
+            return {"name": name, "arguments": arguments}
+
+        raw_payload = self._deserialize_payload(element.text or "")
+        if isinstance(raw_payload, dict):
+            return raw_payload
+
+        child_name = self._xml_child_text(element, "name")
+        if child_name is None:
+            return None
+        arguments = self._xml_arguments(element)
+        if arguments is None:
+            return None
+        return {"name": child_name, "arguments": arguments}
+
+    def _xml_arguments(
+        self, element: ElementTree.Element
+    ) -> dict[str, ToolValue] | None:
+        arguments_text = self._xml_child_text(element, "arguments")
+        if arguments_text is not None:
+            arguments = self._deserialize_payload(arguments_text)
+            if isinstance(arguments, dict):
+                return cast(dict[str, ToolValue], arguments)
+            return None
+
+        parameters: dict[str, ToolValue] = {}
+        for child in element:
+            if self._xml_local_name(child.tag) != "parameter":
+                continue
+            name = child.attrib.get("name")
+            if not isinstance(name, str) or not name.strip():
+                return None
+            parameters[name] = self._xml_parameter_value(child)
+        return parameters
+
+    def _xml_parameter_value(self, element: ElementTree.Element) -> ToolValue:
+        text = (element.text or "").strip()
+        if element.attrib.get("string") == "false":
+            try:
+                return cast(ToolValue, loads(text))
+            except JSONDecodeError:
+                return text
+        return text
+
+    @classmethod
+    def _xml_child_text(
+        cls, element: ElementTree.Element, name: str
+    ) -> str | None:
+        for child in element:
+            if cls._xml_local_name(child.tag) == name:
+                return child.text or ""
+        return None
+
+    @staticmethod
+    def _xml_local_name(name: str) -> str:
+        return name.rsplit("}", 1)[-1].rsplit(":", 1)[-1]
+
+    def _function_call_payload(self, text: str) -> Any:
+        match = search(r"([\w.]+)\s*\((\{.*\})\)", text.strip(), DOTALL)
+        if not match:
+            return None
+        arguments = self._deserialize_payload(match.group(2))
+        if not isinstance(arguments, dict):
+            return None
+        return {"name": match.group(1), "arguments": arguments}
+
+    def _payload_recovery_diagnostic(
+        self,
+        payload: Any,
+        recovery_format: ToolCallRecoveryFormat,
+    ) -> ToolCallDiagnostic | None:
+        diagnostic = self._payload_diagnostic(payload)
+        if diagnostic is None:
+            return None
+
+        details = diagnostic.details.copy()
+        details["source_format"] = recovery_format.value
+        return ToolCallDiagnostic(
+            id=diagnostic.id,
+            call_id=diagnostic.call_id,
+            requested_name=diagnostic.requested_name,
+            canonical_name=diagnostic.canonical_name,
+            code=diagnostic.code,
+            stage=diagnostic.stage,
+            message=diagnostic.message,
+            retryable=diagnostic.retryable,
+            details=details,
+            started_at=diagnostic.started_at,
+            finished_at=diagnostic.finished_at,
+            duration_ms=diagnostic.duration_ms,
+        )
 
     def _tag_payloads(self, text: str) -> list[Any]:
         payloads: list[Any] = []

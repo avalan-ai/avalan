@@ -10,6 +10,7 @@ from avalan.entities import (
     ToolCall,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
+    ToolCallRecoveryFormat,
     ToolFormat,
 )
 from avalan.tool.parser import ToolCallParser
@@ -628,6 +629,191 @@ class ToolCallParserFullCoverageTestCase(TestCase):
                         stage=ToolCallDiagnosticStage.VALIDATE,
                         **kwargs,
                     )
+
+    def test_recovery_marker_helpers_cover_all_formats(self):
+        cases = (
+            (
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+                "[TOOL_CALL]",
+                "plain",
+            ),
+            (
+                ToolCallRecoveryFormat.MINIMAX_XML,
+                "<invoke",
+                "plain",
+            ),
+            (
+                ToolCallRecoveryFormat.TOOL_CODE,
+                "<tool_code>",
+                "plain",
+            ),
+            (
+                ToolCallRecoveryFormat.BROAD_XML,
+                "<function",
+                "plain",
+            ),
+            (
+                ToolCallRecoveryFormat.DSML_LEAKAGE,
+                "<DSML:invoke",
+                "invoke",
+            ),
+            (
+                ToolCallRecoveryFormat.FENCED,
+                "```json\n{}\n```",
+                "plain",
+            ),
+        )
+
+        for recovery_format, positive, negative in cases:
+            with self.subTest(recovery_format=recovery_format):
+                self.assertTrue(
+                    ToolCallParser._has_recovery_marker(
+                        positive, recovery_format
+                    )
+                )
+                self.assertFalse(
+                    ToolCallParser._has_recovery_marker(
+                        negative, recovery_format
+                    )
+                )
+
+    def test_recovery_marker_without_payload_reports_diagnostic(self):
+        parser = ToolCallParser(
+            recovery_formats=[ToolCallRecoveryFormat.TOOL_CALL_BLOCK]
+        )
+
+        outcome = parser.parse("[TOOL_CALL]{bad")
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(
+            outcome.diagnostics[0].details["source_format"],
+            ToolCallRecoveryFormat.TOOL_CALL_BLOCK.value,
+        )
+
+    def test_recovery_payloads_skip_duplicate_formats(self):
+        parser = ToolCallParser(
+            recovery_formats=[
+                ToolCallRecoveryFormat.MINIMAX_XML,
+                ToolCallRecoveryFormat.BROAD_XML,
+            ]
+        )
+        text = (
+            '<invoke name="calculator"><parameter name="expression">'
+            "1 + 1</parameter></invoke>"
+        )
+
+        recovered = parser._recovery_payloads(text)
+
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0].payload["name"], "calculator")
+
+    def test_fenced_recovery_accepts_direct_json_payload(self):
+        call_id = _uuid4()
+        parser = ToolCallParser(
+            recovery_formats=[ToolCallRecoveryFormat.FENCED]
+        )
+
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            outcome = parser.parse(
+                '```json\n{"name": "calculator", "arguments": {}}\n```'
+            )
+
+        self.assertEqual(
+            outcome.calls,
+            [ToolCall(id=call_id, name="calculator", arguments={})],
+        )
+        self.assertEqual(outcome.diagnostics, [])
+
+    def test_xml_recovery_helper_rejects_malformed_xml(self):
+        parser = ToolCallParser()
+
+        self.assertIsNone(parser._xml_payload("<invoke>"))
+        self.assertIsNone(parser._xml_payload("<unknown></unknown>"))
+
+    def test_xml_recovery_parses_tool_call_payload_shapes(self):
+        parser = ToolCallParser()
+
+        self.assertEqual(
+            parser._xml_payload(
+                '<tool_call>{"name": "calculator", "arguments": {}}'
+                "</tool_call>"
+            ),
+            {"name": "calculator", "arguments": {}},
+        )
+        self.assertEqual(
+            parser._xml_payload(
+                '<tool_call name="calculator">{"expression": "2"}</tool_call>'
+            ),
+            {"name": "calculator", "arguments": {"expression": "2"}},
+        )
+        self.assertEqual(
+            parser._xml_payload(
+                "<tool_call><name>calculator</name><arguments>{}"
+                "</arguments></tool_call>"
+            ),
+            {"name": "calculator", "arguments": {}},
+        )
+        self.assertIsNone(
+            parser._xml_payload(
+                "<tool_call><arguments>{}</arguments></tool_call>"
+            )
+        )
+        self.assertIsNone(
+            parser._xml_payload(
+                "<tool_call><name>calculator</name><arguments>[]"
+                "</arguments></tool_call>"
+            )
+        )
+        self.assertIsNone(
+            parser._xml_payload(
+                "<tool_call name='calculator'><parameter>bad</parameter>"
+                "</tool_call>"
+            )
+        )
+
+    def test_xml_recovery_rejects_invalid_named_payloads(self):
+        parser = ToolCallParser()
+
+        self.assertIsNone(
+            parser._xml_payload(
+                "<invoke><parameter name='value'>1</parameter></invoke>"
+            )
+        )
+        self.assertIsNone(
+            parser._xml_payload(
+                "<invoke name='calculator'><parameter>1</parameter></invoke>"
+            )
+        )
+
+    def test_xml_recovery_handles_parameters_and_non_parameters(self):
+        parser = ToolCallParser()
+
+        payload = parser._xml_payload(
+            "<invoke name='calculator'>"
+            "<description>ignored</description>"
+            "<parameter name='expression'>2 + 2</parameter>"
+            "<parameter name='precision' string='false'>2</parameter>"
+            "<parameter name='fallback' string='false'>not-json</parameter>"
+            "</invoke>"
+        )
+
+        self.assertEqual(
+            payload,
+            {
+                "name": "calculator",
+                "arguments": {
+                    "expression": "2 + 2",
+                    "precision": 2,
+                    "fallback": "not-json",
+                },
+            },
+        )
+
+    def test_function_call_payload_rejects_non_object_arguments(self):
+        parser = ToolCallParser()
+
+        self.assertIsNone(parser._function_call_payload("calculator({1})"))
 
 
 if __name__ == "__main__":

@@ -202,6 +202,31 @@ class ToolManagerCreationTestCase(TestCase):
             ),
         )
 
+    def test_get_calls_consumes_recovery_parser_output(self):
+        call_id = _uuid4()
+        manager = ToolManager.create_instance(
+            settings=ToolManagerSettings(
+                recovery_formats=[ToolCallRecoveryFormat.TOOL_CALL_BLOCK]
+            )
+        )
+
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            calls = manager.get_calls(
+                '[TOOL_CALL]{"name": "calculator", "arguments": '
+                '{"expression": "1 + 1"}}[/TOOL_CALL]'
+            )
+
+        self.assertEqual(
+            calls,
+            [
+                ToolCall(
+                    id=call_id,
+                    name="calculator",
+                    arguments={"expression": "1 + 1"},
+                )
+            ],
+        )
+
     def test_toolset_without_tools(self):
         manager = ToolManager.create_instance(
             enable_tools=None,

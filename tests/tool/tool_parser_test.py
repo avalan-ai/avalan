@@ -234,6 +234,226 @@ class ToolCallParserFormatTestCase(TestCase):
         self.assertEqual(diagnostic.details["source_format"], "fenced")
         self.assertEqual(details, {"reason": "malformed"})
 
+    def test_recovery_formats_parse_explicit_payloads(self):
+        cases = (
+            (
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+                (
+                    '[TOOL_CALL]{"name": "calculator", "arguments": '
+                    '{"expression": "1 + 1"}}[/TOOL_CALL]'
+                ),
+                {"expression": "1 + 1"},
+            ),
+            (
+                ToolCallRecoveryFormat.MINIMAX_XML,
+                (
+                    '<invoke name="calculator"><parameter name="expression">'
+                    "2 + 2</parameter></invoke>"
+                ),
+                {"expression": "2 + 2"},
+            ),
+            (
+                ToolCallRecoveryFormat.MINIMAX_XML,
+                (
+                    '<mm:invoke name="calculator"><mm:parameter '
+                    'name="expression">3 + 3</mm:parameter></mm:invoke>'
+                ),
+                {"expression": "3 + 3"},
+            ),
+            (
+                ToolCallRecoveryFormat.TOOL_CODE,
+                (
+                    '<tool_code>{"name": "calculator", "arguments": '
+                    '{"expression": "4 + 4"}}</tool_code>'
+                ),
+                {"expression": "4 + 4"},
+            ),
+            (
+                ToolCallRecoveryFormat.TOOL_CODE,
+                '<tool_code>calculator({"expression": "5 + 5"})</tool_code>',
+                {"expression": "5 + 5"},
+            ),
+            (
+                ToolCallRecoveryFormat.BROAD_XML,
+                (
+                    '<function name="calculator"><arguments>'
+                    '{"expression": "6 + 6"}</arguments></function>'
+                ),
+                {"expression": "6 + 6"},
+            ),
+            (
+                ToolCallRecoveryFormat.DSML_LEAKAGE,
+                (
+                    "<DSML:tool_calls>"
+                    '<DSML:invoke name="calculator">'
+                    '<DSML:parameter name="expression">7 + 7'
+                    "</DSML:parameter>"
+                    "</DSML:invoke></DSML:tool_calls>"
+                ),
+                {"expression": "7 + 7"},
+            ),
+            (
+                ToolCallRecoveryFormat.FENCED,
+                (
+                    "```xml\n"
+                    '<invoke name="calculator"><parameter '
+                    'name="expression">8 + 8</parameter></invoke>\n'
+                    "```"
+                ),
+                {"expression": "8 + 8"},
+            ),
+        )
+
+        for recovery_format, text, arguments in cases:
+            with self.subTest(recovery_format=recovery_format):
+                call_id = _uuid4()
+                parser = ToolCallParser(recovery_formats=[recovery_format])
+
+                with patch("avalan.tool.parser.uuid4", return_value=call_id):
+                    outcome = parser.parse(text)
+
+                self.assertEqual(
+                    outcome.calls,
+                    [
+                        ToolCall(
+                            id=call_id,
+                            name="calculator",
+                            arguments=arguments,
+                        )
+                    ],
+                )
+                self.assertEqual(outcome.diagnostics, [])
+
+    def test_recovery_formats_report_malformed_payloads(self):
+        cases = (
+            (
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+                "[TOOL_CALL]{bad[/TOOL_CALL]",
+            ),
+            (
+                ToolCallRecoveryFormat.MINIMAX_XML,
+                (
+                    '<invoke name="calculator"><parameter>bad</parameter>'
+                    "</invoke>"
+                ),
+            ),
+            (
+                ToolCallRecoveryFormat.TOOL_CODE,
+                "<tool_code>{bad</tool_code>",
+            ),
+            (
+                ToolCallRecoveryFormat.BROAD_XML,
+                (
+                    '<function name="calculator"><arguments>[]</arguments>'
+                    "</function>"
+                ),
+            ),
+            (
+                ToolCallRecoveryFormat.DSML_LEAKAGE,
+                (
+                    '<DSML:invoke name="calculator"><DSML:parameter>bad'
+                    "</DSML:parameter></DSML:invoke>"
+                ),
+            ),
+            (
+                ToolCallRecoveryFormat.FENCED,
+                "```json\n{bad\n```",
+            ),
+        )
+
+        for recovery_format, text in cases:
+            with self.subTest(recovery_format=recovery_format):
+                outcome = ToolCallParser(
+                    recovery_formats=[recovery_format]
+                ).parse(text)
+
+                self.assertEqual(outcome.calls, [])
+                self.assertEqual(len(outcome.diagnostics), 1)
+                self.assertEqual(
+                    outcome.diagnostics[0].code,
+                    ToolCallDiagnosticCode.MALFORMED_CALL,
+                )
+                self.assertEqual(
+                    outcome.diagnostics[0].stage,
+                    ToolCallDiagnosticStage.PARSE,
+                )
+                self.assertEqual(
+                    outcome.diagnostics[0].details["source_format"],
+                    recovery_format.value,
+                )
+
+    def test_recovery_keeps_valid_call_after_malformed_segment(self):
+        first_id = _uuid4()
+        second_id = _uuid4()
+        parser = ToolCallParser(
+            recovery_formats=[ToolCallRecoveryFormat.TOOL_CALL_BLOCK]
+        )
+        text = (
+            "[TOOL_CALL]{bad[/TOOL_CALL]"
+            '[TOOL_CALL]{"name": "calculator", "arguments": '
+            '{"expression": "9 + 9"}}[/TOOL_CALL]'
+        )
+
+        with patch(
+            "avalan.tool.parser.uuid4",
+            side_effect=[first_id, second_id],
+        ):
+            outcome = parser.parse(text)
+
+        self.assertEqual(
+            outcome.calls,
+            [
+                ToolCall(
+                    id=first_id,
+                    name="calculator",
+                    arguments={"expression": "9 + 9"},
+                )
+            ],
+        )
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(
+            outcome.diagnostics[0].details["source_format"],
+            ToolCallRecoveryFormat.TOOL_CALL_BLOCK.value,
+        )
+
+    def test_fenced_recovery_preserves_multiple_calls_in_order(self):
+        first_id = _uuid4()
+        second_id = _uuid4()
+        parser = ToolCallParser(
+            recovery_formats=[ToolCallRecoveryFormat.FENCED]
+        )
+        text = (
+            "```xml\n"
+            '<invoke name="first"><parameter name="value">1</parameter>'
+            "</invoke>"
+            '<invoke name="second"><parameter name="value">2</parameter>'
+            "</invoke>\n"
+            "```"
+        )
+
+        with patch(
+            "avalan.tool.parser.uuid4",
+            side_effect=[first_id, second_id],
+        ):
+            outcome = parser.parse(text)
+
+        self.assertEqual(
+            outcome.calls,
+            [
+                ToolCall(
+                    id=first_id,
+                    name="first",
+                    arguments={"value": "1"},
+                ),
+                ToolCall(
+                    id=second_id,
+                    name="second",
+                    arguments={"value": "2"},
+                ),
+            ],
+        )
+        self.assertEqual(outcome.diagnostics, [])
+
 
 class ToolCallParserParseOutcomeTestCase(TestCase):
     def test_parse_normalizes_tuple_formats(self):
