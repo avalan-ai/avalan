@@ -7,6 +7,7 @@ from ..entities import (
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallOutcome,
+    ToolCallParseOutcome,
     ToolCallResult,
     ToolDescriptor,
     ToolFilter,
@@ -463,13 +464,23 @@ class ToolManager:
         return self._parser.is_potential_tool_call(buffer, token_str)
 
     def tool_call_status(
-        self, buffer: str
+        self, buffer: str, *, final: bool = False
     ) -> ToolCallParser.ToolCallBufferStatus:
         """Proxy :meth:`ToolCallParser.tool_call_status`."""
-        return self._parser.tool_call_status(buffer)
+        return self._parser.tool_call_status(buffer, final=final)
+
+    def parse_calls(self, text: str) -> ToolCallParseOutcome:
+        """Return parsed calls and diagnostics for ``text``."""
+        return self._parser.parse(text)
+
+    def stream_buffer_diagnostics(
+        self, buffer: str
+    ) -> list[ToolCallDiagnostic]:
+        """Return diagnostics for a terminal streaming buffer."""
+        return self._parser.stream_buffer_diagnostics(buffer)
 
     def get_calls(self, text: str) -> list[ToolCall] | None:
-        calls = self._parser.parse(text).calls
+        calls = self.parse_calls(text).calls
         return calls or None
 
     async def prepare_call(

@@ -238,6 +238,78 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             ToolCallParser.ToolCallBufferStatus.CLOSED,
         )
 
+    def test_tool_call_status_reports_final_terminal_states(self):
+        parser = ToolCallParser()
+
+        self.assertEqual(
+            parser.tool_call_status("<tool_call>", final=True),
+            ToolCallParser.ToolCallBufferStatus.UNTERMINATED,
+        )
+        self.assertEqual(
+            parser.tool_call_status("<tool_call></tool_call>", final=True),
+            ToolCallParser.ToolCallBufferStatus.MALFORMED,
+        )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call>{"name": "calculator", "arguments": {}}'
+                "</tool_call>",
+                final=True,
+            ),
+            ToolCallParser.ToolCallBufferStatus.CLOSED,
+        )
+
+    def test_stream_buffer_diagnostics_reports_unterminated_buffer(self):
+        parser = ToolCallParser()
+
+        diagnostics = parser.stream_buffer_diagnostics(
+            '<tool_call>{"name": "calculator", "arguments": {}}'
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(
+            diagnostics[0].details["stream_status"], "unterminated"
+        )
+
+    def test_stream_buffer_diagnostics_reports_malformed_closed_buffer(self):
+        parser = ToolCallParser()
+
+        diagnostics = parser.stream_buffer_diagnostics(
+            '<tool_call>{"name": "calculator", "arguments": }</tool_call>'
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+
+    def test_stream_buffer_diagnostics_reports_malformed_status_fallback(self):
+        parser = ToolCallParser()
+
+        diagnostics = parser.stream_buffer_diagnostics(
+            "<tool_call></tool_call>"
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(diagnostics[0].details["stream_status"], "malformed")
+
+    def test_stream_buffer_diagnostics_returns_empty_for_valid_buffer(self):
+        parser = ToolCallParser()
+
+        diagnostics = parser.stream_buffer_diagnostics(
+            '<tool_call>{"name": "calculator", "arguments": {}}</tool_call>'
+        )
+
+        self.assertEqual(diagnostics, [])
+
     def test_tool_call_status_reports_harmony_closure(self):
         parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
 

@@ -1,9 +1,14 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
-from avalan.entities import ToolCallToken, ToolFormat
+from avalan.entities import (
+    ToolCallDiagnosticCode,
+    ToolCallToken,
+    ToolFormat,
+)
 from avalan.event import EventType
 from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
 
 
@@ -212,3 +217,64 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(await parser.push("<tool_call>"), [])
         self.assertTrue(parser._inside_call)
+
+    async def test_closed_malformed_stream_emits_diagnostic_event(self):
+        manager = ToolManager.create_instance(enable_tools=[])
+        event_manager = MagicMock()
+        event_manager.trigger = AsyncMock()
+        parser = ToolCallResponseParser(manager, event_manager)
+
+        items: list = []
+        for part in (
+            "<tool_call>",
+            '{"name": "calculator", "arguments": }',
+            "</tool_call>",
+        ):
+            items.extend(await parser.push(part))
+
+        diagnostic_event = items[-1]
+        self.assertEqual(diagnostic_event.type, EventType.TOOL_DIAGNOSTIC)
+        diagnostics = diagnostic_event.payload["diagnostics"]
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertFalse(parser._inside_call)
+        self.assertEqual(parser._buffer.getvalue(), "")
+        self.assertEqual(
+            event_manager.trigger.await_args_list[0].args[0].type,
+            EventType.TOOL_DETECT,
+        )
+        self.assertTrue(
+            any(
+                call.args[0].type == EventType.TOOL_DIAGNOSTIC
+                for call in event_manager.trigger.await_args_list
+            )
+        )
+
+    async def test_flush_unterminated_stream_emits_diagnostic_event(self):
+        manager = ToolManager.create_instance(enable_tools=[])
+        parser = ToolCallResponseParser(manager, None)
+
+        pushed = await parser.push(
+            '<tool_call>{"name": "calculator", "arguments": {}}'
+        )
+        flushed = await parser.flush()
+
+        self.assertTrue(
+            all(isinstance(token, ToolCallToken) for token in pushed)
+        )
+        self.assertEqual(len(flushed), 1)
+        diagnostic_event = flushed[0]
+        self.assertEqual(diagnostic_event.type, EventType.TOOL_DIAGNOSTIC)
+        diagnostics = diagnostic_event.payload["diagnostics"]
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(
+            diagnostics[0].details["stream_status"], "unterminated"
+        )
+        self.assertFalse(parser._inside_call)

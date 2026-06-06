@@ -2704,6 +2704,29 @@ class ToolManagerPotentialCallTestCase(TestCase):
             ToolCallParser.ToolCallBufferStatus.OPEN,
         )
 
+    def test_tool_call_status_proxies_final_parser_status(self):
+        self.assertIs(
+            self.manager.tool_call_status("<tool_call>", final=True),
+            ToolCallParser.ToolCallBufferStatus.UNTERMINATED,
+        )
+
+    def test_parse_calls_returns_parser_outcome(self):
+        outcome = self.manager.parse_calls(
+            '<tool_call>{"name": "calculator", "arguments": {}}</tool_call>'
+        )
+
+        self.assertEqual(len(outcome.calls), 1)
+        self.assertEqual(outcome.calls[0].name, "calculator")
+
+    def test_stream_buffer_diagnostics_proxies_parser(self):
+        diagnostics = self.manager.stream_buffer_diagnostics("<tool_call>")
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+
 
 class ToolManagerSchemasTestCase(TestCase):
     def test_json_schemas(self):
