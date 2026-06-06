@@ -1,7 +1,10 @@
-from unittest import TestCase, main
+from collections.abc import Mapping
+from unittest import IsolatedAsyncioTestCase, TestCase, main
 
+from avalan.entities import ToolManagerSettings
 from avalan.flow import (
     FLOW_INPUT_KEY,
+    FLOW_TOOL_NODE_TYPE,
     FlowInputDefinition,
     FlowInputType,
     FlowNodeContract,
@@ -11,9 +14,50 @@ from avalan.flow import (
     FlowOutputType,
     default_flow_node_registry,
     flow_input_binding,
+    tool_flow_node_registry,
 )
 from avalan.flow.node import Node
 from avalan.flow.registry import FlowNodeConfigurationError
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
+from avalan.tool.mcp import McpToolSet
+
+
+async def flow_adder(a: int, b: int) -> int:
+    return a + b
+
+
+flow_adder.aliases = ["sum"]  # type: ignore[attr-defined]
+
+
+async def flow_adder_alt(a: int, b: int) -> int:
+    return a + b
+
+
+flow_adder_alt.aliases = ["sum"]  # type: ignore[attr-defined]
+
+
+async def flow_disabled(a: int) -> int:
+    return a
+
+
+def _tool_manager(
+    *,
+    enable_tools: list[str] | None = None,
+) -> ToolManager:
+    return ToolManager.create_instance(
+        enable_tools=enable_tools
+        or [
+            "flow_adder",
+            "mcp.call",
+        ],
+        available_toolsets=[
+            ToolSet(tools=[flow_adder, flow_adder_alt]),
+            ToolSet(namespace="disabled", tools=[flow_disabled]),
+            McpToolSet(),
+        ],
+        settings=ToolManagerSettings(),
+    )
 
 
 class FlowNodeRegistryTestCase(TestCase):
@@ -216,6 +260,91 @@ class FlowNodeRegistryTestCase(TestCase):
                 message="Flow node configuration is invalid.",
                 hint="Fix the node configuration.",
             )
+
+
+class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
+    async def test_tool_registry_builds_async_tool_node_with_metadata(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(_tool_manager())
+
+        self.assertTrue(registry.supports(FLOW_TOOL_NODE_TYPE))
+        self.assertTrue(registry.supports_ref(FLOW_TOOL_NODE_TYPE))
+        self.assertTrue(registry.is_async_only(FLOW_TOOL_NODE_TYPE))
+        metadata = registry.metadata(FLOW_TOOL_NODE_TYPE)
+        input_contract = registry.input_contract(FLOW_TOOL_NODE_TYPE)
+        output_contract = registry.output_contract(FLOW_TOOL_NODE_TYPE)
+        assert metadata is not None
+        assert input_contract is not None
+        assert output_contract is not None
+        tools = metadata.metadata["tools"]
+        assert isinstance(tools, Mapping)
+        self.assertIn("flow_adder", tools)
+        self.assertEqual(input_contract.name, "arguments")
+        self.assertEqual(input_contract.type, FlowInputType.OBJECT)
+        self.assertEqual(output_contract.name, "result")
+        self.assertEqual(output_contract.type, FlowOutputType.JSON)
+
+        node = registry.build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+            )
+        )
+
+        self.assertEqual(node.label, "flow_adder")
+        with self.assertRaises(NotImplementedError):
+            await node.execute_async({})
+
+    def test_tool_registry_can_extend_custom_base_registry(self) -> None:
+        def factory(definition: FlowNodeDefinition) -> Node:
+            return Node(definition.name, func=lambda _: "custom")
+
+        base_registry = FlowNodeRegistry({"custom": factory})
+
+        registry = tool_flow_node_registry(
+            _tool_manager(),
+            base_registry=base_registry,
+        )
+
+        self.assertIs(registry, base_registry)
+        self.assertTrue(registry.supports("custom"))
+        self.assertTrue(registry.supports(FLOW_TOOL_NODE_TYPE))
+
+    def test_tool_registry_rejects_invalid_arguments(self) -> None:
+        with self.assertRaises(AssertionError):
+            tool_flow_node_registry(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            tool_flow_node_registry(
+                _tool_manager(),
+                base_registry=object(),  # type: ignore[arg-type]
+            )
+
+    def test_tool_node_factory_rejects_bad_refs(self) -> None:
+        manager = _tool_manager(enable_tools=["flow_adder", "flow_adder_alt"])
+        registry = tool_flow_node_registry(manager)
+        cases = (
+            (None, "flow.missing_ref"),
+            ("tools/adder.py", "flow.invalid_ref"),
+            ("mcp://server/tool", "flow.invalid_ref"),
+            ("missing", "flow.tool_unknown"),
+            ("disabled.flow_disabled", "flow.tool_disabled"),
+            ("sum", "flow.tool_ambiguous"),
+        )
+
+        for ref, code in cases:
+            with self.subTest(ref=ref):
+                definition = FlowNodeDefinition(
+                    name="calculate",
+                    type=FLOW_TOOL_NODE_TYPE,
+                    ref=ref,
+                )
+                with self.assertRaises(FlowNodeConfigurationError) as context:
+                    registry.build(definition)
+
+                self.assertEqual(context.exception.code, code)
+                self.assertEqual(context.exception.path, "nodes.calculate.ref")
 
 
 if __name__ == "__main__":
