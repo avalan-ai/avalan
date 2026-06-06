@@ -159,6 +159,9 @@ class TextGenerationVendor(ABC):
             if tool_name_text
             else ""
         )
+        provider_name_encoded = tool_name_text.startswith(
+            TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX
+        )
         if isinstance(arguments, str):
             try:
                 args = cast(dict[str, Any], loads(arguments))
@@ -179,6 +182,8 @@ class TextGenerationVendor(ABC):
             id=cast(Any, call_id_value),
             name=name,
             arguments=cast(dict[str, ToolValue], args),
+            provider_name=tool_name_text or None,
+            provider_name_encoded=provider_name_encoded,
         )
         token_payload: dict[str, Any] = {
             "name": name,

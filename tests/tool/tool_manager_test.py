@@ -678,6 +678,52 @@ class ToolManagerCreationTestCase(TestCase):
 
         self.assertIsNone(manager.validate_tool_call(call))
 
+    def test_validate_tool_call_resolves_provider_encoded_name(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.adder"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[DummyAdder()])
+            ],
+            settings=ToolManagerSettings(),
+        )
+        encoded_name = TextGenerationVendor.encode_tool_name("math.adder")
+        call = ToolCall(
+            id="call-1",
+            name="math.adder",
+            arguments={"a": 1, "b": 2},
+            provider_name=encoded_name,
+            provider_name_encoded=True,
+        )
+
+        self.assertIsNone(manager.validate_tool_call(call))
+
+    def test_validate_tool_call_rejects_ambiguous_provider_alias(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "adder_alt"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyAdderAlt()])
+            ],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="sum",
+            arguments={"a": 1, "b": 2},
+            provider_name="sum",
+        )
+
+        diagnostic = manager.validate_tool_call(call)
+
+        assert diagnostic is not None
+        self.assertEqual(diagnostic.requested_name, "sum")
+        self.assertIs(
+            diagnostic.code, ToolCallDiagnosticCode.AMBIGUOUS_TOOL_NAME
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.RESOLVE)
+        self.assertEqual(
+            diagnostic.details["candidates"], ["adder", "adder_alt"]
+        )
+
     def test_validate_tool_call_returns_resolution_diagnostic(self):
         manager = ToolManager.create_instance(
             enable_tools=[],
@@ -1110,6 +1156,112 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(prepared.descriptor.name, "adder")
         self.assertEqual(prepared.arguments, {"a": 1, "b": 2})
         self.assertEqual(prepared.context, context)
+
+    async def test_prepare_call_resolves_provider_encoded_name(self):
+        adder = DummyAdder()
+        manager = ToolManager.create_instance(
+            enable_tools=["math.adder"],
+            available_toolsets=[ToolSet(namespace="math", tools=[adder])],
+            settings=ToolManagerSettings(),
+        )
+        provider_name = TextGenerationVendor.encode_tool_name("math.adder")
+        call = ToolCall(
+            id="call-1",
+            name="math.adder",
+            arguments={"a": 1, "b": 2},
+            provider_name=provider_name,
+            provider_name_encoded=True,
+        )
+        context = ToolCallContext()
+
+        prepared = await manager.prepare_call(call, context=context)
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(
+            prepared.call,
+            ToolCall(
+                id="call-1",
+                name="math.adder",
+                arguments={"a": 1, "b": 2},
+                provider_name=provider_name,
+                provider_name_encoded=True,
+            ),
+        )
+        self.assertIs(prepared.callable, adder)
+
+    async def test_prepare_call_rejects_ambiguous_provider_encoded_alias(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "adder_alt"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyAdderAlt()])
+            ],
+            settings=ToolManagerSettings(),
+        )
+        provider_name = TextGenerationVendor.encode_tool_name("sum")
+        call = ToolCall(
+            id="call-1",
+            name="sum",
+            arguments={"a": 1, "b": 2},
+            provider_name=provider_name,
+            provider_name_encoded=True,
+        )
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertEqual(diagnostic.requested_name, provider_name)
+        self.assertIs(
+            diagnostic.code, ToolCallDiagnosticCode.AMBIGUOUS_TOOL_NAME
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.RESOLVE)
+
+    async def test_execute_call_runs_provider_encoded_name(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.adder"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[DummyAdder()])
+            ],
+            settings=ToolManagerSettings(),
+        )
+        provider_name = TextGenerationVendor.encode_tool_name("math.adder")
+        call = ToolCall(
+            id="call-1",
+            name="math.adder",
+            arguments={"a": 2, "b": 3},
+            provider_name=provider_name,
+            provider_name_encoded=True,
+        )
+        result_id = _uuid4()
+
+        with patch("avalan.tool.manager.uuid4", return_value=result_id):
+            outcome = await manager.execute_call(
+                call,
+                context=ToolCallContext(),
+            )
+
+        self.assertEqual(
+            outcome,
+            ToolCallResult(
+                id=result_id,
+                call=ToolCall(
+                    id="call-1",
+                    name="math.adder",
+                    arguments={"a": 2, "b": 3},
+                    provider_name=provider_name,
+                    provider_name_encoded=True,
+                ),
+                name="math.adder",
+                arguments={"a": 2, "b": 3},
+                provider_name=provider_name,
+                provider_name_encoded=True,
+                result=5,
+            ),
+        )
 
     async def test_prepare_call_returns_resolution_diagnostic(self):
         manager = ToolManager.create_instance(

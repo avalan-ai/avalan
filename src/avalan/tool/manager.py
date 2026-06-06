@@ -170,16 +170,19 @@ class ToolManager:
 
     def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
         """Return a diagnostic when a tool call is not executable."""
-        resolution = self.resolve_tool_name(call.name)
+        resolution = self._resolve_call_name(call)
         if resolution.diagnostic_code is not None:
             return ToolCallDiagnostic(
                 id=uuid4(),
                 call_id=call.id,
-                requested_name=call.name,
+                requested_name=resolution.requested_name,
                 canonical_name=resolution.canonical_name,
                 code=resolution.diagnostic_code,
                 stage=ToolCallDiagnosticStage.RESOLVE,
-                message=f"Tool '{call.name}' is {resolution.status.value}.",
+                message=(
+                    f"Tool '{resolution.requested_name}' is "
+                    f"{resolution.status.value}."
+                ),
                 details={"candidates": cast(Any, resolution.candidates)},
             )
 
@@ -633,7 +636,7 @@ class ToolManager:
         *,
         validate: bool = True,
     ) -> PreparedToolCall | ToolCallDiagnostic:
-        resolution = self.resolve_tool_name(call.name)
+        resolution = self._resolve_call_name(call)
         if resolution.diagnostic_code is not None:
             return self._resolution_diagnostic(call, resolution)
         assert resolution.canonical_name is not None
@@ -663,6 +666,8 @@ class ToolManager:
             id=call.id,
             name=resolution.canonical_name,
             arguments=arguments,
+            provider_name=call.provider_name,
+            provider_name_encoded=call.provider_name_encoded,
         )
         if validate:
             diagnostic = self._validate_tool_arguments(
@@ -689,12 +694,24 @@ class ToolManager:
         return ToolCallDiagnostic(
             id=uuid4(),
             call_id=call.id,
-            requested_name=call.name,
+            requested_name=resolution.requested_name,
             canonical_name=resolution.canonical_name,
             code=resolution.diagnostic_code,
             stage=ToolCallDiagnosticStage.RESOLVE,
-            message=f"Tool '{call.name}' is {resolution.status.value}.",
+            message=(
+                f"Tool '{resolution.requested_name}' is "
+                f"{resolution.status.value}."
+            ),
             details={"candidates": cast(Any, resolution.candidates)},
+        )
+
+    def _resolve_call_name(self, call: ToolCall) -> ToolNameResolution:
+        provider_name = call.provider_name
+        if provider_name is None:
+            return self.resolve_tool_name(call.name)
+        return self.resolve_tool_name(
+            provider_name,
+            provider_originated=True,
         )
 
     def _diagnostic(
@@ -1050,6 +1067,8 @@ class ToolManager:
                 call=call,
                 name=call.name,
                 arguments=call.arguments,
+                provider_name=call.provider_name,
+                provider_name_encoded=call.provider_name_encoded,
                 result=result,
             )
         except Exception as exc:
@@ -1058,6 +1077,8 @@ class ToolManager:
                 call=call,
                 name=call.name,
                 arguments=call.arguments,
+                provider_name=call.provider_name,
+                provider_name_encoded=call.provider_name_encoded,
                 error=self._project_error(exc),
                 message=str(exc),
             )

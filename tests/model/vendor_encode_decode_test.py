@@ -41,3 +41,7 @@ class VendorEncodeDecodeTestCase(TestCase):
     def test_decode_rejects_malformed_encoded_name(self) -> None:
         with self.assertRaises(AssertionError):
             TextGenerationVendor.decode_tool_name("avl_notbase64")
+
+    def test_decode_rejects_invalid_encoded_payload(self) -> None:
+        with self.assertRaises(AssertionError):
+            TextGenerationVendor.decode_tool_name("avl_A")

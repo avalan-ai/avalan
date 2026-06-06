@@ -613,9 +613,21 @@ class MessageToolCall:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCall:
-    id: UUID | str
+    id: UUID | str | None
     name: str
     arguments: dict[str, ToolValue] | None = None
+    provider_name: str | None = None
+    provider_name_encoded: bool = False
+
+    def __post_init__(self) -> None:
+        if self.id is not None:
+            _assert_tool_identifier(self.id, "id")
+        assert isinstance(self.name, str)
+        _assert_optional_tool_name(self.provider_name, "provider_name")
+        assert isinstance(self.provider_name_encoded, bool)
+        assert (
+            self.provider_name is not None or not self.provider_name_encoded
+        ), "provider_name is required when provider_name_encoded is true"
 
 
 @final
