@@ -1,5 +1,5 @@
 from asyncio import CancelledError, sleep
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4 as _uuid4
@@ -309,6 +309,142 @@ class ToolManagerCreationTestCase(TestCase):
             descriptor.provider_safe_schema["function"]["parameters"],
             descriptor.schema["function"]["parameters"],
         )
+
+    def test_descriptors_expose_canonical_return_schemas(self):
+        class Payload(TypedDict):
+            name: str
+            tags: list[str]
+
+        def scalar() -> int:
+            """Count records.
+
+            Returns:
+                Record count.
+            """
+            return 1
+
+        def object_value() -> Payload:
+            """Build a payload.
+
+            Returns:
+                Payload object.
+            """
+            return {"name": "ok", "tags": ["ready"]}
+
+        def array_value() -> list[str]:
+            """List values.
+
+            Returns:
+                Values.
+            """
+            return ["ready"]
+
+        def nullable_value() -> str | None:
+            """Maybe return a value.
+
+            Returns:
+                Optional value.
+            """
+            return None
+
+        def union_value() -> str | int:
+            """Return an identifier.
+
+            Returns:
+                Identifier.
+            """
+            return "ready"
+
+        manager = ToolManager.create_instance(
+            enable_tools=None,
+            available_toolsets=[
+                ToolSet(
+                    tools=[
+                        scalar,
+                        object_value,
+                        array_value,
+                        nullable_value,
+                        union_value,
+                    ]
+                )
+            ],
+            settings=ToolManagerSettings(),
+        )
+
+        descriptors = {
+            descriptor.name: descriptor for descriptor in manager.list_tools()
+        }
+
+        self.assertEqual(
+            descriptors["scalar"].return_schema,
+            {"type": "integer", "description": "Record count."},
+        )
+        self.assertEqual(
+            descriptors["object_value"].return_schema,
+            {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["name", "tags"],
+                "additionalProperties": False,
+                "description": "Payload object.",
+            },
+        )
+        self.assertEqual(
+            descriptors["array_value"].return_schema,
+            {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Values.",
+            },
+        )
+        self.assertEqual(
+            descriptors["nullable_value"].return_schema,
+            {
+                "type": ["string", "null"],
+                "description": "Optional value.",
+            },
+        )
+        self.assertEqual(
+            descriptors["union_value"].return_schema,
+            {
+                "anyOf": [{"type": "string"}, {"type": "integer"}],
+                "description": "Identifier.",
+            },
+        )
+        for descriptor in descriptors.values():
+            assert descriptor.schema is not None
+            self.assertEqual(
+                descriptor.return_schema,
+                descriptor.schema["function"]["return"],
+            )
+
+    def test_tool_descriptor_ignores_malformed_return_schema(self):
+        adder = DummyAdder()
+        schema = {
+            "type": "function",
+            "function": {
+                "name": "adder",
+                "parameters": {"type": "object"},
+                "return": ["integer"],
+            },
+        }
+
+        descriptor = ToolManager._tool_descriptor(
+            canonical_name="adder",
+            tool=adder,
+            aliases=[],
+            namespace=None,
+            schema=schema,
+        )
+
+        self.assertEqual(descriptor.parameter_schema, {"type": "object"})
+        self.assertIsNone(descriptor.return_schema)
 
     def test_tool_descriptor_accepts_missing_schema(self):
         adder = DummyAdder()

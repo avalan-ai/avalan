@@ -31,7 +31,12 @@ class JsonSchemaUtilitiesAdditionalTestCase(TestCase):
             )
 
         mixed_literal = _literal_schema(Literal["x", 1])
+        string_literal = _literal_schema(Literal["x", "y"])
         self.assertEqual(mixed_literal, {"enum": ["x", 1]})
+        self.assertEqual(
+            string_literal,
+            {"type": "string", "enum": ["x", "y"]},
+        )
 
     def test_get_json_schema_maps_unhandled_types_to_object(self) -> None:
         def transform(
@@ -62,6 +67,121 @@ class JsonSchemaUtilitiesAdditionalTestCase(TestCase):
         self.assertEqual(
             schema["function"]["return"]["items"]["anyOf"],
             [{"type": "string"}, {"type": "integer"}],
+        )
+
+    def test_get_json_schema_return_schemas_cover_supported_shapes(
+        self,
+    ) -> None:
+        class Payload(TypedDict):
+            name: str
+            scores: list[int]
+
+        def scalar_result() -> int:
+            """Count records.
+
+            Returns:
+                Record count.
+            """
+            return 1
+
+        def object_result() -> Payload:
+            """Build a payload.
+
+            Returns:
+                Structured payload.
+            """
+            return {"name": "ok", "scores": [1]}
+
+        def array_result() -> list[str]:
+            """List names.
+
+            Returns:
+                Names.
+            """
+            return ["ok"]
+
+        def nullable_result() -> str | None:
+            """Maybe return a name.
+
+            Returns:
+                Optional name.
+            """
+            return None
+
+        def union_result() -> str | int:
+            """Return an identifier.
+
+            Returns:
+                Identifier.
+            """
+            return "ok"
+
+        cases = (
+            (
+                scalar_result,
+                {"type": "integer", "description": "Record count."},
+            ),
+            (
+                object_result,
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "scores": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                        },
+                    },
+                    "required": ["name", "scores"],
+                    "additionalProperties": False,
+                    "description": "Structured payload.",
+                },
+            ),
+            (
+                array_result,
+                {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Names.",
+                },
+            ),
+            (
+                nullable_result,
+                {
+                    "type": ["string", "null"],
+                    "description": "Optional name.",
+                },
+            ),
+            (
+                union_result,
+                {
+                    "anyOf": [{"type": "string"}, {"type": "integer"}],
+                    "description": "Identifier.",
+                },
+            ),
+        )
+
+        for function, expected_schema in cases:
+            with self.subTest(function=function.__name__):
+                schema = get_json_schema(function)
+
+                self.assertEqual(
+                    schema["function"]["return"],
+                    expected_schema,
+                )
+
+    def test_get_json_schema_unannotated_return_defaults_to_object(
+        self,
+    ) -> None:
+        def build_value():
+            """Build a value."""
+            return "ok"
+
+        schema = get_json_schema(build_value)
+
+        self.assertEqual(
+            schema["function"]["return"],
+            {"type": "object", "description": ""},
         )
 
     def test_json_type_covers_builtin_and_unknown_annotations(self) -> None:
