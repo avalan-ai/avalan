@@ -1,8 +1,17 @@
+from asyncio import CancelledError
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
 
-from avalan.entities import ToolManagerSettings
+from avalan.entities import (
+    ToolCall,
+    ToolCallContext,
+    ToolCallDiagnosticCode,
+    ToolFilter,
+    ToolFilterResult,
+    ToolManagerSettings,
+)
 from avalan.flow import (
     FLOW_INPUT_KEY,
     FLOW_TOOL_NODE_TYPE,
@@ -72,22 +81,45 @@ async def loader_adder_alt(a: int, b: int) -> int:
 loader_adder_alt.aliases = ["loader_sum"]  # type: ignore[attr-defined]
 
 
+async def loader_multiplier(a: int, b: int) -> int:
+    return a * b
+
+
+async def loader_status() -> str:
+    return "ready"
+
+
 async def loader_disabled(a: int) -> int:
     return a
+
+
+ToolFilterCallable = Callable[
+    [ToolCall, ToolCallContext],
+    tuple[ToolCall, ToolCallContext] | ToolFilterResult | None,
+]
+ToolFilterConfig = list[ToolFilterCallable | ToolFilter]
 
 
 def _tool_loader(
     *,
     enable_tools: list[str] | None = None,
+    filters: ToolFilterConfig | None = None,
 ) -> FlowDefinitionLoader:
     manager = ToolManager.create_instance(
         enable_tools=enable_tools or ["loader_adder", "mcp.call"],
         available_toolsets=[
-            ToolSet(tools=[loader_adder, loader_adder_alt]),
+            ToolSet(
+                tools=[
+                    loader_adder,
+                    loader_adder_alt,
+                    loader_multiplier,
+                    loader_status,
+                ]
+            ),
             ToolSet(namespace="disabled", tools=[loader_disabled]),
             McpToolSet(),
         ],
-        settings=ToolManagerSettings(),
+        settings=ToolManagerSettings(filters=filters),
     )
     return FlowDefinitionLoader(tool_flow_node_registry(manager))
 
@@ -232,6 +264,293 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 initial_inputs={"left": 2, "right": 5},
             ),
             7,
+        )
+
+    async def test_loaded_tool_node_validates_arguments_before_filters(
+        self,
+    ) -> None:
+        events: list[str] = []
+
+        async def checked_value(value: int) -> int:
+            events.append("tool")
+            return value + 1
+
+        def repair_argument(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            events.append("filter")
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"value": 3},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["checked_value"],
+            available_toolsets=[ToolSet(tools=[checked_value])],
+            settings=ToolManagerSettings(filters=[repair_argument]),
+        )
+        loader = FlowDefinitionLoader(tool_flow_node_registry(manager))
+
+        result = loader.loads_result(f"""
+            [flow]
+            name = "tool_node"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "{FLOW_TOOL_NODE_TYPE}"
+            ref = "checked_value"
+
+            [nodes.start.config]
+            output_mode = "envelope"
+
+            [nodes.start.config.arguments]
+            value = "value"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.flow is not None
+        output = await result.flow.execute_async(
+            initial_node="start",
+            initial_inputs={"payload": {"value": "bad"}},
+        )
+
+        assert isinstance(output, dict)
+        diagnostic = output["diagnostic"]
+        assert isinstance(diagnostic, dict)
+        self.assertEqual(output["status"], "diagnostic")
+        self.assertEqual(
+            diagnostic["code"],
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED.value,
+        )
+        self.assertEqual(events, [])
+
+    async def test_tool_node_executes_no_argument_tool_from_loaded_flow(
+        self,
+    ) -> None:
+        loader = _tool_loader(enable_tools=["loader_status"])
+
+        result = loader.loads_result(f"""
+            [flow]
+            name = "tool_node"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "{FLOW_TOOL_NODE_TYPE}"
+            ref = "loader_status"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.flow is not None
+        self.assertEqual(
+            await result.flow.execute_async(initial_node="start"),
+            "ready",
+        )
+
+    async def test_tool_node_blocks_provider_name_rewrite_from_loaded_flow(
+        self,
+    ) -> None:
+        def set_provider_name(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments=call.arguments,
+                    provider_name="loader_multiplier",
+                ),
+                ToolCallContext(),
+            )
+
+        loader = _tool_loader(
+            enable_tools=["loader_adder", "loader_multiplier"],
+            filters=[set_provider_name],
+        )
+
+        result = loader.loads_result(f"""
+            [flow]
+            name = "tool_node"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "{FLOW_TOOL_NODE_TYPE}"
+            ref = "loader_adder"
+
+            [nodes.start.config]
+            output_mode = "envelope"
+
+            [nodes.start.config.arguments]
+            a = "left"
+            b = "right"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.flow is not None
+        output = await result.flow.execute_async(
+            initial_node="start",
+            initial_inputs={"left": 2, "right": 5},
+        )
+
+        assert isinstance(output, dict)
+        diagnostic = output["diagnostic"]
+        assert isinstance(diagnostic, dict)
+        self.assertEqual(output["status"], "diagnostic")
+        self.assertEqual(output["result"], None)
+        self.assertEqual(output["canonical_name"], "loader_adder")
+        self.assertEqual(
+            diagnostic["code"],
+            ToolCallDiagnosticCode.FILTER_SUPPRESSED.value,
+        )
+        self.assertEqual(
+            diagnostic["details"], {"filtered_name": "loader_multiplier"}
+        )
+
+    async def test_loaded_tool_node_matches_filter_after_alias_rewrite(
+        self,
+    ) -> None:
+        called: list[str] = []
+
+        def set_alias(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            called.append("alias")
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="loader_sum",
+                    arguments=call.arguments,
+                ),
+                ToolCallContext(),
+            )
+
+        def adjust_argument(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            assert call.arguments is not None
+            called.append("adder")
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={
+                        "a": call.arguments["a"],
+                        "b": 8,
+                    },
+                ),
+                context,
+            )
+
+        def unrelated(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            called.append("multiplier")
+            return call, context
+
+        loader = _tool_loader(
+            enable_tools=["loader_adder"],
+            filters=[
+                set_alias,
+                ToolFilter(func=unrelated, namespace="loader_multiplier"),
+                ToolFilter(func=adjust_argument, namespace="loader_adder"),
+            ],
+        )
+
+        result = loader.loads_result(f"""
+            [flow]
+            name = "tool_node"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "{FLOW_TOOL_NODE_TYPE}"
+            ref = "loader_adder"
+
+            [nodes.start.config.arguments]
+            a = "left"
+            b = "right"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.flow is not None
+        output = await result.flow.execute_async(
+            initial_node="start",
+            initial_inputs={"left": 2, "right": 5},
+        )
+
+        self.assertEqual(output, 10)
+        self.assertEqual(called, ["alias", "adder"])
+
+    async def test_loaded_tool_node_propagates_cancellation_after_filter(
+        self,
+    ) -> None:
+        called: list[str] = []
+
+        def replace_context(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            called.append("filter")
+            return call, ToolCallContext()
+
+        async def cancel() -> None:
+            called.append("cancel")
+            if called.count("cancel") == 6:
+                raise CancelledError()
+
+        loader = _tool_loader(
+            enable_tools=["loader_adder"],
+            filters=[replace_context],
+        )
+        result = loader.loads_result(f"""
+            [flow]
+            name = "tool_node"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "{FLOW_TOOL_NODE_TYPE}"
+            ref = "loader_adder"
+
+            [nodes.start.config]
+            output_mode = "envelope"
+
+            [nodes.start.config.arguments]
+            a = "left"
+            b = "right"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.flow is not None
+        with self.assertRaises(CancelledError):
+            await result.flow.execute_async(
+                initial_node="start",
+                initial_inputs={"left": 2, "right": 5},
+                cancellation_checker=cancel,
+            )
+
+        self.assertEqual(
+            called,
+            [
+                "cancel",
+                "cancel",
+                "cancel",
+                "cancel",
+                "cancel",
+                "filter",
+                "cancel",
+            ],
         )
 
     def test_tool_node_rejects_invalid_argument_bindings_on_load(

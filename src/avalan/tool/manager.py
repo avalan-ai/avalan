@@ -33,6 +33,7 @@ from binascii import Error as BinasciiError
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from copy import deepcopy
+from dataclasses import replace
 from inspect import Parameter, signature
 from re import compile as compile_regex
 from types import TracebackType
@@ -768,7 +769,7 @@ class ToolManager:
         return ToolCallDiagnostic(
             id=uuid4(),
             call_id=call.id,
-            requested_name=call.name,
+            requested_name=call.name if call.name.strip() else None,
             canonical_name=canonical_name,
             code=code,
             stage=stage,
@@ -1068,6 +1069,7 @@ class ToolManager:
         if not self._settings.filters:
             return call, context
 
+        flow_tool_node = context.flow_tool_node
         for f in self._settings.filters:
             filter_namespace: str | None = None
             if isinstance(f, ToolFilter):
@@ -1075,7 +1077,10 @@ class ToolManager:
                 filter_namespace = f.namespace
             else:
                 filter_func = f
-            if not matches_tool_namespace(call.name, filter_namespace):
+            if not matches_tool_namespace(
+                self._filtered_tool_name(call),
+                filter_namespace,
+            ):
                 continue
             modified = filter_func(call, context)
             if modified is None:
@@ -1086,6 +1091,7 @@ class ToolManager:
                 if modified.status is ToolFilterResultStatus.SUPPRESS:
                     return self._diagnostic(
                         call=call,
+                        canonical_name=self._diagnostic_canonical_name(call),
                         code=modified.code,
                         stage=ToolCallDiagnosticStage.FILTER,
                         message=(
@@ -1102,16 +1108,71 @@ class ToolManager:
             next_call, next_context = modified
             assert isinstance(next_call, ToolCall)
             assert isinstance(next_context, ToolCallContext)
-            if context.flow_tool_node and next_call.name != call.name:
+            next_context = self._preserve_flow_context(
+                context,
+                next_context,
+                flow_tool_node=flow_tool_node,
+            )
+            flow_tool_node = flow_tool_node or next_context.flow_tool_node
+            filtered_name = self._filtered_tool_name(next_call)
+            if flow_tool_node and filtered_name != self._filtered_tool_name(
+                call
+            ):
                 return self._diagnostic(
                     call=call,
+                    canonical_name=self._diagnostic_canonical_name(call),
                     code=ToolCallDiagnosticCode.FILTER_SUPPRESSED,
                     stage=ToolCallDiagnosticStage.FILTER,
                     message="Tool filter name rewrites are disabled.",
-                    details={"filtered_name": next_call.name},
+                    details={"filtered_name": filtered_name},
                 )
             call, context = next_call, next_context
         return call, context
+
+    def _filtered_tool_name(self, call: ToolCall) -> str:
+        if call.provider_name is None:
+            try:
+                resolution = self.resolve_tool_name(call.name)
+            except AssertionError:
+                return call.name
+            return resolution.canonical_name or resolution.requested_name
+        try:
+            resolution = self.resolve_tool_name(
+                call.provider_name,
+                provider_originated=True,
+            )
+        except AssertionError:
+            return call.provider_name
+        return resolution.canonical_name or resolution.requested_name
+
+    def _diagnostic_canonical_name(self, call: ToolCall) -> str | None:
+        try:
+            resolution = self._resolve_call_name(call)
+        except AssertionError:
+            return None
+        return resolution.canonical_name
+
+    @staticmethod
+    def _preserve_flow_context(
+        current: ToolCallContext,
+        next_context: ToolCallContext,
+        *,
+        flow_tool_node: bool,
+    ) -> ToolCallContext:
+        if not flow_tool_node and not next_context.flow_tool_node:
+            return next_context
+
+        changes: dict[str, Any] = {}
+        if not next_context.flow_tool_node:
+            changes["flow_tool_node"] = True
+        if (
+            next_context.cancellation_checker is None
+            and current.cancellation_checker is not None
+        ):
+            changes["cancellation_checker"] = current.cancellation_checker
+        if not changes:
+            return next_context
+        return replace(next_context, **changes)
 
     async def _execute_prepared_call(
         self, prepared: PreparedToolCall
