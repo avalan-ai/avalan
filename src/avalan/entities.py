@@ -618,6 +618,7 @@ class ToolCall:
     arguments: dict[str, ToolValue] | None = None
     provider_name: str | None = None
     provider_name_encoded: bool = False
+    provider_arguments_malformed: bool = False
 
     def __post_init__(self) -> None:
         if self.id is not None:
@@ -625,9 +626,14 @@ class ToolCall:
         assert isinstance(self.name, str)
         _assert_optional_tool_name(self.provider_name, "provider_name")
         assert isinstance(self.provider_name_encoded, bool)
+        assert isinstance(self.provider_arguments_malformed, bool)
         assert (
             self.provider_name is not None or not self.provider_name_encoded
         ), "provider_name is required when provider_name_encoded is true"
+        assert (
+            self.provider_name is not None
+            or not self.provider_arguments_malformed
+        ), "provider_name is required when provider arguments are malformed"
 
 
 @final

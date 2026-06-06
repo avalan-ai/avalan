@@ -185,6 +185,7 @@ def test_base_vendor_boundary_branches() -> None:
     assert invalid_arguments.call.id.startswith("<object object at ")
     assert invalid_arguments.call.name == "tool"
     assert invalid_arguments.call.arguments == {}
+    assert invalid_arguments.call.provider_arguments_malformed is True
 
     dict_arguments = TextGenerationVendor.build_tool_call_token(
         None, "pkg__tool", {"ok": True}
