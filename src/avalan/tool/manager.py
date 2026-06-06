@@ -310,8 +310,8 @@ class ToolManager:
         return self._parser.tool_call_status(buffer)
 
     def get_calls(self, text: str) -> list[ToolCall] | None:
-        calls = self._parser(text)
-        return calls if isinstance(calls, list) else None
+        calls = self._parser.parse(text).calls
+        return calls or None
 
     async def __aenter__(self) -> "ToolManager":
         if self._toolsets:
