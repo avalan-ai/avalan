@@ -93,6 +93,22 @@ class ResponsesUtilsTestCase(TestCase):
         data = loads(events[0].split("data: ")[1])
         self.assertIsNone(data["result"])
 
+    def test_token_to_sse_handles_current_none_tool_result(self) -> None:
+        call = ToolCall(id="c-none", name="tool", arguments={"x": 1})
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={0: call, "result": None},
+        )
+
+        events = _token_to_sse(event, 5)
+
+        self.assertEqual(len(events), 1)
+        data = loads(events[0].split("data: ")[1])
+        self.assertEqual(data["id"], "c-none")
+        self.assertEqual(data["name"], "tool")
+        self.assertEqual(data["arguments"], {"x": 1})
+        self.assertIsNone(data["result"])
+
     def test_token_to_sse_handles_tool_call_token_with_call(self) -> None:
         call = ToolCall(id="c4", name="adder", arguments={"x": 1})
         token = ToolCallToken(token="ignored", call=call)

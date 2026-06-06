@@ -28,6 +28,11 @@ class NodeExecuteTestCase(TestCase):
         self.assertEqual(node.execute({"a": 1, "b": 2}), {"a": 1, "b": 2})
         self.assertIsNone(node.execute({}))
 
+    def test_execute_none_output_bypasses_output_schema(self):
+        node = Node("n", func=lambda _: None, output_schema=str)
+
+        self.assertIsNone(node.execute({"x": 1}))
+
     def test_schema_validation(self):
         node = Node(
             "n",
@@ -122,6 +127,16 @@ class NodeAsyncTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaises(CancelledError):
             await node.execute_async({}, cancellation_checker=cancelled)
+
+    async def test_execute_async_none_output_bypasses_output_schema(
+        self,
+    ) -> None:
+        async def no_output(_: dict[str, int]) -> None:
+            await sleep(0)
+
+        node = Node("n", func=no_output, output_schema=str)
+
+        self.assertIsNone(await node.execute_async({"x": 1}))
 
 
 class NodeImportTestCase(TestCase):

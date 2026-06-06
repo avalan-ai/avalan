@@ -1,3 +1,4 @@
+from json import loads
 from unittest import TestCase
 from uuid import uuid4
 
@@ -37,6 +38,30 @@ class VendorBuildToolCallTokenTestCase(TestCase):
             provider_name="pkg__tool",
         )
         self.assertEqual(token, expected)
+
+    def test_build_tool_call_token_keeps_call_as_executable_boundary(
+        self,
+    ) -> None:
+        token = TextGenerationVendor.build_tool_call_token(
+            call_id="call_1",
+            tool_name=TextGenerationVendor.encode_tool_name("pkg.tool"),
+            arguments={"value": 3},
+        )
+
+        self.assertEqual(
+            token.call,
+            ToolCall(id="call_1", name="pkg.tool", arguments={"value": 3}),
+        )
+        self.assertEqual(token.provider_name, "avl_cGtnLnRvb2w")
+        payload = loads(
+            token.token.removeprefix("<tool_call>").removesuffix(
+                "</tool_call>"
+            )
+        )
+        self.assertEqual(
+            payload,
+            {"name": "pkg.tool", "arguments": {"value": 3}, "id": "call_1"},
+        )
 
     def test_build_tool_call_token_handles_invalid_json_str(self) -> None:
         token = TextGenerationVendor.build_tool_call_token(
