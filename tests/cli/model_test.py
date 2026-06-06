@@ -6,6 +6,7 @@ from logging import getLogger
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
+from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
@@ -34,6 +35,9 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallToken,
     TransformerEngineSettings,
 )
@@ -788,7 +792,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         console = MagicMock()
         console.width = 80
         logger = MagicMock()
-        captured: list[dict[str, object]] = []
+        captured: list[dict[str, Any]] = []
 
         async def fake_tokens(*p, **kw):
             captured.append(
@@ -1601,6 +1605,102 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             fifth["input_token_count"],
             response.input_token_count + inner_response.input_token_count,
         )
+
+    async def test_token_generation_tool_diagnostic_is_result_event(self):
+        diagnostic = ToolCallDiagnostic(
+            id="diag-model",
+            call_id="call-model",
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+        events = [
+            model_cmds.Event(
+                type=model_cmds.EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostic": diagnostic},
+            ),
+            model_cmds.Token(id=1, token="a"),
+        ]
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    for item in events:
+                        yield item
+
+                return gen()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+            display_answer_height_expand=False,
+            display_answer_height=12,
+        )
+        console = MagicMock()
+        console.width = 80
+        captured: list[dict[str, object]] = []
+
+        async def fake_tokens(*p, **kw):
+            captured.append(
+                {
+                    "tool_event_calls": list(p[14]),
+                    "tool_event_results": list(p[15]),
+                    "spinner": p[16],
+                }
+            )
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+        theme.get_spinner.return_value = "dots"
+        theme._n = lambda s, p, n: s if n == 1 else p
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        lm = SimpleNamespace(
+            model_id="m",
+            tokenizer_config=None,
+            input_token_count=MagicMock(return_value=1),
+        )
+
+        with patch.object(model_cmds, "Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=MagicMock(),
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="text",
+                response=Resp(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+            )
+
+        self.assertEqual(captured[0]["tool_event_calls"], [])
+        self.assertEqual(
+            captured[0]["tool_event_results"][0].type,
+            model_cmds.EventType.TOOL_DIAGNOSTIC,
+        )
+        self.assertIsNone(captured[0]["spinner"])
 
     async def test_token_generation_display_options_combinations(self):
         combos = [

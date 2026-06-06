@@ -4,6 +4,8 @@ from ...entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCall,
+    ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -15,7 +17,11 @@ from ...server.entities import (
     MCPToolRequest,
 )
 from ...types import JsonObject, JsonScalar, MutableJsonValue
-from ...utils import to_json
+from ...utils import (
+    to_json,
+    tool_call_diagnostic_payload,
+    tool_call_error_payload,
+)
 from ..sse import sse_bytes, sse_headers
 from . import (
     MODEL_FALLBACK as DEFAULT_MODEL_FALLBACK,
@@ -32,6 +38,7 @@ from dataclasses import dataclass, replace
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from typing import (
+    Any,
     AsyncGenerator,
     AsyncIterator,
     Final,
@@ -701,6 +708,7 @@ async def _stream_mcp_response(
                 continue
 
             if isinstance(item, Event) and item.type in (
+                EventType.TOOL_DIAGNOSTIC,
                 EventType.TOOL_PROCESS,
                 EventType.TOOL_RESULT,
             ):
@@ -931,6 +939,38 @@ async def _tool_event_notifications(
         }
         return
 
+    if "diagnostic" in item:
+        diagnostic_payload = item["diagnostic"]
+        tool_summary = tool_summaries.setdefault(
+            tool_call_id,
+            {
+                "id": tool_call_id,
+                "name": item.get("name"),
+                "arguments": item.get("arguments"),
+            },
+        )
+        tool_summary["diagnostic"] = diagnostic_payload
+        yield {
+            "jsonrpc": "2.0",
+            "method": "notifications/message",
+            "params": {
+                "level": "warning",
+                "message": {
+                    "type": "tool.diagnostic",
+                    "toolCallId": tool_call_id,
+                    "name": item.get("name"),
+                    "arguments": item.get("arguments"),
+                    "diagnostic": diagnostic_payload,
+                    "timings": {
+                        "started": event.started,
+                        "finished": event.finished,
+                        "elapsed": event.elapsed,
+                    },
+                },
+            },
+        }
+        return
+
     tool_summary = tool_summaries.setdefault(
         tool_call_id,
         {
@@ -1038,12 +1078,22 @@ def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
             if isinstance(event.payload, dict)
             else None
         )
+        if isinstance(tool_result, ToolCallDiagnostic):
+            call = (
+                event.payload.get("call")
+                if isinstance(event.payload, dict)
+                else None
+            )
+            return _tool_call_diagnostic_item(
+                tool_result,
+                call if isinstance(call, ToolCall) else None,
+            )
         if isinstance(tool_result, ToolCallError):
             return {
                 "id": str(tool_result.call.id),
                 "name": tool_result.name,
                 "arguments": cast(JSONValue, tool_result.arguments),
-                "error": tool_result.message,
+                "error": cast(JSONValue, tool_call_error_payload(tool_result)),
             }
         if isinstance(tool_result, ToolCallResult):
             result: JSONValue = (
@@ -1059,6 +1109,16 @@ def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
                 "arguments": cast(JSONValue, tool_result.arguments),
                 "result": result,
             }
+    if event.type is EventType.TOOL_DIAGNOSTIC:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        diagnostic = _payload_diagnostic(payload)
+        if diagnostic is None:
+            return None
+        call = payload.get("call")
+        return _tool_call_diagnostic_item(
+            diagnostic,
+            call if isinstance(call, ToolCall) else None,
+        )
     if isinstance(event.payload, list) and event.payload:
         call = event.payload[0]
     else:
@@ -1073,6 +1133,48 @@ def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
         "id": str(call.id),
         "name": call.name,
         "arguments": cast(JSONValue, call.arguments),
+    }
+
+
+def _payload_diagnostic(
+    payload: dict[str, Any],
+) -> ToolCallDiagnostic | None:
+    diagnostic = payload.get("diagnostic")
+    if isinstance(diagnostic, ToolCallDiagnostic):
+        return diagnostic
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, list):
+        return next(
+            (
+                item
+                for item in diagnostics
+                if isinstance(item, ToolCallDiagnostic)
+            ),
+            None,
+        )
+    return None
+
+
+def _tool_call_diagnostic_item(
+    diagnostic: ToolCallDiagnostic, call: ToolCall | None
+) -> dict[str, JSONValue]:
+    diagnostic_payload = {
+        "id": str(diagnostic.id),
+        **tool_call_diagnostic_payload(diagnostic),
+    }
+    if diagnostic.call_id is not None:
+        diagnostic_payload["call_id"] = str(diagnostic.call_id)
+    return {
+        "id": str(call.id if call else diagnostic.call_id or diagnostic.id),
+        "name": (
+            call.name
+            if call
+            else diagnostic.canonical_name
+            or diagnostic.requested_name
+            or "tool"
+        ),
+        "arguments": cast(JSONValue, call.arguments if call else None),
+        "diagnostic": cast(JSONValue, diagnostic_payload),
     }
 
 

@@ -16,12 +16,19 @@ from ...entities import (
     Token,
     TokenDetail,
     TokenizerConfig,
+    ToolCallDiagnostic,
     ToolCallError,
     User,
 )
 from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...memory.permanent import PermanentMemoryPartition
-from ...utils import _j, _lf, to_json
+from ...utils import (
+    _j,
+    _lf,
+    to_json,
+    tool_call_diagnostic_payload,
+    tool_call_error_payload,
+)
 
 from datetime import datetime, timedelta
 from locale import format_string
@@ -2333,12 +2340,25 @@ class FancyTheme(Theme):
                             + "[/gray78]",
                         )
                     )
+                elif event.type == EventType.TOOL_DIAGNOSTIC and payload:
+                    diagnostic = self._tool_diagnostic_from_payload(payload)
+                    if diagnostic is None:
+                        event_log.append(str(event.payload))
+                        continue
+                    event_log.append(
+                        self._tool_diagnostic_log(diagnostic, payload)
+                    )
                 elif (
                     event.type == EventType.TOOL_RESULT
                     and payload
                     and payload["result"]
                 ):
                     result = payload["result"]
+                    if isinstance(result, ToolCallDiagnostic):
+                        event_log.append(
+                            self._tool_diagnostic_log(result, payload)
+                        )
+                        continue
                     event_log.append(
                         _(
                             "Executed tool {tool} call #{call_id}"
@@ -2358,7 +2378,9 @@ class FancyTheme(Theme):
                             + "[/gray78]",
                             total_arguments=len(result.call.arguments or []),
                             result=(
-                                "[red]" + result.message + "[/red]"
+                                "[red]"
+                                + to_json(tool_call_error_payload(result))
+                                + "[/red]"
                                 if isinstance(result, ToolCallError)
                                 else (
                                     "[spring_green3]"
@@ -2396,6 +2418,54 @@ class FancyTheme(Theme):
             event_log = event_log[-events_limit:]
 
         return event_log
+
+    def _tool_diagnostic_from_payload(
+        self, payload: Any
+    ) -> ToolCallDiagnostic | None:
+        if not isinstance(payload, dict):
+            return None
+        diagnostic = payload.get("diagnostic")
+        if isinstance(diagnostic, ToolCallDiagnostic):
+            return diagnostic
+        result = payload.get("result")
+        if isinstance(result, ToolCallDiagnostic):
+            return result
+        diagnostics = payload.get("diagnostics")
+        if isinstance(diagnostics, list):
+            return next(
+                (
+                    item
+                    for item in diagnostics
+                    if isinstance(item, ToolCallDiagnostic)
+                ),
+                None,
+            )
+        return None
+
+    def _tool_diagnostic_log(
+        self, diagnostic: ToolCallDiagnostic, payload: Any
+    ) -> str:
+        call = payload.get("call") if isinstance(payload, dict) else None
+        tool_name = (
+            getattr(call, "name", None)
+            or diagnostic.canonical_name
+            or diagnostic.requested_name
+            or "tool"
+        )
+        call_id = (
+            getattr(call, "id", None) or diagnostic.call_id or diagnostic.id
+        )
+        diagnostic_payload = tool_call_diagnostic_payload(diagnostic)
+        return self._(
+            "Tool diagnostic {code} at {stage} for {tool} call #{call_id}:"
+            " {message}."
+        ).format(
+            code="[yellow]" + diagnostic_payload["code"] + "[/yellow]",
+            stage="[gray78]" + diagnostic_payload["stage"] + "[/gray78]",
+            tool="[gray78]" + str(tool_name) + "[/gray78]",
+            call_id="[gray78]" + str(call_id)[:8] + "[/gray78]",
+            message="[yellow]" + diagnostic.message + "[/yellow]",
+        )
 
     def _tokens_table(
         self,

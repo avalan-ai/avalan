@@ -5,12 +5,17 @@ from ...entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
 )
 from ...event import Event, EventType
-from ...utils import to_json
+from ...utils import (
+    to_json,
+    tool_call_diagnostic_payload,
+    tool_call_error_payload,
+)
 from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
 from ..sse import sse_message
@@ -505,7 +510,10 @@ class A2AResponseTranslator:
             if item.type is EventType.TOOL_PROCESS:
                 events.extend(await self._handle_tool_process(item))
                 return events
-            if item.type is EventType.TOOL_RESULT:
+            if item.type in (
+                EventType.TOOL_DIAGNOSTIC,
+                EventType.TOOL_RESULT,
+            ):
                 events.extend(await self._handle_tool_result(item))
                 return events
             return events
@@ -692,6 +700,8 @@ class A2AResponseTranslator:
         events: list[dict[str, Any]] = []
         payload = event.payload or {}
         result = payload.get("result") if isinstance(payload, dict) else None
+        if event.type is EventType.TOOL_DIAGNOSTIC:
+            result = result or _payload_diagnostic(payload)
         call = payload.get("call") if isinstance(payload, dict) else None
         artifact_id: str | None = None
         artifact_name: str | None = None
@@ -708,9 +718,21 @@ class A2AResponseTranslator:
             artifact_name = result.call.name
             content = {
                 "type": "data",
-                "data": {"error": result.message},
+                "data": {"error": tool_call_error_payload(result)},
             }
             metadata["status"] = "error"
+        elif isinstance(result, ToolCallDiagnostic):
+            artifact_id = str(result.call_id or result.id)
+            artifact_name = (
+                result.canonical_name or result.requested_name or "tool"
+            )
+            content = {
+                "type": "data",
+                "data": {"diagnostic": _diagnostic_payload(result)},
+            }
+            metadata["status"] = "diagnostic"
+            metadata["diagnostic_code"] = result.code.value
+            metadata["diagnostic_stage"] = result.stage.value
         elif isinstance(payload, ToolCall):
             artifact_id = str(payload.id)
             artifact_name = payload.name
@@ -1302,6 +1324,7 @@ def _state_for_item(
         return StreamState.REASONING
     if isinstance(item, (ToolCallToken, Event)):
         if isinstance(item, Event) and item.type not in (
+            EventType.TOOL_DIAGNOSTIC,
             EventType.TOOL_PROCESS,
             EventType.TOOL_RESULT,
         ):
@@ -1326,8 +1349,19 @@ def _call_identifier(item: Token | TokenDetail | Event | str) -> str | None:
                 call = candidates[0]
                 if isinstance(call, ToolCall):
                     return str(call.id)
-        if item.type is EventType.TOOL_RESULT and item.payload:
+        if (
+            item.type
+            in (
+                EventType.TOOL_DIAGNOSTIC,
+                EventType.TOOL_RESULT,
+            )
+            and item.payload
+        ):
             result = item.payload.get("result")
+            if item.type is EventType.TOOL_DIAGNOSTIC:
+                result = result or _payload_diagnostic(item.payload)
+            if isinstance(result, ToolCallDiagnostic):
+                return str(result.call_id or result.id)
             if isinstance(result, (ToolCallResult, ToolCallError)):
                 return str(result.call.id)
             call = item.payload.get("call")
@@ -1342,6 +1376,37 @@ def _token_text(item: Token | TokenDetail | Event | str) -> str:
     if isinstance(item, Token):
         return item.token
     return ""
+
+
+def _payload_diagnostic(
+    payload: dict[str, Any],
+) -> ToolCallDiagnostic | None:
+    diagnostic = payload.get("diagnostic")
+    if isinstance(diagnostic, ToolCallDiagnostic):
+        return diagnostic
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, list):
+        return next(
+            (
+                item
+                for item in diagnostics
+                if isinstance(item, ToolCallDiagnostic)
+            ),
+            None,
+        )
+    return None
+
+
+def _diagnostic_payload(
+    diagnostic: ToolCallDiagnostic,
+) -> dict[str, Any]:
+    payload = {
+        "id": str(diagnostic.id),
+        **tool_call_diagnostic_payload(diagnostic),
+    }
+    if diagnostic.call_id is not None:
+        payload["call_id"] = str(diagnostic.call_id)
+    return payload
 
 
 def _enum_value(value: Any) -> str | None:

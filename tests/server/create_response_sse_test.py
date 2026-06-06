@@ -15,6 +15,9 @@ from avalan.entities import (
     MessageRole,
     ReasoningToken,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -395,14 +398,94 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(second_delta["arguments"], {"x": 1})
 
         third_data = loads(data_lines[function_indices[2]][6:])
-        self.assertEqual(loads(third_data["error"]), "fail")
+        self.assertEqual(
+            third_data["error"], {"type": "RuntimeError", "message": "fail"}
+        )
         third_delta = loads(third_data["delta"])
-        self.assertEqual(loads(third_delta["error"]), "fail")
+        self.assertEqual(
+            third_delta["error"], {"type": "RuntimeError", "message": "fail"}
+        )
 
         output_index = events.index("response.output_text.delta")
         output_data = loads(data_lines[output_index][6:])
         self.assertEqual(output_data["delta"], "final")
 
+        orchestrator.sync_messages.assert_awaited_once()
+
+    async def test_streaming_includes_tool_diagnostic_event(self) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        call = ToolCall(id="call-d", name="missing", arguments={})
+        diagnostic = ToolCallDiagnostic(
+            id="diag-d",
+            call_id=call.id,
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+        tokens = [
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostics": ["bad"]},
+            ),
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"call": call, "diagnostic": diagnostic},
+            ),
+            "final",
+        ]
+
+        class DummyResponse:
+            def __init__(self, items) -> None:  # type: ignore[no-untyped-def]
+                self._items = items
+                self.input_token_count = 0
+                self.output_token_count = 0
+
+            def __aiter__(self):  # type: ignore[override]
+                async def gen():
+                    for item in self._items:
+                        yield item
+
+                return gen()
+
+        response = DummyResponse(tokens)
+
+        async def orchestrate_stub(request, logger, orch):
+            return response, uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        chunks: list[str] = []
+        async for chunk in streaming_resp.body_iterator:
+            chunks.append(
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+            )
+
+        text = "".join(chunks)
+        blocks = [b for b in text.strip().split("\n\n") if b]
+        events = [block.split("\n")[0].split(": ")[1] for block in blocks]
+        data_lines = [block.split("\n")[1] for block in blocks]
+
+        self.assertIn("response.tool_call_diagnostic.delta", events)
+        diagnostic_index = events.index("response.tool_call_diagnostic.delta")
+        diagnostic_data = loads(data_lines[diagnostic_index][6:])
+        self.assertEqual(diagnostic_data["id"], "call-d")
+        self.assertEqual(diagnostic_data["diagnostic"]["code"], "tool.unknown")
+        output_index = events.index("response.output_text.delta")
+        output_data = loads(data_lines[output_index][6:])
+        self.assertEqual(output_data["delta"], "final")
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_streaming_serializes_tool_result_temporal_types(

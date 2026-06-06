@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from json import loads
 from unittest import TestCase
 
@@ -7,6 +8,9 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -75,7 +79,98 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(len(events), 1)
         data = loads(events[0].split("data: ")[1])
         self.assertEqual(data["id"], "c2")
-        self.assertEqual(data["error"], '"boom"')
+        self.assertEqual(
+            data["error"], {"type": "RuntimeError", "message": "boom"}
+        )
+        delta = loads(data["delta"])
+        self.assertEqual(
+            delta["error"], {"type": "RuntimeError", "message": "boom"}
+        )
+
+    def test_token_to_sse_handles_tool_diagnostic(self) -> None:
+        call = ToolCall(id="c-diagnostic", name="missing", arguments={})
+        diagnostic = ToolCallDiagnostic(
+            id="diag-1",
+            call_id=call.id,
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+        event = Event(
+            type=EventType.TOOL_DIAGNOSTIC,
+            payload={"call": call, "diagnostic": diagnostic},
+        )
+
+        events = _token_to_sse(event, 3)
+
+        self.assertEqual(len(events), 1)
+        self.assertIn("response.tool_call_diagnostic.delta", events[0])
+        data = loads(events[0].split("data: ")[1])
+        self.assertEqual(data["id"], "c-diagnostic")
+        self.assertEqual(data["diagnostic"]["code"], "tool.unknown")
+        delta = loads(data["delta"])
+        self.assertEqual(delta["diagnostic"]["call_id"], "c-diagnostic")
+
+    def test_tool_call_event_item_handles_tool_result_diagnostic(
+        self,
+    ) -> None:
+        call = ToolCall(id="c-result-diagnostic", name="missing", arguments={})
+        diagnostic = ToolCallDiagnostic(
+            id="diag-result",
+            call_id=call.id,
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"call": call, "result": diagnostic},
+        )
+
+        item = _tool_call_event_item(event)
+
+        self.assertEqual(item["id"], "c-result-diagnostic")
+        self.assertEqual(item["diagnostic"]["code"], "tool.unknown")
+
+    def test_tool_call_event_item_handles_diagnostic_timing_fields(
+        self,
+    ) -> None:
+        diagnostic = ToolCallDiagnostic(
+            id="diag-timing",
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+            started_at=datetime(2026, 1, 1, 12, 0, 0),
+            finished_at=datetime(2026, 1, 1, 12, 0, 1),
+            duration_ms=1000.0,
+        )
+        event = Event(
+            type=EventType.TOOL_DIAGNOSTIC,
+            payload={"diagnostics": [diagnostic]},
+        )
+
+        item = _tool_call_event_item(event)
+
+        self.assertEqual(item["id"], "diag-timing")
+        self.assertEqual(item["name"], "missing")
+        self.assertEqual(
+            item["diagnostic"]["started_at"], "2026-01-01T12:00:00"
+        )
+        self.assertEqual(
+            item["diagnostic"]["finished_at"], "2026-01-01T12:00:01"
+        )
+        self.assertEqual(item["diagnostic"]["duration_ms"], 1000.0)
+
+    def test_token_to_sse_ignores_malformed_tool_diagnostic(self) -> None:
+        event = Event(
+            type=EventType.TOOL_DIAGNOSTIC,
+            payload={"diagnostics": ["bad"]},
+        )
+
+        self.assertEqual(_token_to_sse(event, 4), [])
 
     def test_token_to_sse_handles_tool_result_without_payload(self) -> None:
         call = ToolCall(id="c3", name="tool", arguments={})
@@ -108,6 +203,21 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(data["name"], "tool")
         self.assertEqual(data["arguments"], {"x": 1})
         self.assertIsNone(data["result"])
+
+    def test_tool_call_event_item_ignores_missing_tool_call(self) -> None:
+        event = Event(
+            type=EventType.TOOL_PROCESS,
+            payload={"call": None},
+        )
+
+        self.assertIsNone(_tool_call_event_item(event))
+
+    def test_tool_call_event_item_ignores_unexpected_payload(
+        self,
+    ) -> None:
+        event = Event(type=EventType.TOOL_PROCESS, payload="bad")
+
+        self.assertIsNone(_tool_call_event_item(event))
 
     def test_token_to_sse_handles_tool_call_token_with_call(self) -> None:
         call = ToolCall(id="c4", name="adder", arguments={"x": 1})

@@ -19,6 +19,9 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -306,7 +309,10 @@ class MCPUtilityTestCase(TestCase):
             },
         )
         error_item = mcp_router._tool_call_event_item(error_event)
-        self.assertEqual(error_item["error"], "boom")
+        self.assertEqual(
+            error_item["error"],
+            {"type": "Exception", "message": "boom"},
+        )
 
         result_event = Event(
             type=EventType.TOOL_RESULT,
@@ -344,6 +350,50 @@ class MCPUtilityTestCase(TestCase):
             type=EventType.TOOL_PROCESS, payload={"call": None}
         )
         self.assertIsNone(mcp_router._tool_call_event_item(null_call_event))
+
+        diagnostic = ToolCallDiagnostic(
+            id="diag-1",
+            call_id="c1",
+            requested_name="run",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+        diagnostic_event = Event(
+            type=EventType.TOOL_DIAGNOSTIC,
+            payload={"call": call, "diagnostic": diagnostic},
+        )
+        diagnostic_item = mcp_router._tool_call_event_item(diagnostic_event)
+        self.assertEqual(diagnostic_item["id"], "c1")
+        self.assertEqual(diagnostic_item["diagnostic"]["code"], "tool.unknown")
+
+        result_diagnostic_event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"call": call, "result": diagnostic},
+        )
+        result_diagnostic_item = mcp_router._tool_call_event_item(
+            result_diagnostic_event
+        )
+        self.assertEqual(result_diagnostic_item["id"], "c1")
+        self.assertEqual(
+            result_diagnostic_item["diagnostic"]["code"], "tool.unknown"
+        )
+
+        malformed_diagnostic_event = Event(
+            type=EventType.TOOL_DIAGNOSTIC,
+            payload={"diagnostics": ["bad"]},
+        )
+        self.assertIsNone(
+            mcp_router._tool_call_event_item(malformed_diagnostic_event)
+        )
+
+        invalid_diagnostic_event = Event(
+            type=EventType.TOOL_DIAGNOSTIC,
+            payload={"diagnostic": "bad"},
+        )
+        self.assertIsNone(
+            mcp_router._tool_call_event_item(invalid_diagnostic_event)
+        )
 
     def test_get_resource_store_reuses_instance(self) -> None:
         request = self._request()
@@ -1136,6 +1186,47 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         message = notifications[-1]["params"]["message"]
         self.assertEqual(message["resultDelta"], '{"payload":"value"}')
 
+    async def test_tool_event_notifications_serializes_diagnostic(
+        self,
+    ) -> None:
+        call = ToolCall(id="c-d", name="missing", arguments={})
+        diagnostic = ToolCallDiagnostic(
+            id="diag-d",
+            call_id=call.id,
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+        event = Event(
+            type=EventType.TOOL_DIAGNOSTIC,
+            payload={"call": call, "diagnostic": diagnostic},
+            started=4.0,
+            finished=5.0,
+            elapsed=1.0,
+        )
+        store = mcp_router.MCPResourceStore()
+        tool_summaries: dict[str, dict[str, Any]] = {}
+        resources: dict[str, mcp_router.MCPResource] = {}
+        notifications = []
+        async for item in mcp_router._tool_event_notifications(
+            event=event,
+            tool_summaries=tool_summaries,
+            resources=resources,
+            resource_store=store,
+            base_path="/base",
+        ):
+            notifications.append(item)
+
+        self.assertFalse(resources)
+        self.assertIn(str(call.id), tool_summaries)
+        summary = tool_summaries[str(call.id)]
+        self.assertEqual(summary["diagnostic"]["code"], "tool.unknown")
+        message = notifications[-1]["params"]["message"]
+        self.assertEqual(message["type"], "tool.diagnostic")
+        self.assertEqual(message["toolCallId"], "c-d")
+        self.assertEqual(message["diagnostic"]["message"], "Unknown tool.")
+
 
 class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
     def _chat_request(self, stream: bool = False) -> ChatCompletionRequest:
@@ -1733,6 +1824,64 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             and item.get("method") == "notifications/message"
         ]
         self.assertTrue(any("error" in e["params"]["message"] for e in errors))
+
+    async def test_stream_mcp_response_handles_tool_diagnostic(self) -> None:
+        call = ToolCall(id="c-d", name="missing", arguments={})
+        diagnostic = ToolCallDiagnostic(
+            id="diag-d",
+            call_id=call.id,
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+        response = DummyResponse(
+            [
+                Event(
+                    type=EventType.TOOL_DIAGNOSTIC,
+                    payload={"call": call, "diagnostic": diagnostic},
+                    started=1.0,
+                    finished=2.0,
+                    elapsed=1.0,
+                ),
+                Token(token="done"),
+            ]
+        )
+        response.input_token_count = 0
+        response.output_token_count = 0
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+        store = mcp_router.MCPResourceStore()
+        request_model = self._chat_request(stream=True)
+        payloads = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=store,
+            base_path="/m",
+            cancel_event=cancel_event,
+        ):
+            payloads.append(loads(chunk.decode("utf-8")))
+        orchestrator.sync_messages.assert_awaited()
+        diagnostics = [
+            item
+            for item in payloads
+            if isinstance(item, dict)
+            and item.get("method") == "notifications/message"
+            and item["params"]["message"].get("type") == "tool.diagnostic"
+        ]
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0]["params"]["message"]["diagnostic"]["code"],
+            "tool.unknown",
+        )
 
     async def test_stream_mcp_response_cancellation_closes_resources(
         self,

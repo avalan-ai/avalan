@@ -28,6 +28,11 @@ from avalan.entities import (
     Token,
     TokenDetail,
     TokenizerConfig,
+    ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
+    ToolCallError,
     User,
 )
 from avalan.event import Event, EventStats, EventType
@@ -482,6 +487,14 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             id=UUID(int=2), name="calc", arguments={"x": 1}
         )
         tool_result = SimpleNamespace(call=tool_call, result={"ok": True})
+        diagnostic = ToolCallDiagnostic(
+            id="diag-1",
+            call_id="call-1",
+            requested_name="weather",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
         events = [
             Event(
                 type=EventType.TOOL_EXECUTE,
@@ -504,6 +517,10 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 payload={"result": tool_result},
                 elapsed=0.01,
             ),
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostic": diagnostic},
+            ),
         ]
 
         log = self.theme._events_log(
@@ -516,7 +533,75 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         )
 
         assert log is not None
-        self.assertEqual(len(log), 5)
+        self.assertEqual(len(log), 6)
+        self.assertIn("tool.unknown", log[-1])
+        self.assertIn("Unknown tool.", log[-1])
+
+    def test_events_log_tool_result_diagnostic_and_error(self):
+        call = ToolCall(id="call-2", name="calc", arguments={"x": 1})
+        diagnostic = ToolCallDiagnostic(
+            id="diag-2",
+            call_id=call.id,
+            requested_name="calc",
+            code=ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+            stage=ToolCallDiagnosticStage.VALIDATE,
+            message="Invalid arguments.",
+        )
+        error = ToolCallError(
+            id="error-1",
+            call=call,
+            name="calc",
+            arguments={"x": 1},
+            error=RuntimeError("secret"),
+            message="Tool failed.",
+        )
+        events = [
+            Event(
+                type=EventType.TOOL_RESULT,
+                payload={"call": call, "result": diagnostic},
+            ),
+            Event(
+                type=EventType.TOOL_RESULT,
+                payload={"result": error},
+                elapsed=0.01,
+            ),
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostics": ["bad"]},
+            ),
+        ]
+
+        log = self.theme._events_log(
+            events,
+            events_limit=None,
+            include_tokens=False,
+            include_tool_detect=False,
+            include_tools=True,
+            include_non_tools=False,
+        )
+
+        assert log is not None
+        self.assertIn("tool_call.arguments_invalid", log[0])
+        self.assertIn("Tool failed.", log[1])
+        self.assertNotIn("secret", log[1])
+        self.assertIn("bad", log[2])
+
+    def test_tool_diagnostic_from_payload_variants(self):
+        diagnostic = ToolCallDiagnostic(
+            id="diag-payload",
+            call_id="call-payload",
+            requested_name="calc",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+
+        self.assertIsNone(self.theme._tool_diagnostic_from_payload("bad"))
+        self.assertIs(
+            self.theme._tool_diagnostic_from_payload({"result": diagnostic}),
+            diagnostic,
+        )
+        self.assertIsNone(self.theme._tool_diagnostic_from_payload({}))
 
     def test_search_message_matches(self):
         msg = EngineMessageScored(

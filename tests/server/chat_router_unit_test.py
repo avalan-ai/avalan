@@ -1,5 +1,6 @@
 import importlib
 import sys
+from json import loads
 from logging import Logger, getLogger
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
@@ -15,6 +16,11 @@ from avalan.entities import (
     MessageRole,
     ReasoningEffort,
     ReasoningToken,
+    ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
+    ToolCallError,
     ToolCallToken,
 )
 from avalan.model import TextGenerationResponse
@@ -318,6 +324,132 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertIn('"content":"a"', chunks[0])
         self.assertIn('"content":"b"', chunks[1])
         self.assertEqual(len(chunks), 3)
+
+    async def test_streaming_projects_tool_diagnostic_event(self) -> None:
+        from avalan.event import Event, EventType
+
+        diagnostic = ToolCallDiagnostic(
+            id="diag-chat",
+            call_id="call-chat",
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+
+        async def output_gen():
+            yield Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostic": diagnostic},
+            )
+            yield Event(type=EventType.START, payload={})
+            yield "b"
+
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = output_gen()
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+        chunks = [chunk async for chunk in resp.body_iterator]
+        diagnostic_chunk = loads(chunks[0][6:])
+        diagnostic_payload = loads(
+            diagnostic_chunk["choices"][0]["delta"]["content"]
+        )
+        self.assertEqual(diagnostic_payload["type"], "tool_diagnostic")
+        self.assertEqual(
+            diagnostic_payload["diagnostic"]["code"], "tool.unknown"
+        )
+        self.assertIn('"content":"b"', chunks[1])
+        self.assertEqual(len(chunks), 3)
+
+    async def test_event_text_handles_diagnostic_payload_variants(
+        self,
+    ) -> None:
+        from avalan.event import Event, EventType
+
+        diagnostic = ToolCallDiagnostic(
+            id="diag-chat-list",
+            call_id="call-chat",
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+
+        diagnostic_text = self.chat._event_text(
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostics": ["bad", diagnostic]},
+            )
+        )
+        diagnostic_payload = loads(diagnostic_text)
+        self.assertEqual(diagnostic_payload["type"], "tool_diagnostic")
+        self.assertEqual(
+            diagnostic_payload["diagnostic"]["code"], "tool.unknown"
+        )
+
+        result_text = self.chat._event_text(
+            Event(
+                type=EventType.TOOL_RESULT,
+                payload={"result": diagnostic},
+            )
+        )
+        result_payload = loads(result_text)
+        self.assertEqual(result_payload["type"], "tool_diagnostic")
+
+        self.assertEqual(
+            self.chat._event_text(
+                Event(
+                    type=EventType.TOOL_DIAGNOSTIC,
+                    payload={"diagnostic": "bad"},
+                )
+            ),
+            "",
+        )
+
+    async def test_streaming_projects_tool_error_safely(self) -> None:
+        from avalan.event import Event, EventType
+
+        call = ToolCall(id="call-error", name="tool", arguments={})
+        error = ToolCallError(
+            id="error-chat",
+            call=call,
+            name="tool",
+            arguments={},
+            error=RuntimeError("secret"),
+            message="Tool failed.",
+        )
+
+        async def output_gen():
+            yield Event(
+                type=EventType.TOOL_RESULT,
+                payload={"result": error},
+            )
+
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = output_gen()
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+        chunks = [chunk async for chunk in resp.body_iterator]
+        error_chunk = loads(chunks[0][6:])
+        error_payload = loads(error_chunk["choices"][0]["delta"]["content"])
+        self.assertEqual(error_payload["type"], "tool_error")
+        self.assertEqual(
+            error_payload["error"],
+            {"type": "RuntimeError", "message": "Tool failed."},
+        )
+        self.assertNotIn("secret", chunks[0])
         orch.assert_awaited_once()
 
     async def test_streaming_includes_reasoning_tokens(self) -> None:

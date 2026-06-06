@@ -18,6 +18,9 @@ from avalan.entities import (
     ReasoningToken,
     Token,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -416,6 +419,43 @@ async def _run_tool_handlers_cover_branches() -> None:
     error_events = await translator_error._handle_tool_result(error_event)
     assert any(
         event["event"] == "artifact.completed" for event in error_events
+    )
+    error_artifact = await translator_error._store.get_artifact(
+        "tool-error", "call-4"
+    )
+    assert error_artifact["content"][0]["data"]["error"] == {
+        "type": "RuntimeError",
+        "message": "fail",
+    }
+
+    translator_diagnostic = await prepare("tool-diagnostic")
+    diagnostic_call = ToolCall(id="call-d", name="missing", arguments=None)
+    diagnostic = ToolCallDiagnostic(
+        id="diag-d",
+        call_id=diagnostic_call.id,
+        requested_name="missing",
+        code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        stage=ToolCallDiagnosticStage.RESOLVE,
+        message="Unknown tool.",
+    )
+    diagnostic_event = Event(
+        type=EventType.TOOL_DIAGNOSTIC,
+        payload={"call": diagnostic_call, "diagnostic": diagnostic},
+    )
+    diagnostic_events = await translator_diagnostic._handle_tool_result(
+        diagnostic_event
+    )
+    assert any(
+        event["event"] == "artifact.completed" for event in diagnostic_events
+    )
+    diagnostic_artifact = await translator_diagnostic._store.get_artifact(
+        "tool-diagnostic", "call-d"
+    )
+    assert diagnostic_artifact["metadata"]["status"] == "diagnostic"
+    assert diagnostic_artifact["metadata"]["diagnostic_code"] == "tool.unknown"
+    assert (
+        diagnostic_artifact["content"][0]["data"]["diagnostic"]["message"]
+        == "Unknown tool."
     )
 
     translator_payload = await prepare("tool-payload")
@@ -940,6 +980,10 @@ async def _run_additional_router_helpers() -> None:
         _state_for_item(Event(type=EventType.TOOL_RESULT, payload={}))
         is StreamState.TOOL
     )
+    assert (
+        _state_for_item(Event(type=EventType.TOOL_DIAGNOSTIC, payload={}))
+        is StreamState.TOOL
+    )
     assert _state_for_item(Event(type=EventType.START, payload={})) is None
     assert _state_for_item("text") is StreamState.ANSWER
     assert _state_for_item(Token(token="text")) is StreamState.ANSWER
@@ -967,6 +1011,41 @@ async def _run_additional_router_helpers() -> None:
             Event(type=EventType.TOOL_RESULT, payload={"call": call})
         )
         == "call"
+    )
+    diagnostic = ToolCallDiagnostic(
+        id="diag",
+        call_id="call-d",
+        requested_name="tool",
+        code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        stage=ToolCallDiagnosticStage.RESOLVE,
+        message="Unknown tool.",
+    )
+    assert (
+        _call_identifier(
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostic": diagnostic},
+            )
+        )
+        == "call-d"
+    )
+    assert (
+        _call_identifier(
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostics": ["bad", diagnostic]},
+            )
+        )
+        == "call-d"
+    )
+    assert (
+        _call_identifier(
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostic": "bad"},
+            )
+        )
+        is None
     )
     assert (
         _call_identifier(Event(type=EventType.TOOL_RESULT, payload={})) is None
