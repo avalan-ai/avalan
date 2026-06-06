@@ -8,7 +8,21 @@ from uuid import UUID
 
 from avalan.cli.download import create_live_tqdm_class, tqdm_rich_progress
 from avalan.compat import override
-from avalan.utils import _j, _lf, logger_replace, to_json
+from avalan.entities import (
+    ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
+    ToolCallError,
+)
+from avalan.utils import (
+    _j,
+    _lf,
+    logger_replace,
+    to_json,
+    tool_call_diagnostic_payload,
+    tool_call_error_payload,
+)
 
 
 class UtilsListJoinTestCase(TestCase):
@@ -71,6 +85,61 @@ class UtilsToJsonTestCase(TestCase):
     def test_to_json_unsupported_type(self) -> None:
         with self.assertRaises(TypeError):
             to_json(object())
+
+
+class UtilsToolCallErrorPayloadTestCase(TestCase):
+    def test_tool_call_diagnostic_payload_includes_canonical_name(
+        self,
+    ) -> None:
+        diagnostic = ToolCallDiagnostic(
+            id="diag",
+            requested_name="lookup",
+            canonical_name="lookup_weather",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+        )
+
+        payload = tool_call_diagnostic_payload(diagnostic)
+
+        self.assertEqual(payload["canonical_name"], "lookup_weather")
+
+    def test_tool_call_error_payload_projects_exception_safely(self) -> None:
+        call = ToolCall(id="call-1", name="tool", arguments={})
+        error = ToolCallError(
+            id="err-1",
+            call=call,
+            name="tool",
+            arguments={},
+            error=RuntimeError("secret-path"),
+            message="Tool failed.",
+        )
+
+        payload = tool_call_error_payload(error)
+
+        self.assertEqual(
+            payload, {"type": "RuntimeError", "message": "Tool failed."}
+        )
+        self.assertNotIn("secret-path", to_json(payload))
+
+    def test_tool_call_error_payload_uses_projected_error_type(self) -> None:
+        call = ToolCall(id="call-2", name="tool", arguments={})
+        error = ToolCallError(
+            id="err-2",
+            call=call,
+            name="tool",
+            arguments={},
+            error={"type": "ValidationError", "detail": "raw value"},
+            message="Arguments are invalid.",
+        )
+
+        payload = tool_call_error_payload(error)
+
+        self.assertEqual(
+            payload,
+            {"type": "ValidationError", "message": "Arguments are invalid."},
+        )
+        self.assertNotIn("raw value", to_json(payload))
 
 
 class CompatOverrideTestCase(TestCase):

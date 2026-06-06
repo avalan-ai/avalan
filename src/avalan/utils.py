@@ -1,4 +1,4 @@
-from .entities import ToolCallDiagnostic
+from .entities import ToolCallDiagnostic, ToolCallError
 
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, time
@@ -64,4 +64,12 @@ def tool_call_diagnostic_payload(
         payload["canonical_name"] = diagnostic.canonical_name
     if diagnostic.details:
         payload["details"] = diagnostic.details
+    return payload
+
+
+def tool_call_error_payload(error: ToolCallError) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": error.error_type,
+        "message": error.message,
+    }
     return payload

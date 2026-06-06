@@ -3,13 +3,19 @@ from ...entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCall,
+    ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
 )
 from ...event import Event, EventType
 from ...server.entities import ResponsesRequest
-from ...utils import to_json
+from ...utils import (
+    to_json,
+    tool_call_diagnostic_payload,
+    tool_call_error_payload,
+)
 from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
@@ -74,11 +80,16 @@ async def create_response(
                 call_id: str | None = None
                 if isinstance(token, Event):
                     if token.type not in (
+                        EventType.TOOL_DIAGNOSTIC,
                         EventType.TOOL_PROCESS,
                         EventType.TOOL_RESULT,
                     ):
                         continue
-                    call_id = _tool_call_event_item(token)["id"]
+                    item = _tool_call_event_item(token)
+                    if item is None:
+                        continue
+                    item_id = item.get("id")
+                    call_id = item_id if isinstance(item_id, str) else None
                 elif (
                     isinstance(token, ToolCallToken) and token.call is not None
                 ):
@@ -159,28 +170,38 @@ def _token_to_sse(
             )
         )
     elif isinstance(token, Event) and token.type in (
+        EventType.TOOL_DIAGNOSTIC,
         EventType.TOOL_PROCESS,
         EventType.TOOL_RESULT,
     ):
         item = _tool_call_event_item(token)
+        if item is None:
+            return events
         delta_obj = {
             "id": item["id"],
             "name": item["name"],
             "arguments": item.get("arguments"),
         }
-        if token.type is EventType.TOOL_RESULT:
+        if "diagnostic" in item:
+            delta_obj["diagnostic"] = item["diagnostic"]
+        elif token.type is EventType.TOOL_RESULT:
             if "error" in item:
-                delta_obj["error"] = to_json(item.get("error"))
+                delta_obj["error"] = item.get("error")
             else:
                 result = item.get("result", None)
                 delta_obj["result"] = to_json(result) if result else None
 
+        event_type = (
+            "response.tool_call_diagnostic.delta"
+            if "diagnostic" in item
+            else "response.function_call_arguments.delta"
+        )
         events.append(
             sse_message(
                 to_json(
                     {
                         **delta_obj,
-                        "type": "response.function_call_arguments.delta",
+                        "type": event_type,
                         "delta": to_json(delta_obj),
                         "id": item["id"],
                         "output_index": 0,
@@ -188,7 +209,7 @@ def _token_to_sse(
                         "sequence_number": seq,
                     }
                 ),
-                event="response.function_call_arguments.delta",
+                event=event_type,
             )
         )
     elif isinstance(token, ToolCallToken):
@@ -304,7 +325,12 @@ def _new_state(
         new_state = ResponseState.REASONING
     elif isinstance(token, (ToolCallToken, Event)) and (
         not isinstance(token, Event)
-        or token.type in (EventType.TOOL_PROCESS, EventType.TOOL_RESULT)
+        or token.type
+        in (
+            EventType.TOOL_DIAGNOSTIC,
+            EventType.TOOL_PROCESS,
+            EventType.TOOL_RESULT,
+        )
     ):
         new_state = ResponseState.TOOL_CALLING
     elif token is not None:
@@ -410,7 +436,7 @@ def _content_part_done(id: str | None = None) -> str:
     return sse_message(to_json(data), event="response.content_part.done")
 
 
-def _tool_call_event_item(event: Event) -> dict[str, Any]:
+def _tool_call_event_item(event: Event) -> dict[str, Any] | None:
     payload = cast(Any, event.payload)
     tool_result = (
         payload["result"]
@@ -419,12 +445,48 @@ def _tool_call_event_item(event: Event) -> dict[str, Any]:
         and "result" in payload
         else None
     )
+    if isinstance(tool_result, ToolCallDiagnostic):
+        call = payload.get("call") if isinstance(payload, dict) else None
+        return _tool_call_diagnostic_item(
+            tool_result,
+            call if isinstance(call, ToolCall) else None,
+        )
+    if event.type is EventType.TOOL_DIAGNOSTIC:
+        diagnostic = (
+            payload.get("diagnostic") if isinstance(payload, dict) else None
+        )
+        if not isinstance(diagnostic, ToolCallDiagnostic):
+            diagnostics = (
+                payload.get("diagnostics")
+                if isinstance(payload, dict)
+                else None
+            )
+            if isinstance(diagnostics, list):
+                diagnostic = next(
+                    (
+                        item
+                        for item in diagnostics
+                        if isinstance(item, ToolCallDiagnostic)
+                    ),
+                    None,
+                )
+        if not isinstance(diagnostic, ToolCallDiagnostic):
+            return None
+        call = payload.get("call") if isinstance(payload, dict) else None
+        return _tool_call_diagnostic_item(
+            diagnostic,
+            call if isinstance(call, ToolCall) else None,
+        )
     if tool_result is not None:
         tool_call = tool_result.call
     elif isinstance(payload, list):
         tool_call = payload[0]
+    elif isinstance(payload, dict):
+        tool_call = payload.get("call") or payload.get(0)
     else:
-        tool_call = cast(dict[Any, Any], payload)[0]
+        tool_call = None
+    if tool_call is None:
+        return None
     item = {
         "type": "function_call",
         "id": str(tool_call.id),
@@ -433,9 +495,39 @@ def _tool_call_event_item(event: Event) -> dict[str, Any]:
     }
     if tool_result is not None:
         if isinstance(tool_result, ToolCallError):
-            item["error"] = tool_result.message
+            item["error"] = tool_call_error_payload(tool_result)
         elif isinstance(tool_result, ToolCallResult):
             item["result"] = tool_result.result
         else:
             item["result"] = tool_result
     return item
+
+
+def _tool_call_diagnostic_item(
+    diagnostic: ToolCallDiagnostic, call: ToolCall | None
+) -> dict[str, Any]:
+    diagnostic_payload = {
+        "id": str(diagnostic.id),
+        **tool_call_diagnostic_payload(diagnostic),
+    }
+    if diagnostic.call_id is not None:
+        diagnostic_payload["call_id"] = str(diagnostic.call_id)
+    if diagnostic.started_at is not None:
+        diagnostic_payload["started_at"] = diagnostic.started_at.isoformat()
+    if diagnostic.finished_at is not None:
+        diagnostic_payload["finished_at"] = diagnostic.finished_at.isoformat()
+    if diagnostic.duration_ms is not None:
+        diagnostic_payload["duration_ms"] = diagnostic.duration_ms
+    return {
+        "type": "function_call",
+        "id": str(call.id if call else diagnostic.call_id or diagnostic.id),
+        "name": (
+            call.name
+            if call
+            else diagnostic.canonical_name
+            or diagnostic.requested_name
+            or "tool"
+        ),
+        "arguments": call.arguments if call else None,
+        "diagnostic": diagnostic_payload,
+    }

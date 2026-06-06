@@ -750,7 +750,10 @@ async def _token_stream(
                     if next_input_token_count:
                         display_input_token_count += next_input_token_count
                         input_token_count = next_input_token_count
-                elif event.type == EventType.TOOL_RESULT:
+                elif event.type in (
+                    EventType.TOOL_DIAGNOSTIC,
+                    EventType.TOOL_RESULT,
+                ):
                     tool_event_results.append(event)
                     if event.payload and "call" in event.payload:
                         completed_call_ids.add(event.payload["call"].id)

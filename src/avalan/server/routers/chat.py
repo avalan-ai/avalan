@@ -1,6 +1,12 @@
 from ...agent.orchestrator import Orchestrator
-from ...entities import MessageRole, ReasoningToken, ToolCallToken
-from ...event import Event
+from ...entities import (
+    MessageRole,
+    ReasoningToken,
+    ToolCallDiagnostic,
+    ToolCallError,
+    ToolCallToken,
+)
+from ...event import Event, EventType
 from ...server.entities import (
     ChatCompletionChoice,
     ChatCompletionChunk,
@@ -11,12 +17,17 @@ from ...server.entities import (
     ChatCompletionUsage,
     ChatMessage,
 )
+from ...utils import (
+    to_json,
+    tool_call_diagnostic_payload,
+    tool_call_error_payload,
+)
 from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
 
 from logging import Logger
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -61,8 +72,10 @@ async def create_chat_completion(
         async def generate_chunks() -> AsyncIterator[str]:
             async for token in response:
                 if isinstance(token, Event):
-                    continue
-                if isinstance(token, (ReasoningToken, ToolCallToken)):
+                    token_text = _event_text(token)
+                    if not token_text:
+                        continue
+                elif isinstance(token, (ReasoningToken, ToolCallToken)):
                     token_text = token.token
                 else:
                     token_text = str(token)
@@ -118,3 +131,67 @@ async def create_chat_completion(
     await orchestrator.sync_messages()
 
     return final_response
+
+
+def _event_text(event: Event) -> str:
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    if event.type is EventType.TOOL_DIAGNOSTIC:
+        diagnostic = _payload_diagnostic(payload)
+        if diagnostic is None:
+            return ""
+        return to_json(
+            {
+                "type": "tool_diagnostic",
+                "diagnostic": _diagnostic_payload(diagnostic),
+            }
+        )
+    if event.type is EventType.TOOL_RESULT:
+        result = payload.get("result")
+        if isinstance(result, ToolCallDiagnostic):
+            return to_json(
+                {
+                    "type": "tool_diagnostic",
+                    "diagnostic": _diagnostic_payload(result),
+                }
+            )
+        if isinstance(result, ToolCallError):
+            return to_json(
+                {
+                    "type": "tool_error",
+                    "toolCallId": str(result.call.id),
+                    "name": result.call.name,
+                    "error": tool_call_error_payload(result),
+                }
+            )
+    return ""
+
+
+def _payload_diagnostic(
+    payload: dict[str, Any],
+) -> ToolCallDiagnostic | None:
+    diagnostic = payload.get("diagnostic")
+    if isinstance(diagnostic, ToolCallDiagnostic):
+        return diagnostic
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, list):
+        return next(
+            (
+                item
+                for item in diagnostics
+                if isinstance(item, ToolCallDiagnostic)
+            ),
+            None,
+        )
+    return None
+
+
+def _diagnostic_payload(
+    diagnostic: ToolCallDiagnostic,
+) -> dict[str, Any]:
+    payload = {
+        "id": str(diagnostic.id),
+        **tool_call_diagnostic_payload(diagnostic),
+    }
+    if diagnostic.call_id is not None:
+        payload["call_id"] = str(diagnostic.call_id)
+    return payload
