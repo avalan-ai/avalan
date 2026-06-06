@@ -1,3 +1,4 @@
+from typing import Any, cast
 from unittest import TestCase, main
 from unittest.mock import patch
 from uuid import uuid4 as _uuid4
@@ -6,6 +7,7 @@ from avalan.entities import (
     ToolCall,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
+    ToolCallRecoveryFormat,
     ToolFormat,
 )
 from avalan.tool.parser import ToolCallParser
@@ -138,6 +140,99 @@ class ToolCallParserFormatTestCase(TestCase):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaises(AssertionError):
                     ToolCallParser(**kwargs)
+
+    def test_recovery_formats_default_to_empty(self):
+        parser = ToolCallParser()
+
+        self.assertEqual(parser.recovery_formats, ())
+
+    def test_recovery_formats_are_explicit(self):
+        parser = ToolCallParser(
+            recovery_formats=[
+                ToolCallRecoveryFormat.FENCED,
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+            ]
+        )
+
+        self.assertEqual(
+            parser.recovery_formats,
+            (
+                ToolCallRecoveryFormat.FENCED,
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+            ),
+        )
+
+    def test_rejects_invalid_recovery_formats(self):
+        with self.assertRaises(AssertionError):
+            ToolCallParser(recovery_formats=cast(Any, ["fenced"]))
+
+    def test_recovery_shaped_text_does_not_parse_by_default(self):
+        cases = (
+            (
+                "tool_call_block",
+                (
+                    '[TOOL_CALL]{"name": "calculator", "arguments": {}}'
+                    "[/TOOL_CALL]"
+                ),
+            ),
+            (
+                "minimax_xml",
+                (
+                    '<invoke name="calculator"><parameter name="expression">'
+                    "2 + 2</parameter></invoke>"
+                ),
+            ),
+            (
+                "tool_code",
+                (
+                    '<tool_code>{"name": "calculator", "arguments":'
+                    " {}}</tool_code>"
+                ),
+            ),
+            (
+                "broad_xml",
+                (
+                    '<function name="calculator"><arguments>{}</arguments>'
+                    "</function>"
+                ),
+            ),
+            (
+                "dsml_leakage",
+                (
+                    "<DSML:tool_calls>"
+                    '<DSML:invoke name="calculator">'
+                    "</DSML:invoke></DSML:tool_calls>"
+                ),
+            ),
+            (
+                "fenced",
+                (
+                    "```xml\n"
+                    '<tool_call>{"name": "calculator", "arguments": {}}'
+                    "</tool_call>\n```"
+                ),
+            ),
+        )
+
+        parser = ToolCallParser()
+        for name, text in cases:
+            with self.subTest(name=name):
+                outcome = parser.parse(text)
+
+                self.assertEqual(outcome.calls, [])
+                self.assertEqual(outcome.diagnostics, [])
+
+    def test_recovery_diagnostic_details_identify_source_format(self):
+        details = {"reason": "malformed"}
+
+        diagnostic = ToolCallParser._malformed_call_diagnostic(
+            details=details,
+            recovery_format=ToolCallRecoveryFormat.FENCED,
+        )
+
+        self.assertEqual(diagnostic.details["reason"], "malformed")
+        self.assertEqual(diagnostic.details["source_format"], "fenced")
+        self.assertEqual(details, {"reason": "malformed"})
 
 
 class ToolCallParserParseOutcomeTestCase(TestCase):

@@ -14,6 +14,7 @@ from ...entities import (
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
     ToolCall,
+    ToolCallRecoveryFormat,
     ToolFormat,
 )
 from ...event import Event, EventStats
@@ -579,9 +580,23 @@ async def agent_run(
             tool_format = (
                 ToolFormat(args.tool_format) if args.tool_format else None
             )
-            orchestrator = await loader.from_settings(
-                settings, tool_settings=tool_settings, tool_format=tool_format
-            )
+            tool_recovery_formats = [
+                ToolCallRecoveryFormat(value)
+                for value in getattr(args, "tool_recovery_format", None) or []
+            ]
+            if tool_recovery_formats:
+                orchestrator = await loader.from_settings(
+                    settings,
+                    tool_settings=tool_settings,
+                    tool_format=tool_format,
+                    tool_recovery_formats=tool_recovery_formats,
+                )
+            else:
+                orchestrator = await loader.from_settings(
+                    settings,
+                    tool_settings=tool_settings,
+                    tool_format=tool_format,
+                )
         orchestrator.event_manager.add_listener(_event_listener)
 
         orchestrator = await stack.enter_async_context(orchestrator)
@@ -948,11 +963,13 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
     )
     template = env.get_template("blueprint.toml")
     tool_format = getattr(args, "tool_format", None)
+    tool_recovery_formats = getattr(args, "tool_recovery_format", None) or []
     rendered = template.render(
         orchestrator=settings,
         browser_tool=browser_tool,
         database_tool=database_tool,
         graph_tool=graph_tool,
         tool_format=tool_format,
+        tool_recovery_formats=tool_recovery_formats,
     )
     console.print(Syntax(rendered, "toml"))
