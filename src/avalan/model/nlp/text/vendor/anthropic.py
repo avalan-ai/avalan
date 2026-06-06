@@ -10,6 +10,7 @@ from .....entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -17,7 +18,7 @@ from .....entities import (
 from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
-from .....utils import to_json
+from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -269,8 +270,15 @@ class AnthropicClient(TextGenerationVendor):
                 continue
 
             if message.role == MessageRole.TOOL:
-                result = message.tool_call_result or message.tool_call_error
-                if not isinstance(result, (ToolCallResult, ToolCallError)):
+                result = (
+                    message.tool_call_result
+                    or message.tool_call_error
+                    or message.tool_call_diagnostic
+                )
+                if not isinstance(
+                    result,
+                    (ToolCallResult, ToolCallError, ToolCallDiagnostic),
+                ):
                     if not isinstance(message, Message):
                         fallback_messages = self._message_templates(
                             message, [*excluded_roles, "tool"]
@@ -283,11 +291,35 @@ class AnthropicClient(TextGenerationVendor):
                             )
                         template_messages.extend(fallback_messages)
                     continue
-                call_id = str(result.call.id)
-                if call_id not in tool_call_ids:
-                    tool_use_block = AnthropicClient._tool_use_block(
-                        result.call
+                call: ToolCall | MessageToolCall
+                if isinstance(result, ToolCallDiagnostic):
+                    if result.call_id is None:
+                        template_messages.append(
+                            {
+                                "role": str(MessageRole.ASSISTANT),
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": to_json(
+                                            tool_call_diagnostic_payload(
+                                                result
+                                            )
+                                        ),
+                                    }
+                                ],
+                            }
+                        )
+                        continue
+                    call = AnthropicClient._diagnostic_tool_call(
+                        message,
+                        result,
                     )
+                    call_id = str(result.call_id)
+                else:
+                    call = result.call
+                    call_id = str(result.call.id)
+                if call_id not in tool_call_ids:
+                    tool_use_block = AnthropicClient._tool_use_block(call)
                     if last_assistant_index is not None:
                         assistant_message = template_messages[
                             last_assistant_index
@@ -384,9 +416,42 @@ class AnthropicClient(TextGenerationVendor):
         }
 
     @staticmethod
+    def _diagnostic_tool_call(
+        message: Message,
+        diagnostic: ToolCallDiagnostic,
+    ) -> MessageToolCall:
+        assert diagnostic.call_id is not None
+        return MessageToolCall(
+            id=str(diagnostic.call_id),
+            name=(
+                message.name
+                or diagnostic.canonical_name
+                or diagnostic.requested_name
+                or "tool"
+            ),
+            arguments=cast(Any, message.arguments or {}),
+        )
+
+    @staticmethod
     def _tool_result_message(
-        result: ToolCallResult | ToolCallError,
+        result: ToolCallResult | ToolCallError | ToolCallDiagnostic,
     ) -> dict[str, Any]:
+        if isinstance(result, ToolCallDiagnostic):
+            assert result.call_id is not None
+            return {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": str(result.call_id),
+                        "content": to_json(
+                            tool_call_diagnostic_payload(result)
+                        ),
+                        "is_error": True,
+                    }
+                ],
+            }
+
         tool_result_content: dict[str, Any] = {
             "type": "tool_result",
             "tool_use_id": str(result.call.id),

@@ -460,6 +460,25 @@ class EntityHelperTestCase(TestCase):
 
         self.assertTrue(message.is_from_agent)
 
+    def test_message_can_carry_tool_call_diagnostic(self):
+        diagnostic = ToolCallDiagnostic(
+            id=uuid4(),
+            call_id="call1",
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Tool is unknown.",
+        )
+        message = Message(
+            role=MessageRole.TOOL,
+            content='{"code": "tool.unknown"}',
+            tool_call_diagnostic=diagnostic,
+        )
+
+        self.assertIs(message.tool_call_diagnostic, diagnostic)
+        self.assertIsNone(message.tool_call_result)
+        self.assertIsNone(message.tool_call_error)
+
     def test_reasoning_token_initializes_base_token(self):
         token = ReasoningToken(token="thinking", id=1, probability=0.5)
 

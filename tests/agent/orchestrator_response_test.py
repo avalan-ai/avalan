@@ -2,6 +2,7 @@ from asyncio import wait_for
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from io import StringIO
+from json import loads
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
@@ -25,6 +26,9 @@ from avalan.entities import (
     TokenDetail,
     ToolCall,
     ToolCallContext,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallResult,
     ToolCallToken,
     ToolFormat,
@@ -36,6 +40,7 @@ from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
 
@@ -627,6 +632,100 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         assert isinstance(context.input, list)
         self.assertEqual(context.input[-2].tool_calls[0].id, "call1")
         self.assertEqual(context.input[-1].content, "4")
+
+    async def test_to_str_returns_anchored_diagnostic_to_model(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        async def known(value: str) -> str:
+            """Return the provided value.
+
+            Args:
+                value: Value to return.
+
+            Returns:
+                Provided value.
+            """
+            return value
+
+        tool = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[known])]
+        )
+        call = ToolCall(
+            id="call1",
+            name="missing",
+            arguments={"value": "x"},
+        )
+
+        async def outer_gen():
+            yield ToolCallToken(token="", call=call)
+
+        outer_response = TextGenerationResponse(
+            lambda **_: outer_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=GenerationSettings(),
+            settings=GenerationSettings(),
+        )
+        agent.return_value = _string_response("recovered", async_gen=False)
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        result = await resp.to_str()
+
+        self.assertEqual(result, "recovered")
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        assistant_message = context.input[-2]
+        diagnostic_message = context.input[-1]
+        self.assertEqual(assistant_message.tool_calls[0].id, "call1")
+        self.assertEqual(assistant_message.tool_calls[0].name, "missing")
+        self.assertEqual(diagnostic_message.role, MessageRole.TOOL)
+        self.assertIsNone(diagnostic_message.tool_call_result)
+        self.assertIsNone(diagnostic_message.tool_call_error)
+        self.assertIsNotNone(diagnostic_message.tool_call_diagnostic)
+        diagnostic = diagnostic_message.tool_call_diagnostic
+        assert diagnostic is not None
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        )
+        self.assertEqual(diagnostic.call_id, "call1")
+        payload = loads(str(diagnostic_message.content))
+        self.assertEqual(payload["code"], "tool.unknown")
+        self.assertEqual(payload["requested_name"], "missing")
+
+    async def test_unanchored_diagnostic_uses_recovery_message(self):
+        diagnostic = ToolCallDiagnostic(
+            id="diag1",
+            code=ToolCallDiagnosticCode.MALFORMED_CALL,
+            stage=ToolCallDiagnosticStage.PARSE,
+            message="Could not parse tool call.",
+        )
+
+        messages = OrchestratorResponse._tool_observation_messages(
+            diagnostic,
+            json_output=False,
+        )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].role, MessageRole.ASSISTANT)
+        self.assertIs(messages[0].tool_call_diagnostic, diagnostic)
+        self.assertIsNone(messages[0].tool_calls)
+        payload = loads(str(messages[0].content))
+        self.assertEqual(payload["code"], "tool_call.malformed")
 
     async def test_iteration_carries_tool_messages_to_nested_tool_call(self):
         engine = _DummyEngine()

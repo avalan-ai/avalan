@@ -1676,6 +1676,7 @@ class Ds4Model(TextGenerationModel):
             message.tool_calls
             or message.tool_call_result
             or message.tool_call_error
+            or message.tool_call_diagnostic
         )
 
     @staticmethod

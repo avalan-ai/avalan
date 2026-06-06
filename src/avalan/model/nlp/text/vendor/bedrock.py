@@ -9,6 +9,7 @@ from .....entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -16,7 +17,7 @@ from .....entities import (
 from .....model.provider import ProviderFamily
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
-from .....utils import to_json
+from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -530,7 +531,28 @@ class BedrockClient(TextGenerationVendor):
             if exclude_roles and str(message.role) in exclude_roles:
                 continue
             if message.role == MessageRole.TOOL:
-                result = message.tool_call_result or message.tool_call_error
+                result = (
+                    message.tool_call_result
+                    or message.tool_call_error
+                    or message.tool_call_diagnostic
+                )
+                if (
+                    isinstance(result, ToolCallDiagnostic)
+                    and result.call_id is None
+                ):
+                    templated.append(
+                        {
+                            "role": str(MessageRole.ASSISTANT),
+                            "content": [
+                                {
+                                    "text": to_json(
+                                        tool_call_diagnostic_payload(result)
+                                    )
+                                }
+                            ],
+                        }
+                    )
+                    continue
                 if result:
                     templated.append(self._tool_result_message(result))
                 continue
@@ -715,8 +737,29 @@ class BedrockClient(TextGenerationVendor):
         return {"type": "url", "url": image_url.get("uri", "")}
 
     def _tool_result_message(
-        self, result: ToolCallResult | ToolCallError
+        self, result: ToolCallResult | ToolCallError | ToolCallDiagnostic
     ) -> dict[str, Any]:
+        if isinstance(result, ToolCallDiagnostic):
+            assert result.call_id is not None
+            return {
+                "role": str(MessageRole.USER),
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": str(result.call_id),
+                            "content": [
+                                {
+                                    "text": to_json(
+                                        tool_call_diagnostic_payload(result)
+                                    )
+                                }
+                            ],
+                            "status": "error",
+                        }
+                    }
+                ],
+            }
+
         content: dict[str, Any] = {
             "toolUseId": result.call.id,
             "content": [

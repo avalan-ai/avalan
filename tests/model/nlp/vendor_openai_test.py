@@ -23,6 +23,9 @@ from avalan.entities import (
     ReasoningToken,
     Token,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -1659,6 +1662,51 @@ class TemplateAndToolSchemaTestCase(TestCase):
                 },
             ],
         )
+
+    def test_template_messages_tool_diagnostic(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        diagnostic = ToolCallDiagnostic(
+            id="d1",
+            call_id="c1",
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Tool is unknown.",
+        )
+        msg = Message(
+            role=MessageRole.TOOL,
+            name="missing",
+            arguments={"a": 1},
+            tool_call_diagnostic=diagnostic,
+        )
+
+        templated = client._template_messages([msg])
+
+        self.assertEqual(templated[0]["call_id"], "c1")
+        self.assertEqual(templated[0]["name"], "missing")
+        self.assertEqual(templated[0]["arguments"], '{"a": 1}')
+        output = loads(templated[1]["output"])
+        self.assertEqual(output["code"], "tool.unknown")
+        self.assertEqual(output["requested_name"], "missing")
+
+    def test_template_messages_unanchored_tool_diagnostic(self):
+        client = self.mod.OpenAIClient(api_key="k", base_url="b")
+        diagnostic = ToolCallDiagnostic(
+            id="d1",
+            code=ToolCallDiagnosticCode.MALFORMED_CALL,
+            stage=ToolCallDiagnosticStage.PARSE,
+            message="Tool call could not be parsed.",
+        )
+        msg = Message(
+            role=MessageRole.TOOL,
+            tool_call_diagnostic=diagnostic,
+        )
+
+        templated = client._template_messages([msg])
+
+        self.assertEqual(templated[0]["role"], "assistant")
+        output = loads(templated[0]["content"])
+        self.assertEqual(output["code"], "tool_call.malformed")
 
 
 class OpenAIAdditionalCoverageTestCase(TestCase):

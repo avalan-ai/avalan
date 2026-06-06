@@ -608,6 +608,8 @@ class TextGenerationModel(BaseNLPModel):
         template_messages = []
         for message in messages:
             message_dict = asdict(message)
+            if message_dict.get("tool_call_diagnostic") is None:
+                message_dict.pop("tool_call_diagnostic", None)
             prepared = _TOOL_MESSAGE_PARSER.prepare_message_for_template(
                 message, message_dict
             )

@@ -3,6 +3,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from importlib import import_module, reload
 from importlib.machinery import ModuleSpec
+from json import loads
 from sys import modules
 from types import ModuleType, SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -18,6 +19,9 @@ from avalan.entities import (
     ReasoningToken,
     Token,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -936,6 +940,52 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
             config["tools"][0]["toolSpec"]["name"],
             "avl_cGtnLnRvb2w",
         )
+
+    def test_template_messages_tool_diagnostic(self):
+        client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
+        diagnostic = ToolCallDiagnostic(
+            id="diag1",
+            call_id="call1",
+            requested_name="missing",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Tool is unknown.",
+        )
+
+        templated = client._template_messages(
+            [
+                Message(
+                    role=MessageRole.TOOL,
+                    name="missing",
+                    arguments={"a": 1},
+                    tool_call_diagnostic=diagnostic,
+                )
+            ]
+        )
+
+        tool_result = templated[0]["content"][0]["toolResult"]
+        self.assertEqual(tool_result["toolUseId"], "call1")
+        self.assertEqual(tool_result["status"], "error")
+        payload = loads(tool_result["content"][0]["text"])
+        self.assertEqual(payload["code"], "tool.unknown")
+        self.assertEqual(payload["requested_name"], "missing")
+
+    def test_template_messages_unanchored_tool_diagnostic(self):
+        client = self.mod.BedrockClient(exit_stack=AsyncExitStack())
+        diagnostic = ToolCallDiagnostic(
+            id="diag1",
+            code=ToolCallDiagnosticCode.MALFORMED_CALL,
+            stage=ToolCallDiagnosticStage.PARSE,
+            message="Tool call could not be parsed.",
+        )
+
+        templated = client._template_messages(
+            [Message(role=MessageRole.TOOL, tool_call_diagnostic=diagnostic)]
+        )
+
+        self.assertEqual(templated[0]["role"], "assistant")
+        payload = loads(templated[0]["content"][0]["text"])
+        self.assertEqual(payload["code"], "tool_call.malformed")
 
     def test_model_loads_client(self):
         settings = TransformerEngineSettings(
