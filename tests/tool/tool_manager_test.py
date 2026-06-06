@@ -24,6 +24,7 @@ from avalan.entities import (
 from avalan.tool import Tool, ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.math import CalculatorTool
+from avalan.tool.parser import ToolCallParser
 
 
 class ToolManagerCreationTestCase(TestCase):
@@ -150,6 +151,22 @@ class ToolManagerCreationTestCase(TestCase):
             settings=ToolManagerSettings(),
         )
         self.assertTrue(manager.is_empty)
+
+    def test_nested_toolset_names_are_available_but_not_enabled(self):
+        inner = ToolSet(namespace="inner", tools=[CalculatorTool()])
+        outer = ToolSet(namespace="outer", tools=[CalculatorTool(), inner])
+        manager = ToolManager.create_instance(
+            enable_tools=["outer"],
+            available_toolsets=[outer],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["outer.calculator"],
+        )
+        resolution = manager.resolve_tool_name("outer.inner.calculator")
+        self.assertIs(resolution.status, ToolNameResolutionStatus.DISABLED)
 
     def test_list_and_describe_enabled_tools(self):
         adder = DummyAdder()
@@ -449,20 +466,68 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         calls = self.manager.get_calls("no tools here")
         self.assertIsNone(calls)
 
-    async def test_get_calls_preserves_current_tuple_format_none(self):
+    async def test_get_calls_normalizes_configured_tuple_formats(self):
         cases = (
             (
                 ToolFormat.JSON,
                 '{"tool": "calculator", "arguments": {"expression": "1"}}',
+                {"expression": "1"},
             ),
             (
                 ToolFormat.REACT,
                 'Action: calculator\nAction Input: {"expression": "2"}',
+                {"expression": "2"},
             ),
-            (ToolFormat.BRACKET, "[calculator](3)"),
+            (
+                ToolFormat.BRACKET,
+                "[calculator](3)",
+                {"input": "3"},
+            ),
             (
                 ToolFormat.OPENAI,
                 '{"name": "calculator", "arguments": {"expression": "4"}}',
+                {"expression": "4"},
+            ),
+        )
+
+        for tool_format, text, arguments in cases:
+            with self.subTest(tool_format=tool_format):
+                manager = ToolManager.create_instance(
+                    enable_tools=["calculator"],
+                    available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+                    settings=ToolManagerSettings(tool_format=tool_format),
+                )
+                call_id = _uuid4()
+
+                with patch("avalan.tool.parser.uuid4", return_value=call_id):
+                    self.assertEqual(
+                        manager.get_calls(text),
+                        [
+                            ToolCall(
+                                id=call_id,
+                                name="calculator",
+                                arguments=arguments,
+                            )
+                        ],
+                    )
+
+    async def test_get_calls_returns_none_for_parse_diagnostics_only(self):
+        cases = (
+            (
+                ToolFormat.JSON,
+                '{"tool": "calculator", "arguments": ["1"]}',
+            ),
+            (
+                ToolFormat.REACT,
+                'Action: calculator\nAction Input: ["2"]',
+            ),
+            (
+                ToolFormat.OPENAI,
+                '{"name": "calculator", "arguments": ["3"]}',
+            ),
+            (
+                ToolFormat.JSON,
+                '{"tool": "calculator", "arguments": ',
             ),
         )
 
@@ -652,6 +717,12 @@ class ToolManagerPotentialCallTestCase(TestCase):
             result = self.manager.is_potential_tool_call("", "")
             self.assertFalse(result)
             called.assert_called_once_with("", "")
+
+    def test_tool_call_status_proxies_parser(self):
+        self.assertIs(
+            self.manager.tool_call_status("<tool_call>"),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
 
 
 class ToolManagerSchemasTestCase(TestCase):
