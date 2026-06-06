@@ -1,0 +1,21 @@
+{
+  "tokens": [
+    "<|start|>",
+    "assistant<|channel|>commentary to=functions.calculator ",
+    "<|constrain|>json<|message|>",
+    "{\"expression\":\"2 + 2\"}",
+    "<|call|>",
+    "<|channel|>final<|message|>",
+    "done"
+  ],
+  "call": {
+    "name": "calculator",
+    "arguments": {
+      "expression": "2 + 2"
+    }
+  },
+  "strings": [
+    "<|channel|>final<|message|>",
+    "done"
+  ]
+}

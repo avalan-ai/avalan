@@ -1,0 +1,59 @@
+[
+  {
+    "name": "prefix_then_text",
+    "tokens": [
+      "<to",
+      "x"
+    ],
+    "event": null,
+    "strings": [
+      "<to",
+      "x"
+    ]
+  },
+  {
+    "name": "split_closed_tag",
+    "tokens": [
+      "pre ",
+      "<tool",
+      "_call>",
+      "{\"name\":\"calculator\",\"arguments\":{\"expression\":\"1 + 1\"}}",
+      "</tool_call>",
+      " post"
+    ],
+    "event": "tool_process",
+    "strings": [
+      "pre ",
+      " post"
+    ],
+    "call": {
+      "name": "calculator",
+      "arguments": {
+        "expression": "1 + 1"
+      }
+    }
+  },
+  {
+    "name": "split_malformed_tag",
+    "tokens": [
+      "<tool",
+      "_call>",
+      "{\"name\":\"calculator\",\"arguments\":}",
+      "</tool_call>"
+    ],
+    "event": "tool_diagnostic",
+    "diagnostic_code": "MALFORMED_CALL"
+  },
+  {
+    "name": "unterminated_tag",
+    "tokens": [
+      "<tool",
+      "_call>",
+      "{\"name\":\"calculator\",\"arguments\":{}}"
+    ],
+    "event": "tool_diagnostic",
+    "flush": true,
+    "diagnostic_code": "MALFORMED_CALL",
+    "stream_status": "unterminated"
+  }
+]

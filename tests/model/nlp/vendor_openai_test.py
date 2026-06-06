@@ -3,6 +3,8 @@ import sys
 import types
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
+from json import loads
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -30,6 +32,9 @@ from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
 )
+from avalan.tool.parser import ToolCallParser
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tool_parsing"
 
 
 class AsyncIter:
@@ -670,6 +675,77 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(t4.call.arguments, {"p": 1})
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+
+    async def test_provider_argument_deltas_match_serialized_call(self):
+        fixture = loads(
+            (FIXTURES / "provider_openai_argument_deltas.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        call_id = fixture["call_id"]
+        events = [
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    id=call_id,
+                    custom_tool_call=SimpleNamespace(
+                        id=call_id,
+                        name=fixture["provider_name"],
+                    ),
+                ),
+            ),
+            *[
+                SimpleNamespace(
+                    type="response.function_call_arguments.delta",
+                    id=call_id,
+                    delta=delta,
+                )
+                for delta in fixture["argument_deltas"]
+            ],
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(id=call_id),
+            ),
+            SimpleNamespace(
+                type="response.output_text.delta",
+                delta=fixture["assistant_after"],
+            ),
+        ]
+
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+        outputs = []
+        async for output in stream:
+            outputs.append(output)
+
+        delta_outputs = outputs[: len(fixture["argument_deltas"])]
+        self.assertTrue(
+            all(isinstance(output, ToolCallToken) for output in delta_outputs)
+        )
+        self.assertEqual(
+            [output.token for output in delta_outputs],
+            fixture["argument_deltas"],
+        )
+
+        final_token = outputs[len(fixture["argument_deltas"])]
+        self.assertIsInstance(final_token, ToolCallToken)
+        self.assertIsNotNone(final_token.call)
+        self.assertEqual(final_token.call.id, call_id)
+        self.assertEqual(final_token.call.name, fixture["provider_name"])
+        self.assertEqual(
+            final_token.call.arguments,
+            {"city": "Paris", "unit": "c"},
+        )
+
+        parsed = ToolCallParser().parse(final_token.token)
+        self.assertEqual(len(parsed.calls), 1)
+        self.assertEqual(parsed.diagnostics, [])
+        self.assertEqual(parsed.calls[0].id, final_token.call.id)
+        self.assertEqual(parsed.calls[0].name, final_token.call.name)
+        self.assertEqual(
+            parsed.calls[0].arguments,
+            final_token.call.arguments,
+        )
+        self.assertEqual(outputs[-1].token, fixture["assistant_after"])
 
     async def test_generation_settings_and_tools(self):
         stream_instance = AsyncIter([])
