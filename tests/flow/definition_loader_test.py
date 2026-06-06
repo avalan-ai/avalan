@@ -187,10 +187,10 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             type = "{FLOW_TOOL_NODE_TYPE}"
             ref = "mcp.call"
 
-            [nodes.start.config]
-            uri = "http://localhost:4000"
-            name = "remote.calculator"
-            arguments = {{expression = "1 + 1"}}
+            [nodes.start.config.arguments]
+            uri = "uri"
+            name = "remote_name"
+            arguments = "remote_arguments"
             """)
 
         self.assertTrue(result.ok)
@@ -198,9 +198,59 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         assert result.flow is not None
         self.assertEqual(result.definition.nodes[0].ref, "mcp.call")
         self.assertEqual(
-            result.definition.nodes[0].config["name"],
-            "remote.calculator",
+            result.definition.nodes[0].config["arguments"],
+            {
+                "uri": "uri",
+                "name": "remote_name",
+                "arguments": "remote_arguments",
+            },
         )
+
+    def test_tool_node_rejects_invalid_argument_bindings_on_load(
+        self,
+    ) -> None:
+        loader = _tool_loader()
+        cases = (
+            (
+                "unknown",
+                """
+                [nodes.start.config.arguments]
+                expression = "left"
+                a = "left"
+                b = "right"
+                """,
+                "flow.unknown_argument_binding",
+                "nodes.start.config.arguments.expression",
+            ),
+            (
+                "missing",
+                """
+                [nodes.start.config.arguments]
+                a = "left"
+                """,
+                "flow.missing_argument_binding",
+                "nodes.start.config.arguments.b",
+            ),
+        )
+
+        for name, config, code, path in cases:
+            with self.subTest(name=name):
+                result = loader.loads_result(f"""
+                    [flow]
+                    name = "tool_node"
+                    entrypoint = "start"
+                    output_node = "start"
+
+                    [nodes.start]
+                    type = "{FLOW_TOOL_NODE_TYPE}"
+                    ref = "loader_adder"
+
+                    {config}
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.issues[0].code, code)
+                self.assertEqual(result.issues[0].path, path)
 
     def test_tool_node_rejects_invalid_refs(self) -> None:
         loader = _tool_loader(

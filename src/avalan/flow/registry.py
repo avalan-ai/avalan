@@ -1,7 +1,10 @@
 from ..entities import (
+    ToolCall,
+    ToolCallDiagnostic,
     ToolDescriptor,
     ToolNameResolution,
     ToolNameResolutionStatus,
+    ToolValue,
 )
 from .definition import (
     FlowInputDefinition,
@@ -14,7 +17,8 @@ from .definition import (
 from .node import Node
 
 from collections.abc import Iterable, Mapping
-from typing import Protocol
+from typing import Protocol, cast
+from uuid import uuid4
 
 FLOW_INPUT_KEY = "__flow_input__"
 FLOW_TOOL_NODE_TYPE = "tool"
@@ -30,6 +34,10 @@ class FlowToolResolver(Protocol):
     def resolve_tool_name(
         self, name: str, *, provider_originated: bool = False
     ) -> ToolNameResolution: ...
+
+    def validate_tool_call(
+        self, call: ToolCall
+    ) -> ToolCallDiagnostic | None: ...
 
 
 class FlowNodeConfigurationError(ValueError):
@@ -290,8 +298,29 @@ def _tool_node_factory(
             )
         assert resolution.canonical_name is not None
         descriptor = descriptors[resolution.canonical_name]
+        _validate_tool_node_bindings(definition, descriptor)
 
-        async def run(_: dict[str, object]) -> object:
+        async def run(inputs: dict[str, object]) -> object:
+            arguments = cast(
+                dict[str, ToolValue],
+                _tool_node_arguments(definition, descriptor, inputs),
+            )
+            diagnostic = resolver.validate_tool_call(
+                ToolCall(
+                    id=str(uuid4()),
+                    name=descriptor.name,
+                    arguments=arguments,
+                )
+            )
+            if diagnostic is not None:
+                raise FlowNodeConfigurationError(
+                    code="flow.invalid_arguments",
+                    path=f"nodes.{definition.name}.config.arguments",
+                    message="Tool node arguments are invalid.",
+                    hint=(
+                        "Provide arguments matching the tool parameter schema."
+                    ),
+                )
             raise NotImplementedError(
                 "Flow tool node execution is unavailable."
             )
@@ -347,6 +376,8 @@ def _is_flow_tool_resolver(value: object) -> bool:
         and callable(getattr(value, "list_tools"))
         and hasattr(value, "resolve_tool_name")
         and callable(getattr(value, "resolve_tool_name"))
+        and hasattr(value, "validate_tool_call")
+        and callable(getattr(value, "validate_tool_call"))
     )
 
 
@@ -359,11 +390,149 @@ def _tool_contracts(
         contract: dict[str, object] = {"aliases": tuple(descriptor.aliases)}
         if descriptor.parameter_schema is not None:
             contract["parameter_schema"] = descriptor.parameter_schema
+            contract["input_contract"] = FlowNodeContract(
+                name="arguments",
+                type=FlowInputType.OBJECT,
+                schema=descriptor.parameter_schema,
+            )
         if descriptor.return_schema is not None:
             contract["return_schema"] = descriptor.return_schema
+            contract["output_contract"] = FlowNodeContract(
+                name="result",
+                type=FlowOutputType.JSON,
+                schema=descriptor.return_schema,
+            )
         contracts[descriptor.name] = contract
     return contracts
 
 
 def _is_ref_import_like(ref: str) -> bool:
     return "://" in ref or "/" in ref or "\\" in ref or ":" in ref
+
+
+def _validate_tool_node_bindings(
+    definition: FlowNodeDefinition,
+    descriptor: ToolDescriptor,
+) -> None:
+    bindings = definition.config.get("arguments")
+    if bindings is None:
+        return
+    path = f"nodes.{definition.name}.config.arguments"
+    if not isinstance(bindings, Mapping):
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_arguments",
+            path=path,
+            message="Tool node argument bindings are invalid.",
+            hint="Use a TOML table mapping parameter names to selectors.",
+        )
+
+    parameters = _tool_parameter_names(descriptor)
+    required = _tool_required_parameters(descriptor)
+    for name, selector in bindings.items():
+        if not isinstance(name, str) or name not in parameters:
+            raise FlowNodeConfigurationError(
+                code="flow.unknown_argument_binding",
+                path=f"{path}.{name}",
+                message="Tool node argument binding is unknown.",
+                hint="Bind only declared tool parameters.",
+            )
+        if not isinstance(selector, str) or not selector.strip():
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_argument_selector",
+                path=f"{path}.{name}",
+                message="Tool node argument selector is invalid.",
+                hint="Use a non-empty dotted input selector.",
+            )
+    missing = sorted(required - set(bindings))
+    if missing:
+        raise FlowNodeConfigurationError(
+            code="flow.missing_argument_binding",
+            path=f"{path}.{missing[0]}",
+            message="Tool node argument binding is missing.",
+            hint="Bind every required tool parameter.",
+        )
+
+
+def _tool_node_arguments(
+    definition: FlowNodeDefinition,
+    descriptor: ToolDescriptor,
+    inputs: Mapping[str, object],
+) -> dict[str, object]:
+    bindings = definition.config.get("arguments")
+    source = _node_input_value(definition, inputs)
+    if bindings is not None:
+        assert isinstance(bindings, Mapping)
+        return {
+            str(name): _select_argument(
+                source, str(selector), definition, name
+            )
+            for name, selector in bindings.items()
+            if isinstance(name, str) and isinstance(selector, str)
+        }
+
+    parameters = _tool_parameter_names(descriptor)
+    if isinstance(source, Mapping):
+        matched = {
+            name: _copy_flow_value(source[name])
+            for name in sorted(parameters)
+            if name in source
+        }
+        if matched:
+            return matched
+
+    if len(parameters) == 1:
+        parameter = next(iter(parameters))
+        return {parameter: source}
+
+    raise FlowNodeConfigurationError(
+        code="flow.ambiguous_argument_binding",
+        path=f"nodes.{definition.name}.config.arguments",
+        message="Tool node arguments are ambiguous.",
+        hint="Add explicit argument selectors for this tool node.",
+    )
+
+
+def _select_argument(
+    source: object,
+    selector: str,
+    definition: FlowNodeDefinition,
+    name: object,
+) -> object:
+    try:
+        return _select_path(source, selector)
+    except (IndexError, KeyError, ValueError):
+        raise FlowNodeConfigurationError(
+            code="flow.unresolved_argument_selector",
+            path=f"nodes.{definition.name}.config.arguments.{name}",
+            message="Tool node argument selector cannot be resolved.",
+            hint="Reference a value available on the node input.",
+        ) from None
+
+
+def _tool_parameter_names(descriptor: ToolDescriptor) -> frozenset[str]:
+    properties = _tool_parameter_properties(descriptor)
+    if properties is None:
+        return frozenset()
+    return frozenset(properties)
+
+
+def _tool_required_parameters(descriptor: ToolDescriptor) -> frozenset[str]:
+    schema = descriptor.parameter_schema
+    if schema is None:
+        return frozenset()
+    required = schema.get("required", [])
+    if not isinstance(required, list | tuple):
+        return frozenset()
+    return frozenset(name for name in required if isinstance(name, str))
+
+
+def _tool_parameter_properties(
+    descriptor: ToolDescriptor,
+) -> Mapping[str, object] | None:
+    schema = descriptor.parameter_schema
+    if schema is None:
+        return None
+    properties = schema.get("properties", {})
+    if not isinstance(properties, Mapping):
+        return None
+    return properties

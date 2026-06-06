@@ -1,7 +1,14 @@
 from collections.abc import Mapping
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
-from avalan.entities import ToolManagerSettings
+from avalan.entities import (
+    ToolCall,
+    ToolCallDiagnostic,
+    ToolDescriptor,
+    ToolManagerSettings,
+    ToolNameResolution,
+    ToolNameResolutionStatus,
+)
 from avalan.flow import (
     FLOW_INPUT_KEY,
     FLOW_TOOL_NODE_TYPE,
@@ -41,6 +48,10 @@ async def flow_disabled(a: int) -> int:
     return a
 
 
+async def flow_identity(value: int) -> int:
+    return value
+
+
 def _tool_manager(
     *,
     enable_tools: list[str] | None = None,
@@ -49,15 +60,58 @@ def _tool_manager(
         enable_tools=enable_tools
         or [
             "flow_adder",
+            "flow_identity",
             "mcp.call",
         ],
         available_toolsets=[
-            ToolSet(tools=[flow_adder, flow_adder_alt]),
+            ToolSet(tools=[flow_adder, flow_adder_alt, flow_identity]),
             ToolSet(namespace="disabled", tools=[flow_disabled]),
             McpToolSet(),
         ],
         settings=ToolManagerSettings(),
     )
+
+
+class RecordingToolResolver:
+    def __init__(self, manager: ToolManager) -> None:
+        self.manager = manager
+        self.calls: list[ToolCall] = []
+
+    def list_tools(self) -> list[ToolDescriptor]:
+        return self.manager.list_tools()
+
+    def resolve_tool_name(
+        self, name: str, *, provider_originated: bool = False
+    ) -> ToolNameResolution:
+        return self.manager.resolve_tool_name(
+            name,
+            provider_originated=provider_originated,
+        )
+
+    def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
+        self.calls.append(call)
+        return self.manager.validate_tool_call(call)
+
+
+class StaticToolResolver:
+    def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+        self.descriptors = descriptors
+
+    def list_tools(self) -> list[ToolDescriptor]:
+        return self.descriptors
+
+    def resolve_tool_name(
+        self, name: str, *, provider_originated: bool = False
+    ) -> ToolNameResolution:
+        return ToolNameResolution(
+            requested_name=name,
+            status=ToolNameResolutionStatus.EXACT,
+            canonical_name=name,
+            candidates=[name],
+        )
+
+    def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
+        return None
 
 
 class FlowNodeRegistryTestCase(TestCase):
@@ -295,7 +349,216 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(node.label, "flow_adder")
         with self.assertRaises(NotImplementedError):
-            await node.execute_async({})
+            await node.execute_async({"payload": {"a": 1, "b": 2}})
+
+    async def test_tool_node_binds_explicit_argument_selectors(
+        self,
+    ) -> None:
+        resolver = RecordingToolResolver(_tool_manager())
+        registry = tool_flow_node_registry(resolver)
+        node = registry.build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+                input="payload",
+                config={"arguments": {"b": "right", "a": "left"}},
+            )
+        )
+
+        with self.assertRaises(NotImplementedError):
+            await node.execute_async(
+                {"payload": {"left": 2, "right": 3, "ignored": 4}}
+            )
+
+        self.assertEqual(len(resolver.calls), 1)
+        self.assertEqual(resolver.calls[0].name, "flow_adder")
+        self.assertEqual(resolver.calls[0].arguments, {"b": 3, "a": 2})
+
+    async def test_tool_node_binds_implicit_object_by_parameter_name(
+        self,
+    ) -> None:
+        resolver = RecordingToolResolver(_tool_manager())
+        registry = tool_flow_node_registry(resolver)
+        node = registry.build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+            )
+        )
+
+        with self.assertRaises(NotImplementedError):
+            await node.execute_async({"payload": {"b": 5, "a": 4}})
+
+        self.assertEqual(resolver.calls[0].arguments, {"a": 4, "b": 5})
+
+    async def test_tool_node_binds_single_parameter_from_whole_input(
+        self,
+    ) -> None:
+        resolver = RecordingToolResolver(
+            _tool_manager(enable_tools=["flow_identity"])
+        )
+        registry = tool_flow_node_registry(resolver)
+        node = registry.build(
+            FlowNodeDefinition(
+                name="identity",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_identity",
+            )
+        )
+
+        with self.assertRaises(NotImplementedError):
+            await node.execute_async({"payload": 7})
+
+        self.assertEqual(resolver.calls[0].arguments, {"value": 7})
+
+    async def test_tool_node_handles_descriptor_schema_edge_cases(
+        self,
+    ) -> None:
+        cases = (
+            (
+                ToolDescriptor(name="raw", parameter_schema=None),
+                {"arguments": {}},
+                {},
+                None,
+            ),
+            (
+                ToolDescriptor(
+                    name="bad_required",
+                    parameter_schema={
+                        "type": "object",
+                        "properties": {},
+                        "required": "bad",
+                    },
+                ),
+                {"arguments": {}},
+                {},
+                None,
+            ),
+            (
+                ToolDescriptor(
+                    name="bad_properties",
+                    parameter_schema={
+                        "type": "object",
+                        "properties": [],
+                    },
+                ),
+                {},
+                {"payload": {"value": 1}},
+                "flow.ambiguous_argument_binding",
+            ),
+        )
+
+        for descriptor, config, inputs, code in cases:
+            with self.subTest(name=descriptor.name):
+                registry = tool_flow_node_registry(
+                    StaticToolResolver([descriptor])
+                )
+                node = registry.build(
+                    FlowNodeDefinition(
+                        name=descriptor.name,
+                        type=FLOW_TOOL_NODE_TYPE,
+                        ref=descriptor.name,
+                        config=config,
+                    )
+                )
+
+                if code is None:
+                    with self.assertRaises(NotImplementedError):
+                        await node.execute_async(inputs)
+                    continue
+
+                with self.assertRaises(FlowNodeConfigurationError) as context:
+                    await node.execute_async(inputs)
+                self.assertEqual(context.exception.code, code)
+
+    async def test_tool_node_rejects_invalid_runtime_bindings(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(_tool_manager())
+        unresolved = registry.build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+                config={"arguments": {"a": "left", "b": "missing"}},
+            )
+        )
+        ambiguous = registry.build(
+            FlowNodeDefinition(
+                name="sum",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+            )
+        )
+        invalid = registry.build(
+            FlowNodeDefinition(
+                name="typed",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+                config={"arguments": {"a": "left", "b": "right"}},
+            )
+        )
+
+        cases = (
+            (
+                unresolved,
+                {"left": 1},
+                "flow.unresolved_argument_selector",
+            ),
+            (ambiguous, {"value": 1}, "flow.ambiguous_argument_binding"),
+            (
+                invalid,
+                {"left": "one", "right": 2},
+                "flow.invalid_arguments",
+            ),
+        )
+        for node, inputs, code in cases:
+            with self.subTest(code=code):
+                with self.assertRaises(FlowNodeConfigurationError) as context:
+                    await node.execute_async(inputs)
+
+                self.assertEqual(context.exception.code, code)
+
+    def test_tool_node_factory_rejects_invalid_argument_bindings(self) -> None:
+        registry = tool_flow_node_registry(_tool_manager())
+        cases = (
+            (
+                {"arguments": "a"},
+                "flow.invalid_arguments",
+                "nodes.calculate.config.arguments",
+            ),
+            (
+                {"arguments": {"c": "left", "a": "left", "b": "right"}},
+                "flow.unknown_argument_binding",
+                "nodes.calculate.config.arguments.c",
+            ),
+            (
+                {"arguments": {"a": "left", "b": ""}},
+                "flow.invalid_argument_selector",
+                "nodes.calculate.config.arguments.b",
+            ),
+            (
+                {"arguments": {"a": "left"}},
+                "flow.missing_argument_binding",
+                "nodes.calculate.config.arguments.b",
+            ),
+        )
+
+        for config, code, path in cases:
+            with self.subTest(code=code):
+                definition = FlowNodeDefinition(
+                    name="calculate",
+                    type=FLOW_TOOL_NODE_TYPE,
+                    ref="flow_adder",
+                    config=config,
+                )
+                with self.assertRaises(FlowNodeConfigurationError) as context:
+                    registry.build(definition)
+
+                self.assertEqual(context.exception.code, code)
+                self.assertEqual(context.exception.path, path)
 
     def test_tool_registry_can_extend_custom_base_registry(self) -> None:
         def factory(definition: FlowNodeDefinition) -> Node:
