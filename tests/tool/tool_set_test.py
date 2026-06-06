@@ -227,7 +227,7 @@ class ToolJsonSchemaUtilityTestCase(TestCase):
         self.assertEqual(schema["function"]["name"], "maybe_count")
         self.assertEqual(
             schema["function"]["parameters"]["properties"]["value"]["type"],
-            "string",
+            ["string", "null"],
         )
         self.assertEqual(
             schema["function"]["parameters"]["properties"]["enabled"][
