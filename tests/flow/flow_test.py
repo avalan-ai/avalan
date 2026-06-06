@@ -68,8 +68,11 @@ class FlowParseMermaidTestCase(TestCase):
         self.assertIn("B", flow.nodes)
 
 
-class FlowExecutionTestCase(TestCase):
-    def test_manual_execution(self):
+class FlowExecutionTestCase(IsolatedAsyncioTestCase):
+    def test_sync_execute_is_not_exposed(self) -> None:
+        self.assertFalse(hasattr(Flow(), "execute"))
+
+    async def test_manual_execution(self):
         executed = []
 
         def start(_):
@@ -93,12 +96,12 @@ class FlowExecutionTestCase(TestCase):
         flow.add_connection("A", "B")
         flow.add_connection("B", "C")
 
-        result = flow.execute()
+        result = await flow.execute_async()
 
         self.assertEqual(result, 4)
         self.assertEqual(executed, ["A", "B", "C"])
 
-    def test_skip_node_without_inputs(self):
+    async def test_skip_node_without_inputs(self):
         executed = []
 
         def start(_):
@@ -114,12 +117,12 @@ class FlowExecutionTestCase(TestCase):
         flow.add_node(Node("B", func=should_not_run))
         flow.add_connection("A", "B", conditions=[lambda _: False])
 
-        result = flow.execute()
+        result = await flow.execute_async()
 
         self.assertIsNone(result)
         self.assertEqual(executed, ["A"])
 
-    def test_none_output_forwards_to_downstream_node(self) -> None:
+    async def test_none_output_forwards_to_downstream_node(self) -> None:
         executed: list[str] = []
 
         def start(_: dict[str, object]) -> None:
@@ -136,44 +139,12 @@ class FlowExecutionTestCase(TestCase):
         flow.add_node(Node("B", func=finish))
         flow.add_connection("A", "B")
 
-        result = flow.execute()
+        result = await flow.execute_async()
 
         self.assertEqual(result, "forwarded")
         self.assertEqual(executed, ["A", "B"])
 
-    def test_execute_rejects_async_only_nodes_before_work(self) -> None:
-        executed: list[str] = []
-
-        def start(_: dict[str, object]) -> int:
-            executed.append("A")
-            return 1
-
-        flow = Flow()
-        flow.add_node(Node("A", func=start))
-        flow.add_node(Node("B", func=lambda _: 2, async_only=True))
-        flow.add_connection("A", "B")
-
-        with self.assertRaisesRegex(TypeError, "execute_async: B"):
-            flow.execute()
-
-        self.assertEqual(executed, [])
-
-    def test_execute_rejects_async_only_subgraph_before_work(self) -> None:
-        executed: list[str] = []
-        subgraph = Flow()
-        subgraph.add_node(Node("inner", func=lambda _: 1, async_only=True))
-
-        flow = Flow()
-        flow.add_node(Node("A", func=lambda _: executed.append("A") or 1))
-        flow.add_node(Node("B", subgraph=subgraph))
-        flow.add_connection("A", "B")
-
-        with self.assertRaisesRegex(TypeError, "execute_async: B"):
-            flow.execute()
-
-        self.assertEqual(executed, [])
-
-    def test_execute_with_initial_node(self):
+    async def test_execute_with_initial_node(self):
         executed = []
 
         def start(_):
@@ -197,42 +168,30 @@ class FlowExecutionTestCase(TestCase):
         flow.add_connection("A", "B")
         flow.add_connection("B", "C")
 
-        result = flow.execute(initial_node="B", initial_data=5)
+        result = await flow.execute_async(initial_node="B", initial_data=5)
 
         self.assertEqual(result, 12)
         self.assertEqual(executed, ["B", "C"])
 
-    def test_execute_raises_when_no_start_nodes(self):
+    async def test_execute_raises_when_no_start_nodes(self):
         flow = Flow()
         flow.add_node(Node("A"))
         flow.add_node(Node("B"))
         flow.add_connection("A", "B")
         flow.add_connection("B", "A")
         with self.assertRaises(ValueError) as context:
-            flow.execute()
+            await flow.execute_async()
         self.assertIn("cycle", str(context.exception))
 
-    def test_execute_detects_cycle_with_initial_node(self):
+    async def test_execute_detects_cycle_with_initial_node(self):
         flow = Flow()
         flow.add_node(Node("A"))
         flow.add_node(Node("B"))
         flow.add_connection("A", "B")
         flow.add_connection("B", "A")
         with self.assertRaises(ValueError) as context:
-            flow.execute(initial_node="A", initial_data=1)
+            await flow.execute_async(initial_node="A", initial_data=1)
         self.assertIn("cycle", str(context.exception))
-
-    def test_execute_rejects_async_connection_hooks(self) -> None:
-        async def should_not_forward(_: object) -> bool:
-            return False
-
-        flow = Flow()
-        flow.add_node(Node("A", func=lambda _: 1))
-        flow.add_node(Node("B", func=lambda _: 2))
-        flow.add_connection("A", "B", conditions=[should_not_forward])
-
-        with self.assertRaisesRegex(TypeError, "check_conditions_async"):
-            flow.execute()
 
 
 class FlowAsyncExecutionTestCase(IsolatedAsyncioTestCase):

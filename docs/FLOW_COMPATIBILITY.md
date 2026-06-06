@@ -16,16 +16,15 @@ Native flows are Python-constructed directed graphs:
   connects existing nodes.
 - `Flow.parse_mermaid(...)` imports a Mermaid edge diagram into plain nodes and
   unlabeled or labeled edges.
-- `Flow.execute(...)` runs synchronously from explicit or inferred start nodes.
-- `Flow.execute_async(...)` runs asynchronously with cancellation checkpoints,
+- `Flow.execute_async(...)` runs flows with cancellation checkpoints,
   `initial_data`, and `initial_inputs`.
 - `Node` can run a Python callable, pass through input values, or invoke a
   subgraph. Node input and output schemas are Python `type` checks.
 - `FlowManager` wraps async execution with timeout support and sanitized
   before/after events.
 
-Current flow execution infers start nodes from graph topology and returns the
-single terminal node value when exactly one terminal node exists. When multiple
+Flow execution infers start nodes from graph topology and returns the single
+terminal node value when exactly one terminal node exists. When multiple
 terminal nodes exist, execution returns a mapping keyed by terminal node name.
 Cycles and unknown node references are runtime errors.
 
