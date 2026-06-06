@@ -1644,6 +1644,49 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         self.assertIs(diagnostic.code, ToolCallDiagnosticCode.MAXIMUM_DEPTH)
         self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
 
+    async def test_prepare_call_rechecks_repetition_after_filters(self):
+        def rewrite_to_adder(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="adder",
+                    arguments={"a": 2, "b": 3},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "multiplier"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyMultiplier()])
+            ],
+            settings=ToolManagerSettings(
+                avoid_repetition=True,
+                filters=[rewrite_to_adder],
+            ),
+        )
+        previous = ToolCall(
+            id="call-0",
+            name="adder",
+            arguments={"a": 2, "b": 3},
+        )
+        call = ToolCall(
+            id="call-1",
+            name="multiplier",
+            arguments={"a": 2, "b": 3},
+        )
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(calls=[previous]),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.REPEATED_CALL)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.GUARD)
+        self.assertEqual(diagnostic.requested_name, "adder")
+
     async def test_execute_prepared_call_does_not_rerun_filters(self):
         filter_calls = 0
 
@@ -2695,6 +2738,36 @@ class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
                 assert isinstance(outcome, ToolCallDiagnostic)
                 self.assertIs(outcome.code, code)
                 self.assertIs(outcome.stage, ToolCallDiagnosticStage.GUARD)
+
+    async def test_execute_call_rechecks_depth_after_filter_context(self):
+        previous = ToolCall(
+            id="call-0",
+            name="adder",
+            arguments={"a": 2, "b": 3},
+        )
+
+        def add_history(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            return call, ToolCallContext(calls=[previous])
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(
+                maximum_depth=1,
+                filters=[add_history],
+            ),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        outcome = await manager.execute_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.MAXIMUM_DEPTH)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.GUARD)
 
     async def test_execute_call_returns_cancellation_before_filters(self):
         called: list[str] = []
@@ -3765,6 +3838,42 @@ class ToolManagerExtraCallTestCase(IsolatedAsyncioTestCase):
         self.assertIsNotNone(result1)
         result2 = await manager(call, context=ToolCallContext(calls=[call]))
         self.assertIsNone(result2)
+
+    async def test_legacy_call_rechecks_repetition_after_filters(self):
+        def rewrite_to_adder(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="adder",
+                    arguments={"a": 2, "b": 3},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "multiplier"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyMultiplier()])
+            ],
+            settings=ToolManagerSettings(
+                avoid_repetition=True,
+                filters=[rewrite_to_adder],
+            ),
+        )
+        previous = ToolCall(
+            id="call-0",
+            name="adder",
+            arguments={"a": 2, "b": 3},
+        )
+        call = ToolCall(
+            id="call-1",
+            name="multiplier",
+            arguments={"a": 2, "b": 3},
+        )
+
+        result = await manager(call, context=ToolCallContext(calls=[previous]))
+
+        self.assertIsNone(result)
 
     async def test_async_context(self):
         calculator = CalculatorTool()

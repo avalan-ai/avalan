@@ -894,6 +894,8 @@ class ToolCallParserParseOutcomeTestCase(TestCase):
                 None,
                 '<tool_call>{"name": "calculator", "arguments": }</tool_call>',
             ),
+            (None, "<tool>{bad}</tool>"),
+            (None, "<tool_call>{bad}"),
         )
 
         for tool_format, text in cases:
@@ -1349,8 +1351,41 @@ class ToolCallParserTagTestCase(TestCase):
             ]
             self.assertEqual(self.parser(text), expected)
 
+    def test_self_closing_preserves_inner_attribute_quotes(self):
+        text = (
+            '<tool_call name="calculator" arguments=\'{"phrase": '
+            '"rock \', roll", "expression": "1 > 0"}\'/>'
+        )
+        call_id = _uuid4()
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            expected = [
+                ToolCall(
+                    id=call_id,
+                    name="calculator",
+                    arguments={
+                        "phrase": "rock ', roll",
+                        "expression": "1 > 0",
+                    },
+                )
+            ]
+            self.assertEqual(self.parser(text), expected)
+
     def test_self_closing_rejects_non_object_arguments(self):
         text = '<tool_call name="calculator" arguments=\'["2"]\'/>'
+        outcome = self.parser.parse(text)
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        diagnostic = outcome.diagnostics[0]
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+        self.assertEqual(diagnostic.stage, ToolCallDiagnosticStage.PARSE)
+        self.assertEqual(diagnostic.requested_name, "calculator")
+
+    def test_self_closing_rejects_malformed_inner_attribute_quote(self):
+        text = '<tool_call name="calculator" arguments=\'{"phrase": "rock \'/>'
         outcome = self.parser.parse(text)
 
         self.assertEqual(outcome.calls, [])

@@ -493,35 +493,15 @@ class ToolManager:
         """Return a prepared execution plan or a diagnostic."""
         assert call
 
-        history = context.calls or []
-
-        if self._settings.avoid_repetition and history:
-            last = history[-1]
-            if last.name == call.name and last.arguments == call.arguments:
-                return self._diagnostic(
-                    call=call,
-                    code=ToolCallDiagnosticCode.REPEATED_CALL,
-                    stage=ToolCallDiagnosticStage.GUARD,
-                    message="Tool call repeats the previous call.",
-                )
-
-        if (
-            self._settings.maximum_depth is not None
-            and len(history) + 1 > self._settings.maximum_depth
-        ):
-            return self._diagnostic(
-                call=call,
-                code=ToolCallDiagnosticCode.MAXIMUM_DEPTH,
-                stage=ToolCallDiagnosticStage.GUARD,
-                message="Tool call exceeds the maximum depth.",
-            )
+        diagnostic = self._guard_diagnostic(call, context)
+        if diagnostic is not None:
+            return diagnostic
 
         await _check_cancelled(context)
 
         prepared = self._prepare_resolved_call(
             call,
             context,
-            validate=False,
         )
         if isinstance(prepared, ToolCallDiagnostic):
             return prepared
@@ -532,7 +512,21 @@ class ToolManager:
         call, context = filtered
         await _check_cancelled(context)
 
-        return self._prepare_resolved_call(call, context)
+        prepared = self._prepare_resolved_call(
+            call,
+            context,
+        )
+        if isinstance(prepared, ToolCallDiagnostic):
+            return prepared
+
+        diagnostic = self._guard_diagnostic(prepared.call, prepared.context)
+        if diagnostic is not None:
+            return diagnostic
+
+        validation = self._validate_prepared_call(prepared)
+        if validation is not None:
+            return validation
+        return prepared
 
     async def execute_prepared_call(
         self, prepared: PreparedToolCall
@@ -622,17 +616,7 @@ class ToolManager:
         if self._settings.execution_mode is ToolManagerExecutionMode.OUTCOMES:
             return await self.execute_call(call, context)
 
-        history = context.calls or []
-
-        if self._settings.avoid_repetition and history:
-            last = history[-1]
-            if last.name == call.name and last.arguments == call.arguments:
-                return None
-
-        if (
-            self._settings.maximum_depth is not None
-            and len(history) + 1 > self._settings.maximum_depth
-        ):
+        if self._guard_diagnostic(call, context) is not None:
             return None
 
         if not self._tools or call.name not in self._tools:
@@ -650,9 +634,10 @@ class ToolManager:
         prepared = self._prepare_resolved_call(
             call,
             context,
-            validate=False,
         )
         if isinstance(prepared, ToolCallDiagnostic):
+            return None
+        if self._guard_diagnostic(prepared.call, prepared.context) is not None:
             return None
         return await self._execute_prepared_call(prepared)
 
@@ -660,8 +645,6 @@ class ToolManager:
         self,
         call: ToolCall,
         context: ToolCallContext,
-        *,
-        validate: bool = True,
     ) -> PreparedToolCall | ToolCallDiagnostic:
         resolution = self._resolve_call_name(call)
         if resolution.diagnostic_code is not None:
@@ -704,22 +687,50 @@ class ToolManager:
             provider_name_encoded=call.provider_name_encoded,
             provider_arguments_malformed=call.provider_arguments_malformed,
         )
-        if validate:
-            diagnostic = self._validate_tool_arguments(
-                call=prepared_call,
-                canonical_name=resolution.canonical_name,
-                tool=tool,
-                arguments=arguments,
-                context=context,
-            )
-            if diagnostic is not None:
-                return diagnostic
         return PreparedToolCall(
             call=prepared_call,
             callable=tool,
             descriptor=descriptor,
             arguments=arguments,
             context=context,
+        )
+
+    def _guard_diagnostic(
+        self, call: ToolCall, context: ToolCallContext
+    ) -> ToolCallDiagnostic | None:
+        history = context.calls or []
+
+        if self._settings.avoid_repetition and history:
+            last = history[-1]
+            if last.name == call.name and last.arguments == call.arguments:
+                return self._diagnostic(
+                    call=call,
+                    code=ToolCallDiagnosticCode.REPEATED_CALL,
+                    stage=ToolCallDiagnosticStage.GUARD,
+                    message="Tool call repeats the previous call.",
+                )
+
+        if (
+            self._settings.maximum_depth is not None
+            and len(history) + 1 > self._settings.maximum_depth
+        ):
+            return self._diagnostic(
+                call=call,
+                code=ToolCallDiagnosticCode.MAXIMUM_DEPTH,
+                stage=ToolCallDiagnosticStage.GUARD,
+                message="Tool call exceeds the maximum depth.",
+            )
+        return None
+
+    def _validate_prepared_call(
+        self, prepared: PreparedToolCall
+    ) -> ToolCallDiagnostic | None:
+        return self._validate_tool_arguments(
+            call=prepared.call,
+            canonical_name=prepared.call.name,
+            tool=prepared.callable,
+            arguments=prepared.arguments,
+            context=prepared.context,
         )
 
     def _resolution_diagnostic(

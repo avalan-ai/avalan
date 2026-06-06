@@ -134,11 +134,24 @@ class Flow:
                 "Flow has no valid starting node; graph may contain a cycle"
             )
 
+        reachable = self._collect_reachable(start_nodes)
+        cycle_nodes = self._detect_cycle_nodes(start_nodes)
+        if cycle_nodes:
+            remaining = sorted(cycle_nodes)
+            raise ValueError(
+                "Flow contains a cycle involving: " + ", ".join(remaining)
+            )
+
         incoming_counts = {
-            name: len(self.incoming.get(name, [])) for name in self.nodes
+            name: sum(
+                1
+                for connection in self.incoming.get(name, [])
+                if connection.src.name in reachable
+            )
+            for name in reachable
         }
         indegree = dict(incoming_counts)
-        buffers: dict[str, dict[str, Any]] = {name: {} for name in self.nodes}
+        buffers: dict[str, dict[str, Any]] = {name: {} for name in reachable}
         if initial_inputs is not None and len(start_nodes) == 1:
             buffers[start_nodes[0].name] = dict(initial_inputs)
         elif initial_data is not None and len(start_nodes) == 1:
@@ -151,7 +164,6 @@ class Flow:
 
         outputs: dict[str, Any] = {}
         processed: set[str] = set()
-        reachable = self._collect_reachable(start_nodes)
         await _check_cancelled(cancellation_checker)
         while queue:
             await _check_cancelled(cancellation_checker)
@@ -184,17 +196,10 @@ class Flow:
                 "Flow contains a cycle involving: " + ", ".join(remaining)
             )
 
-        cycle_nodes = self._detect_cycle_nodes(start_nodes)
-        if cycle_nodes:
-            remaining = sorted(cycle_nodes)
-            raise ValueError(
-                "Flow contains a cycle involving: " + ", ".join(remaining)
-            )
-
         terminal = {
             name: _flow_output(outputs[name])
             for name, outs in self.outgoing.items()
-            if not outs
+            if name in reachable and not outs
         }
         await _check_cancelled(cancellation_checker)
         if len(terminal) == 1:
@@ -232,24 +237,23 @@ class Flow:
 
     def _detect_cycle_nodes(self, start_nodes: list[Node]) -> set[str]:
         visited: set[str] = set()
-        recursion_stack: set[str] = set()
+        path: list[str] = []
+        path_indexes: dict[str, int] = {}
         cycle_nodes: set[str] = set()
 
-        def dfs(name: str) -> bool:
-            if name in recursion_stack:
-                cycle_nodes.add(name)
-                return True
+        def dfs(name: str) -> None:
+            if name in path_indexes:
+                cycle_nodes.update(path[path_indexes[name] :])
+                return
             if name in visited:
-                return False
+                return
             visited.add(name)
-            recursion_stack.add(name)
-            found_cycle = False
+            path_indexes[name] = len(path)
+            path.append(name)
             for connection in self.outgoing.get(name, []):
-                if dfs(connection.dest.name):
-                    cycle_nodes.add(name)
-                    found_cycle = True
-            recursion_stack.remove(name)
-            return found_cycle
+                dfs(connection.dest.name)
+            path.pop()
+            path_indexes.pop(name)
 
         for node in start_nodes:
             dfs(node.name)
@@ -261,7 +265,11 @@ class Flow:
         processed: set[str],
         reachable: set[str],
     ) -> None:
-        if node.name in processed or len(processed) >= len(reachable):
+        if (
+            node.name not in reachable
+            or node.name in processed
+            or len(processed) >= len(reachable)
+        ):
             raise ValueError("Flow traversal revisited node: " + node.name)
 
 

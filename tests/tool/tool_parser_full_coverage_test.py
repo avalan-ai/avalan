@@ -2,6 +2,7 @@ from typing import Any, cast
 from unittest import TestCase, main
 from unittest.mock import patch
 from uuid import uuid4 as _uuid4
+from xml.etree import ElementTree
 
 from avalan.entities import (
     Message,
@@ -10,6 +11,7 @@ from avalan.entities import (
     ToolCall,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
+    ToolCallParseOutcome,
     ToolCallRecoveryFormat,
     ToolFormat,
 )
@@ -390,6 +392,280 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             parser.tool_call_status("<tool_call></tool_call>"),
             ToolCallParser.ToolCallBufferStatus.CLOSED,
         )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call>{"name": "calculator", '
+                '"arguments": {"text": "/>"}}'
+            ),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call>{"name": "calculator", '
+                '"arguments": {"text": "<tool_call name=\\"inner\\"/>"}}'
+            ),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call>{"name": "calculator", '
+                '"arguments": {"text": "<tool_call></tool_call>"}}'
+            ),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call>{"name": "calculator", '
+                '"arguments": {"text": "</tool_call>"}}'
+            ),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call>{"name": "calculator", '
+                '"arguments": {"text": "escaped \\" </tool_call>"}}'
+            ),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call name="first"/>'
+                '<tool_call>{"name": "calculator", '
+                '"arguments": {"text": "<tool_call name=\\"inner\\"/>"}}'
+            ),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
+        self.assertEqual(
+            parser.tool_call_status('<tool_call name="calculator"/>'),
+            ToolCallParser.ToolCallBufferStatus.CLOSED,
+        )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call name="calculator" arguments=\'{"expression": '
+                '"1 > 0"}\'/>'
+            ),
+            ToolCallParser.ToolCallBufferStatus.CLOSED,
+        )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call>{"name": "first", "arguments": {}}</tool_call>'
+                '<tool_call name="second"/>'
+            ),
+            ToolCallParser.ToolCallBufferStatus.CLOSED,
+        )
+
+    def test_tool_call_status_uses_latest_mixed_tag_start(self) -> None:
+        parser = ToolCallParser()
+        open_sibling = (
+            '<tool_call>{"name": "first", "arguments": {}}</tool_call>'
+            ' between <tool name="second">{"value": 2}'
+        )
+        closed_sibling = open_sibling + "</tool>"
+
+        self.assertEqual(
+            parser.tool_call_status(open_sibling),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
+        self.assertEqual(
+            parser.tool_call_status(open_sibling, final=True),
+            ToolCallParser.ToolCallBufferStatus.UNTERMINATED,
+        )
+        self.assertEqual(
+            parser.tool_call_status(closed_sibling),
+            ToolCallParser.ToolCallBufferStatus.CLOSED,
+        )
+        self.assertEqual(
+            parser._latest_tool_start(
+                '<tool_call name="first"/><tool name="second">',
+                ["<tool_call", "<tool ", "<tool>"],
+            ),
+            (25, "<tool "),
+        )
+
+    def test_tool_call_status_ignores_quoted_self_close_marker(self) -> None:
+        parser = ToolCallParser()
+        text = (
+            '<tool_call name="calculator" arguments=\'{"expression": "/>"}\'>'
+        )
+
+        self.assertEqual(
+            parser.tool_call_status(text),
+            ToolCallParser.ToolCallBufferStatus.OPEN,
+        )
+        self.assertEqual(
+            parser.tool_call_status(text, final=True),
+            ToolCallParser.ToolCallBufferStatus.UNTERMINATED,
+        )
+        diagnostics = parser.stream_buffer_diagnostics(text)
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(
+            diagnostics[0].details["stream_status"], "unterminated"
+        )
+
+    def test_tool_call_status_handles_visible_quote_text_before_tag(
+        self,
+    ) -> None:
+        parser = ToolCallParser()
+        apostrophe_text = (
+            'don\'t <tool_call name="calculator" arguments=\'{"value": 2}\'/>'
+        )
+        quoted_prefix_text = (
+            '"<tool_call" '
+            '<tool_call name="calculator" arguments=\'{"value": 2}\'/>'
+        )
+
+        for text in (apostrophe_text, quoted_prefix_text):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    parser.tool_call_status(text),
+                    ToolCallParser.ToolCallBufferStatus.CLOSED,
+                )
+                self.assertEqual(
+                    parser.tool_call_status(text, final=True),
+                    ToolCallParser.ToolCallBufferStatus.CLOSED,
+                )
+                outcome = parser.parse(text)
+                self.assertEqual(len(outcome.calls), 1)
+                self.assertEqual(outcome.calls[0].name, "calculator")
+                self.assertEqual(outcome.calls[0].arguments, {"value": 2})
+                self.assertEqual(outcome.diagnostics, [])
+
+        quoted_only = '"<tool_call name=\\"calculator\\" arguments=\'{}\'/>"'
+        self.assertEqual(
+            parser.tool_call_status(quoted_only),
+            ToolCallParser.ToolCallBufferStatus.NONE,
+        )
+        self.assertEqual(parser.parse(quoted_only), ToolCallParseOutcome())
+
+    def test_tool_call_status_ignores_markdown_fenced_markers(self) -> None:
+        parser = ToolCallParser()
+        text = (
+            "```xml\n"
+            '<tool_call>{"name": "calculator", "arguments": {}}'
+            "</tool_call>\n"
+            "```"
+        )
+
+        self.assertEqual(
+            parser.tool_call_status(""),
+            ToolCallParser.ToolCallBufferStatus.NONE,
+        )
+        self.assertEqual(
+            parser.tool_call_status(text),
+            ToolCallParser.ToolCallBufferStatus.NONE,
+        )
+        self.assertEqual(parser.stream_buffer_diagnostics(text), [])
+
+        unterminated = (
+            '```xml\n<tool_call>{"name": "calculator", "arguments": {}}'
+        )
+        self.assertEqual(
+            parser.tool_call_status(unterminated, final=True),
+            ToolCallParser.ToolCallBufferStatus.NONE,
+        )
+        self.assertEqual(parser.stream_buffer_diagnostics(unterminated), [])
+
+    def test_tool_call_status_detects_marker_after_markdown_fence(
+        self,
+    ) -> None:
+        parser = ToolCallParser()
+        fenced_text = "```xml\n<tool_call></tool_call>\n```\n"
+
+        self.assertEqual(
+            parser.tool_call_status(
+                fenced_text
+                + '<tool_call>{"name": "calculator", "arguments": {}}'
+                + "</tool_call>",
+                final=True,
+            ),
+            ToolCallParser.ToolCallBufferStatus.CLOSED,
+        )
+
+    def test_tool_end_helpers_ignore_quoted_markers(self) -> None:
+        parser = ToolCallParser()
+
+        self.assertFalse(
+            parser._has_unquoted_tool_end(
+                '{"text": "</tool_call>"}', ["</tool_call>"]
+            )
+        )
+        self.assertTrue(
+            parser._has_unquoted_tool_end(
+                '{"text": "</tool_call>"}</tool_call>', ["</tool_call>"]
+            )
+        )
+        text = (
+            '<tool_call>{"text": "</tool_call>"}</tool_call>'
+            '<tool_call name="second"/>'
+        )
+        second_start = text.find('<tool_call name="second"')
+        self.assertEqual(
+            parser._last_tool_end_before(
+                text,
+                second_start,
+                ["</tool_call>"],
+            ),
+            second_start,
+        )
+        text_without_real_close = (
+            '<tool_call>{"text": "</tool_call>"}<tool_call name="second"/>'
+        )
+        self.assertEqual(
+            parser._last_tool_end_before(
+                text_without_real_close,
+                text_without_real_close.find('<tool_call name="second"'),
+                ["</tool_call>"],
+            ),
+            -1,
+        )
+        two_self_closing_tags = (
+            '<tool_call name="first"/>'
+            "<tool_call name=\"second\" arguments='{}'/>"
+        )
+        self.assertFalse(
+            parser._has_unclosed_tool_start_before(
+                two_self_closing_tags,
+                two_self_closing_tags.find('<tool_call name="second"'),
+                ["<tool_call", "<tool ", "<tool>"],
+                ["</tool_call>", "</tool>", "<|call|>"],
+            )
+        )
+        open_then_self_closing = (
+            '<tool_call>{"name": "first"}'
+            "<tool_call name=\"second\" arguments='{}'/>"
+        )
+        self.assertTrue(
+            parser._has_unclosed_tool_start_before(
+                open_then_self_closing,
+                open_then_self_closing.find('<tool_call name="second"'),
+                ["<tool_call", "<tool ", "<tool>"],
+                ["</tool_call>", "</tool>", "<|call|>"],
+            )
+        )
+        self.assertFalse(
+            parser._opening_tool_tag_is_self_closing("<tool>", "/>")
+        )
+        tag_text = '<tool_call arguments=\'{"expression": "1 > 0"}\'/>'
+        self.assertEqual(
+            parser._tag_end_index(tag_text, 0),
+            tag_text.rindex(">"),
+        )
+        escaped_tag_text = "<tool_call arguments='escaped \\' > value'>"
+        self.assertEqual(
+            parser._tag_end_index(escaped_tag_text, 0),
+            escaped_tag_text.rindex(">"),
+        )
+        self.assertEqual(
+            parser._tag_end_index(
+                '<tool_call arguments=\'{"expression": "unterminated"}',
+                0,
+            ),
+            -1,
+        )
 
     def test_tool_call_status_reports_dsml_states(self):
         parser = ToolCallParser(tool_format=ToolFormat.DSML)
@@ -430,6 +706,14 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             ),
             ToolCallParser.ToolCallBufferStatus.CLOSED,
         )
+        self.assertEqual(
+            parser.tool_call_status(
+                '<tool_call>{"name": "calculator", '
+                '"arguments": {"text": "<tool_call name=\\"inner\\"/>"}}',
+                final=True,
+            ),
+            ToolCallParser.ToolCallBufferStatus.UNTERMINATED,
+        )
 
     def test_stream_buffer_diagnostics_reports_unterminated_buffer(self):
         parser = ToolCallParser()
@@ -459,13 +743,17 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             diagnostics[0].code,
             ToolCallDiagnosticCode.MALFORMED_CALL,
         )
+        self.assertEqual(diagnostics[0].details["stream_status"], "malformed")
 
     def test_stream_buffer_diagnostics_reports_malformed_status_fallback(self):
         parser = ToolCallParser()
 
-        diagnostics = parser.stream_buffer_diagnostics(
-            "<tool_call></tool_call>"
-        )
+        with patch.object(
+            ToolCallParser, "parse", return_value=ToolCallParseOutcome()
+        ):
+            diagnostics = parser.stream_buffer_diagnostics(
+                "<tool_call></tool_call>"
+            )
 
         self.assertEqual(len(diagnostics), 1)
         self.assertEqual(
@@ -473,6 +761,19 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             ToolCallDiagnosticCode.MALFORMED_CALL,
         )
         self.assertEqual(diagnostics[0].details["stream_status"], "malformed")
+
+    def test_stream_buffer_diagnostics_returns_parse_diagnostics(self):
+        parser = ToolCallParser(tool_format=ToolFormat.JSON)
+
+        diagnostics = parser.stream_buffer_diagnostics(
+            '{"tool": "calculator", "arguments": []}'
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
 
     def test_stream_buffer_diagnostics_returns_empty_for_valid_buffer(self):
         parser = ToolCallParser()
@@ -556,6 +857,62 @@ class ToolCallParserFullCoverageTestCase(TestCase):
                         arguments={"value": 2},
                     )
                 ],
+            )
+
+    def test_tag_payload_helpers_cover_xml_tool_edges(self):
+        parser = ToolCallParser()
+
+        self.assertEqual(
+            parser._tag_payloads("<tool name=\"calculator\" arguments='{}'/>"),
+            [{"name": "calculator", "arguments": {}}],
+        )
+        self.assertEqual(
+            parser._tag_attribute(
+                '<tool_call tool_name="bad" name="calculator"/>',
+                "name",
+            ),
+            "calculator",
+        )
+        self.assertEqual(
+            parser._tag_attribute(
+                '<tool_call name="cal\\"culator"/>',
+                "name",
+            ),
+            'cal\\"culator',
+        )
+        self.assertEqual(
+            parser._tag_attribute_close_index(
+                '"unterminated',
+                1,
+                '"',
+            ),
+            -1,
+        )
+        self.assertEqual(parser._tag_payloads("<tool />"), [])
+        self.assertEqual(parser._tag_body_payloads("<tool_call"), [])
+        self.assertEqual(parser._self_closing_tag_payloads("<tool_call"), [])
+
+        named = ElementTree.fromstring(
+            '<tool_call name="calculator">{"value": 2}</tool_call>'
+        )
+        self.assertEqual(
+            parser._tag_payload_from_element(named),
+            {"name": "calculator", "arguments": {"value": 2}},
+        )
+
+        unnamed = ElementTree.fromstring(
+            '<tool_call>{"name": "calculator", "arguments": {}}</tool_call>'
+        )
+        with patch(
+            "avalan.tool.parser.loads",
+            side_effect=RuntimeError("boom"),
+        ):
+            self.assertIsNone(parser._tag_payload_from_element(unnamed))
+            self.assertEqual(
+                parser._self_closing_tag_payloads(
+                    "<tool_call name=\"calculator\" arguments='{}'/>"
+                ),
+                [{"name": "calculator", "arguments": None}],
             )
 
     def test_tool_call_from_payload_rejects_invalid_inputs(self):
