@@ -1060,6 +1060,264 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(diagnostic.details, {"filtered_name": "multiplier"})
 
 
+class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
+    async def test_execute_call_returns_result_for_prepared_call(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+        result_id = _uuid4()
+
+        with patch("avalan.tool.manager.uuid4", return_value=result_id):
+            outcome = await manager.execute_call(
+                call,
+                context=ToolCallContext(),
+            )
+
+        self.assertEqual(
+            outcome,
+            ToolCallResult(
+                id=result_id,
+                call=call,
+                name="adder",
+                arguments={"a": 1, "b": 2},
+                result=3,
+            ),
+        )
+
+    async def test_execute_call_returns_execution_error(self):
+        async def failing_tool(a: int) -> None:
+            raise ValueError("boom")
+
+        manager = ToolManager.create_instance(
+            enable_tools=["failing_tool"],
+            available_toolsets=[ToolSet(tools=[failing_tool])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id="call-1", name="failing_tool", arguments={"a": 1})
+
+        outcome = await manager.execute_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(outcome, ToolCallError)
+        assert isinstance(outcome, ToolCallError)
+        self.assertIsInstance(outcome.error, ValueError)
+        self.assertEqual(outcome.message, "boom")
+
+    async def test_execute_call_returns_resolution_diagnostics(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "adder_alt"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyAdderAlt()]),
+                ToolSet(namespace="disabled", tools=[CalculatorTool()]),
+            ],
+            settings=ToolManagerSettings(),
+        )
+        cases = (
+            (
+                ToolCall(id="call-1", name="missing", arguments={}),
+                ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            ),
+            (
+                ToolCall(
+                    id="call-2",
+                    name="disabled.calculator",
+                    arguments={},
+                ),
+                ToolCallDiagnosticCode.DISABLED_TOOL,
+            ),
+            (
+                ToolCall(id="call-3", name="sum", arguments={}),
+                ToolCallDiagnosticCode.AMBIGUOUS_TOOL_NAME,
+            ),
+        )
+
+        for call, code in cases:
+            with self.subTest(code=code):
+                outcome = await manager.execute_call(
+                    call,
+                    context=ToolCallContext(),
+                )
+
+                self.assertIsInstance(outcome, ToolCallDiagnostic)
+                assert isinstance(outcome, ToolCallDiagnostic)
+                self.assertIs(outcome.code, code)
+                self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
+
+    async def test_execute_call_returns_filter_diagnostic(self):
+        def suppress(
+            _call: ToolCall,
+            _context: ToolCallContext,
+        ) -> ToolFilterResult:
+            return ToolFilterResult(status=ToolFilterResultStatus.SUPPRESS)
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[suppress]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        outcome = await manager.execute_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.FILTER_SUPPRESSED)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.FILTER)
+
+    async def test_execute_call_returns_guard_diagnostics(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(
+                avoid_repetition=True,
+                maximum_depth=1,
+            ),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+        cases = (
+            (
+                ToolCallContext(calls=[call]),
+                ToolCallDiagnosticCode.REPEATED_CALL,
+            ),
+            (
+                ToolCallContext(
+                    calls=[
+                        ToolCall(
+                            id="call-2",
+                            name="adder",
+                            arguments={"a": 3, "b": 4},
+                        )
+                    ]
+                ),
+                ToolCallDiagnosticCode.MAXIMUM_DEPTH,
+            ),
+        )
+
+        for context, code in cases:
+            with self.subTest(code=code):
+                outcome = await manager.execute_call(call, context=context)
+
+                self.assertIsInstance(outcome, ToolCallDiagnostic)
+                assert isinstance(outcome, ToolCallDiagnostic)
+                self.assertIs(outcome.code, code)
+                self.assertIs(outcome.stage, ToolCallDiagnosticStage.GUARD)
+
+    async def test_execute_call_returns_cancellation_before_filters(self):
+        called: list[str] = []
+
+        async def adder(a: int) -> int:
+            called.append("tool")
+            return a + 1
+
+        def filter_call(call: ToolCall, context: ToolCallContext):
+            called.append("filter")
+            return call, context
+
+        async def cancel() -> None:
+            called.append("cancel")
+            raise CancelledError()
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(filters=[filter_call]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1})
+
+        outcome = await manager.execute_call(
+            call,
+            context=ToolCallContext(cancellation_checker=cancel),
+        )
+
+        self.assertEqual(called, ["cancel"])
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.CANCELLED)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.GUARD)
+        self.assertEqual(outcome.details, {})
+
+    async def test_execute_call_returns_cancellation_after_confirmation(self):
+        called: list[str] = []
+
+        async def adder(a: int) -> int:
+            called.append("tool")
+            return a + 1
+
+        async def first_check() -> None:
+            called.append("first")
+
+        second_checks = 0
+
+        async def second_check() -> None:
+            nonlocal second_checks
+            second_checks += 1
+            called.append(f"second:{second_checks}")
+            if second_checks == 2:
+                raise CancelledError()
+
+        def replace_checker(call: ToolCall, context: ToolCallContext):
+            called.append("filter")
+            return (
+                call,
+                ToolCallContext(
+                    calls=context.calls,
+                    cancellation_checker=second_check,
+                ),
+            )
+
+        def confirm(call: ToolCall) -> str:
+            called.append(f"confirm:{call.name}")
+            return "y"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(filters=[replace_checker]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1})
+
+        outcome = await manager.execute_call(
+            call,
+            context=ToolCallContext(cancellation_checker=first_check),
+            confirm=confirm,
+        )
+
+        self.assertEqual(
+            called,
+            ["first", "filter", "second:1", "confirm:adder", "second:2"],
+        )
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.CANCELLED)
+        self.assertEqual(outcome.canonical_name, "adder")
+
+    async def test_execute_call_returns_confirmation_rejection(self):
+        async def reject(_call: ToolCall) -> str:
+            return "n"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2})
+
+        outcome = await manager.execute_call(
+            call,
+            context=ToolCallContext(),
+            confirm=reject,
+        )
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertEqual(outcome.requested_name, "adder")
+        self.assertEqual(outcome.canonical_name, "adder")
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.USER_REJECTED)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.CONFIRM)
+
+
 class ToolManagerToolTypesTestCase(IsolatedAsyncioTestCase):
     async def test_native_tool_with_arguments(self):
         tool = NativeAdderTool()

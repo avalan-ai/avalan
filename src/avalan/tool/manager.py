@@ -6,6 +6,7 @@ from ..entities import (
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallError,
+    ToolCallOutcome,
     ToolCallResult,
     ToolDescriptor,
     ToolFilter,
@@ -25,7 +26,7 @@ from .parser import ToolCallParser
 from asyncio import CancelledError, wait_for
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from binascii import Error as BinasciiError
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from inspect import signature
@@ -496,6 +497,49 @@ class ToolManager:
         await _check_cancelled(prepared.context)
         return await self._execute_prepared_call(prepared)
 
+    async def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+        *,
+        confirm: (
+            Callable[
+                [ToolCall], Awaitable[str | bool | None] | str | bool | None
+            ]
+            | None
+        ) = None,
+    ) -> ToolCallOutcome:
+        """Execute a call and return result, error, or diagnostic."""
+        assert call
+
+        try:
+            prepared = await self.prepare_call(call, context)
+        except CancelledError:
+            return self._cancelled_diagnostic(call)
+        if isinstance(prepared, ToolCallDiagnostic):
+            return prepared
+
+        if confirm is not None:
+            action = confirm(prepared.call)
+            if isinstance(action, Awaitable):
+                action = await action
+            if action not in (True, "y", "a"):
+                return self._diagnostic(
+                    call=prepared.call,
+                    canonical_name=prepared.call.name,
+                    code=ToolCallDiagnosticCode.USER_REJECTED,
+                    stage=ToolCallDiagnosticStage.CONFIRM,
+                    message="Tool call was rejected before execution.",
+                )
+
+        try:
+            return await self.execute_prepared_call(prepared)
+        except CancelledError:
+            return self._cancelled_diagnostic(
+                prepared.call,
+                canonical_name=prepared.call.name,
+            )
+
     async def __aenter__(self) -> "ToolManager":
         if self._toolsets:
             for i, toolset in enumerate(self._toolsets):
@@ -646,6 +690,20 @@ class ToolManager:
             stage=stage,
             message=message,
             details=details or {},
+        )
+
+    def _cancelled_diagnostic(
+        self,
+        call: ToolCall,
+        *,
+        canonical_name: str | None = None,
+    ) -> ToolCallDiagnostic:
+        return self._diagnostic(
+            call=call,
+            canonical_name=canonical_name,
+            code=ToolCallDiagnosticCode.CANCELLED,
+            stage=ToolCallDiagnosticStage.GUARD,
+            message="Tool call was cancelled before execution.",
         )
 
     def _validate_tool_arguments(
