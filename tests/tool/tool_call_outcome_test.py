@@ -214,6 +214,52 @@ class ToolCallDiagnosticTestCase(TestCase):
                     ToolCallDiagnostic(**diagnostic_kwargs)
 
 
+class ToolCallTestCase(TestCase):
+    def test_create_with_provider_provenance(self):
+        call = ToolCall(
+            id="call-1",
+            name="pkg.tool",
+            arguments={"a": 1},
+            provider_name="avl_cGtnLnRvb2w",
+            provider_name_encoded=True,
+        )
+
+        self.assertEqual(call.id, "call-1")
+        self.assertEqual(call.name, "pkg.tool")
+        self.assertEqual(call.arguments, {"a": 1})
+        self.assertEqual(call.provider_name, "avl_cGtnLnRvb2w")
+        self.assertTrue(call.provider_name_encoded)
+
+    def test_allows_missing_id_and_name_for_legacy_provider_calls(self):
+        call = ToolCall(id=None, name="", arguments={})
+
+        self.assertIsNone(call.id)
+        self.assertEqual(call.name, "")
+
+    def test_rejects_invalid_provider_provenance(self):
+        invalid_cases = (
+            {"id": "", "name": "tool"},
+            {"id": "call-1", "name": 1},
+            {"id": "call-1", "name": "tool", "provider_name": ""},
+            {
+                "id": "call-1",
+                "name": "tool",
+                "provider_name_encoded": True,
+            },
+            {
+                "id": "call-1",
+                "name": "tool",
+                "provider_name": "tool",
+                "provider_name_encoded": 1,
+            },
+        )
+
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ToolCall(**kwargs)
+
+
 class ToolCallParseOutcomeTestCase(TestCase):
     def test_fields_are_stable(self):
         self.assertEqual(
