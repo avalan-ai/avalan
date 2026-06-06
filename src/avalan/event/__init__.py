@@ -39,6 +39,7 @@ class EventType(StrEnum):
     STREAM_END = "stream_end"
     TOKEN_GENERATED = "token_generated"
     TOOL_DETECT = "tool_detect"
+    TOOL_DIAGNOSTIC = "tool_diagnostic"
     TOOL_EXECUTE = "tool_execute"
     TOOL_MODEL_RUN = "tool_model_run"
     TOOL_MODEL_RESPONSE = "tool_model_response"
