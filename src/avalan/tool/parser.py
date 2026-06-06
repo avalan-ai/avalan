@@ -3,7 +3,12 @@ from ..entities import (
     MessageContent,
     MessageContentText,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
+    ToolCallParseOutcome,
     ToolFormat,
+    ToolValue,
 )
 from .dsml import DsmlTools
 
@@ -12,7 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from json import JSONDecodeError, loads
 from re import DOTALL, compile, finditer, search, sub
-from typing import Any, final
+from typing import Any, cast, final
 from uuid import UUID, uuid4
 from xml.etree import ElementTree
 
@@ -62,6 +67,30 @@ class ToolCallParser:
         if not calls:
             calls = self._parse_tag(text)
         return calls
+
+    def parse(self, text: str) -> ToolCallParseOutcome:
+        """Return normalized tool calls and parse diagnostics."""
+        parsed = self(text)
+        calls: list[ToolCall] = []
+        diagnostics: list[ToolCallDiagnostic] = []
+
+        if isinstance(parsed, list):
+            for call in parsed:
+                normalized, diagnostic = self._normalize_tool_call(call)
+                if normalized is not None:
+                    calls.append(normalized)
+                if diagnostic is not None:
+                    diagnostics.append(diagnostic)
+        elif isinstance(parsed, tuple) and len(parsed) == 2:
+            normalized, diagnostic = self._normalize_tuple_call(parsed)
+            if normalized is not None:
+                calls.append(normalized)
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
+        else:
+            diagnostics.extend(self._parse_failure_diagnostics(text))
+
+        return ToolCallParseOutcome(calls=calls, diagnostics=diagnostics)
 
     def set_eos_token(self, eos_token: str) -> None:
         self._eos_token = eos_token
@@ -510,6 +539,247 @@ class ToolCallParser:
                 pass
 
         return tool_calls if tool_calls else None
+
+    def _normalize_tool_call(
+        self, call: ToolCall
+    ) -> tuple[ToolCall | None, ToolCallDiagnostic | None]:
+        if call.arguments is not None and not isinstance(call.arguments, dict):
+            return None, self._arguments_diagnostic(
+                call_id=call.id,
+                requested_name=call.name,
+            )
+        return call, None
+
+    def _normalize_tuple_call(
+        self, parsed: tuple[Any, Any]
+    ) -> tuple[ToolCall | None, ToolCallDiagnostic | None]:
+        name, arguments = parsed
+        if not isinstance(name, str) or not name.strip():
+            return None, self._malformed_call_diagnostic()
+        if not isinstance(arguments, dict):
+            return None, self._arguments_diagnostic(requested_name=name)
+        return (
+            ToolCall(
+                id=uuid4(),
+                name=name,
+                arguments=cast(dict[str, ToolValue], arguments),
+            ),
+            None,
+        )
+
+    def _parse_failure_diagnostics(
+        self, text: str
+    ) -> list[ToolCallDiagnostic]:
+        match self._tool_format:
+            case ToolFormat.JSON:
+                diagnostics = self._json_failure_diagnostics(
+                    text,
+                    name_field="tool",
+                )
+            case ToolFormat.REACT:
+                diagnostics = self._react_failure_diagnostics(text)
+            case ToolFormat.OPENAI:
+                diagnostics = self._json_failure_diagnostics(
+                    text,
+                    name_field="name",
+                )
+            case ToolFormat.HARMONY:
+                diagnostics = self._harmony_failure_diagnostics(text)
+            case _:
+                diagnostics = []
+
+        if not diagnostics:
+            diagnostics = self._tag_failure_diagnostics(text)
+        return diagnostics
+
+    def _json_failure_diagnostics(
+        self,
+        text: str,
+        *,
+        name_field: str,
+    ) -> list[ToolCallDiagnostic]:
+        stripped = text.strip()
+        if not stripped or stripped[0] not in "[{":
+            return []
+        try:
+            payload = loads(stripped)
+        except JSONDecodeError:
+            return [self._malformed_call_diagnostic()]
+
+        if not isinstance(payload, dict):
+            return [self._malformed_call_diagnostic()]
+
+        name = payload.get(name_field)
+        requested_name = name if isinstance(name, str) else None
+        if not isinstance(name, str) or not name.strip():
+            return [self._malformed_call_diagnostic()]
+
+        arguments = payload.get("arguments", {})
+        if not isinstance(arguments, dict):
+            return [self._arguments_diagnostic(requested_name=requested_name)]
+        return []
+
+    def _react_failure_diagnostics(
+        self, text: str
+    ) -> list[ToolCallDiagnostic]:
+        act = search(r"Action:\s*(\w+)", text)
+        inp = search(r"Action Input:\s*({.*}|\[.*\])", text, DOTALL)
+        if not act and not inp:
+            return []
+        if not act or not inp:
+            return [self._malformed_call_diagnostic()]
+        try:
+            arguments = loads(inp.group(1))
+        except JSONDecodeError:
+            return [
+                self._malformed_call_diagnostic(requested_name=act.group(1))
+            ]
+        if not isinstance(arguments, dict):
+            return [self._arguments_diagnostic(requested_name=act.group(1))]
+        return []
+
+    def _harmony_failure_diagnostics(
+        self, text: str
+    ) -> list[ToolCallDiagnostic]:
+        if "<|channel|>" not in text or " to=" not in text:
+            return []
+
+        diagnostics: list[ToolCallDiagnostic] = []
+        pattern = (
+            r"(?:<\|start\|>assistant)?"
+            r"<\|channel\|>(?:commentary|analysis)"
+            r" to=(?:functions\.)?([\w\.]+)"
+            r"(?:<\|channel\|>(?:commentary|analysis))?"
+            r"[^<]*"
+            r"(?:<\|constrain\|>json)?"
+            r"<\|message\|>\s*(.*?)\s*<\|call\|>"
+        )
+        for match in finditer(pattern, text, DOTALL):
+            requested_name = match.group(1)
+            args_text = match.group(2)
+            if not args_text:
+                continue
+            try:
+                arguments = loads(args_text)
+            except JSONDecodeError:
+                diagnostics.append(
+                    self._malformed_call_diagnostic(
+                        requested_name=requested_name
+                    )
+                )
+                continue
+            if not isinstance(arguments, dict):
+                diagnostics.append(
+                    self._arguments_diagnostic(requested_name=requested_name)
+                )
+        return diagnostics
+
+    def _tag_failure_diagnostics(self, text: str) -> list[ToolCallDiagnostic]:
+        if "<tool_call" not in text and "<tool " not in text:
+            return []
+
+        diagnostics: list[ToolCallDiagnostic] = []
+        payloads = self._tag_payloads(text)
+        for payload in payloads:
+            diagnostic = self._payload_diagnostic(payload)
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
+        return diagnostics
+
+    def _tag_payloads(self, text: str) -> list[Any]:
+        payloads: list[Any] = []
+        try:
+            root = ElementTree.fromstring(f"<root>{text}</root>")
+            for element in root.findall(".//tool_call"):
+                if element.text is not None:
+                    payload = self._deserialize_payload(element.text)
+                    name = element.attrib.get("name")
+                    if name is not None:
+                        payload = {"name": name, "arguments": payload}
+                    payloads.append(payload)
+            for element in root.findall(".//tool"):
+                if element.text is not None:
+                    payload = self._deserialize_payload(element.text)
+                    name = element.attrib.get("name")
+                    if name is not None:
+                        payload = {"name": name, "arguments": payload}
+                    payloads.append(payload)
+            return payloads
+        except ElementTree.ParseError:
+            pass
+
+        payload_patterns = (
+            r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
+            r"<tool_call\s+name=\"([^\"]+)\"\s*>(.*?)</tool_call>",
+            r"<tool\s+name=\"([^\"]+)\"\s*>(.*?)</tool>",
+            r"<tool_call\s+name=\"([^\"]+)\"\s+arguments='([^']*)'\s*/>",
+        )
+        for pattern in payload_patterns:
+            for match in finditer(pattern, text, DOTALL):
+                if match.lastindex == 1:
+                    payloads.append(self._deserialize_payload(match.group(1)))
+                    continue
+                name = match.group(1)
+                arguments = self._deserialize_payload(match.group(2))
+                payloads.append({"name": name, "arguments": arguments})
+        return payloads
+
+    @staticmethod
+    def _deserialize_payload(text: str) -> Any:
+        json_text = text.strip()
+        try:
+            return loads(json_text)
+        except JSONDecodeError:
+            try:
+                return literal_eval(json_text)
+            except (SyntaxError, ValueError):
+                return None
+
+    def _payload_diagnostic(self, payload: Any) -> ToolCallDiagnostic | None:
+        if not isinstance(payload, dict):
+            return self._malformed_call_diagnostic()
+
+        name = payload.get("name")
+        requested_name = name if isinstance(name, str) else None
+        if not isinstance(name, str) or not name.strip():
+            return self._malformed_call_diagnostic()
+
+        arguments = payload.get("arguments")
+        if not isinstance(arguments, dict):
+            call_id = payload.get("id")
+            return self._arguments_diagnostic(
+                call_id=call_id if isinstance(call_id, (UUID, str)) else None,
+                requested_name=requested_name,
+            )
+        return None
+
+    @staticmethod
+    def _arguments_diagnostic(
+        *,
+        call_id: UUID | str | None = None,
+        requested_name: str | None = None,
+    ) -> ToolCallDiagnostic:
+        return ToolCallDiagnostic(
+            id=uuid4(),
+            call_id=call_id,
+            requested_name=requested_name,
+            code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+            stage=ToolCallDiagnosticStage.PARSE,
+            message="Tool call arguments must be an object.",
+        )
+
+    @staticmethod
+    def _malformed_call_diagnostic(
+        *,
+        requested_name: str | None = None,
+    ) -> ToolCallDiagnostic:
+        return ToolCallDiagnostic(
+            id=uuid4(),
+            requested_name=requested_name,
+            code=ToolCallDiagnosticCode.MALFORMED_CALL,
+            stage=ToolCallDiagnosticStage.PARSE,
+            message="Tool call could not be parsed.",
+        )
 
     @staticmethod
     def _tool_call_from_payload(payload: Any) -> ToolCall | None:

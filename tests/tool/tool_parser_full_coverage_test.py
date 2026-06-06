@@ -1,3 +1,4 @@
+from typing import Any, cast
 from unittest import TestCase, main
 from unittest.mock import patch
 from uuid import uuid4 as _uuid4
@@ -7,6 +8,7 @@ from avalan.entities import (
     MessageContentText,
     MessageRole,
     ToolCall,
+    ToolCallDiagnosticCode,
     ToolFormat,
 )
 from avalan.tool.parser import ToolCallParser
@@ -319,6 +321,178 @@ class ToolCallParserFullCoverageTestCase(TestCase):
                     "arguments": [],
                 }
             )
+        )
+
+    def test_parse_reports_diagnostic_from_invalid_list_call(self):
+        parser = ToolCallParser()
+        call = ToolCall(
+            id="call-1",
+            name="calculator",
+            arguments=cast(Any, ["bad"]),
+        )
+
+        with patch.object(ToolCallParser, "__call__", return_value=[call]):
+            outcome = parser.parse("ignored")
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(outcome.diagnostics[0].call_id, "call-1")
+        self.assertEqual(
+            outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+
+    def test_parse_reports_diagnostic_from_invalid_tuple_name(self):
+        parser = ToolCallParser()
+
+        with patch.object(
+            ToolCallParser,
+            "__call__",
+            return_value=cast(Any, (" ", {})),
+        ):
+            outcome = parser.parse("ignored")
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(
+            outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+
+    def test_json_failure_diagnostics_cover_valid_and_top_level_array(self):
+        parser = ToolCallParser(tool_format=ToolFormat.JSON)
+
+        self.assertEqual(
+            parser._json_failure_diagnostics(
+                '{"tool": "calculator", "arguments": {}}',
+                name_field="tool",
+            ),
+            [],
+        )
+
+        diagnostics = parser._json_failure_diagnostics(
+            '["calculator"]',
+            name_field="tool",
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+
+    def test_react_failure_diagnostics_cover_absent_valid_and_invalid(self):
+        parser = ToolCallParser(tool_format=ToolFormat.REACT)
+
+        self.assertEqual(parser._react_failure_diagnostics("plain"), [])
+        self.assertEqual(
+            parser._react_failure_diagnostics(
+                'Action: calculator\nAction Input: {"expression": "2"}'
+            ),
+            [],
+        )
+
+        diagnostics = parser._react_failure_diagnostics(
+            'Action: calculator\nAction Input: {"expression": }'
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(diagnostics[0].requested_name, "calculator")
+
+    def test_harmony_failure_diagnostics_cover_empty_and_invalid_messages(
+        self,
+    ):
+        parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+
+        self.assertEqual(
+            parser._harmony_failure_diagnostics("<|channel|>commentary"),
+            [],
+        )
+        self.assertEqual(
+            parser._harmony_failure_diagnostics(
+                "<|channel|>commentary to=functions.calculator"
+                "<|message|><|call|>"
+            ),
+            [],
+        )
+
+        diagnostics = parser._harmony_failure_diagnostics(
+            "<|channel|>commentary to=functions.calculator"
+            '<|message|>{"expression": }<|call|>'
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(diagnostics[0].requested_name, "calculator")
+
+    def test_tag_diagnostics_cover_xml_name_attributes(self):
+        parser = ToolCallParser()
+
+        tool_call_outcome = parser.parse(
+            '<tool_call name="calculator">["bad"]</tool_call>'
+        )
+        self.assertEqual(tool_call_outcome.calls, [])
+        self.assertEqual(len(tool_call_outcome.diagnostics), 1)
+        self.assertEqual(
+            tool_call_outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+
+        tool_outcome = parser.parse('<tool name="calculator">["bad"]</tool>')
+        self.assertEqual(tool_outcome.calls, [])
+        self.assertEqual(len(tool_outcome.diagnostics), 1)
+        self.assertEqual(
+            tool_outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+
+    def test_tag_diagnostics_cover_regex_fallback_payloads(self):
+        parser = ToolCallParser()
+
+        cases = (
+            (
+                '<tool_call>{"name": "calculator", "arguments": '
+                '["bad"]}</tool_call></extra>'
+            ),
+            '<tool_call name="calculator">["bad"]</tool_call></extra>',
+            '<tool name="calculator">["bad"]</tool></extra>',
+            '<tool_call name="calculator" arguments=\'["bad"]\'/></extra>',
+        )
+
+        for text in cases:
+            with self.subTest(text=text):
+                outcome = parser.parse(text)
+
+                self.assertEqual(outcome.calls, [])
+                self.assertEqual(len(outcome.diagnostics), 1)
+                self.assertEqual(
+                    outcome.diagnostics[0].code,
+                    ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+                )
+
+    def test_payload_diagnostic_returns_none_for_valid_payload(self):
+        parser = ToolCallParser()
+
+        self.assertIsNone(
+            parser._payload_diagnostic({"name": "calculator", "arguments": {}})
+        )
+
+    def test_payload_diagnostic_rejects_invalid_name(self):
+        parser = ToolCallParser()
+        diagnostic = parser._payload_diagnostic({"name": " ", "arguments": {}})
+
+        self.assertIsNotNone(diagnostic)
+        assert diagnostic is not None
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
         )
 
 
