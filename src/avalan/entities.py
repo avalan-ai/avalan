@@ -690,6 +690,26 @@ ToolCallOutcome: TypeAlias = (
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class PreparedToolCall:
+    call: ToolCall
+    callable: Callable[..., Any]
+    descriptor: "ToolDescriptor"
+    arguments: dict[str, ToolValue]
+    context: "ToolCallContext"
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.call, ToolCall)
+        assert callable(self.callable)
+        assert isinstance(self.descriptor, ToolDescriptor)
+        assert isinstance(self.arguments, dict)
+        assert isinstance(self.context, ToolCallContext)
+        assert self.call.name == self.descriptor.name
+        assert self.callable is self.descriptor.callable
+        assert (self.call.arguments or {}) == self.arguments
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolDescriptor:
     name: str
     callable: Callable[..., Any] | None = None

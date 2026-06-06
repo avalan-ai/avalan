@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4 as _uuid4
 
 from avalan.entities import (
+    PreparedToolCall,
     ToolCall,
     ToolCallContext,
+    ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallError,
@@ -585,6 +587,252 @@ class NativeNoArgTool(Tool):
 
     async def __call__(self, context: ToolCallContext) -> str:
         return "hi"
+
+
+class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
+    async def test_prepare_call_returns_canonical_plan_for_alias(self):
+        adder = DummyAdder()
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2})
+        context = ToolCallContext()
+
+        prepared = await manager.prepare_call(call, context=context)
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(
+            prepared.call,
+            ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2}),
+        )
+        self.assertIs(prepared.callable, adder)
+        self.assertEqual(prepared.descriptor.name, "adder")
+        self.assertEqual(prepared.arguments, {"a": 1, "b": 2})
+        self.assertEqual(prepared.context, context)
+
+    async def test_prepare_call_returns_resolution_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id="call-1", name="missing", arguments={})
+        diagnostic_id = _uuid4()
+
+        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
+            diagnostic = await manager.prepare_call(
+                call,
+                context=ToolCallContext(),
+            )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertEqual(diagnostic.id, diagnostic_id)
+        self.assertEqual(diagnostic.call_id, "call-1")
+        self.assertEqual(diagnostic.requested_name, "missing")
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.UNKNOWN_TOOL)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.RESOLVE)
+
+    async def test_prepare_call_returns_malformed_arguments_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="adder",
+            arguments=cast(Any, ["a"]),
+        )
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+
+    async def test_prepare_call_returns_repeated_call_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(avoid_repetition=True),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(calls=[call]),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.REPEATED_CALL)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.GUARD)
+
+    async def test_prepare_call_returns_maximum_depth_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(maximum_depth=1),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(calls=[call]),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.MAXIMUM_DEPTH)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.GUARD)
+
+    async def test_prepare_call_accepts_native_tool_arguments(self):
+        tool = NativeAdderTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["native_adder"],
+            available_toolsets=[ToolSet(tools=[tool])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="native_adder",
+            arguments={"a": 1, "b": 2},
+        )
+
+        prepared = await manager.prepare_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.arguments, {"a": 1, "b": 2})
+
+    async def test_prepare_call_validates_arguments_after_filters(self):
+        def drop_argument(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(id=call.id, name=call.name, arguments={"a": 1}),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[drop_argument]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertEqual(diagnostic.canonical_name, "adder")
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+
+    async def test_execute_prepared_call_does_not_rerun_filters(self):
+        filter_calls = 0
+
+        def replace_argument(call: ToolCall, context: ToolCallContext):
+            nonlocal filter_calls
+            filter_calls += 1
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"a": 3, "b": 4},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[replace_argument]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+        result_id = _uuid4()
+
+        prepared = await manager.prepare_call(call, context=ToolCallContext())
+        self.assertEqual(filter_calls, 1)
+        assert isinstance(prepared, PreparedToolCall)
+
+        with patch("avalan.tool.manager.uuid4", return_value=result_id):
+            result = await manager.execute_prepared_call(prepared)
+
+        self.assertEqual(filter_calls, 1)
+        self.assertEqual(
+            result,
+            ToolCallResult(
+                id=result_id,
+                call=ToolCall(
+                    id="call-1",
+                    name="adder",
+                    arguments={"a": 3, "b": 4},
+                ),
+                name="adder",
+                arguments={"a": 3, "b": 4},
+                result=7,
+            ),
+        )
+
+    async def test_prepare_call_filter_can_repair_arguments(self):
+        def add_argument(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"a": 1, "b": 2},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[add_argument]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1})
+
+        prepared = await manager.prepare_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.arguments, {"a": 1, "b": 2})
+
+    async def test_legacy_call_preserves_filter_name_rewrite(self):
+        def rename(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(id=call.id, name="renamed", arguments=call.arguments),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[rename]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        result = await manager(call, context=ToolCallContext())
+
+        self.assertIsInstance(result, ToolCallResult)
+        assert isinstance(result, ToolCallResult)
+        self.assertEqual(result.name, "renamed")
+        self.assertEqual(result.result, 3)
 
 
 class ToolManagerToolTypesTestCase(IsolatedAsyncioTestCase):
