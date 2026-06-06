@@ -29,6 +29,7 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallRecoveryFormat,
     ToolCallToken,
     ToolFormat,
 )
@@ -859,6 +860,58 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn('format = "json"', output)
         self.assertIn('"math.calculator"', output)
 
+    async def test_agent_init_tool_recovery_formats_output(self):
+        args = Namespace(
+            name="N",
+            role="R",
+            task="T",
+            instructions=None,
+            goal_instructions=None,
+            memory_recent=False,
+            memory_permanent_message=None,
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            engine_uri="uri",
+            run_max_new_tokens=None,
+            run_skip_special_tokens=False,
+            run_temperature=None,
+            run_top_k=None,
+            run_top_p=None,
+            run_use_cache=None,
+            run_cache_strategy=None,
+            run_reasoning_effort=None,
+            run_chat_add_generation_prompt=None,
+            run_chat_enable_thinking=None,
+            tool=None,
+            tool_format=None,
+            tool_recovery_format=["fenced", "tool_call_block"],
+            tool_browser_engine=None,
+            tool_browser_search=None,
+            tool_browser_search_context=None,
+            backend="transformers",
+            no_repl=False,
+            quiet=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T"]),
+            patch.object(agent_cmds.Prompt, "ask", side_effect=["N", "uri"]),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        self.assertIn("[tool]", output)
+        self.assertIn("recovery_formats = [", output)
+        self.assertIn('"fenced"', output)
+        self.assertIn('"tool_call_block"', output)
+
 
 class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -1327,6 +1380,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.args.engine_uri = "engine"
         self.args.role = "assistant"
         self.args.run_skip_special_tokens = True
+        self.args.tool_recovery_format = [
+            ToolCallRecoveryFormat.FENCED.value,
+            ToolCallRecoveryFormat.TOOL_CALL_BLOCK.value,
+        ]
 
         with (
             patch.object(agent_cmds, "get_input", return_value=None),
@@ -1358,6 +1415,13 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(tool_settings.browser)
         self.assertIsNone(tool_settings.database)
         self.assertIsNone(tool_settings.graph)
+        self.assertEqual(
+            fs_patch.call_args.kwargs["tool_recovery_formats"],
+            [
+                ToolCallRecoveryFormat.FENCED,
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+            ],
+        )
         ff_patch.assert_not_called()
 
     async def test_run_sets_hidden_states(self):
@@ -2047,6 +2111,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             *,
             tool_settings=None,
             tool_format=None,
+            tool_recovery_formats=None,
         ):
             self.orch.tool = ToolManager.create_instance(
                 available_toolsets=[],

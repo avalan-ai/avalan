@@ -12,6 +12,7 @@ from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import (
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
+    ToolCallRecoveryFormat,
     ToolFormat,
 )
 from avalan.event import Event, EventType
@@ -743,6 +744,108 @@ format = \"{value}\"
                         ]
                         self.assertEqual(tool_format, expected)
                     await stack.aclose()
+
+    async def test_tool_recovery_format_variants(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool]
+recovery_formats = [\"fenced\", \"tool_call_block\"]
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            stack = AsyncExitStack()
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+
+            with patch.object(
+                OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                loader = OrchestratorLoader(
+                    hub=hub,
+                    logger=logger,
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                await loader.from_file(path, agent_id=uuid4())
+
+                self.assertEqual(
+                    from_settings.call_args.kwargs["tool_recovery_formats"],
+                    [
+                        ToolCallRecoveryFormat.FENCED,
+                        ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+                    ],
+                )
+            await stack.aclose()
+
+    async def test_tool_recovery_formats_reject_non_list(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool]
+recovery_formats = \"fenced\"
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            stack = AsyncExitStack()
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            with self.assertRaises(AssertionError):
+                await loader.from_file(path, agent_id=uuid4())
+            await stack.aclose()
+
+    async def test_tool_recovery_formats_reject_unknown_value(self):
+        config = """
+[agent]
+role = \"assistant\"
+
+[engine]
+uri = \"ai://local/model\"
+
+[tool]
+recovery_formats = [\"unknown\"]
+"""
+        with TemporaryDirectory() as tmp:
+            path = f"{tmp}/agent.toml"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(config)
+
+            stack = AsyncExitStack()
+            hub = MagicMock(spec=HuggingfaceHub)
+            logger = MagicMock(spec=Logger)
+
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            with self.assertRaises(ValueError):
+                await loader.from_file(path, agent_id=uuid4())
+            await stack.aclose()
 
     async def test_tool_settings_argument(self):
         config = """

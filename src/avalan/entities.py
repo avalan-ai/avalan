@@ -156,6 +156,15 @@ class ToolFormat(StrEnum):
     DSML = "dsml"
 
 
+class ToolCallRecoveryFormat(StrEnum):
+    TOOL_CALL_BLOCK = "tool_call_block"
+    MINIMAX_XML = "minimax_xml"
+    TOOL_CODE = "tool_code"
+    BROAD_XML = "broad_xml"
+    DSML_LEAKAGE = "dsml_leakage"
+    FENCED = "fenced"
+
+
 class ToolCallDiagnosticCode(StrEnum):
     UNKNOWN_TOOL = "tool.unknown"
     DISABLED_TOOL = "tool.disabled"
@@ -1181,6 +1190,9 @@ class ToolTransformer:
 class ToolManagerSettings:
     eos_token: str | None = None
     tool_format: ToolFormat | None = None
+    recovery_formats: list[ToolCallRecoveryFormat] = field(
+        default_factory=list
+    )
     avoid_repetition: bool = False
     maximum_depth: int | None = None
     maximum_argument_depth: int | None = None
@@ -1231,6 +1243,9 @@ class ToolManagerSettings:
                 and not isinstance(limit, bool)
                 and limit > 0
             )
+        assert isinstance(self.recovery_formats, list)
+        for recovery_format in self.recovery_formats:
+            assert isinstance(recovery_format, ToolCallRecoveryFormat)
         assert isinstance(self.execution_mode, ToolManagerExecutionMode)
         assert isinstance(self.missing_call_mode, ToolManagerMissingCallMode)
         assert isinstance(self.parser_return_mode, ToolParserReturnMode)

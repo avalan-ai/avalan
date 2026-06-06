@@ -14,6 +14,7 @@ from avalan.entities import (
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallError,
+    ToolCallRecoveryFormat,
     ToolCallResult,
     ToolFilter,
     ToolFilterResult,
@@ -57,6 +58,7 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertIsNone(settings.maximum_parser_input_size)
         self.assertIsNone(settings.maximum_parser_payload_depth)
         self.assertIsNone(settings.maximum_parser_payload_size)
+        self.assertEqual(settings.recovery_formats, [])
 
     def test_settings_accept_outcome_compatibility_modes(self):
         settings = ToolManagerSettings(
@@ -71,6 +73,7 @@ class ToolManagerCreationTestCase(TestCase):
             maximum_parser_input_size=128,
             maximum_parser_payload_depth=4,
             maximum_parser_payload_size=96,
+            recovery_formats=[ToolCallRecoveryFormat.FENCED],
         )
 
         self.assertIs(
@@ -93,6 +96,9 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(settings.maximum_parser_input_size, 128)
         self.assertEqual(settings.maximum_parser_payload_depth, 4)
         self.assertEqual(settings.maximum_parser_payload_size, 96)
+        self.assertEqual(
+            settings.recovery_formats, [ToolCallRecoveryFormat.FENCED]
+        )
 
     def test_settings_reject_invalid_compatibility_modes(self):
         invalid_cases = (
@@ -106,6 +112,8 @@ class ToolManagerCreationTestCase(TestCase):
             {"maximum_parser_input_size": True},
             {"maximum_parser_payload_depth": "1"},
             {"maximum_parser_payload_size": 0},
+            {"recovery_formats": "fenced"},
+            {"recovery_formats": ["fenced"]},
         )
 
         for kwargs in invalid_cases:
@@ -176,6 +184,23 @@ class ToolManagerCreationTestCase(TestCase):
         settings = ToolManagerSettings(tool_format=ToolFormat.HARMONY)
         manager = ToolManager.create_instance(settings=settings)
         self.assertEqual(manager.tool_format, ToolFormat.HARMONY)
+
+    def test_recovery_formats_pass_to_parser(self):
+        settings = ToolManagerSettings(
+            recovery_formats=[
+                ToolCallRecoveryFormat.FENCED,
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+            ]
+        )
+        manager = ToolManager.create_instance(settings=settings)
+
+        self.assertEqual(
+            manager._parser.recovery_formats,
+            (
+                ToolCallRecoveryFormat.FENCED,
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+            ),
+        )
 
     def test_toolset_without_tools(self):
         manager = ToolManager.create_instance(

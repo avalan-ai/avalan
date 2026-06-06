@@ -13,6 +13,7 @@ from ..entities import (
     ReasoningTag,
     TextGenerationLoaderClass,
     TimestepSpacing,
+    ToolCallRecoveryFormat,
     ToolFormat,
     User,
     VisionColorModel,
@@ -1317,6 +1318,12 @@ class CLI:
             type=str,
             choices=[t.value for t in ToolFormat],
             help="Tool format",
+        )
+        agent_run_parser.add_argument(
+            "--tool-recovery-format",
+            action="append",
+            choices=[t.value for t in ToolCallRecoveryFormat],
+            help="Enable a tool-call recovery format",
         )
         agent_run_parser.add_argument(
             "--reasoning-tag",

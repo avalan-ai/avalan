@@ -5,6 +5,7 @@ from ..entities import (
     EngineUri,
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
+    ToolCallRecoveryFormat,
     ToolFormat,
     ToolManagerSettings,
     TransformerEngineSettings,
@@ -599,10 +600,30 @@ class OrchestratorLoader:
             if tool_format_str:
                 tool_format = ToolFormat(tool_format_str)
 
+            recovery_format_values = tool_section.get("recovery_formats", [])
+            assert isinstance(
+                recovery_format_values, list
+            ), "tool.recovery_formats must be a list"
+            tool_recovery_formats: list[ToolCallRecoveryFormat] = []
+            for value in recovery_format_values:
+                assert isinstance(
+                    value, str
+                ), "tool.recovery_formats entries must be strings"
+                tool_recovery_formats.append(ToolCallRecoveryFormat(value))
+
             _l("Loaded agent from %s", path, is_debug=False)
 
+            if tool_recovery_formats:
+                return await self.from_settings(
+                    settings,
+                    tool_settings=tool_settings,
+                    tool_format=tool_format,
+                    tool_recovery_formats=tool_recovery_formats,
+                )
             return await self.from_settings(
-                settings, tool_settings=tool_settings, tool_format=tool_format
+                settings,
+                tool_settings=tool_settings,
+                tool_format=tool_format,
             )
 
     async def from_settings(
@@ -611,6 +632,7 @@ class OrchestratorLoader:
         *,
         tool_settings: ToolSettingsContext | None = None,
         tool_format: ToolFormat | None = None,
+        tool_recovery_formats: list[ToolCallRecoveryFormat] | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
 
@@ -730,7 +752,10 @@ class OrchestratorLoader:
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,
             enable_tools=settings.tools,
-            settings=ToolManagerSettings(tool_format=tool_format),
+            settings=ToolManagerSettings(
+                tool_format=tool_format,
+                recovery_formats=tool_recovery_formats or [],
+            ),
         )
         tool = await self._stack.enter_async_context(tool)
 

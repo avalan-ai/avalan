@@ -63,6 +63,7 @@ class ToolManager:
     ) -> "ToolManager":
         parser = ToolCallParser(
             eos_token=settings.eos_token if settings else None,
+            recovery_formats=settings.recovery_formats if settings else None,
             tool_format=settings.tool_format if settings else None,
             maximum_payload_depth=(
                 settings.maximum_parser_payload_depth if settings else None

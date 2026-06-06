@@ -7,12 +7,14 @@ from ..entities import (
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallParseOutcome,
+    ToolCallRecoveryFormat,
     ToolFormat,
     ToolValue,
 )
 from .dsml import DsmlTools
 
 from ast import literal_eval
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from json import JSONDecodeError, loads
@@ -39,12 +41,14 @@ class ToolCallParser:
     _maximum_payload_depth: int | None
     _maximum_payload_size: int | None
     _maximum_text_size: int | None
+    _recovery_formats: tuple[ToolCallRecoveryFormat, ...]
     _tool_format: ToolFormat | None
 
     def __init__(
         self,
         tool_format: ToolFormat | None = None,
         eos_token: str | None = None,
+        recovery_formats: Sequence[ToolCallRecoveryFormat] | None = None,
         maximum_text_size: int | None = None,
         maximum_payload_depth: int | None = None,
         maximum_payload_size: int | None = None,
@@ -59,8 +63,12 @@ class ToolCallParser:
                 and not isinstance(limit, bool)
                 and limit > 0
             )
+        if recovery_formats is not None:
+            for recovery_format in recovery_formats:
+                assert isinstance(recovery_format, ToolCallRecoveryFormat)
         self._tool_format = tool_format
         self._eos_token = eos_token
+        self._recovery_formats = tuple(recovery_formats or ())
         self._maximum_text_size = maximum_text_size
         self._maximum_payload_depth = maximum_payload_depth
         self._maximum_payload_size = maximum_payload_size
@@ -69,6 +77,11 @@ class ToolCallParser:
     def tool_format(self) -> ToolFormat | None:
         """Return the tool format used by the parser."""
         return self._tool_format
+
+    @property
+    def recovery_formats(self) -> tuple[ToolCallRecoveryFormat, ...]:
+        """Return explicitly enabled recovery formats."""
+        return self._recovery_formats
 
     def __call__(
         self, text: str
@@ -1014,14 +1027,18 @@ class ToolCallParser:
         requested_name: str | None = None,
         message: str = "Tool call could not be parsed.",
         details: dict[str, ToolValue] | None = None,
+        recovery_format: ToolCallRecoveryFormat | None = None,
     ) -> ToolCallDiagnostic:
+        diagnostic_details = details.copy() if details is not None else {}
+        if recovery_format is not None:
+            diagnostic_details["source_format"] = recovery_format.value
         return ToolCallDiagnostic(
             id=uuid4(),
             requested_name=requested_name,
             code=ToolCallDiagnosticCode.MALFORMED_CALL,
             stage=ToolCallDiagnosticStage.PARSE,
             message=message,
-            details=details or {},
+            details=diagnostic_details,
         )
 
     @staticmethod
