@@ -9,6 +9,8 @@ from ....entities import (
     ToolCall,
     ToolCallContext,
     ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallOutcome,
     ToolCallResult,
@@ -31,11 +33,14 @@ from json import dumps, loads
 from queue import Queue
 from time import perf_counter
 from typing import Any, AsyncIterator, Awaitable, Callable, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 
 class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     """Async iterator handling tool execution during streaming."""
+
+    _MAXIMUM_TOOL_CYCLES = 8
+    _MAXIMUM_CONSECUTIVE_NON_EXECUTED_CYCLES = 2
 
     _response: TextGenerationResponse
     _response_iterator: AsyncIterator[Token | TokenDetail | str] | None
@@ -52,6 +57,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _context: ModelCallContext
     _tool_context: ToolCallContext | None
     _call_history: list[ToolCall]
+    _attempted_call_signatures: set[str]
+    _tool_cycle_signatures: set[str]
+    _tool_cycle_count: int
+    _consecutive_non_executed_cycles: int
     _agent_id: UUID | None
     _participant_id: UUID | None
     _session_id: UUID | None
@@ -89,6 +98,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._step = 0
         self._tool_context = None
         self._call_history = []
+        self._attempted_call_signatures = set()
+        self._tool_cycle_signatures = set()
+        self._tool_cycle_count = 0
+        self._consecutive_non_executed_cycles = 0
         self._agent_id = agent_id
         self._participant_id = participant_id
         self._session_id = session_id
@@ -237,7 +250,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 confirm=False,
             )
 
-            self._call_history.append(call)
+            self._record_tool_outcome(result)
             self._tool_context = context
 
             end = perf_counter()
@@ -267,6 +280,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 result_events.append(result_event)
 
             tool_messages = []
+            outcomes = []
             for e in result_events:
                 assert e.payload is not None and "result" in e.payload
                 tool_result = e.payload["result"]
@@ -276,6 +290,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     (ToolCallResult, ToolCallError, ToolCallDiagnostic),
                 ):
                     continue
+                outcomes.append(tool_result)
                 tool_messages.extend(
                     self._tool_observation_messages(
                         tool_result,
@@ -287,6 +302,17 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         json_output=True,
                     )
                 )
+
+            if not self._should_continue_tool_cycle(
+                tool_messages,
+                outcomes,
+            ):
+                if self._event_manager and not self._finished:
+                    self._finished = True
+                    await self._event_manager.trigger(
+                        Event(type=EventType.END)
+                    )
+                raise StopAsyncIteration
 
             assert self._input and (
                 (
@@ -464,7 +490,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     context,
                     confirm=True,
                 )
-                self._call_history.append(call)
+                self._record_tool_outcome(result)
                 self._tool_context = context
                 if result is not None:
                     results.append(result)
@@ -480,7 +506,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     )
                     await self._event_manager.trigger(result_event)
 
-            current_response = await self._react_process(delta, results)
+            next_response = await self._react_process(delta, results)
+            if next_response is None:
+                break
+            current_response = next_response
             new_text, structured_calls = await self._response_text_and_calls(
                 current_response
             )
@@ -520,6 +549,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     ) -> ToolCallOutcome | None:
         if self._tool_manager is None:
             return None
+        repeated_diagnostic = self._repeated_call_diagnostic(call)
+        if repeated_diagnostic is not None:
+            return repeated_diagnostic
+
+        self._attempted_call_signatures.add(self._call_signature(call))
         if type(self._tool_manager) is ToolManager:
             confirmation = self._tool_confirm if confirm else None
             return await self._tool_manager.execute_call(
@@ -531,7 +565,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
     async def _react_process(
         self, output: str, results: list[ToolCallOutcome]
-    ) -> TextGenerationResponse:
+    ) -> TextGenerationResponse | None:
         tool_messages: list[Message] = []
         for result in results:
             tool_messages.extend(
@@ -540,6 +574,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     json_output=False,
                 )
             )
+
+        if not self._should_continue_tool_cycle(tool_messages, results):
+            return None
 
         assert self._input and (
             (
@@ -583,6 +620,124 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         assert isinstance(response, TextGenerationResponse)
         self._model_responses.append(response)
         return response
+
+    def _should_continue_tool_cycle(
+        self,
+        tool_messages: list[Message],
+        outcomes: list[ToolCallOutcome],
+    ) -> bool:
+        if not tool_messages:
+            return False
+
+        cycle_signature = self._tool_cycle_signature(tool_messages)
+        if cycle_signature in self._tool_cycle_signatures:
+            return False
+
+        if self._tool_cycle_count >= self._MAXIMUM_TOOL_CYCLES:
+            return False
+
+        non_executed = bool(outcomes) and all(
+            isinstance(outcome, ToolCallDiagnostic) for outcome in outcomes
+        )
+        if non_executed:
+            self._consecutive_non_executed_cycles += 1
+        else:
+            self._consecutive_non_executed_cycles = 0
+
+        if (
+            self._consecutive_non_executed_cycles
+            > self._MAXIMUM_CONSECUTIVE_NON_EXECUTED_CYCLES
+        ):
+            return False
+
+        self._tool_cycle_signatures.add(cycle_signature)
+        self._tool_cycle_count += 1
+        return True
+
+    def _record_tool_outcome(self, result: ToolCallOutcome | None) -> None:
+        if isinstance(result, (ToolCallResult, ToolCallError)):
+            self._call_history.append(result.call)
+
+    def _repeated_call_diagnostic(
+        self, call: ToolCall
+    ) -> ToolCallDiagnostic | None:
+        if self._call_signature(call) not in self._attempted_call_signatures:
+            return None
+        return ToolCallDiagnostic(
+            id=uuid4(),
+            call_id=call.id,
+            requested_name=call.name,
+            code=ToolCallDiagnosticCode.REPEATED_CALL,
+            stage=ToolCallDiagnosticStage.GUARD,
+            message="Tool call repeats a previous attempt.",
+        )
+
+    @staticmethod
+    def _call_signature(call: ToolCall) -> str:
+        return dumps(
+            {
+                "arguments": call.arguments,
+                "name": call.name,
+            },
+            default=str,
+            sort_keys=True,
+        )
+
+    @classmethod
+    def _tool_cycle_signature(cls, messages: list[Message]) -> str:
+        payload = [
+            cls._tool_cycle_message_payload(message) for message in messages
+        ]
+        return dumps(
+            payload,
+            default=str,
+            sort_keys=True,
+        )
+
+    @classmethod
+    def _tool_cycle_message_payload(cls, message: Message) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "arguments": message.arguments,
+            "content": message.content,
+            "name": message.name,
+            "role": message.role.value,
+            "thinking": message.thinking,
+            "tool_calls": (
+                [asdict(tool_call) for tool_call in message.tool_calls]
+                if message.tool_calls
+                else None
+            ),
+        }
+        if message.tool_call_result is not None:
+            result = message.tool_call_result
+            payload["tool_call_result"] = {
+                "arguments": result.arguments,
+                "call": cls._call_signature(result.call),
+                "name": result.name,
+                "result": cls._json_content(result.result),
+            }
+        if message.tool_call_error is not None:
+            error = message.tool_call_error
+            payload["tool_call_error"] = {
+                "arguments": error.arguments,
+                "call": cls._call_signature(error.call),
+                "message": error.message,
+                "name": error.name,
+            }
+        if message.tool_call_diagnostic is not None:
+            diagnostic = message.tool_call_diagnostic
+            payload["tool_call_diagnostic"] = {
+                "call_id": diagnostic.call_id,
+                "canonical_name": diagnostic.canonical_name,
+                "code": diagnostic.code.value,
+                "details": diagnostic.details,
+                "message": diagnostic.message,
+                "requested_name": diagnostic.requested_name,
+                "retryable": diagnostic.retryable,
+                "stage": diagnostic.stage.value,
+                "status": diagnostic.status.value,
+            }
+        return payload
 
     @classmethod
     def _tool_observation_messages(
