@@ -1,5 +1,6 @@
 from asyncio import run
 from json import loads
+from typing import Any, cast
 from unittest import TestCase
 from uuid import uuid4
 
@@ -32,6 +33,38 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         )
 
         self.assertEqual(prompt, "system")
+
+    def test_system_prompt_returns_text_content_or_none(self) -> None:
+        vendor = TextGenerationVendor()
+
+        self.assertEqual(
+            vendor._system_prompt(
+                [
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=MessageContentText(type="text", text="system"),
+                    )
+                ]
+            ),
+            "system",
+        )
+        self.assertIsNone(
+            vendor._system_prompt(
+                [
+                    Message(
+                        role=MessageRole.SYSTEM,
+                        content=MessageContentImage(
+                            type="image_url", image_url={"url": "image"}
+                        ),
+                    )
+                ]
+            )
+        )
+        self.assertIsNone(
+            vendor._system_prompt(
+                [Message(role=MessageRole.USER, content="skip")]
+            )
+        )
 
     def test_template_messages_wraps_content_blocks(self) -> None:
         messages = [
@@ -74,6 +107,45 @@ class VendorBuildToolCallTokenTestCase(TestCase):
             ],
         )
 
+    def test_template_messages_wraps_strings_lists_and_excluded_roles(
+        self,
+    ) -> None:
+        messages = [
+            Message(role=MessageRole.SYSTEM, content="skip"),
+            Message(role=MessageRole.USER, content="hello"),
+            Message(
+                role=MessageRole.USER,
+                content=[
+                    MessageContentText(type="text", text="listed"),
+                    MessageContentImage(
+                        type="image_url", image_url={"url": "image"}
+                    ),
+                ],
+            ),
+        ]
+
+        templated = TextGenerationVendor()._template_messages(
+            messages,
+            exclude_roles=["system"],
+        )
+
+        self.assertEqual(
+            templated,
+            [
+                {"role": "user", "content": "hello"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "listed"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "image"},
+                        },
+                    ],
+                },
+            ],
+        )
+
     def test_stream_exposes_provider_metadata(self) -> None:
         async def generator():
             yield "token"
@@ -86,6 +158,29 @@ class VendorBuildToolCallTokenTestCase(TestCase):
 
         self.assertEqual(stream.provider_family, "openai")
         self.assertEqual(stream.usage, {"tokens": 1})
+
+    def test_stream_iterates_generator_and_rejects_missing_generator(
+        self,
+    ) -> None:
+        async def generator():
+            yield "token"
+
+        async def next_token() -> object:
+            stream = TextGenerationVendorStream(generator())
+            iterator = stream()
+            self.assertIs(iterator, stream)
+            return await anext(iterator)
+
+        self.assertEqual(run(next_token()), "token")
+
+        with self.assertRaises(AssertionError):
+            TextGenerationVendorStream(cast(Any, None)).__aiter__()
+
+    def test_encode_tool_name_preserves_provider_safe_names(self) -> None:
+        self.assertEqual(
+            TextGenerationVendor.encode_tool_name("tool_name"),
+            "tool_name",
+        )
 
     def test_build_tool_call_token_from_string_json(self) -> None:
         token = TextGenerationVendor.build_tool_call_token(
@@ -158,6 +253,40 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         self.assertEqual(
             payload,
             {"name": "pkg.tool", "arguments": {"value": 3}, "id": "call_1"},
+        )
+
+    def test_build_tool_call_token_preserves_malformed_encoded_name(
+        self,
+    ) -> None:
+        token = TextGenerationVendor.build_tool_call_token(
+            call_id="call-1",
+            tool_name="avl_notbase64",
+            arguments={"value": 3},
+        )
+
+        self.assertEqual(
+            token.call,
+            ToolCall(
+                id="call-1",
+                name="avl_notbase64",
+                arguments={"value": 3},
+                provider_name="avl_notbase64",
+                provider_name_encoded=True,
+            ),
+        )
+        self.assertEqual(token.provider_name, "avl_notbase64")
+        payload = loads(
+            token.token.removeprefix("<tool_call>").removesuffix(
+                "</tool_call>"
+            )
+        )
+        self.assertEqual(
+            payload,
+            {
+                "name": "avl_notbase64",
+                "arguments": {"value": 3},
+                "id": "call-1",
+            },
         )
 
     def test_build_tool_call_token_handles_invalid_json_str(self) -> None:

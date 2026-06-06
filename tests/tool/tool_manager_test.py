@@ -684,6 +684,26 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(resolution.canonical_name, "adder")
         self.assertEqual(resolution.candidates, ["adder"])
 
+    def test_resolve_tool_name_disabled_exact_wins_over_enabled_alias(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder()]),
+                ToolSet(tools=[DummySum()]),
+            ],
+            settings=ToolManagerSettings(),
+        )
+
+        resolution = manager.resolve_tool_name("sum")
+
+        self.assertIs(resolution.status, ToolNameResolutionStatus.DISABLED)
+        self.assertIsNone(resolution.canonical_name)
+        self.assertEqual(resolution.candidates, ["sum"])
+        self.assertIs(
+            resolution.diagnostic_code,
+            ToolCallDiagnosticCode.DISABLED_TOOL,
+        )
+
     def test_resolve_tool_name_disabled_alias_is_not_recovered(self):
         manager = ToolManager.create_instance(
             enable_tools=[],
@@ -727,6 +747,29 @@ class ToolManagerCreationTestCase(TestCase):
         call = ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2})
 
         self.assertIsNone(manager.validate_tool_call(call))
+
+    def test_validate_tool_call_rejects_disabled_exact_alias_collision(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder()]),
+                ToolSet(tools=[DummySum()]),
+            ],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2})
+
+        diagnostic = manager.validate_tool_call(call)
+
+        assert diagnostic is not None
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.DISABLED_TOOL,
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.RESOLVE)
+        self.assertEqual(diagnostic.requested_name, "sum")
+        self.assertIsNone(diagnostic.canonical_name)
+        self.assertEqual(diagnostic.details["candidates"], ["sum"])
 
     def test_validate_tool_call_resolves_provider_encoded_name(self):
         manager = ToolManager.create_instance(
@@ -1366,6 +1409,34 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
                 result=5,
             ),
         )
+
+    async def test_execute_call_reports_malformed_provider_encoded_name(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        token = TextGenerationVendor.build_tool_call_token(
+            call_id="call-1",
+            tool_name="avl_notbase64",
+            arguments={"a": 2, "b": 3},
+        )
+        diagnostic_id = _uuid4()
+
+        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
+            outcome = await manager.execute_call(
+                token.call,
+                context=ToolCallContext(),
+            )
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertEqual(outcome.id, diagnostic_id)
+        self.assertEqual(outcome.call_id, "call-1")
+        self.assertEqual(outcome.requested_name, "avl_notbase64")
+        self.assertIsNone(outcome.canonical_name)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.MALFORMED_CALL)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
 
     async def test_prepare_call_returns_resolution_diagnostic(self):
         manager = ToolManager.create_instance(
@@ -2049,6 +2120,29 @@ class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(valid_empty.result, "ok")
         self.assertEqual(calls, 1)
 
+    async def test_execute_call_rejects_disabled_exact_alias_collision(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder()]),
+                ToolSet(tools=[DummySum()]),
+            ],
+            settings=ToolManagerSettings(),
+        )
+
+        outcome = await manager.execute_call(
+            ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2}),
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.DISABLED_TOOL)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
+        self.assertEqual(outcome.requested_name, "sum")
+        self.assertIsNone(outcome.canonical_name)
+        self.assertEqual(outcome.details["candidates"], ["sum"])
+
     async def test_execute_call_returns_execution_error(self):
         async def failing_tool(a: int) -> None:
             raise ValueError("boom")
@@ -2281,6 +2375,131 @@ class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
         self.assertIs(outcome.stage, ToolCallDiagnosticStage.CONFIRM)
 
 
+class ToolManagerOutcomeModeCallTestCase(IsolatedAsyncioTestCase):
+    async def test_call_uses_outcome_mode_to_execute_alias(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(
+                execution_mode=ToolManagerExecutionMode.OUTCOMES
+            ),
+        )
+        call = ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2})
+        result_id = _uuid4()
+
+        with patch("avalan.tool.manager.uuid4", return_value=result_id):
+            outcome = await manager(call, context=ToolCallContext())
+
+        self.assertEqual(
+            outcome,
+            ToolCallResult(
+                id=result_id,
+                call=ToolCall(
+                    id="call-1",
+                    name="adder",
+                    arguments={"a": 1, "b": 2},
+                ),
+                name="adder",
+                arguments={"a": 1, "b": 2},
+                result=3,
+            ),
+        )
+
+    async def test_legacy_call_still_returns_none_for_alias(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2})
+
+        outcome = await manager(call, context=ToolCallContext())
+
+        self.assertIsNone(outcome)
+
+    async def test_call_uses_outcome_mode_for_resolution_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(
+                execution_mode=ToolManagerExecutionMode.OUTCOMES
+            ),
+        )
+        call = ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2})
+        diagnostic_id = _uuid4()
+
+        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
+            outcome = await manager(call, context=ToolCallContext())
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertEqual(outcome.id, diagnostic_id)
+        self.assertEqual(outcome.call_id, "call-1")
+        self.assertEqual(outcome.requested_name, "sum")
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.DISABLED_TOOL)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
+
+    async def test_call_uses_outcome_mode_for_validation_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(
+                execution_mode=ToolManagerExecutionMode.OUTCOMES
+            ),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1})
+
+        outcome = await manager(call, context=ToolCallContext())
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertEqual(outcome.call_id, "call-1")
+        self.assertIs(
+            outcome.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.VALIDATE)
+
+    async def test_call_uses_outcome_mode_for_provider_argument_diagnostic(
+        self,
+    ):
+        calls = 0
+
+        async def provider_no_args() -> str:
+            nonlocal calls
+            calls += 1
+            return "ok"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["provider_no_args"],
+            available_toolsets=[ToolSet(tools=[provider_no_args])],
+            settings=ToolManagerSettings(
+                execution_mode=ToolManagerExecutionMode.OUTCOMES,
+                provider_arguments_mode=(
+                    ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED
+                ),
+            ),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="provider_no_args",
+            arguments={},
+            provider_name="provider_no_args",
+            provider_arguments_malformed=True,
+        )
+
+        outcome = await manager(call, context=ToolCallContext())
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(
+            outcome.code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.VALIDATE)
+        self.assertEqual(calls, 0)
+
+
 class ToolManagerToolTypesTestCase(IsolatedAsyncioTestCase):
     async def test_native_tool_with_arguments(self):
         tool = NativeAdderTool()
@@ -2499,6 +2718,189 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
                         ],
                     )
 
+    async def test_react_calls_after_malformed_input_execute(self):
+        async def echo_input(input: str) -> str:
+            return input
+
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator", "echo_input"],
+            available_toolsets=[ToolSet(tools=[CalculatorTool(), echo_input])],
+            settings=ToolManagerSettings(tool_format=ToolFormat.REACT),
+        )
+        outcome = manager.parse_calls(
+            'Action: broken\nAction Input: {"expression": '
+            "\nAction: calculator\n"
+            'Action Input: {"expression": "1 + 1"}\n'
+            "Action: echo_input\n"
+            'Action Input: {"input": "done"}'
+        )
+
+        self.assertEqual(len(outcome.calls), 2)
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(
+            outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+
+        first = await manager.execute_call(
+            outcome.calls[0],
+            context=ToolCallContext(),
+        )
+        second = await manager.execute_call(
+            outcome.calls[1],
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(first, ToolCallResult)
+        self.assertIsInstance(second, ToolCallResult)
+        assert isinstance(first, ToolCallResult)
+        assert isinstance(second, ToolCallResult)
+        self.assertEqual(first.result, "2")
+        self.assertEqual(second.result, "done")
+
+    def test_get_calls_preserves_multiple_tag_calls_after_xml_parse_error(
+        self,
+    ):
+        text = (
+            '<tool_call name="calculator">{"expression": "1"}</tool_call>'
+            "&"
+            '<tool_call name="calculator">{"expression": "2"}</tool_call>'
+        )
+        first_id = _uuid4()
+        second_id = _uuid4()
+
+        with patch(
+            "avalan.tool.parser.uuid4", side_effect=[first_id, second_id]
+        ):
+            calls = self.manager.get_calls(text)
+
+        self.assertEqual(
+            calls,
+            [
+                ToolCall(
+                    id=first_id,
+                    name="calculator",
+                    arguments={"expression": "1"},
+                ),
+                ToolCall(
+                    id=second_id,
+                    name="calculator",
+                    arguments={"expression": "2"},
+                ),
+            ],
+        )
+
+    async def test_react_namespaced_tool_executes(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math.calculator"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[CalculatorTool()])
+            ],
+            settings=ToolManagerSettings(tool_format=ToolFormat.REACT),
+        )
+        call_id = _uuid4()
+        result_id = _uuid4()
+
+        with (
+            patch("avalan.tool.parser.uuid4", return_value=call_id),
+            patch("avalan.tool.manager.uuid4", return_value=result_id),
+        ):
+            calls = manager.get_calls(
+                'Action: math.calculator\nAction Input: {"expression": "2"}'
+            )
+            assert calls is not None
+            result = await manager(calls[0], context=ToolCallContext())
+
+        expected_call = ToolCall(
+            id=call_id,
+            name="math.calculator",
+            arguments={"expression": "2"},
+        )
+        self.assertEqual(calls, [expected_call])
+        self.assertEqual(
+            result,
+            ToolCallResult(
+                id=result_id,
+                call=expected_call,
+                name="math.calculator",
+                arguments={"expression": "2"},
+                result="2",
+            ),
+        )
+
+    async def test_bracket_namespaced_tool_executes(self):
+        async def echo_input(input: str) -> str:
+            return input
+
+        manager = ToolManager.create_instance(
+            enable_tools=["text.echo_input"],
+            available_toolsets=[ToolSet(namespace="text", tools=[echo_input])],
+            settings=ToolManagerSettings(tool_format=ToolFormat.BRACKET),
+        )
+        call_id = _uuid4()
+        result_id = _uuid4()
+
+        with (
+            patch("avalan.tool.parser.uuid4", return_value=call_id),
+            patch("avalan.tool.manager.uuid4", return_value=result_id),
+        ):
+            calls = manager.get_calls("[text.echo_input](hello)")
+            assert calls is not None
+            result = await manager(calls[0], context=ToolCallContext())
+
+        expected_call = ToolCall(
+            id=call_id,
+            name="text.echo_input",
+            arguments={"input": "hello"},
+        )
+        self.assertEqual(calls, [expected_call])
+        self.assertEqual(
+            result,
+            ToolCallResult(
+                id=result_id,
+                call=expected_call,
+                name="text.echo_input",
+                arguments={"input": "hello"},
+                result="hello",
+            ),
+        )
+
+    def test_parse_calls_reports_malformed_bracket_with_valid_call(self):
+        manager = ToolManager.create_instance(
+            settings=ToolManagerSettings(tool_format=ToolFormat.BRACKET),
+        )
+        call_id = _uuid4()
+        diagnostic_id = _uuid4()
+
+        with patch(
+            "avalan.tool.parser.uuid4",
+            side_effect=[call_id, diagnostic_id],
+        ):
+            outcome = manager.parse_calls(
+                "[math..calculator](bad)\n[math.calculator](2)"
+            )
+
+        self.assertEqual(
+            outcome.calls,
+            [
+                ToolCall(
+                    id=call_id,
+                    name="math.calculator",
+                    arguments={"input": "2"},
+                )
+            ],
+        )
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(outcome.diagnostics[0].id, diagnostic_id)
+        self.assertEqual(
+            outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(
+            outcome.diagnostics[0].stage,
+            ToolCallDiagnosticStage.PARSE,
+        )
+
     async def test_get_calls_returns_none_for_parse_diagnostics_only(self):
         cases = (
             (
@@ -2516,6 +2918,14 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
             (
                 ToolFormat.JSON,
                 '{"tool": "calculator", "arguments": ',
+            ),
+            (
+                ToolFormat.JSON,
+                '{"tool": "math..calculator", "arguments": {}}',
+            ),
+            (
+                ToolFormat.OPENAI,
+                '{"name": "math/calculator", "arguments": {}}',
             ),
         )
 

@@ -17,7 +17,7 @@ from ast import literal_eval
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from json import JSONDecodeError, loads
+from json import JSONDecodeError, JSONDecoder, loads
 from re import DOTALL, MULTILINE, compile, finditer, search, sub
 from typing import Any, cast, final
 from uuid import UUID, uuid4
@@ -40,7 +40,24 @@ _MARKDOWN_FENCED_BLOCK_CAPTURE_PATTERN = compile(
     r"^[ \t]*(?P=fence)[ \t]*$",
     DOTALL | MULTILINE,
 )
+_MARKDOWN_FENCE_LINE_PATTERN = compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})")
 _XML_NAME_PREFIX_PATTERN = compile(r"<(/?)([A-Za-z_][\w.-]*):")
+_TOOL_NAME_PATTERN_TEXT = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+_TOOL_NAME_PATTERN = compile(rf"^{_TOOL_NAME_PATTERN_TEXT}$")
+_BRACKET_CALL_PATTERN = compile(r"\[([^\]\r\n]*)\]\(([^)\r\n]*)\)")
+_BRACKET_CALL_START_PATTERN = compile(r"\[[^\]\r\n]*\]\(")
+_REACT_CALL_PATTERN = compile(
+    r"^[ \t]*Action:\s*(?P<name>[^\r\n]*)\s*(?:\r?\n)+"
+    r"[ \t]*Action Input:\s*(?P<arguments>.*?)(?=^[ \t]*Action:\s*|\Z)",
+    DOTALL | MULTILINE,
+)
+_REACT_ACTION_PATTERN = compile(
+    r"^[ \t]*Action:\s*(?P<name>[^\r\n]*)\s*$",
+    MULTILINE,
+)
+_REACT_INPUT_PATTERN = compile(r"^[ \t]*Action Input:\s*", MULTILINE)
+_REACT_JSON_DECODER = JSONDecoder()
+_NO_TAG_PAYLOAD = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +147,18 @@ class ToolCallParser:
         text_diagnostic = self._text_limit_diagnostic(text)
         if text_diagnostic is not None:
             return ToolCallParseOutcome(diagnostics=[text_diagnostic])
+
+        if self._tool_format is ToolFormat.REACT:
+            react_outcome = self._parse_react_outcome(text)
+            if react_outcome.calls:
+                if not react_outcome.diagnostics:
+                    react_outcome.diagnostics.extend(
+                        self._tag_failure_diagnostics(text)
+                    )
+                    react_outcome.diagnostics.extend(
+                        self._recovery_failure_diagnostics(text)
+                    )
+                return react_outcome
 
         parsed = self(text)
         calls: list[ToolCall] = []
@@ -263,16 +292,20 @@ class ToolCallParser:
                     "content_type": "json",
                 }
                 for call in parsed
+                if self._is_valid_tool_name(call.name)
+                and (
+                    call.arguments is None or isinstance(call.arguments, dict)
+                )
             ]
 
         if isinstance(parsed, tuple) and len(parsed) == 2:
             name, arguments = parsed
-            if isinstance(name, str):
+            if self._is_valid_tool_name(name) and isinstance(arguments, dict):
                 return [
                     {
                         "id": None,
                         "name": name,
-                        "arguments": arguments or {},
+                        "arguments": arguments,
                         "content_type": "json",
                     }
                 ]
@@ -498,17 +531,84 @@ class ToolCallParser:
             return None
 
     def _parse_react(self, text: str) -> tuple[str, dict[str, Any]] | None:
-        act = search(r"Action:\s*(\w+)", text)
-        inp = search(r"Action Input:\s*({.*})", text, DOTALL)
-        if act and inp:
-            try:
-                return act.group(1), loads(inp.group(1))
-            except JSONDecodeError:
-                pass
+        for name, arguments, malformed in self._react_payloads(text):
+            if (
+                not malformed
+                and _TOOL_NAME_PATTERN.fullmatch(name)
+                and isinstance(arguments, dict)
+            ):
+                return name, arguments
         return None
 
+    def _parse_react_outcome(self, text: str) -> ToolCallParseOutcome:
+        calls: list[ToolCall] = []
+        diagnostics: list[ToolCallDiagnostic] = []
+        for name, arguments, malformed in self._react_payloads(text):
+            requested_name = (
+                name if _TOOL_NAME_PATTERN.fullmatch(name) else None
+            )
+            if requested_name is None:
+                diagnostics.append(self._malformed_call_diagnostic())
+                continue
+            if malformed:
+                diagnostics.append(
+                    self._malformed_call_diagnostic(
+                        requested_name=requested_name
+                    )
+                )
+                continue
+            if not isinstance(arguments, dict):
+                diagnostics.append(
+                    self._arguments_diagnostic(requested_name=requested_name)
+                )
+                continue
+            diagnostic = self.resource_limit_diagnostic(
+                value=arguments,
+                maximum_depth=self._maximum_payload_depth,
+                maximum_size=self._maximum_payload_size,
+                stage=ToolCallDiagnosticStage.PARSE,
+                requested_name=requested_name,
+            )
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
+                continue
+            calls.append(
+                ToolCall(
+                    id=uuid4(),
+                    name=requested_name,
+                    arguments=cast(dict[str, ToolValue], arguments),
+                )
+            )
+        return ToolCallParseOutcome(calls=calls, diagnostics=diagnostics)
+
+    def _react_payloads(self, text: str) -> list[tuple[str, Any, bool]]:
+        payloads: list[tuple[str, Any, bool]] = []
+        for match in _REACT_CALL_PATTERN.finditer(text):
+            arguments, malformed = self._decode_react_arguments(
+                match.group("arguments")
+            )
+            payloads.append(
+                (
+                    match.group("name").strip(),
+                    arguments,
+                    malformed,
+                )
+            )
+        return payloads
+
+    @staticmethod
+    def _decode_react_arguments(text: str) -> tuple[Any, bool]:
+        stripped = text.strip()
+        if not stripped:
+            return None, True
+        try:
+            arguments, _ = _REACT_JSON_DECODER.raw_decode(stripped)
+        except JSONDecodeError:
+            return None, True
+        return arguments, False
+
     def _parse_bracket(self, text: str) -> tuple[str, dict[str, Any]] | None:
-        m = search(r"\[(\w+)\]\(([^)]+)\)", text)
+        m = search(rf"\[({_TOOL_NAME_PATTERN_TEXT})\]\(([^)]+)\)", text)
         if m:
             return m.group(1), {"input": m.group(2)}
         return None
@@ -518,6 +618,8 @@ class ToolCallParser:
     ) -> tuple[str, dict[str, Any]] | None:
         try:
             payload = loads(text)
+            if not isinstance(payload, dict):
+                return None
             name = payload.get("name")
             args = payload.get("arguments", {})
             if isinstance(name, str) and isinstance(args, dict):
@@ -559,107 +661,21 @@ class ToolCallParser:
         if self._eos_token:
             text = text.strip().removesuffix(self._eos_token)
         text = self._without_markdown_fenced_blocks(text)
-        try:
-            root = ElementTree.fromstring(f"<root>{text}</root>")
-            for element in root.findall(".//tool_call"):
-                tool_call = None
-                try:
-                    if element.text is None:
-                        continue
-                    json_text = element.text.strip()
-
-                    try:
-                        tool_call = loads(json_text)
-                    except JSONDecodeError:
-                        try:
-                            tool_call = literal_eval(json_text)
-                        except (SyntaxError, ValueError):
-                            continue
-                except Exception:
-                    pass
-
-                if (
-                    tool_call is not None
-                    and "name" in tool_call
-                    and "arguments" in tool_call
-                ):
-                    parsed = self._tool_call_from_payload(tool_call)
-                    if parsed is not None:
-                        tool_calls.append(parsed)
-        except ElementTree.ParseError:
-            pass
-
-        if tool_calls:
-            return tool_calls
-
-        m = search(
-            r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, flags=DOTALL
-        )
-        if m:
-            tool_call_payload = m.group(1)
-            try:
-                tool_call = loads(tool_call_payload)
-                parsed = self._tool_call_from_payload(tool_call)
-                if parsed is not None:
-                    tool_calls.append(parsed)
-            except JSONDecodeError:
-                pass
-
-        m = search(
-            r"<tool_call\s+name=\"([^\"]+)\"\s*>(\{.*?\})</tool_call>",
-            text,
-            DOTALL,
-        )
-        if m:
-            try:
-                tool_calls.append(
-                    ToolCall(
-                        id=uuid4(),
-                        name=m.group(1),
-                        arguments=loads(m.group(2)),
-                    )
-                )
-            except JSONDecodeError:
-                pass
-
-        m = search(
-            r"<tool\s+name=\"([^\"]+)\"\s*>(\{.*?\})</tool>",
-            text,
-            DOTALL,
-        )
-        if m:
-            try:
-                tool_calls.append(
-                    ToolCall(
-                        id=uuid4(),
-                        name=m.group(1),
-                        arguments=loads(m.group(2)),
-                    )
-                )
-            except JSONDecodeError:
-                pass
-
-        m = search(
-            r"<tool_call\s+name=\"([^\"]+)\"\s+arguments='(\{.*?\})'\s*/>",
-            text,
-        )
-        if m:
-            try:
-                tool_calls.append(
-                    ToolCall(
-                        id=uuid4(),
-                        name=m.group(1),
-                        arguments=loads(m.group(2)),
-                    )
-                )
-            except JSONDecodeError:
-                pass
+        for payload in self._tag_payloads(text):
+            parsed = self._tool_call_from_payload(payload)
+            if parsed is not None:
+                tool_calls.append(parsed)
 
         return tool_calls if tool_calls else None
 
     def _normalize_tool_call(
         self, call: ToolCall
     ) -> tuple[ToolCall | None, ToolCallDiagnostic | None]:
+        if not self._is_valid_tool_name(call.name):
+            return None, self._malformed_call_diagnostic(
+                call_id=call.id,
+                requested_name=call.name if call.name.strip() else None,
+            )
         if call.arguments is not None and not isinstance(call.arguments, dict):
             return None, self._arguments_diagnostic(
                 call_id=call.id,
@@ -681,8 +697,12 @@ class ToolCallParser:
         self, parsed: tuple[Any, Any]
     ) -> tuple[ToolCall | None, ToolCallDiagnostic | None]:
         name, arguments = parsed
-        if not isinstance(name, str) or not name.strip():
-            return None, self._malformed_call_diagnostic()
+        if not self._is_valid_tool_name(name):
+            return None, self._malformed_call_diagnostic(
+                requested_name=(
+                    name if isinstance(name, str) and name.strip() else None
+                )
+            )
         if not isinstance(arguments, dict):
             return None, self._arguments_diagnostic(requested_name=name)
         diagnostic = self.resource_limit_diagnostic(
@@ -714,6 +734,8 @@ class ToolCallParser:
                 )
             case ToolFormat.REACT:
                 diagnostics = self._react_failure_diagnostics(text)
+            case ToolFormat.BRACKET:
+                diagnostics = self._bracket_failure_diagnostics(text)
             case ToolFormat.OPENAI:
                 diagnostics = self._json_failure_diagnostics(
                     text,
@@ -768,8 +790,16 @@ class ToolCallParser:
 
         name = payload.get(name_field)
         requested_name = name if isinstance(name, str) else None
-        if not isinstance(name, str) or not name.strip():
-            return [self._malformed_call_diagnostic()]
+        if not self._is_valid_tool_name(name):
+            return [
+                self._malformed_call_diagnostic(
+                    requested_name=(
+                        name
+                        if isinstance(name, str) and name.strip()
+                        else None
+                    )
+                )
+            ]
 
         arguments = payload.get("arguments", {})
         if not isinstance(arguments, dict):
@@ -779,20 +809,43 @@ class ToolCallParser:
     def _react_failure_diagnostics(
         self, text: str
     ) -> list[ToolCallDiagnostic]:
-        act = search(r"Action:\s*(\w+)", text)
-        inp = search(r"Action Input:\s*({.*}|\[.*\])", text, DOTALL)
-        if not act and not inp:
+        outcome = self._parse_react_outcome(text)
+        if outcome.diagnostics:
+            return outcome.diagnostics
+        if outcome.calls:
             return []
-        if not act or not inp:
+
+        has_action = _REACT_ACTION_PATTERN.search(text) is not None
+        has_input = _REACT_INPUT_PATTERN.search(text) is not None
+        if not has_action and not has_input:
+            return []
+        return [self._malformed_call_diagnostic()]
+
+    def _bracket_failure_diagnostics(
+        self, text: str
+    ) -> list[ToolCallDiagnostic]:
+        malformed = False
+        complete_call_starts: set[int] = set()
+        for match in _BRACKET_CALL_PATTERN.finditer(text):
+            complete_call_starts.add(match.start())
+            name = match.group(1).strip()
+            argument = match.group(2)
+            if (
+                not name
+                or not _TOOL_NAME_PATTERN.fullmatch(name)
+                or not argument
+            ):
+                malformed = True
+                break
+
+        if not malformed:
+            for match in _BRACKET_CALL_START_PATTERN.finditer(text):
+                if match.start() not in complete_call_starts:
+                    malformed = True
+                    break
+
+        if malformed:
             return [self._malformed_call_diagnostic()]
-        try:
-            arguments = loads(inp.group(1))
-        except JSONDecodeError:
-            return [
-                self._malformed_call_diagnostic(requested_name=act.group(1))
-            ]
-        if not isinstance(arguments, dict):
-            return [self._arguments_diagnostic(requested_name=act.group(1))]
         return []
 
     def _harmony_failure_diagnostics(
@@ -846,7 +899,26 @@ class ToolCallParser:
 
     @staticmethod
     def _without_markdown_fenced_blocks(text: str) -> str:
-        return _MARKDOWN_FENCED_BLOCK_PATTERN.sub("", text)
+        stripped_text = _MARKDOWN_FENCED_BLOCK_PATTERN.sub("", text)
+        lines = stripped_text.splitlines(keepends=True)
+        output: list[str] = []
+        open_fence: str | None = None
+        for line in lines:
+            match = _MARKDOWN_FENCE_LINE_PATTERN.match(line)
+            if open_fence is None:
+                if match is None:
+                    output.append(line)
+                    continue
+                open_fence = match.group("fence")
+                continue
+
+            if match is None:
+                continue
+            fence = match.group("fence")
+            if fence[0] == open_fence[0] and len(fence) >= len(open_fence):
+                open_fence = None
+
+        return "".join(output)
 
     def _parse_recovery(self, text: str) -> list[ToolCall] | None:
         tool_calls: list[ToolCall] = []
@@ -861,25 +933,44 @@ class ToolCallParser:
     ) -> list[ToolCallDiagnostic]:
         diagnostics: list[ToolCallDiagnostic] = []
         candidates = self._recovery_payloads(text)
+        candidates_by_format: dict[
+            ToolCallRecoveryFormat, list[_RecoveryPayload]
+        ] = {}
         for recovered in candidates:
+            candidates_by_format.setdefault(
+                recovered.recovery_format, []
+            ).append(recovered)
             diagnostic = self._payload_recovery_diagnostic(
                 recovered.payload, recovered.recovery_format
             )
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
 
-        if not candidates:
-            for recovery_format in self._recovery_formats:
-                if self._has_recovery_marker(text, recovery_format):
-                    diagnostics.append(
-                        self._malformed_call_diagnostic(
-                            recovery_format=recovery_format
-                        )
+        reported_marker_starts: set[int] = set()
+        for recovery_format in self._recovery_formats:
+            candidate_starts = {
+                candidate.span[0]
+                for candidate in candidates_by_format.get(recovery_format, [])
+            }
+            for marker_start in self._recovery_marker_starts(
+                text, recovery_format
+            ):
+                if (
+                    marker_start in candidate_starts
+                    or marker_start in reported_marker_starts
+                ):
+                    continue
+                diagnostics.append(
+                    self._malformed_call_diagnostic(
+                        recovery_format=recovery_format
                     )
+                )
+                reported_marker_starts.add(marker_start)
+                break
         return diagnostics
 
     def _recovery_payloads(self, text: str) -> list[_RecoveryPayload]:
-        recovered: list[_RecoveryPayload] = []
+        candidates: list[_RecoveryPayload] = []
         seen_payloads: set[tuple[tuple[int, int], str]] = set()
         for recovery_format in self._recovery_formats:
             for payload in self._recovery_payloads_for_format(
@@ -889,8 +980,27 @@ class ToolCallParser:
                 if key in seen_payloads:
                     continue
                 seen_payloads.add(key)
-                recovered.append(payload)
-        return sorted(recovered, key=lambda payload: payload.span)
+                candidates.append(payload)
+
+        recovered: list[_RecoveryPayload] = []
+        for candidate in sorted(candidates, key=lambda payload: payload.span):
+            if any(
+                self._equivalent_recovery_payload(existing, candidate)
+                for existing in recovered
+            ):
+                continue
+            recovered.append(candidate)
+        return recovered
+
+    @staticmethod
+    def _equivalent_recovery_payload(
+        left: _RecoveryPayload, right: _RecoveryPayload
+    ) -> bool:
+        return (
+            repr(left.payload) == repr(right.payload)
+            and left.span[0] < right.span[1]
+            and right.span[0] < left.span[1]
+        )
 
     def _recovery_payloads_for_format(
         self,
@@ -927,32 +1037,61 @@ class ToolCallParser:
             case ToolCallRecoveryFormat.FENCED:
                 return self._fenced_recovery_payloads(text)
 
-    @staticmethod
+    @classmethod
     def _has_recovery_marker(
-        text: str, recovery_format: ToolCallRecoveryFormat
+        cls, text: str, recovery_format: ToolCallRecoveryFormat
     ) -> bool:
+        return bool(cls._recovery_marker_starts(text, recovery_format))
+
+    @classmethod
+    def _recovery_marker_starts(
+        cls, text: str, recovery_format: ToolCallRecoveryFormat
+    ) -> list[int]:
         match recovery_format:
             case ToolCallRecoveryFormat.TOOL_CALL_BLOCK:
-                return "[TOOL_CALL]" in text
+                return [
+                    match.start() for match in finditer(r"\[TOOL_CALL\]", text)
+                ]
             case ToolCallRecoveryFormat.MINIMAX_XML:
-                return any(
-                    marker in text
-                    for marker in ("<invoke", ":invoke", "<tool_call")
+                return cls._xml_recovery_marker_starts(
+                    text, {"invoke", "tool_call"}
                 )
             case ToolCallRecoveryFormat.TOOL_CODE:
-                return "<tool_code" in text
+                return [
+                    match.start() for match in finditer(r"<tool_code\b", text)
+                ]
             case ToolCallRecoveryFormat.BROAD_XML:
-                return any(
-                    marker in text
-                    for marker in ("<function", "<invoke", ":invoke")
+                return cls._xml_recovery_marker_starts(
+                    text, {"function", "function_call", "invoke"}
                 )
             case ToolCallRecoveryFormat.DSML_LEAKAGE:
-                return "DSML" in text and "invoke" in text
+                return [
+                    match.start()
+                    for match in finditer(r"<[A-Za-z_][\w.-]*:invoke\b", text)
+                ]
             case ToolCallRecoveryFormat.FENCED:
-                return (
-                    _MARKDOWN_FENCED_BLOCK_CAPTURE_PATTERN.search(text)
-                    is not None
-                )
+                closed_block_spans = [
+                    match.span()
+                    for match in (
+                        _MARKDOWN_FENCED_BLOCK_CAPTURE_PATTERN.finditer(text)
+                    )
+                ]
+                return [
+                    match.start()
+                    for match in compile(
+                        r"^[ \t]*(?:`{3,}|~{3,})", MULTILINE
+                    ).finditer(text)
+                    if not any(
+                        start < match.start() < end
+                        for start, end in closed_block_spans
+                    )
+                ]
+
+    @staticmethod
+    def _xml_recovery_marker_starts(text: str, names: set[str]) -> list[int]:
+        name_pattern = "|".join(sorted(names))
+        pattern = compile(rf"<(?:[A-Za-z_][\w.-]*:)?(?:{name_pattern})\b")
+        return [match.start() for match in pattern.finditer(text)]
 
     def _tool_call_block_payloads(
         self,
@@ -1207,18 +1346,12 @@ class ToolCallParser:
         try:
             root = ElementTree.fromstring(f"<root>{text}</root>")
             for element in root.findall(".//tool_call"):
-                if element.text is not None:
-                    payload = self._deserialize_payload(element.text)
-                    name = element.attrib.get("name")
-                    if name is not None:
-                        payload = {"name": name, "arguments": payload}
+                payload = self._tag_payload_from_element(element)
+                if payload is not _NO_TAG_PAYLOAD:
                     payloads.append(payload)
             for element in root.findall(".//tool"):
-                if element.text is not None:
-                    payload = self._deserialize_payload(element.text)
-                    name = element.attrib.get("name")
-                    if name is not None:
-                        payload = {"name": name, "arguments": payload}
+                payload = self._tag_payload_from_element(element)
+                if payload is not _NO_TAG_PAYLOAD:
                     payloads.append(payload)
             return payloads
         except ElementTree.ParseError:
@@ -1240,6 +1373,37 @@ class ToolCallParser:
                 payloads.append({"name": name, "arguments": arguments})
         return payloads
 
+    def _tag_payload_from_element(self, element: ElementTree.Element) -> Any:
+        name = element.attrib.get("name")
+        arguments_text = element.attrib.get("arguments")
+        if arguments_text is not None:
+            arguments = self._deserialize_json_payload(arguments_text)
+            if name is None:
+                return None
+            return {"name": name, "arguments": arguments}
+
+        if element.text is None:
+            if name is not None:
+                return {"name": name, "arguments": None}
+            return _NO_TAG_PAYLOAD
+
+        if name is not None:
+            payload = self._deserialize_json_payload(element.text)
+            payload = {"name": name, "arguments": payload}
+            return payload
+
+        try:
+            return self._deserialize_payload(element.text)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _deserialize_json_payload(text: str) -> Any:
+        try:
+            return loads(text.strip())
+        except Exception:
+            return None
+
     @staticmethod
     def _deserialize_payload(text: str) -> Any:
         json_text = text.strip()
@@ -1257,8 +1421,12 @@ class ToolCallParser:
 
         name = payload.get("name")
         requested_name = name if isinstance(name, str) else None
-        if not isinstance(name, str) or not name.strip():
-            return self._malformed_call_diagnostic()
+        if not self._is_valid_tool_name(name):
+            return self._malformed_call_diagnostic(
+                requested_name=(
+                    name if isinstance(name, str) and name.strip() else None
+                )
+            )
 
         call_id = payload.get("id")
         arguments = payload.get("arguments")
@@ -1395,6 +1563,7 @@ class ToolCallParser:
     @staticmethod
     def _malformed_call_diagnostic(
         *,
+        call_id: UUID | str | None = None,
         requested_name: str | None = None,
         message: str = "Tool call could not be parsed.",
         details: dict[str, ToolValue] | None = None,
@@ -1405,11 +1574,18 @@ class ToolCallParser:
             diagnostic_details["source_format"] = recovery_format.value
         return ToolCallDiagnostic(
             id=uuid4(),
+            call_id=call_id,
             requested_name=requested_name,
             code=ToolCallDiagnosticCode.MALFORMED_CALL,
             stage=ToolCallDiagnosticStage.PARSE,
             message=message,
             details=diagnostic_details,
+        )
+
+    @staticmethod
+    def _is_valid_tool_name(name: Any) -> bool:
+        return isinstance(name, str) and bool(
+            _TOOL_NAME_PATTERN.fullmatch(name)
         )
 
     @staticmethod
@@ -1419,8 +1595,11 @@ class ToolCallParser:
 
         name = payload.get("name")
         arguments = payload.get("arguments")
-        if not isinstance(name, str) or not isinstance(arguments, dict):
+        if not ToolCallParser._is_valid_tool_name(name) or not isinstance(
+            arguments, dict
+        ):
             return None
+        assert isinstance(name, str)
 
         call_id = payload.get("id")
         identifier: UUID | str = (
