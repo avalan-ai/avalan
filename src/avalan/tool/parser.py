@@ -360,14 +360,18 @@ class ToolCallParser:
         PREFIX = 1
         OPEN = 2
         CLOSED = 3
+        MALFORMED = 4
+        UNTERMINATED = 5
 
     def tool_call_status(
-        self, buffer: str
+        self, buffer: str, *, final: bool = False
     ) -> "ToolCallParser.ToolCallBufferStatus":
+        status: ToolCallParser.ToolCallBufferStatus
         if self._tool_format is ToolFormat.DSML:
             dsml_status = self._dsml_tool_call_status(buffer)
             if dsml_status is not self.ToolCallBufferStatus.NONE:
-                return dsml_status
+                status = dsml_status
+                return self._final_tool_call_status(buffer, status, final)
 
         start = ["<tool_call", "<tool ", "<tool>"]
         end = ["</tool_call>", "</tool>", "/>", "<|call|>"]
@@ -385,15 +389,63 @@ class ToolCallParser:
         tail = buffer[-max_len:]
         for s in start:
             if s.startswith(tail) and tail != s:
-                return self.ToolCallBufferStatus.PREFIX
+                status = self.ToolCallBufferStatus.PREFIX
+                return self._final_tool_call_status(buffer, status, final)
         for s in start:
             idx = buffer.rfind(s)
             if idx != -1:
                 after = buffer[idx + len(s) :]
                 if any(e in after for e in end):
-                    return self.ToolCallBufferStatus.CLOSED
-                return self.ToolCallBufferStatus.OPEN
+                    status = self.ToolCallBufferStatus.CLOSED
+                    return self._final_tool_call_status(buffer, status, final)
+                status = self.ToolCallBufferStatus.OPEN
+                return self._final_tool_call_status(buffer, status, final)
         return self.ToolCallBufferStatus.NONE
+
+    def stream_buffer_diagnostics(
+        self, buffer: str
+    ) -> list[ToolCallDiagnostic]:
+        """Return diagnostics for a terminal streaming buffer."""
+        status = self.tool_call_status(buffer, final=True)
+        if status is self.ToolCallBufferStatus.UNTERMINATED:
+            return [
+                self._malformed_call_diagnostic(
+                    message=(
+                        "Tool call stream ended before the call was complete."
+                    ),
+                    details={"stream_status": status.name.lower()},
+                )
+            ]
+
+        outcome = self.parse(buffer)
+        if outcome.diagnostics:
+            return outcome.diagnostics
+        if status is self.ToolCallBufferStatus.MALFORMED:
+            return [
+                self._malformed_call_diagnostic(
+                    details={"stream_status": status.name.lower()}
+                )
+            ]
+        return []
+
+    def _final_tool_call_status(
+        self,
+        buffer: str,
+        status: "ToolCallParser.ToolCallBufferStatus",
+        final: bool,
+    ) -> "ToolCallParser.ToolCallBufferStatus":
+        if not final:
+            return status
+        if status in (
+            self.ToolCallBufferStatus.PREFIX,
+            self.ToolCallBufferStatus.OPEN,
+        ):
+            return self.ToolCallBufferStatus.UNTERMINATED
+        if status is self.ToolCallBufferStatus.CLOSED:
+            outcome = self.parse(buffer)
+            if not outcome.calls:
+                return self.ToolCallBufferStatus.MALFORMED
+        return status
 
     def _dsml_tool_call_status(
         self, buffer: str
@@ -960,13 +1012,16 @@ class ToolCallParser:
     def _malformed_call_diagnostic(
         *,
         requested_name: str | None = None,
+        message: str = "Tool call could not be parsed.",
+        details: dict[str, ToolValue] | None = None,
     ) -> ToolCallDiagnostic:
         return ToolCallDiagnostic(
             id=uuid4(),
             requested_name=requested_name,
             code=ToolCallDiagnosticCode.MALFORMED_CALL,
             stage=ToolCallDiagnosticStage.PARSE,
-            message="Tool call could not be parsed.",
+            message=message,
+            details=details or {},
         )
 
     @staticmethod

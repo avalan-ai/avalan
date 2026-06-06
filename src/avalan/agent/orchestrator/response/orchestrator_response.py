@@ -385,12 +385,23 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 self._tool_process_events.put(event)
         except StopAsyncIteration:
             if self._tool_parser:
+                parser_items: list[Token | TokenDetail | Event] = []
+                parser_events: list[Event] = []
                 for item in await self._tool_parser.flush():
                     if isinstance(item, Event):
-                        self._tool_process_events.put(item)
+                        if item.type == EventType.TOOL_PROCESS:
+                            self._tool_process_events.put(item)
+                        elif item.type == EventType.TOOL_DIAGNOSTIC:
+                            parser_events.append(item)
+                        else:
+                            self._tool_process_events.put(item)
                     else:
-                        assert self._parser_queue
-                        self._parser_queue.put(item)
+                        parser_items.append(item)
+                assert self._parser_queue
+                for item in parser_items:
+                    self._parser_queue.put(item)
+                for event in parser_events:
+                    self._parser_queue.put(event)
                 if self._parser_queue and not self._parser_queue.empty():
                     return self._parser_queue.get()
                 if not self._tool_process_events.empty():

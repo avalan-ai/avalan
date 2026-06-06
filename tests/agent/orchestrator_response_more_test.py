@@ -116,6 +116,30 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(await resp.__anext__(), flushed[1])
         self.assertEqual(resp._tool_process_events.get_nowait(), flushed[0])
 
+    async def test_flush_queues_diagnostic_after_plain_tokens(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        tool = MagicMock(spec=ToolManager)
+        tool.is_empty = False
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+            tool=tool,
+        )
+        resp._tool_parser = MagicMock()
+        diagnostic = Event(type=EventType.TOOL_DIAGNOSTIC)
+        token = Token(id=1, token="x")
+        resp._tool_parser.flush = AsyncMock(return_value=[diagnostic, token])
+        resp.__aiter__()
+
+        self.assertEqual(await resp.__anext__(), token)
+        self.assertEqual(await resp.__anext__(), diagnostic)
+
     async def test_emit_parsed_event(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
