@@ -1,4 +1,5 @@
 from .json_schema import get_json_schema
+from .names import matches_tool_namespace
 
 from abc import ABC
 from collections.abc import Callable, Sequence
@@ -137,9 +138,7 @@ class ToolSet:
             name = getattr(tool, "__name__", tool.__class__.__name__)
             canonical_name = f"{namespace}.{name}" if namespace else name
             for enabled in enable_tools:
-                if canonical_name == enabled or canonical_name.startswith(
-                    f"{enabled}."
-                ):
+                if matches_tool_namespace(canonical_name, enabled):
                     tools.append(tool)
                     break
 

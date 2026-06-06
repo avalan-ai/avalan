@@ -153,6 +153,21 @@ class ToolManagerCreationTestCase(TestCase):
         )
         self.assertTrue(manager.is_empty)
 
+    def test_enable_tools_namespace_uses_segment_boundaries(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["math"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[CalculatorTool()]),
+                ToolSet(namespace="mathx", tools=[CalculatorTool()]),
+            ],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["math.calculator"],
+        )
+
     def test_nested_toolset_names_are_enabled_with_parent_namespace(self):
         inner = ToolSet(namespace="inner", tools=[CalculatorTool()])
         outer = ToolSet(namespace="outer", tools=[CalculatorTool(), inner])
@@ -1312,6 +1327,46 @@ class ToolManagerFiltersTransformersTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(res_other.call.arguments, {"expression": "1"})
         self.assertEqual(res_other.result, "1")
 
+    async def test_filter_namespace_uses_segment_boundaries(self):
+        def modify(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"expression": "2 + 2"},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["math.calculator", "mathx.calculator"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[CalculatorTool()]),
+                ToolSet(namespace="mathx", tools=[CalculatorTool()]),
+            ],
+            settings=ToolManagerSettings(
+                filters=[ToolFilter(func=modify, namespace="math")]
+            ),
+        )
+        call_math = ToolCall(
+            id=_uuid4(), name="math.calculator", arguments={"expression": "1"}
+        )
+        call_mathx = ToolCall(
+            id=_uuid4(), name="mathx.calculator", arguments={"expression": "1"}
+        )
+
+        with patch(
+            "avalan.tool.manager.uuid4",
+            side_effect=[_uuid4(), _uuid4()],
+        ):
+            res_math = await manager(call_math, context=ToolCallContext())
+            res_mathx = await manager(call_mathx, context=ToolCallContext())
+
+        self.assertEqual(res_math.call.arguments, {"expression": "2 + 2"})
+        self.assertEqual(res_math.result, "4")
+        self.assertEqual(res_mathx.call.arguments, {"expression": "1"})
+        self.assertEqual(res_mathx.result, "1")
+
     async def test_transformer_scoped_to_full_namespace(self):
         def transform(_: ToolCall, __: ToolCallContext, result: str | None):
             return f"{result}!"
@@ -1346,6 +1401,39 @@ class ToolManagerFiltersTransformersTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(res_math.result, "1!")
         self.assertEqual(res_plain.result, "1")
+
+    async def test_transformer_namespace_uses_segment_boundaries(self):
+        def transform(_: ToolCall, __: ToolCallContext, result: str | None):
+            return f"{result}!"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["math.calculator", "mathx.calculator"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[CalculatorTool()]),
+                ToolSet(namespace="mathx", tools=[CalculatorTool()]),
+            ],
+            settings=ToolManagerSettings(
+                transformers=[
+                    ToolTransformer(func=transform, namespace="math")
+                ]
+            ),
+        )
+        call_math = ToolCall(
+            id=_uuid4(), name="math.calculator", arguments={"expression": "1"}
+        )
+        call_mathx = ToolCall(
+            id=_uuid4(), name="mathx.calculator", arguments={"expression": "1"}
+        )
+
+        with patch(
+            "avalan.tool.manager.uuid4",
+            side_effect=[_uuid4(), _uuid4()],
+        ):
+            res_math = await manager(call_math, context=ToolCallContext())
+            res_mathx = await manager(call_mathx, context=ToolCallContext())
+
+        self.assertEqual(res_math.result, "1!")
+        self.assertEqual(res_mathx.result, "1")
 
 
 if __name__ == "__main__":

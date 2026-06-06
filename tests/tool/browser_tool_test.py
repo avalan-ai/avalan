@@ -85,6 +85,21 @@ class BrowserToolSetTestCase(IsolatedAsyncioTestCase):
         dummy_stack.enter_async_context.assert_awaited_once_with("client1")
         dummy_tool.with_client.assert_called_once_with("client2")
 
+    async def test_init_uses_default_exit_stack(self):
+        dummy_tool = MagicMock()
+
+        with (
+            patch(
+                "avalan.tool.browser.async_playwright", return_value="client1"
+            ),
+            patch("avalan.tool.browser.BrowserTool", return_value=dummy_tool),
+        ):
+            toolset = BrowserToolSet(settings=BrowserToolSettings())
+
+        self.assertIsInstance(toolset._exit_stack, AsyncExitStack)
+        self.assertEqual(toolset._client, "client1")
+        self.assertEqual(toolset.tools, [dummy_tool])
+
 
 class BrowserToolWithClientTestCase(TestCase):
     def test_with_client(self):

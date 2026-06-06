@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from avalan.tool import Tool, ToolSet
 from avalan.tool.json_schema import get_json_schema
 from avalan.tool.math import CalculatorTool
+from avalan.tool.names import matches_tool_namespace
 
 
 class ToolSetTestCase(TestCase):
@@ -16,6 +17,17 @@ class ToolSetTestCase(TestCase):
         self.assertEqual(list(toolset.tools), [calculator])
         with self.assertRaises(AttributeError):
             toolset.namespace = "other"
+
+
+class ToolNameMatchTestCase(TestCase):
+    def test_namespace_matches_exact_name_and_child_segments(self):
+        self.assertTrue(matches_tool_namespace("math", "math"))
+        self.assertTrue(matches_tool_namespace("math.calculator", "math"))
+        self.assertTrue(matches_tool_namespace("calculator", None))
+
+    def test_namespace_does_not_match_unsafe_prefix(self):
+        self.assertFalse(matches_tool_namespace("mathx", "math"))
+        self.assertFalse(matches_tool_namespace("mathx.calculator", "math"))
 
 
 class DummyTool(Tool):
@@ -181,6 +193,24 @@ class ToolSetJsonSchemasTestCase(TestCase):
             [schema["function"]["name"] for schema in schemas],
             ["outer.inner.calculator"],
         )
+
+    def test_enabled_namespace_uses_segment_boundaries(self):
+        math_set = ToolSet(namespace="math", tools=[CalculatorTool()])
+        mathx_set = ToolSet(namespace="mathx", tools=[CalculatorTool()])
+
+        math_set.with_enabled_tools(["math"])
+        mathx_set.with_enabled_tools(["math"])
+
+        math_schemas = math_set.json_schemas()
+        mathx_schemas = mathx_set.json_schemas()
+
+        assert math_schemas is not None
+        assert mathx_schemas is not None
+        self.assertEqual(
+            [schema["function"]["name"] for schema in math_schemas],
+            ["math.calculator"],
+        )
+        self.assertEqual(mathx_schemas, [])
 
 
 class ToolJsonSchemaUtilityTestCase(TestCase):
