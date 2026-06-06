@@ -14,6 +14,8 @@ from avalan.entities import (
     ToolCallError,
     ToolCallResult,
     ToolFilter,
+    ToolFilterResult,
+    ToolFilterResultStatus,
     ToolFormat,
     ToolManagerExecutionMode,
     ToolManagerMissingCallMode,
@@ -559,6 +561,16 @@ class DummyAdderAlt(DummyAdder):
         self.aliases = ["sum"]
 
 
+class DummyMultiplier(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "multiplier"
+        self.aliases = []
+
+    async def __call__(self, a: int, b: int) -> int:
+        """Return the product of ``a`` and ``b``."""
+        return a * b
+
+
 class DummySum(DummyAdder):
     def __init__(self) -> None:
         self.__name__ = "sum"
@@ -813,10 +825,67 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         assert isinstance(prepared, PreparedToolCall)
         self.assertEqual(prepared.arguments, {"a": 1, "b": 2})
 
-    async def test_legacy_call_preserves_filter_name_rewrite(self):
+    async def test_prepare_call_resolves_filter_name_rewrite(self):
         def rename(call: ToolCall, context: ToolCallContext):
             return (
-                ToolCall(id=call.id, name="renamed", arguments=call.arguments),
+                ToolCall(
+                    id=call.id,
+                    name="multiplier",
+                    arguments=call.arguments,
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "multiplier"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyMultiplier()])
+            ],
+            settings=ToolManagerSettings(filters=[rename]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        prepared = await manager.prepare_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.call.name, "multiplier")
+        result = await manager.execute_prepared_call(prepared)
+        self.assertIsInstance(result, ToolCallResult)
+        assert isinstance(result, ToolCallResult)
+        self.assertEqual(result.result, 6)
+
+    async def test_prepare_call_returns_diagnostic_for_filter_unknown_rewrite(
+        self,
+    ):
+        def rename(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(id=call.id, name="missing", arguments=call.arguments),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[rename]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertEqual(diagnostic.requested_name, "missing")
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.UNKNOWN_TOOL)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.RESOLVE)
+
+    async def test_legacy_call_returns_none_for_filter_unknown_rewrite(self):
+        def rename(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(id=call.id, name="missing", arguments=call.arguments),
                 context,
             )
 
@@ -829,10 +898,166 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
 
         result = await manager(call, context=ToolCallContext())
 
-        self.assertIsInstance(result, ToolCallResult)
-        assert isinstance(result, ToolCallResult)
-        self.assertEqual(result.name, "renamed")
-        self.assertEqual(result.result, 3)
+        self.assertIsNone(result)
+
+    async def test_prepare_call_accepts_explicit_filter_pass(self):
+        def pass_call(
+            _call: ToolCall,
+            _context: ToolCallContext,
+        ) -> ToolFilterResult:
+            return ToolFilterResult(status=ToolFilterResultStatus.PASS)
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[pass_call]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        prepared = await manager.prepare_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.call, call)
+
+    async def test_prepare_call_preserves_legacy_filter_none(self):
+        def pass_call(
+            _call: ToolCall,
+            _context: ToolCallContext,
+        ) -> None:
+            return None
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[pass_call]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        prepared = await manager.prepare_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.call, call)
+
+    async def test_prepare_call_accepts_explicit_filter_modify(self):
+        def modify(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> ToolFilterResult:
+            return ToolFilterResult(
+                status=ToolFilterResultStatus.MODIFY,
+                call=ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"a": 3, "b": 4},
+                ),
+                context=context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[modify]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        prepared = await manager.prepare_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.arguments, {"a": 3, "b": 4})
+
+    async def test_prepare_call_returns_explicit_filter_suppress_diagnostic(
+        self,
+    ):
+        diagnostic_id = _uuid4()
+
+        def suppress(
+            _call: ToolCall,
+            _context: ToolCallContext,
+        ) -> ToolFilterResult:
+            return ToolFilterResult(
+                status=ToolFilterResultStatus.SUPPRESS,
+                message="Blocked by policy.",
+                details={"reason": "policy"},
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[suppress]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
+            diagnostic = await manager.prepare_call(
+                call,
+                context=ToolCallContext(),
+            )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertEqual(diagnostic.id, diagnostic_id)
+        self.assertIs(
+            diagnostic.code, ToolCallDiagnosticCode.FILTER_SUPPRESSED
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.FILTER)
+        self.assertEqual(diagnostic.message, "Blocked by policy.")
+        self.assertEqual(diagnostic.details, {"reason": "policy"})
+
+    async def test_legacy_call_returns_none_for_explicit_filter_suppress(self):
+        def suppress(
+            _call: ToolCall,
+            _context: ToolCallContext,
+        ) -> ToolFilterResult:
+            return ToolFilterResult(status=ToolFilterResultStatus.SUPPRESS)
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[suppress]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1, "b": 2})
+
+        result = await manager(call, context=ToolCallContext())
+
+        self.assertIsNone(result)
+
+    async def test_prepare_call_rejects_flow_tool_node_filter_name_rewrite(
+        self,
+    ):
+        def rename(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="multiplier",
+                    arguments=call.arguments,
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "multiplier"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyMultiplier()])
+            ],
+            settings=ToolManagerSettings(filters=[rename]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(flow_tool_node=True),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(
+            diagnostic.code, ToolCallDiagnosticCode.FILTER_SUPPRESSED
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.FILTER)
+        self.assertEqual(diagnostic.details, {"filtered_name": "multiplier"})
 
 
 class ToolManagerToolTypesTestCase(IsolatedAsyncioTestCase):
