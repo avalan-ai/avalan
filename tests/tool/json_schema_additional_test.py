@@ -184,6 +184,37 @@ class JsonSchemaUtilitiesAdditionalTestCase(TestCase):
             {"type": "object", "description": ""},
         )
 
+    def test_get_json_schema_supports_variadic_keyword_values(self) -> None:
+        def collect(**values: int) -> dict[str, int]:
+            """Collect values."""
+            return values
+
+        def collect_untyped(**values) -> dict[str, object]:
+            """Collect untyped values."""
+            return values
+
+        typed_schema = get_json_schema(collect)
+        untyped_schema = get_json_schema(collect_untyped)
+
+        self.assertEqual(
+            typed_schema["function"]["parameters"],
+            {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": {"type": "integer"},
+            },
+        )
+        self.assertEqual(
+            untyped_schema["function"]["parameters"],
+            {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": True,
+            },
+        )
+
     def test_json_type_covers_builtin_and_unknown_annotations(self) -> None:
         class CustomType:
             pass

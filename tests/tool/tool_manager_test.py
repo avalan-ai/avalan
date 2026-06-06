@@ -1,5 +1,7 @@
 from asyncio import CancelledError, sleep
-from typing import Any, TypedDict, cast
+from dataclasses import replace
+from enum import Enum
+from typing import Any, Literal, TypedDict, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4 as _uuid4
@@ -679,18 +681,35 @@ class ToolManagerCreationTestCase(TestCase):
             available_toolsets=[ToolSet(tools=[DummyAdder()])],
             settings=ToolManagerSettings(),
         )
-        diagnostic_id = _uuid4()
-        call = ToolCall(id="call-1", name="adder", arguments=cast(Any, ["a"]))
-
-        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
-            diagnostic = manager.validate_tool_call(call)
-
-        assert diagnostic is not None
-        self.assertEqual(diagnostic.id, diagnostic_id)
-        self.assertIs(
-            diagnostic.code, ToolCallDiagnosticCode.MALFORMED_ARGUMENTS
+        calls = (
+            ToolCall(
+                id="call-1",
+                name="adder",
+                arguments=cast(Any, ["a"]),
+            ),
+            ToolCall(id="call-2", name="adder", arguments=cast(Any, [])),
         )
-        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+
+        for call in calls:
+            with self.subTest(call_id=call.id):
+                diagnostic_id = _uuid4()
+
+                with patch(
+                    "avalan.tool.manager.uuid4",
+                    return_value=diagnostic_id,
+                ):
+                    diagnostic = manager.validate_tool_call(call)
+
+                assert diagnostic is not None
+                self.assertEqual(diagnostic.id, diagnostic_id)
+                self.assertIs(
+                    diagnostic.code,
+                    ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+                )
+                self.assertIs(
+                    diagnostic.stage,
+                    ToolCallDiagnosticStage.VALIDATE,
+                )
 
     def test_validate_tool_call_returns_argument_validation_diagnostic(self):
         manager = ToolManager.create_instance(
@@ -712,6 +731,226 @@ class ToolManagerCreationTestCase(TestCase):
             ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
         )
         self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+
+    def test_validate_tool_call_rejects_wrong_json_types(self):
+        async def typed_tool(
+            payload: RuntimePayload,
+            count: int,
+            ratio: float,
+            enabled: bool,
+            mode: Literal["fast", "slow"],
+            status: RuntimeMode,
+        ) -> dict[str, Any]:
+            return {"payload": payload, "count": count}
+
+        manager = ToolManager.create_instance(
+            enable_tools=["typed_tool"],
+            available_toolsets=[ToolSet(tools=[typed_tool])],
+            settings=ToolManagerSettings(),
+        )
+        cases = (
+            (
+                {"payload": {"name": "ok", "scores": [1], "note": None}},
+                "$.count is required.",
+            ),
+            (
+                {
+                    "payload": {"name": "ok", "scores": [1], "note": None},
+                    "count": 1,
+                    "ratio": 1.5,
+                    "enabled": True,
+                    "mode": "fast",
+                    "status": "slow",
+                    "extra": "no",
+                },
+                "$.extra is not allowed.",
+            ),
+            (
+                {
+                    "payload": {"name": "ok", "scores": [1], "note": None},
+                    "count": "1",
+                    "ratio": 1.5,
+                    "enabled": True,
+                    "mode": "fast",
+                    "status": "slow",
+                },
+                "$.count must be integer.",
+            ),
+            (
+                {
+                    "payload": {"name": "ok", "scores": [True], "note": None},
+                    "count": 1,
+                    "ratio": 1.5,
+                    "enabled": True,
+                    "mode": "fast",
+                    "status": "slow",
+                },
+                "$.payload.scores[0] must be integer.",
+            ),
+            (
+                {
+                    "payload": {"name": "ok", "scores": [1], "note": 1},
+                    "count": 1,
+                    "ratio": 1.5,
+                    "enabled": True,
+                    "mode": "fast",
+                    "status": "slow",
+                },
+                "$.payload.note must be string or null.",
+            ),
+            (
+                {
+                    "payload": {"name": "ok", "scores": [1], "note": None},
+                    "count": 1,
+                    "ratio": 1.5,
+                    "enabled": True,
+                    "mode": "medium",
+                    "status": "slow",
+                },
+                "$.mode must be one of ['fast', 'slow'].",
+            ),
+            (
+                {
+                    "payload": {"name": "ok", "scores": [1], "note": None},
+                    "count": 1,
+                    "ratio": 1.5,
+                    "enabled": True,
+                    "mode": "fast",
+                    "status": "medium",
+                },
+                "$.status must be one of ['fast', 'slow'].",
+            ),
+        )
+
+        for arguments, message in cases:
+            with self.subTest(message=message):
+                diagnostic = manager.validate_tool_call(
+                    ToolCall(
+                        id="call-1",
+                        name="typed_tool",
+                        arguments=arguments,
+                    )
+                )
+
+                assert diagnostic is not None
+                self.assertIs(
+                    diagnostic.code,
+                    ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+                )
+                self.assertIs(
+                    diagnostic.stage,
+                    ToolCallDiagnosticStage.VALIDATE,
+                )
+                self.assertEqual(diagnostic.message, message)
+
+    def test_schema_validation_helper_covers_composite_shapes(self):
+        self.assertIsNone(
+            ToolManager._schema_validation_error(
+                "ok",
+                {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                "$",
+            )
+        )
+        self.assertEqual(
+            ToolManager._schema_validation_error(
+                False,
+                {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+                "$",
+            ),
+            "$ does not match any allowed schema.",
+        )
+        self.assertIsNone(
+            ToolManager._object_schema_validation_error(
+                "not-object",
+                {"type": "object"},
+                "$",
+            )
+        )
+        self.assertIsNone(
+            ToolManager._array_schema_validation_error(
+                "not-array",
+                {"type": "array"},
+                "$",
+            )
+        )
+        self.assertEqual(
+            ToolManager._array_schema_validation_error(
+                [],
+                {"type": "array", "minItems": 1},
+                "$",
+            ),
+            "$ must contain at least 1 item(s).",
+        )
+        self.assertEqual(
+            ToolManager._array_schema_validation_error(
+                [1, 2],
+                {"type": "array", "maxItems": 1},
+                "$",
+            ),
+            "$ must contain at most 1 item(s).",
+        )
+        self.assertEqual(
+            ToolManager._array_schema_validation_error(
+                ["ok", "bad"],
+                {
+                    "type": "array",
+                    "prefixItems": [
+                        {"type": "string"},
+                        {"type": "integer"},
+                    ],
+                    "minItems": 2,
+                    "maxItems": 2,
+                },
+                "$",
+            ),
+            "$[1] must be integer.",
+        )
+        self.assertIsNone(
+            ToolManager._array_schema_validation_error(
+                ["ok"],
+                {"type": "array", "prefixItems": [None]},
+                "$",
+            )
+        )
+        self.assertIsNone(
+            ToolManager._array_schema_validation_error(
+                ["ok", 1],
+                {
+                    "type": "array",
+                    "prefixItems": [
+                        {"type": "string"},
+                        {"type": "integer"},
+                    ],
+                },
+                "$",
+            )
+        )
+        self.assertTrue(
+            ToolManager._matches_schema_type(object(), "unhandled")
+        )
+
+    def test_validate_tool_call_uses_signature_when_schema_is_missing(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        descriptor = manager._descriptors["adder"]
+        manager._descriptors["adder"] = replace(
+            descriptor,
+            parameter_schema=None,
+        )
+
+        diagnostic = manager.validate_tool_call(
+            ToolCall(id="call-1", name="adder", arguments={"a": 1})
+        )
+
+        assert diagnostic is not None
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertIn("missing", diagnostic.message)
 
 
 class DummyAdder:
@@ -750,6 +989,17 @@ class InvalidAliasesTool(DummyAdder):
     def __init__(self) -> None:
         self.__name__ = "invalid_aliases"
         self.aliases = "sum"
+
+
+class RuntimePayload(TypedDict):
+    name: str
+    scores: list[int]
+    note: str | None
+
+
+class RuntimeMode(str, Enum):
+    FAST = "fast"
+    SLOW = "slow"
 
 
 class NativeAdderTool(Tool):
@@ -822,24 +1072,32 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
             available_toolsets=[ToolSet(tools=[DummyAdder()])],
             settings=ToolManagerSettings(),
         )
-        call = ToolCall(
-            id="call-1",
-            name="adder",
-            arguments=cast(Any, ["a"]),
+        calls = (
+            ToolCall(
+                id="call-1",
+                name="adder",
+                arguments=cast(Any, ["a"]),
+            ),
+            ToolCall(id="call-2", name="adder", arguments=cast(Any, [])),
         )
 
-        diagnostic = await manager.prepare_call(
-            call,
-            context=ToolCallContext(),
-        )
+        for call in calls:
+            with self.subTest(call_id=call.id):
+                diagnostic = await manager.prepare_call(
+                    call,
+                    context=ToolCallContext(),
+                )
 
-        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
-        assert isinstance(diagnostic, ToolCallDiagnostic)
-        self.assertIs(
-            diagnostic.code,
-            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
-        )
-        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+                self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+                assert isinstance(diagnostic, ToolCallDiagnostic)
+                self.assertIs(
+                    diagnostic.code,
+                    ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+                )
+                self.assertIs(
+                    diagnostic.stage,
+                    ToolCallDiagnosticStage.VALIDATE,
+                )
 
     async def test_prepare_call_returns_repeated_call_diagnostic(self):
         manager = ToolManager.create_instance(
@@ -1256,6 +1514,73 @@ class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_execute_call_validates_arguments_before_dispatch(self):
+        calls: list[dict[str, Any]] = []
+
+        async def typed_tool(
+            payload: RuntimePayload,
+            count: int,
+            ratio: float,
+            enabled: bool,
+            mode: Literal["fast", "slow"],
+            status: RuntimeMode,
+        ) -> dict[str, Any]:
+            calls.append(
+                {
+                    "payload": payload,
+                    "count": count,
+                    "ratio": ratio,
+                    "enabled": enabled,
+                    "mode": mode,
+                    "status": status,
+                }
+            )
+            return calls[-1]
+
+        manager = ToolManager.create_instance(
+            enable_tools=["typed_tool"],
+            available_toolsets=[ToolSet(tools=[typed_tool])],
+            settings=ToolManagerSettings(),
+        )
+        valid_arguments = {
+            "payload": {"name": "ok", "scores": [1, 2], "note": None},
+            "count": 2,
+            "ratio": 1.5,
+            "enabled": False,
+            "mode": "fast",
+            "status": "slow",
+        }
+
+        result = await manager.execute_call(
+            ToolCall(
+                id="call-1",
+                name="typed_tool",
+                arguments=valid_arguments,
+            ),
+            context=ToolCallContext(),
+        )
+        diagnostic = await manager.execute_call(
+            ToolCall(
+                id="call-2",
+                name="typed_tool",
+                arguments={**valid_arguments, "count": True},
+            ),
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(result, ToolCallResult)
+        assert isinstance(result, ToolCallResult)
+        self.assertEqual(result.result, valid_arguments)
+        self.assertEqual(calls, [valid_arguments])
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertEqual(diagnostic.message, "$.count must be integer.")
+        self.assertEqual(calls, [valid_arguments])
+
     async def test_execute_call_returns_execution_error(self):
         async def failing_tool(a: int) -> None:
             raise ValueError("boom")
@@ -1597,6 +1922,31 @@ class ToolManagerToolTypesTestCase(IsolatedAsyncioTestCase):
         )
         result = await manager(call, context=ToolCallContext())
         self.assertEqual(result.result, {"b": 2, "a": 1})
+
+    async def test_execute_call_rejects_invalid_variadic_keyword_value(self):
+        async def collect(**values: int) -> dict[str, int]:
+            return values
+
+        manager = ToolManager.create_instance(
+            enable_tools=[collect.__name__],
+            available_toolsets=[ToolSet(tools=[collect])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(),
+            name=collect.__name__,
+            arguments={"a": "1"},
+        )
+
+        outcome = await manager.execute_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(
+            outcome.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertEqual(outcome.message, "$.a must be integer.")
 
     async def test_non_native_tool_without_arguments(self):
         def greet() -> str:

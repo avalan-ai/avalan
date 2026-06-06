@@ -174,7 +174,7 @@ class ToolManager:
                 details={"candidates": cast(Any, resolution.candidates)},
             )
 
-        arguments = call.arguments or {}
+        arguments = call.arguments if call.arguments is not None else {}
         if not isinstance(arguments, dict):
             return ToolCallDiagnostic(
                 id=uuid4(),
@@ -621,7 +621,7 @@ class ToolManager:
             return self._resolution_diagnostic(call, resolution)
         assert resolution.canonical_name is not None
 
-        arguments = call.arguments or {}
+        arguments = call.arguments if call.arguments is not None else {}
         if not isinstance(arguments, dict):
             return self._diagnostic(
                 call=call,
@@ -716,6 +716,16 @@ class ToolManager:
         arguments: dict[str, Any],
         context: ToolCallContext | None = None,
     ) -> ToolCallDiagnostic | None:
+        descriptor = self._descriptors[canonical_name]
+        schema_diagnostic = self._validate_arguments_schema(
+            call=call,
+            canonical_name=canonical_name,
+            arguments=arguments,
+            schema=descriptor.parameter_schema,
+        )
+        if schema_diagnostic is not None:
+            return schema_diagnostic
+
         try:
             if isinstance(tool, Tool):
                 signature(tool.__call__).bind(
@@ -735,6 +745,202 @@ class ToolManager:
                 message=str(exc),
             )
         return None
+
+    def _validate_arguments_schema(
+        self,
+        *,
+        call: ToolCall,
+        canonical_name: str,
+        arguments: dict[str, Any],
+        schema: dict[str, Any] | None,
+    ) -> ToolCallDiagnostic | None:
+        if schema is None:
+            return None
+
+        error = self._schema_validation_error(arguments, schema, "$")
+        if error is None:
+            return None
+        return self._diagnostic(
+            call=call,
+            canonical_name=canonical_name,
+            code=ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+            stage=ToolCallDiagnosticStage.VALIDATE,
+            message=error,
+        )
+
+    @classmethod
+    def _schema_validation_error(
+        cls,
+        value: Any,
+        schema: dict[str, Any],
+        path: str,
+    ) -> str | None:
+        if "anyOf" in schema:
+            any_of = schema["anyOf"]
+            assert isinstance(any_of, list)
+            if any(
+                isinstance(candidate, dict)
+                and cls._schema_validation_error(value, candidate, path)
+                is None
+                for candidate in any_of
+            ):
+                return None
+            return f"{path} does not match any allowed schema."
+
+        expected_type = schema.get("type")
+        if expected_type is not None and not cls._matches_schema_type(
+            value,
+            expected_type,
+        ):
+            return (
+                f"{path} must be {cls._format_expected_type(expected_type)}."
+            )
+
+        if "enum" in schema:
+            enum_values = schema["enum"]
+            assert isinstance(enum_values, list)
+            if value not in enum_values:
+                return f"{path} must be one of {enum_values!r}."
+
+        if value is None:
+            return None
+
+        schema_type = schema.get("type")
+        if schema_type == "object" or (
+            isinstance(schema_type, list) and "object" in schema_type
+        ):
+            return cls._object_schema_validation_error(value, schema, path)
+        if schema_type == "array" or (
+            isinstance(schema_type, list) and "array" in schema_type
+        ):
+            return cls._array_schema_validation_error(value, schema, path)
+        return None
+
+    @classmethod
+    def _object_schema_validation_error(
+        cls,
+        value: Any,
+        schema: dict[str, Any],
+        path: str,
+    ) -> str | None:
+        if not isinstance(value, dict):
+            return None
+
+        properties = schema.get("properties", {})
+        assert isinstance(properties, dict)
+        required = schema.get("required", [])
+        assert isinstance(required, list)
+        for name in required:
+            assert isinstance(name, str)
+            if name not in value:
+                return f"{path}.{name} is required."
+
+        additional_properties = schema.get("additionalProperties", True)
+        for name, field_value in value.items():
+            field_path = f"{path}.{name}"
+            field_schema = properties.get(name)
+            if isinstance(field_schema, dict):
+                error = cls._schema_validation_error(
+                    field_value,
+                    field_schema,
+                    field_path,
+                )
+                if error is not None:
+                    return error
+                continue
+            if additional_properties is False:
+                return f"{field_path} is not allowed."
+            if isinstance(additional_properties, dict):
+                error = cls._schema_validation_error(
+                    field_value,
+                    additional_properties,
+                    field_path,
+                )
+                if error is not None:
+                    return error
+        return None
+
+    @classmethod
+    def _array_schema_validation_error(
+        cls,
+        value: Any,
+        schema: dict[str, Any],
+        path: str,
+    ) -> str | None:
+        if not isinstance(value, list):
+            return None
+
+        min_items = schema.get("minItems")
+        if isinstance(min_items, int) and len(value) < min_items:
+            return f"{path} must contain at least {min_items} item(s)."
+
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and len(value) > max_items:
+            return f"{path} must contain at most {max_items} item(s)."
+
+        prefix_items = schema.get("prefixItems")
+        if isinstance(prefix_items, list):
+            for index, item_schema in enumerate(prefix_items):
+                if index >= len(value) or not isinstance(item_schema, dict):
+                    continue
+                error = cls._schema_validation_error(
+                    value[index],
+                    item_schema,
+                    f"{path}[{index}]",
+                )
+                if error is not None:
+                    return error
+            return None
+
+        items = schema.get("items")
+        if isinstance(items, dict):
+            for index, item in enumerate(value):
+                error = cls._schema_validation_error(
+                    item,
+                    items,
+                    f"{path}[{index}]",
+                )
+                if error is not None:
+                    return error
+        return None
+
+    @classmethod
+    def _matches_schema_type(
+        cls,
+        value: Any,
+        expected_type: str | list[str],
+    ) -> bool:
+        if isinstance(expected_type, list):
+            return any(
+                cls._matches_schema_type(value, t) for t in expected_type
+            )
+
+        match expected_type:
+            case "null":
+                return value is None
+            case "boolean":
+                return isinstance(value, bool)
+            case "integer":
+                return isinstance(value, int) and not isinstance(value, bool)
+            case "number":
+                return isinstance(value, int | float) and not isinstance(
+                    value,
+                    bool,
+                )
+            case "string":
+                return isinstance(value, str)
+            case "array":
+                return isinstance(value, list)
+            case "object":
+                return isinstance(value, dict)
+            case _:
+                return True
+
+    @staticmethod
+    def _format_expected_type(expected_type: str | list[str]) -> str:
+        if isinstance(expected_type, list):
+            return " or ".join(expected_type)
+        return expected_type
 
     def _apply_filters(
         self, call: ToolCall, context: ToolCallContext
