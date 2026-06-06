@@ -1,0 +1,10 @@
+{
+  "call_id": "call_delta",
+  "provider_name": "pkg__func",
+  "argument_deltas": [
+    "{\"city\":",
+    "\"Paris\",",
+    "\"unit\":\"c\"}"
+  ],
+  "assistant_after": "done"
+}
