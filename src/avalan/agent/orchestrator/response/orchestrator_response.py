@@ -8,7 +8,9 @@ from ....entities import (
     TokenDetail,
     ToolCall,
     ToolCallContext,
+    ToolCallDiagnostic,
     ToolCallError,
+    ToolCallOutcome,
     ToolCallResult,
     ToolCallToken,
 )
@@ -18,6 +20,7 @@ from ....model.call import ModelCallContext
 from ....model.response.parsers.tool import ToolCallResponseParser
 from ....model.response.text import TextGenerationResponse
 from ....tool.manager import ToolManager
+from ....utils import tool_call_diagnostic_payload
 from ... import AgentOperation
 from ...engine import EngineAgent
 
@@ -228,10 +231,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 cancellation_checker=self._cancellation_checker,
             )
 
-            result = (
-                await self._tool_manager(call, context)
-                if self._tool_manager
-                else None
+            result = await self._execute_tool_call(
+                call,
+                context,
+                confirm=False,
             )
 
             self._call_history.append(call)
@@ -240,7 +243,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             end = perf_counter()
             result_event = Event(
                 type=EventType.TOOL_RESULT,
-                payload={"result": result},
+                payload={"call": call, "result": result},
                 started=start,
                 finished=end,
                 elapsed=end - start,
@@ -267,51 +270,21 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             for e in result_events:
                 assert e.payload is not None and "result" in e.payload
                 tool_result = e.payload["result"]
-                tool_output = (
-                    tool_result.message
-                    if isinstance(tool_result, ToolCallError)
-                    else tool_result.result
-                )
-                tool_messages.append(
-                    Message(
-                        role=MessageRole.ASSISTANT,
-                        tool_calls=[
-                            MessageToolCall(
-                                id=str(tool_result.call.id),
-                                name=tool_result.name,
-                                arguments=cast(Any, tool_result.arguments),
-                            )
-                        ],
-                    )
-                )
-                tool_result_output = dumps(
-                    (
-                        asdict(cast(Any, tool_output))
-                        if is_dataclass(tool_output)
-                        else tool_output
-                    ),
-                    default=lambda o: (
-                        b64encode(o).decode()
-                        if isinstance(o, (bytes, bytearray, memoryview))
-                        else str(o)
-                    ),
-                )
-                tool_messages.append(
-                    Message(
-                        role=MessageRole.TOOL,
-                        name=tool_result.name,
-                        arguments=tool_result.arguments,
-                        content=tool_result_output,
-                        tool_call_result=(
-                            tool_result
-                            if isinstance(tool_result, ToolCallResult)
+                event_call = e.payload.get("call")
+                if not isinstance(
+                    tool_result,
+                    (ToolCallResult, ToolCallError, ToolCallDiagnostic),
+                ):
+                    continue
+                tool_messages.extend(
+                    self._tool_observation_messages(
+                        tool_result,
+                        call=(
+                            event_call
+                            if isinstance(event_call, ToolCall)
                             else None
                         ),
-                        tool_call_error=(
-                            tool_result
-                            if isinstance(tool_result, ToolCallError)
-                            else None
-                        ),
+                        json_output=True,
                     )
                 )
 
@@ -466,7 +439,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             if not calls:
                 break
 
-            results: list[ToolCallResult | ToolCallError] = []
+            results: list[ToolCallOutcome] = []
             for call in calls:
                 if self._event_manager:
                     start = perf_counter()
@@ -486,10 +459,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     cancellation_checker=self._cancellation_checker,
                 )
 
-                result = (
-                    await self._tool_manager(call, context)
-                    if self._tool_manager
-                    else None
+                result = await self._execute_tool_call(
+                    call,
+                    context,
+                    confirm=True,
                 )
                 self._call_history.append(call)
                 self._tool_context = context
@@ -538,65 +511,33 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             )
         return "".join(text_parts), calls
 
+    async def _execute_tool_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+        *,
+        confirm: bool,
+    ) -> ToolCallOutcome | None:
+        if self._tool_manager is None:
+            return None
+        if type(self._tool_manager) is ToolManager:
+            confirmation = self._tool_confirm if confirm else None
+            return await self._tool_manager.execute_call(
+                call,
+                context,
+                confirm=confirmation,
+            )
+        return await self._tool_manager(call, context)
+
     async def _react_process(
-        self, output: str, results: list[ToolCallResult | ToolCallError]
+        self, output: str, results: list[ToolCallOutcome]
     ) -> TextGenerationResponse:
         tool_messages: list[Message] = []
         for result in results:
-            tool_messages.append(
-                Message(
-                    role=MessageRole.ASSISTANT,
-                    tool_calls=[
-                        MessageToolCall(
-                            id=str(result.call.id),
-                            name=result.name,
-                            arguments=cast(Any, result.arguments),
-                        )
-                    ],
-                )
-            )
-            tool_messages.append(
-                Message(
-                    role=MessageRole.TOOL,
-                    name=result.name,
-                    arguments=result.arguments,
-                    content=(
-                        result.message
-                        if isinstance(result, ToolCallError)
-                        else (
-                            result.result
-                            if isinstance(result.result, str)
-                            else (
-                                dumps(
-                                    (
-                                        asdict(result.result)
-                                        if is_dataclass(result.result)
-                                        else result.result
-                                    ),
-                                    default=lambda o: (
-                                        b64encode(o).decode()
-                                        if isinstance(
-                                            o,
-                                            (
-                                                bytes,
-                                                bytearray,
-                                                memoryview,
-                                            ),
-                                        )
-                                        else str(o)
-                                    ),
-                                )
-                                if result.result is not None
-                                else ""
-                            )
-                        )
-                    ),
-                    tool_call_result=(
-                        result if isinstance(result, ToolCallResult) else None
-                    ),
-                    tool_call_error=(
-                        result if isinstance(result, ToolCallError) else None
-                    ),
+            tool_messages.extend(
+                self._tool_observation_messages(
+                    result,
+                    json_output=False,
                 )
             )
 
@@ -642,6 +583,131 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         assert isinstance(response, TextGenerationResponse)
         self._model_responses.append(response)
         return response
+
+    @classmethod
+    def _tool_observation_messages(
+        cls,
+        outcome: ToolCallOutcome,
+        *,
+        call: ToolCall | None = None,
+        json_output: bool,
+    ) -> list[Message]:
+        if isinstance(outcome, ToolCallDiagnostic):
+            return cls._diagnostic_messages(
+                outcome,
+                call=call,
+                json_output=json_output,
+            )
+
+        return [
+            Message(
+                role=MessageRole.ASSISTANT,
+                tool_calls=[
+                    MessageToolCall(
+                        id=str(outcome.call.id),
+                        name=outcome.name,
+                        arguments=cast(Any, outcome.arguments),
+                    )
+                ],
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                name=outcome.name,
+                arguments=outcome.arguments,
+                content=cls._outcome_content(
+                    outcome,
+                    json_output=json_output,
+                ),
+                tool_call_result=(
+                    outcome if isinstance(outcome, ToolCallResult) else None
+                ),
+                tool_call_error=(
+                    outcome if isinstance(outcome, ToolCallError) else None
+                ),
+            ),
+        ]
+
+    @classmethod
+    def _diagnostic_messages(
+        cls,
+        diagnostic: ToolCallDiagnostic,
+        *,
+        call: ToolCall | None,
+        json_output: bool,
+    ) -> list[Message]:
+        call_id = diagnostic.call_id or (call.id if call else None)
+        name = (
+            diagnostic.canonical_name
+            or diagnostic.requested_name
+            or (call.name if call else "tool")
+        )
+        arguments = call.arguments if call else None
+        content = cls._outcome_content(
+            diagnostic,
+            json_output=json_output,
+        )
+        if call_id is None:
+            return [
+                Message(
+                    role=MessageRole.ASSISTANT,
+                    content=content,
+                    tool_call_diagnostic=diagnostic,
+                )
+            ]
+
+        return [
+            Message(
+                role=MessageRole.ASSISTANT,
+                tool_calls=[
+                    MessageToolCall(
+                        id=str(call_id),
+                        name=name,
+                        arguments=cast(Any, arguments),
+                    )
+                ],
+            ),
+            Message(
+                role=MessageRole.TOOL,
+                name=name,
+                arguments=arguments,
+                content=content,
+                tool_call_diagnostic=diagnostic,
+            ),
+        ]
+
+    @classmethod
+    def _outcome_content(
+        cls,
+        outcome: ToolCallOutcome,
+        *,
+        json_output: bool,
+    ) -> str:
+        if isinstance(outcome, ToolCallDiagnostic):
+            return cls._json_content(tool_call_diagnostic_payload(outcome))
+        if isinstance(outcome, ToolCallError):
+            return (
+                cls._json_content(outcome.message)
+                if json_output
+                else outcome.message
+            )
+
+        result = outcome.result
+        if not json_output and isinstance(result, str):
+            return result
+        if not json_output and result is None:
+            return ""
+        return cls._json_content(result)
+
+    @staticmethod
+    def _json_content(value: Any) -> str:
+        return dumps(
+            asdict(cast(Any, value)) if is_dataclass(value) else value,
+            default=lambda o: (
+                b64encode(o).decode()
+                if isinstance(o, (bytes, bytearray, memoryview))
+                else str(o)
+            ),
+        )
 
     async def _emit(
         self, item: Token | TokenDetail | Event | str

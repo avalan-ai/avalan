@@ -808,6 +808,7 @@ class Message:
     tool_calls: list[MessageToolCall] | None = None
     tool_call_result: ToolCallResult | None = None
     tool_call_error: ToolCallError | None = None
+    tool_call_diagnostic: ToolCallDiagnostic | None = None
 
 
 Input = str | list[str] | Message | list[Message]

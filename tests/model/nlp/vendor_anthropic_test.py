@@ -5,6 +5,7 @@ import types
 from base64 import b64encode
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from json import loads
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,9 @@ from avalan.entities import (
     ReasoningToken,
     Token,
     ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -623,6 +627,63 @@ def test_template_messages_tool_error_details(anthropic_mod):
     tool_result = templated[2]["content"][0]
     assert tool_result["tool_use_id"] == "call1"
     assert tool_result["is_error"] is True
+
+
+def test_template_messages_tool_diagnostic_details(anthropic_mod):
+    mod, _ = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("k", exit_stack=exit_stack)
+
+    diagnostic = ToolCallDiagnostic(
+        id="diag1",
+        call_id="call1",
+        requested_name="missing",
+        code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        stage=ToolCallDiagnosticStage.RESOLVE,
+        message="Tool is unknown.",
+    )
+    messages = [
+        Message(role=MessageRole.USER, content="hi"),
+        Message(
+            role=MessageRole.TOOL,
+            name="missing",
+            arguments={"a": 1},
+            tool_call_diagnostic=diagnostic,
+        ),
+    ]
+
+    templated = client._template_messages(messages)
+
+    tool_use = templated[1]["content"][0]
+    tool_result = templated[2]["content"][0]
+    assert tool_use["type"] == "tool_use"
+    assert tool_use["id"] == "call1"
+    assert tool_use["name"] == "missing"
+    assert tool_use["input"] == {"a": 1}
+    assert tool_result["type"] == "tool_result"
+    assert tool_result["tool_use_id"] == "call1"
+    assert tool_result["is_error"] is True
+    assert loads(tool_result["content"])["code"] == "tool.unknown"
+
+
+def test_template_messages_unanchored_tool_diagnostic(anthropic_mod):
+    mod, _ = anthropic_mod
+    exit_stack = AsyncExitStack()
+    client = mod.AnthropicClient("k", exit_stack=exit_stack)
+    diagnostic = ToolCallDiagnostic(
+        id="diag1",
+        code=ToolCallDiagnosticCode.MALFORMED_CALL,
+        stage=ToolCallDiagnosticStage.PARSE,
+        message="Tool call could not be parsed.",
+    )
+
+    templated = client._template_messages(
+        [Message(role=MessageRole.TOOL, tool_call_diagnostic=diagnostic)]
+    )
+
+    assert templated[0]["role"] == str(MessageRole.ASSISTANT)
+    text = templated[0]["content"][0]["text"]
+    assert loads(text)["code"] == "tool_call.malformed"
 
 
 def test_file_content_translation_and_beta_header(anthropic_mod):

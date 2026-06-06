@@ -8,6 +8,7 @@ from .....entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCallDiagnostic,
     ToolCallResult,
     ToolCallToken,
 )
@@ -15,7 +16,7 @@ from .....model.provider import ProviderFamily, provider_string_option
 from .....model.response.text import TextGenerationResponse
 from .....model.stream import TextGenerationSingleStream
 from .....tool.manager import ToolManager
-from .....utils import to_json
+from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -282,11 +283,15 @@ class OpenAIClient(TextGenerationVendor):
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
     ) -> list[TemplateMessage] | list[dict[str, Any]]:
-        tool_results = [
-            message.tool_call_result or message.tool_call_error
+        tool_messages = [
+            message
             for message in messages
             if message.role == MessageRole.TOOL
-            and (message.tool_call_result or message.tool_call_error)
+            and (
+                message.tool_call_result
+                or message.tool_call_error
+                or message.tool_call_diagnostic
+            )
         ]
         do_exclude_roles = [*(exclude_roles or []), "tool"]
         template_messages = super()._template_messages(
@@ -303,27 +308,58 @@ class OpenAIClient(TextGenerationVendor):
                     for block in content
                     if isinstance(block, dict)
                 ]
-        for result in tool_results:
-            assert result is not None
-            call_id = str(result.call.id)
+        for tool_message in tool_messages:
+            outcome = (
+                tool_message.tool_call_result
+                or tool_message.tool_call_error
+                or tool_message.tool_call_diagnostic
+            )
+            assert outcome is not None
+
+            output: Any
+            if isinstance(outcome, ToolCallDiagnostic):
+                call_id_value = outcome.call_id
+                if call_id_value is None:
+                    messages_out.append(
+                        {
+                            "role": str(MessageRole.ASSISTANT),
+                            "content": to_json(
+                                tool_call_diagnostic_payload(outcome)
+                            ),
+                        }
+                    )
+                    continue
+                call_id = str(call_id_value)
+                name = (
+                    tool_message.name
+                    or outcome.canonical_name
+                    or outcome.requested_name
+                    or "tool"
+                )
+                arguments = tool_message.arguments
+                output = tool_call_diagnostic_payload(outcome)
+            else:
+                call_id = str(outcome.call.id)
+                name = outcome.call.name
+                arguments = outcome.call.arguments
+                output = (
+                    outcome.result
+                    if isinstance(outcome, ToolCallResult)
+                    else {"error": outcome.message}
+                )
+
             call_message = {
                 "type": "function_call",
-                "name": TextGenerationVendor.encode_tool_name(
-                    result.call.name
-                ),
+                "name": TextGenerationVendor.encode_tool_name(name),
                 "call_id": call_id,
-                "arguments": to_json(result.call.arguments),
+                "arguments": to_json(arguments),
             }
             messages_out.append(call_message)
 
             result_message = {
                 "type": "function_call_output",
                 "call_id": call_id,
-                "output": to_json(
-                    result.result
-                    if isinstance(result, ToolCallResult)
-                    else {"error": result.message}
-                ),
+                "output": to_json(output),
             }
             messages_out.append(result_message)
         return messages_out
