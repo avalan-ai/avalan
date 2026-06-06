@@ -1,0 +1,8 @@
+{
+  "tool_call_block": "[TOOL_CALL]{\"name\":\"calculator\",\"arguments\":{\"payload\":{\"nested\":{\"value\":1}}}}[/TOOL_CALL]",
+  "minimax_xml": "<invoke name=\"calculator\"><parameter name=\"payload\" string=\"false\">{\"nested\":{\"value\":1}}</parameter></invoke>",
+  "tool_code": "<tool_code>calculator({\"payload\":{\"nested\":{\"value\":1}}})</tool_code>",
+  "broad_xml": "<function name=\"calculator\"><arguments>{\"payload\":{\"nested\":{\"value\":1}}}</arguments></function>",
+  "dsml_leakage": "<DSML:tool_calls><DSML:invoke name=\"calculator\"><DSML:parameter name=\"payload\" string=\"false\">{\"nested\":{\"value\":1}}</DSML:parameter></DSML:invoke></DSML:tool_calls>",
+  "fenced": "```json\n{\"name\":\"calculator\",\"arguments\":{\"payload\":{\"nested\":{\"value\":1}}}}\n```"
+}

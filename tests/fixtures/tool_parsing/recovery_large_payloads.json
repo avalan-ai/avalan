@@ -1,0 +1,8 @@
+{
+  "tool_call_block": "[TOOL_CALL]{\"name\":\"calculator\",\"arguments\":{\"payload\":\"0123456789abcdef\"}}[/TOOL_CALL]",
+  "minimax_xml": "<invoke name=\"calculator\"><parameter name=\"payload\">0123456789abcdef</parameter></invoke>",
+  "tool_code": "<tool_code>calculator({\"payload\":\"0123456789abcdef\"})</tool_code>",
+  "broad_xml": "<function name=\"calculator\"><arguments>{\"payload\":\"0123456789abcdef\"}</arguments></function>",
+  "dsml_leakage": "<DSML:tool_calls><DSML:invoke name=\"calculator\"><DSML:parameter name=\"payload\">0123456789abcdef</DSML:parameter></DSML:invoke></DSML:tool_calls>",
+  "fenced": "```json\n{\"name\":\"calculator\",\"arguments\":{\"payload\":\"0123456789abcdef\"}}\n```"
+}

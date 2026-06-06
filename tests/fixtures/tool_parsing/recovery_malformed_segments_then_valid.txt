@@ -1,0 +1,18 @@
+The assistant mixed several compatibility shapes:
+
+[TOOL_CALL]{bad[/TOOL_CALL]
+[TOOL_CALL]{"name":"calculator","arguments":{"expression":"1 + 1"}}[/TOOL_CALL]
+
+<tool_code>{bad</tool_code>
+<tool_code>database.run({"sql":"SELECT 1"})</tool_code>
+
+<invoke name="broken"><parameter>missing name</parameter></invoke>
+<invoke name="search"><parameter name="query">avalan docs</parameter></invoke>
+
+```json
+{bad
+```
+
+```json
+{"name":"browser.open","arguments":{"url":"https://example.invalid"}}
+```

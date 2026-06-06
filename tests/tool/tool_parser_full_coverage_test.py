@@ -124,10 +124,65 @@ class ToolCallParserFullCoverageTestCase(TestCase):
 
         self.assertIsNone(parser.extract_structured_message("plain text"))
 
+    def test_has_dsml_tool_call_start_handles_lazy_dependency_errors(self):
+        parser = ToolCallParser()
+
+        with patch(
+            "avalan.tool.parser.DsmlTools.tool_call_start_span",
+            return_value=(0, 4),
+        ):
+            self.assertTrue(parser._has_dsml_tool_call_start("tool_calls"))
+
+        with patch(
+            "avalan.tool.parser.DsmlTools.tool_call_start_span",
+            side_effect=RuntimeError("pyds4 unavailable"),
+        ):
+            self.assertFalse(parser._has_dsml_tool_call_start("tool_calls"))
+
+        dsml_parser = ToolCallParser(tool_format=ToolFormat.DSML)
+        with patch(
+            "avalan.tool.parser.DsmlTools.tool_call_start_span",
+            side_effect=RuntimeError("pyds4 unavailable"),
+        ):
+            with self.assertRaises(RuntimeError):
+                dsml_parser._has_dsml_tool_call_start("tool_calls")
+
     def test_message_tool_calls_returns_empty_without_configured_parser(self):
         parser = ToolCallParser()
 
         self.assertEqual(parser.message_tool_calls("plain text"), [])
+
+    def test_message_tool_calls_extracts_dsml_payload(self):
+        parser = ToolCallParser()
+        call = ToolCall(
+            id="call-1",
+            name="calculator",
+            arguments={"expression": "2 + 2"},
+        )
+
+        with (
+            patch(
+                "avalan.tool.parser.DsmlTools.tool_call_start_span",
+                return_value=(0, 12),
+            ),
+            patch(
+                "avalan.tool.parser.DsmlTools.parse_tool_calls",
+                return_value=[call],
+            ),
+        ):
+            tool_calls = parser.message_tool_calls("tool_calls")
+
+        self.assertEqual(
+            tool_calls,
+            [
+                {
+                    "id": "call-1",
+                    "name": "calculator",
+                    "arguments": {"expression": "2 + 2"},
+                    "content_type": "json",
+                }
+            ],
+        )
 
     def test_message_tool_calls_returns_empty_for_unexpected_shape(self):
         parser = ToolCallParser(tool_format=ToolFormat.JSON)
@@ -238,6 +293,26 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             parser.tool_call_status("<tool_call></tool_call>"),
             ToolCallParser.ToolCallBufferStatus.CLOSED,
         )
+
+    def test_tool_call_status_reports_dsml_states(self):
+        parser = ToolCallParser(tool_format=ToolFormat.DSML)
+        cases = (
+            ("prefix", ToolCallParser.ToolCallBufferStatus.PREFIX),
+            ("open", ToolCallParser.ToolCallBufferStatus.OPEN),
+            ("closed", ToolCallParser.ToolCallBufferStatus.CLOSED),
+            ("none", ToolCallParser.ToolCallBufferStatus.NONE),
+        )
+
+        for native_status, expected in cases:
+            with self.subTest(native_status=native_status):
+                with patch(
+                    "avalan.tool.parser.DsmlTools.tool_call_buffer_status",
+                    return_value=native_status,
+                ):
+                    self.assertEqual(
+                        parser.tool_call_status("tool_calls"),
+                        expected,
+                    )
 
     def test_tool_call_status_reports_final_terminal_states(self):
         parser = ToolCallParser()
