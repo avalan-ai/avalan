@@ -44,6 +44,7 @@ class EventType(StrEnum):
     TOOL_MODEL_RUN = "tool_model_run"
     TOOL_MODEL_RESPONSE = "tool_model_response"
     TOOL_PROCESS = "tool_process"
+    TOOL_PROGRESS = "tool_progress"
     TOOL_RESULT = "tool_result"
 
 
