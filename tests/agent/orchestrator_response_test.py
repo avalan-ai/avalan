@@ -559,6 +559,12 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, "r")
         agent.assert_awaited_once()
         tool.assert_awaited_once()
+        events = [
+            call.args[0] for call in event_manager.trigger.await_args_list
+        ]
+        self.assertFalse(
+            any(event.type is EventType.TOOL_DIAGNOSTIC for event in events)
+        )
 
     async def test_to_str_with_structured_tool_call_token(self):
         engine = _DummyEngine()
@@ -706,6 +712,29 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         payload = loads(str(diagnostic_message.content))
         self.assertEqual(payload["code"], "tool.unknown")
         self.assertEqual(payload["requested_name"], "missing")
+        events = [
+            call.args[0] for call in event_manager.trigger.await_args_list
+        ]
+        diagnostic_events = [
+            event
+            for event in events
+            if event.type is EventType.TOOL_DIAGNOSTIC
+        ]
+        result_events = [
+            event for event in events if event.type is EventType.TOOL_RESULT
+        ]
+        self.assertEqual(len(diagnostic_events), 1)
+        self.assertEqual(len(result_events), 1)
+        diagnostic_event = diagnostic_events[0]
+        diagnostic_payload = diagnostic_event.payload
+        result_payload = result_events[0].payload
+        assert diagnostic_payload is not None
+        assert result_payload is not None
+        self.assertEqual(diagnostic_payload["call"], call)
+        self.assertIs(diagnostic_payload["diagnostic"], diagnostic)
+        self.assertEqual(diagnostic_payload["diagnostics"], [diagnostic])
+        self.assertIs(diagnostic_payload["result"], diagnostic)
+        self.assertIs(result_payload["result"], diagnostic)
 
     async def test_to_str_stops_after_consecutive_non_executed_cycles(self):
         engine = _DummyEngine()

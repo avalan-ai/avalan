@@ -262,6 +262,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 elapsed=end - start,
             )
             if self._event_manager:
+                await self._trigger_tool_diagnostic_event(
+                    call=call,
+                    result=result,
+                    started=start,
+                    finished=end,
+                    elapsed=end - start,
+                )
                 await self._event_manager.trigger(result_event)
 
             self._tool_result_events.put(result_event)
@@ -504,6 +511,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                         finished=end,
                         elapsed=end - start,
                     )
+                    await self._trigger_tool_diagnostic_event(
+                        call=call,
+                        result=result,
+                        started=start,
+                        finished=end,
+                        elapsed=end - start,
+                    )
                     await self._event_manager.trigger(result_event)
 
             next_response = await self._react_process(delta, results)
@@ -657,6 +671,33 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     def _record_tool_outcome(self, result: ToolCallOutcome | None) -> None:
         if isinstance(result, (ToolCallResult, ToolCallError)):
             self._call_history.append(result.call)
+
+    async def _trigger_tool_diagnostic_event(
+        self,
+        *,
+        call: ToolCall,
+        result: ToolCallOutcome | None,
+        started: float,
+        finished: float,
+        elapsed: float,
+    ) -> None:
+        if not isinstance(result, ToolCallDiagnostic):
+            return
+        assert self._event_manager
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={
+                    "call": call,
+                    "diagnostic": result,
+                    "diagnostics": [result],
+                    "result": result,
+                },
+                started=started,
+                finished=finished,
+                elapsed=elapsed,
+            )
+        )
 
     def _repeated_call_diagnostic(
         self, call: ToolCall

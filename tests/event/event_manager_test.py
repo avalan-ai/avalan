@@ -13,6 +13,25 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         self.assertIn(EventType.TOOL_DIAGNOSTIC, TOOL_TYPES)
         self.assertEqual(EventType.TOOL_DIAGNOSTIC.value, "tool_diagnostic")
 
+    def test_tool_progress_event_is_tool_event(self):
+        event = Event(
+            type=EventType.TOOL_PROGRESS,
+            payload={
+                "call_id": "call1",
+                "progress": {"current": 1, "total": 2},
+            },
+        )
+
+        self.assertIs(event.type, EventType.TOOL_PROGRESS)
+        self.assertIn(EventType.TOOL_PROGRESS, TOOL_TYPES)
+        self.assertEqual(EventType.TOOL_PROGRESS.value, "tool_progress")
+        assert event.payload is not None
+        self.assertEqual(event.payload["call_id"], "call1")
+        self.assertEqual(
+            event.payload["progress"],
+            {"current": 1, "total": 2},
+        )
+
     async def test_trigger_and_history(self):
         manager = EventManager(history_length=2)
         called: list[tuple[str, EventType]] = []
