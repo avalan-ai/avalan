@@ -14,6 +14,9 @@ from avalan.entities import (
     ToolCallOutcome,
     ToolCallParseOutcome,
     ToolCallResult,
+    ToolDescriptor,
+    ToolNameResolution,
+    ToolNameResolutionStatus,
 )
 
 
@@ -255,6 +258,83 @@ class ToolCallParseOutcomeTestCase(TestCase):
 
         with self.assertRaises(FrozenInstanceError):
             outcome.calls = []
+
+
+class ToolDescriptorTestCase(TestCase):
+    def test_fields_are_stable(self):
+        self.assertEqual(
+            [field.name for field in fields(ToolDescriptor)],
+            ["name", "aliases", "schema"],
+        )
+
+    def test_create_descriptor(self):
+        descriptor = ToolDescriptor(
+            name="math.calculator",
+            aliases=["calc"],
+            schema={"type": "function"},
+        )
+
+        self.assertEqual(descriptor.name, "math.calculator")
+        self.assertEqual(descriptor.aliases, ["calc"])
+        self.assertEqual(descriptor.schema, {"type": "function"})
+
+    def test_rejects_invalid_values(self):
+        invalid_cases = (
+            {"name": " "},
+            {"aliases": ("calc",)},
+            {"aliases": [" "]},
+            {"schema": []},
+        )
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                valid = {"name": "calculator"}
+                valid.update(kwargs)
+                with self.assertRaises(AssertionError):
+                    ToolDescriptor(**valid)
+
+
+class ToolNameResolutionTestCase(TestCase):
+    def test_statuses_are_stable(self):
+        self.assertEqual(
+            {status.value for status in ToolNameResolutionStatus},
+            {"exact", "alias", "ambiguous", "unknown", "disabled"},
+        )
+
+    def test_create_resolution(self):
+        resolution = ToolNameResolution(
+            requested_name="calc",
+            status=ToolNameResolutionStatus.ALIAS,
+            canonical_name="calculator",
+            candidates=["calculator"],
+            diagnostic_code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        )
+
+        self.assertEqual(resolution.requested_name, "calc")
+        self.assertIs(resolution.status, ToolNameResolutionStatus.ALIAS)
+        self.assertEqual(resolution.canonical_name, "calculator")
+        self.assertEqual(resolution.candidates, ["calculator"])
+        self.assertIs(
+            resolution.diagnostic_code, ToolCallDiagnosticCode.UNKNOWN_TOOL
+        )
+
+    def test_rejects_invalid_values(self):
+        invalid_cases = (
+            {"requested_name": " "},
+            {"status": "exact"},
+            {"canonical_name": " "},
+            {"candidates": ("calculator",)},
+            {"candidates": [" "]},
+            {"diagnostic_code": "tool.unknown"},
+        )
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                valid = {
+                    "requested_name": "calculator",
+                    "status": ToolNameResolutionStatus.EXACT,
+                }
+                valid.update(kwargs)
+                with self.assertRaises(AssertionError):
+                    ToolNameResolution(**valid)
 
 
 class ToolCallOutcomeTestCase(TestCase):

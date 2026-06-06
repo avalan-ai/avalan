@@ -1,4 +1,5 @@
 from asyncio import CancelledError, sleep
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4 as _uuid4
@@ -6,6 +7,8 @@ from uuid import uuid4 as _uuid4
 from avalan.entities import (
     ToolCall,
     ToolCallContext,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolFilter,
@@ -13,6 +16,7 @@ from avalan.entities import (
     ToolManagerExecutionMode,
     ToolManagerMissingCallMode,
     ToolManagerSettings,
+    ToolNameResolutionStatus,
     ToolParserReturnMode,
     ToolProviderArgumentsMode,
     ToolTransformer,
@@ -147,10 +151,190 @@ class ToolManagerCreationTestCase(TestCase):
         )
         self.assertTrue(manager.is_empty)
 
+    def test_list_and_describe_enabled_tools(self):
+        adder = DummyAdder()
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[adder])],
+            settings=ToolManagerSettings(),
+        )
+
+        descriptors = manager.list_tools()
+
+        self.assertEqual(len(descriptors), 1)
+        self.assertEqual(descriptors[0].name, "adder")
+        self.assertEqual(descriptors[0].aliases, ["sum"])
+        assert descriptors[0].schema is not None
+        self.assertEqual(
+            descriptors[0].schema["function"]["name"],
+            "adder",
+        )
+        self.assertEqual(manager.describe_tool("adder"), descriptors[0])
+        self.assertEqual(manager.describe_tool("sum"), descriptors[0])
+        self.assertIsNone(manager.describe_tool("missing"))
+
+    def test_list_tools_prefixes_function_schema(self):
+        def multiply(a: int, b: int) -> int:
+            """Multiply numbers.
+
+            Args:
+                a: Left number.
+                b: Right number.
+            """
+            return a * b
+
+        manager = ToolManager.create_instance(
+            enable_tools=["math.multiply"],
+            available_toolsets=[ToolSet(namespace="math", tools=[multiply])],
+            settings=ToolManagerSettings(),
+        )
+
+        descriptor = manager.list_tools()[0]
+
+        assert descriptor.schema is not None
+        self.assertEqual(
+            descriptor.schema["function"]["name"],
+            "math.multiply",
+        )
+
+    def test_resolve_tool_name_exact_alias_ambiguous_disabled_unknown(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "adder_alt"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyAdderAlt()]),
+                ToolSet(namespace="disabled", tools=[CalculatorTool()]),
+            ],
+            settings=ToolManagerSettings(),
+        )
+
+        exact = manager.resolve_tool_name("adder")
+        self.assertIs(exact.status, ToolNameResolutionStatus.EXACT)
+        self.assertEqual(exact.canonical_name, "adder")
+        self.assertEqual(exact.candidates, ["adder"])
+
+        ambiguous = manager.resolve_tool_name("sum")
+        self.assertIs(ambiguous.status, ToolNameResolutionStatus.AMBIGUOUS)
+        self.assertEqual(ambiguous.candidates, ["adder", "adder_alt"])
+        self.assertIs(
+            ambiguous.diagnostic_code,
+            ToolCallDiagnosticCode.AMBIGUOUS_TOOL_NAME,
+        )
+
+        disabled = manager.resolve_tool_name("disabled.calculator")
+        self.assertIs(disabled.status, ToolNameResolutionStatus.DISABLED)
+        self.assertIs(
+            disabled.diagnostic_code, ToolCallDiagnosticCode.DISABLED_TOOL
+        )
+
+        unknown = manager.resolve_tool_name("missing")
+        self.assertIs(unknown.status, ToolNameResolutionStatus.UNKNOWN)
+        self.assertIs(
+            unknown.diagnostic_code, ToolCallDiagnosticCode.UNKNOWN_TOOL
+        )
+
+    def test_resolve_tool_name_alias(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+
+        resolution = manager.resolve_tool_name("sum")
+
+        self.assertIs(resolution.status, ToolNameResolutionStatus.ALIAS)
+        self.assertEqual(resolution.canonical_name, "adder")
+        self.assertEqual(resolution.candidates, ["adder"])
+
+    def test_resolve_tool_name_rejects_empty_name(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            settings=ToolManagerSettings(),
+        )
+
+        with self.assertRaises(AssertionError):
+            manager.resolve_tool_name(" ")
+
+    def test_invalid_tool_aliases_are_rejected(self):
+        with self.assertRaises(AssertionError):
+            ToolManager.create_instance(
+                enable_tools=["invalid_aliases"],
+                available_toolsets=[ToolSet(tools=[InvalidAliasesTool()])],
+                settings=ToolManagerSettings(),
+            )
+
+    def test_validate_tool_call_accepts_resolved_alias(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(id="call-1", name="sum", arguments={"a": 1, "b": 2})
+
+        self.assertIsNone(manager.validate_tool_call(call))
+
+    def test_validate_tool_call_returns_resolution_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            settings=ToolManagerSettings(),
+        )
+        diagnostic_id = _uuid4()
+        call = ToolCall(id="call-1", name="missing", arguments={})
+
+        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
+            diagnostic = manager.validate_tool_call(call)
+
+        assert diagnostic is not None
+        self.assertEqual(diagnostic.id, diagnostic_id)
+        self.assertEqual(diagnostic.call_id, "call-1")
+        self.assertEqual(diagnostic.requested_name, "missing")
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.UNKNOWN_TOOL)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.RESOLVE)
+
+    def test_validate_tool_call_returns_malformed_arguments_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        diagnostic_id = _uuid4()
+        call = ToolCall(id="call-1", name="adder", arguments=cast(Any, ["a"]))
+
+        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
+            diagnostic = manager.validate_tool_call(call)
+
+        assert diagnostic is not None
+        self.assertEqual(diagnostic.id, diagnostic_id)
+        self.assertIs(
+            diagnostic.code, ToolCallDiagnosticCode.MALFORMED_ARGUMENTS
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+
+    def test_validate_tool_call_returns_argument_validation_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        diagnostic_id = _uuid4()
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 1})
+
+        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
+            diagnostic = manager.validate_tool_call(call)
+
+        assert diagnostic is not None
+        self.assertEqual(diagnostic.id, diagnostic_id)
+        self.assertEqual(diagnostic.canonical_name, "adder")
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+
 
 class DummyAdder:
     def __init__(self) -> None:
         self.__name__ = "adder"
+        self.aliases = ["sum"]
 
     async def __call__(self, a: int, b: int) -> int:
         """Return the sum of ``a`` and ``b``."""
@@ -160,6 +344,13 @@ class DummyAdder:
 class DummyAdderAlt(DummyAdder):
     def __init__(self) -> None:
         self.__name__ = "adder_alt"
+        self.aliases = ["sum"]
+
+
+class InvalidAliasesTool(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "invalid_aliases"
+        self.aliases = "sum"
 
 
 class NativeAdderTool(Tool):

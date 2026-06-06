@@ -486,7 +486,7 @@ def test_template_messages_and_exclude_roles(anthropic_mod):
         Message(role=MessageRole.TOOL, tool_call_result=result),
     ]
     templated = client._template_messages(messages, ["system"])
-    assert templated[1]["content"][1]["name"] == "pkg__tool"
+    assert templated[1]["content"][1]["name"] == "avl_cGtnLnRvb2w"
     assert templated[2]["content"][0]["tool_use_id"] == "id1"
 
     no_assistant = client._template_messages(
@@ -825,7 +825,7 @@ def test_tool_schemas_variants(anthropic_mod):
     out = mod.AnthropicClient._tool_schemas(DummyTool(schemas))
     assert out == [
         {
-            "name": "pkg__tool",
+            "name": "avl_cGtnLnRvb2w",
             "description": "d",
             "input_schema": {
                 "type": "object",

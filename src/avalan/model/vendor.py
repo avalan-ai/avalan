@@ -21,11 +21,17 @@ from .provider import ProviderFamily, provider_family_value
 from .stream import TextGenerationStream
 
 from abc import ABC
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from binascii import Error as BinasciiError
 from json import JSONDecodeError, dumps, loads
+from re import compile as compile_regex
 from typing import Any, AsyncIterator, cast
 
 
 class TextGenerationVendor(ABC):
+    _PROVIDER_TOOL_NAME_PATTERN = compile_regex(r"^[A-Za-z0-9_-]+$")
+    _PROVIDER_TOOL_NAME_PREFIX = "avl_"
+
     async def __call__(
         self,
         model_id: str,
@@ -103,11 +109,41 @@ class TextGenerationVendor(ABC):
 
     @staticmethod
     def encode_tool_name(tool_name: str) -> str:
-        return tool_name.replace(".", "__")
+        assert isinstance(tool_name, str)
+        assert tool_name.strip(), "tool name must not be empty"
+        if TextGenerationVendor._PROVIDER_TOOL_NAME_PATTERN.fullmatch(
+            tool_name
+        ) and not tool_name.startswith(
+            TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX
+        ):
+            return tool_name
+        encoded = urlsafe_b64encode(tool_name.encode()).decode().rstrip("=")
+        return f"{TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX}{encoded}"
 
     @staticmethod
     def decode_tool_name(tool_name: str) -> str:
-        return tool_name.replace("__", ".")
+        assert isinstance(tool_name, str)
+        assert tool_name.strip(), "tool name must not be empty"
+        assert TextGenerationVendor._PROVIDER_TOOL_NAME_PATTERN.fullmatch(
+            tool_name
+        ), "provider tool name is invalid"
+
+        prefix = TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX
+        if not tool_name.startswith(prefix):
+            return tool_name
+
+        payload = tool_name[len(prefix) :]
+        assert payload, "provider tool name is missing encoded content"
+        padding = "=" * (-len(payload) % 4)
+        try:
+            decoded = urlsafe_b64decode(f"{payload}{padding}").decode()
+        except (BinasciiError, UnicodeDecodeError) as exc:
+            raise AssertionError("provider tool name is malformed") from exc
+        assert decoded.strip(), "decoded tool name must not be empty"
+        assert (
+            TextGenerationVendor.encode_tool_name(decoded) == tool_name
+        ), "provider tool name is malformed"
+        return decoded
 
     @staticmethod
     def build_tool_call_token(
@@ -118,7 +154,11 @@ class TextGenerationVendor(ABC):
         tool_name_text = (
             tool_name if isinstance(tool_name, str) else str(tool_name or "")
         )
-        name = TextGenerationVendor.decode_tool_name(tool_name_text)
+        name = (
+            TextGenerationVendor.decode_tool_name(tool_name_text)
+            if tool_name_text
+            else ""
+        )
         if isinstance(arguments, str):
             try:
                 args = cast(dict[str, Any], loads(arguments))
@@ -148,7 +188,9 @@ class TextGenerationVendor(ABC):
             token_payload["id"] = call_id_value
         token_json = dumps(token_payload)
         return ToolCallToken(
-            token=f"<tool_call>{token_json}</tool_call>", call=call
+            token=f"<tool_call>{token_json}</tool_call>",
+            call=call,
+            provider_name=tool_name_text or None,
         )
 
 

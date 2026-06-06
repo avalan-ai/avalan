@@ -180,17 +180,17 @@ def test_base_vendor_boundary_branches() -> None:
     ) == [{"role": "user", "content": "keep"}]
 
     invalid_arguments = TextGenerationVendor.build_tool_call_token(
-        object(), object(), "{"
+        object(), "tool", "{"
     )
     assert invalid_arguments.call.id.startswith("<object object at ")
-    assert invalid_arguments.call.name.startswith("<object object at ")
+    assert invalid_arguments.call.name == "tool"
     assert invalid_arguments.call.arguments == {}
 
     dict_arguments = TextGenerationVendor.build_tool_call_token(
         None, "pkg__tool", {"ok": True}
     )
     assert dict_arguments.call.id is None
-    assert dict_arguments.call.name == "pkg.tool"
+    assert dict_arguments.call.name == "pkg__tool"
     assert dict_arguments.call.arguments == {"ok": True}
     assert '"id"' not in dict_arguments.token
 

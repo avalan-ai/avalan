@@ -214,7 +214,7 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             Message(role=MessageRole.TOOL, tool_call_result=result),
         ]
         templated = client._template_messages(messages)
-        self.assertEqual(templated[1]["content"][1]["name"], "pkg__tool")
+        self.assertEqual(templated[1]["content"][1]["name"], "avl_cGtnLnRvb2w")
         self.assertEqual(templated[2]["content"][0]["tool_use_id"], "id1")
 
         dup = client._template_messages(
@@ -247,7 +247,7 @@ class AnthropicTestCase(IsolatedAsyncioTestCase):
             schema_out,
             [
                 {
-                    "name": "pkg__tool",
+                    "name": "avl_cGtnLnRvb2w",
                     "description": "d",
                     "input_schema": {
                         "type": "object",
