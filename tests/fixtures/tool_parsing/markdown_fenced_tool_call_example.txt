@@ -1,0 +1,7 @@
+Here is an example:
+
+```json
+<tool_call>{"name": "calculator", "arguments": {"expression": "3 + 3"}}</tool_call>
+```
+
+That is only illustrative.

@@ -1,0 +1,2 @@
+<tool_call>{"name": "broken", "arguments": }</tool_call>
+<tool_call>{"name": "calculator", "arguments": {"expression": "2 + 2"}}</tool_call>
