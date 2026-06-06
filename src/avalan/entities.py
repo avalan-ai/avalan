@@ -189,6 +189,26 @@ class ToolCallDiagnosticStatus(StrEnum):
     NON_EXECUTED = "non_executed"
 
 
+class ToolManagerExecutionMode(StrEnum):
+    LEGACY = "legacy"
+    OUTCOMES = "outcomes"
+
+
+class ToolManagerMissingCallMode(StrEnum):
+    LEGACY_NONE = "legacy_none"
+    DIAGNOSTIC = "diagnostic"
+
+
+class ToolParserReturnMode(StrEnum):
+    LEGACY = "legacy"
+    OUTCOME = "outcome"
+
+
+class ToolProviderArgumentsMode(StrEnum):
+    EMPTY_ON_MALFORMED = "empty_on_malformed"
+    DIAGNOSTIC_ON_MALFORMED = "diagnostic_on_malformed"
+
+
 class VisionColorModel(StrEnum):
     ONE = "1"
     L = "L"
@@ -1009,6 +1029,14 @@ class ToolManagerSettings:
     tool_format: ToolFormat | None = None
     avoid_repetition: bool = False
     maximum_depth: int | None = None
+    execution_mode: ToolManagerExecutionMode = ToolManagerExecutionMode.LEGACY
+    missing_call_mode: ToolManagerMissingCallMode = (
+        ToolManagerMissingCallMode.LEGACY_NONE
+    )
+    parser_return_mode: ToolParserReturnMode = ToolParserReturnMode.LEGACY
+    provider_arguments_mode: ToolProviderArgumentsMode = (
+        ToolProviderArgumentsMode.EMPTY_ON_MALFORMED
+    )
     filters: (
         list[
             Callable[
@@ -1028,6 +1056,14 @@ class ToolManagerSettings:
         ]
         | None
     ) = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.execution_mode, ToolManagerExecutionMode)
+        assert isinstance(self.missing_call_mode, ToolManagerMissingCallMode)
+        assert isinstance(self.parser_return_mode, ToolParserReturnMode)
+        assert isinstance(
+            self.provider_arguments_mode, ToolProviderArgumentsMode
+        )
 
 
 def _assert_tool_identifier(value: UUID | str, field_name: str) -> None:

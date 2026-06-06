@@ -10,7 +10,11 @@ from avalan.entities import (
     ToolCallResult,
     ToolFilter,
     ToolFormat,
+    ToolManagerExecutionMode,
+    ToolManagerMissingCallMode,
     ToolManagerSettings,
+    ToolParserReturnMode,
+    ToolProviderArgumentsMode,
     ToolTransformer,
 )
 from avalan.tool import Tool, ToolSet
@@ -19,6 +23,62 @@ from avalan.tool.math import CalculatorTool
 
 
 class ToolManagerCreationTestCase(TestCase):
+    def test_settings_default_to_legacy_compatibility(self):
+        settings = ToolManagerSettings()
+
+        self.assertIs(settings.execution_mode, ToolManagerExecutionMode.LEGACY)
+        self.assertIs(
+            settings.missing_call_mode,
+            ToolManagerMissingCallMode.LEGACY_NONE,
+        )
+        self.assertIs(
+            settings.parser_return_mode,
+            ToolParserReturnMode.LEGACY,
+        )
+        self.assertIs(
+            settings.provider_arguments_mode,
+            ToolProviderArgumentsMode.EMPTY_ON_MALFORMED,
+        )
+
+    def test_settings_accept_outcome_compatibility_modes(self):
+        settings = ToolManagerSettings(
+            execution_mode=ToolManagerExecutionMode.OUTCOMES,
+            missing_call_mode=ToolManagerMissingCallMode.DIAGNOSTIC,
+            parser_return_mode=ToolParserReturnMode.OUTCOME,
+            provider_arguments_mode=(
+                ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED
+            ),
+        )
+
+        self.assertIs(
+            settings.execution_mode, ToolManagerExecutionMode.OUTCOMES
+        )
+        self.assertIs(
+            settings.missing_call_mode,
+            ToolManagerMissingCallMode.DIAGNOSTIC,
+        )
+        self.assertIs(
+            settings.parser_return_mode,
+            ToolParserReturnMode.OUTCOME,
+        )
+        self.assertIs(
+            settings.provider_arguments_mode,
+            ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED,
+        )
+
+    def test_settings_reject_invalid_compatibility_modes(self):
+        invalid_cases = (
+            {"execution_mode": "legacy"},
+            {"missing_call_mode": "legacy_none"},
+            {"parser_return_mode": "legacy"},
+            {"provider_arguments_mode": "empty_on_malformed"},
+        )
+
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ToolManagerSettings(**kwargs)
+
     def test_default_instance_empty(self):
         manager = ToolManager.create_instance(
             enable_tools=[], settings=ToolManagerSettings()

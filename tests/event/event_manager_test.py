@@ -1,11 +1,18 @@
 import asyncio
 from unittest import IsolatedAsyncioTestCase, main
 
-from avalan.event import Event, EventType
+from avalan.event import TOOL_TYPES, Event, EventType
 from avalan.event.manager import EventManager
 
 
 class EventManagerTestCase(IsolatedAsyncioTestCase):
+    def test_tool_diagnostic_event_is_tool_event(self):
+        event = Event(type=EventType.TOOL_DIAGNOSTIC)
+
+        self.assertIs(event.type, EventType.TOOL_DIAGNOSTIC)
+        self.assertIn(EventType.TOOL_DIAGNOSTIC, TOOL_TYPES)
+        self.assertEqual(EventType.TOOL_DIAGNOSTIC.value, "tool_diagnostic")
+
     async def test_trigger_and_history(self):
         manager = EventManager(history_length=2)
         called: list[tuple[str, EventType]] = []
