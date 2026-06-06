@@ -2,6 +2,7 @@ from ..entities import (
     ToolCall,
     ToolCallContext,
     ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallOutcome,
@@ -22,6 +23,7 @@ from .definition import (
 )
 from .node import Node
 
+from asyncio import CancelledError
 from collections.abc import Awaitable, Iterable, Mapping
 from typing import Any, Protocol, cast
 from uuid import uuid4
@@ -327,6 +329,9 @@ def _tool_node_factory(
                 name=descriptor.name,
                 arguments=arguments,
             )
+            diagnostic = resolver.validate_tool_call(call)
+            if diagnostic is not None:
+                return _tool_node_output(definition, diagnostic)
             outcome = await resolver.execute_call(
                 call,
                 context=ToolCallContext(
@@ -484,6 +489,11 @@ def _tool_node_output(
     definition: FlowNodeDefinition,
     outcome: ToolCallOutcome,
 ) -> object:
+    if (
+        isinstance(outcome, ToolCallDiagnostic)
+        and outcome.code is ToolCallDiagnosticCode.CANCELLED
+    ):
+        raise CancelledError()
     mode = cast(str, definition.config.get("output_mode", "raw"))
     if mode == "envelope":
         return _tool_node_envelope(outcome)
@@ -555,7 +565,13 @@ def _tool_node_arguments(
             if isinstance(name, str) and isinstance(selector, str)
         }
 
-    parameters = _tool_parameter_names(descriptor)
+    properties = _tool_parameter_properties(descriptor)
+    parameters = (
+        frozenset(properties) if properties is not None else frozenset()
+    )
+    if properties is not None and not parameters:
+        return {}
+
     if isinstance(source, Mapping):
         matched = {
             name: _copy_flow_value(source[name])

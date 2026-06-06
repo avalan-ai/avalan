@@ -1888,6 +1888,7 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(diagnostic, ToolCallDiagnostic)
         assert isinstance(diagnostic, ToolCallDiagnostic)
         self.assertEqual(diagnostic.id, diagnostic_id)
+        self.assertEqual(diagnostic.canonical_name, "adder")
         self.assertIs(
             diagnostic.code, ToolCallDiagnosticCode.FILTER_SUPPRESSED
         )
@@ -1946,7 +1947,441 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
             diagnostic.code, ToolCallDiagnosticCode.FILTER_SUPPRESSED
         )
         self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.FILTER)
+        self.assertEqual(diagnostic.canonical_name, "adder")
         self.assertEqual(diagnostic.details, {"filtered_name": "multiplier"})
+
+    async def test_prepare_call_keeps_unknown_filter_suppression_uncanonical(
+        self,
+    ) -> None:
+        for rewritten_name in ("missing", ""):
+            with self.subTest(rewritten_name=rewritten_name):
+
+                def rename(
+                    call: ToolCall,
+                    context: ToolCallContext,
+                ) -> tuple[ToolCall, ToolCallContext]:
+                    return (
+                        ToolCall(
+                            id=call.id,
+                            name=rewritten_name,
+                            arguments=call.arguments,
+                        ),
+                        context,
+                    )
+
+                def suppress(
+                    _call: ToolCall,
+                    _context: ToolCallContext,
+                ) -> ToolFilterResult:
+                    return ToolFilterResult(
+                        status=ToolFilterResultStatus.SUPPRESS
+                    )
+
+                manager = ToolManager.create_instance(
+                    enable_tools=["adder"],
+                    available_toolsets=[ToolSet(tools=[DummyAdder()])],
+                    settings=ToolManagerSettings(filters=[rename, suppress]),
+                )
+                call = ToolCall(
+                    id="call-1",
+                    name="adder",
+                    arguments={"a": 2, "b": 3},
+                )
+
+                diagnostic = await manager.prepare_call(
+                    call,
+                    context=ToolCallContext(),
+                )
+
+                self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+                assert isinstance(diagnostic, ToolCallDiagnostic)
+                self.assertIsNone(diagnostic.canonical_name)
+                self.assertIs(
+                    diagnostic.code,
+                    ToolCallDiagnosticCode.FILTER_SUPPRESSED,
+                )
+
+    async def test_prepare_call_keeps_flow_filter_guard_after_context_replace(
+        self,
+    ) -> None:
+        seen_flow_markers: list[bool] = []
+
+        def replace_context(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            seen_flow_markers.append(context.flow_tool_node)
+            return call, ToolCallContext()
+
+        def rename(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            seen_flow_markers.append(context.flow_tool_node)
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="multiplier",
+                    arguments=call.arguments,
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "multiplier"],
+            available_toolsets=[
+                ToolSet(tools=[DummyAdder(), DummyMultiplier()])
+            ],
+            settings=ToolManagerSettings(filters=[replace_context, rename]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(flow_tool_node=True),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(
+            diagnostic.code, ToolCallDiagnosticCode.FILTER_SUPPRESSED
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.FILTER)
+        self.assertEqual(diagnostic.canonical_name, "adder")
+        self.assertEqual(diagnostic.details, {"filtered_name": "multiplier"})
+        self.assertEqual(seen_flow_markers, [True, True])
+
+    async def test_prepare_call_rejects_flow_provider_name_rewrite(
+        self,
+    ) -> None:
+        cases = ("multiplier", "pkg.tool")
+
+        for provider_name in cases:
+            with self.subTest(provider_name=provider_name):
+
+                def set_provider_name(
+                    call: ToolCall,
+                    _context: ToolCallContext,
+                ) -> tuple[ToolCall, ToolCallContext]:
+                    return (
+                        ToolCall(
+                            id=call.id,
+                            name=call.name,
+                            arguments=call.arguments,
+                            provider_name=provider_name,
+                        ),
+                        ToolCallContext(),
+                    )
+
+                manager = ToolManager.create_instance(
+                    enable_tools=["adder", "multiplier"],
+                    available_toolsets=[
+                        ToolSet(tools=[DummyAdder(), DummyMultiplier()])
+                    ],
+                    settings=ToolManagerSettings(filters=[set_provider_name]),
+                )
+                call = ToolCall(
+                    id="call-1",
+                    name="adder",
+                    arguments={"a": 2, "b": 3},
+                )
+
+                diagnostic = await manager.prepare_call(
+                    call,
+                    context=ToolCallContext(flow_tool_node=True),
+                )
+
+                self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+                assert isinstance(diagnostic, ToolCallDiagnostic)
+                self.assertIs(
+                    diagnostic.code,
+                    ToolCallDiagnosticCode.FILTER_SUPPRESSED,
+                )
+                self.assertIs(
+                    diagnostic.stage,
+                    ToolCallDiagnosticStage.FILTER,
+                )
+                self.assertEqual(
+                    diagnostic.details, {"filtered_name": provider_name}
+                )
+
+    async def test_prepare_call_accepts_flow_same_provider_name(
+        self,
+    ) -> None:
+        def set_provider_name(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments=call.arguments,
+                    provider_name="adder",
+                ),
+                ToolCallContext(),
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[set_provider_name]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        prepared = await manager.prepare_call(
+            call,
+            context=ToolCallContext(flow_tool_node=True),
+        )
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.call.name, "adder")
+
+    async def test_prepare_call_accepts_flow_alias_for_same_tool(
+        self,
+    ) -> None:
+        def set_alias(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="sum",
+                    arguments=call.arguments,
+                ),
+                ToolCallContext(),
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[set_alias]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        prepared = await manager.prepare_call(
+            call,
+            context=ToolCallContext(flow_tool_node=True),
+        )
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.call.name, "adder")
+
+    async def test_prepare_call_matches_filter_after_flow_alias_rewrite(
+        self,
+    ) -> None:
+        called: list[str] = []
+
+        def set_alias(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            assert call.arguments is not None
+            called.append("alias")
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="sum",
+                    arguments={"a": call.arguments["a"]},
+                ),
+                ToolCallContext(),
+            )
+
+        def add_argument(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            assert call.arguments is not None
+            called.append("adder")
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"a": call.arguments["a"], "b": 5},
+                ),
+                context,
+            )
+
+        def unrelated(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            called.append("multiplier")
+            return call, context
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(
+                filters=[
+                    set_alias,
+                    ToolFilter(func=unrelated, namespace="multiplier"),
+                    ToolFilter(func=add_argument, namespace="adder"),
+                ],
+            ),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        prepared = await manager.prepare_call(
+            call,
+            context=ToolCallContext(flow_tool_node=True),
+        )
+
+        self.assertIsInstance(prepared, PreparedToolCall)
+        assert isinstance(prepared, PreparedToolCall)
+        self.assertEqual(prepared.call.name, "adder")
+        self.assertEqual(prepared.arguments, {"a": 2, "b": 5})
+        self.assertEqual(called, ["alias", "adder"])
+
+    async def test_prepare_call_rejects_flow_alias_for_other_tool(
+        self,
+    ) -> None:
+        multiplier = DummyMultiplier()
+        multiplier.aliases = ["product"]
+
+        def set_alias(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="product",
+                    arguments=call.arguments,
+                ),
+                ToolCallContext(),
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder", "multiplier"],
+            available_toolsets=[ToolSet(tools=[DummyAdder(), multiplier])],
+            settings=ToolManagerSettings(filters=[set_alias]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(flow_tool_node=True),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.FILTER_SUPPRESSED,
+        )
+        self.assertEqual(diagnostic.details, {"filtered_name": "multiplier"})
+
+    async def test_prepare_call_rejects_flow_blank_filter_name(
+        self,
+    ) -> None:
+        def clear_name(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            return (
+                ToolCall(
+                    id=call.id,
+                    name="",
+                    arguments=call.arguments,
+                ),
+                ToolCallContext(),
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[clear_name]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(flow_tool_node=True),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.FILTER_SUPPRESSED,
+        )
+        self.assertEqual(diagnostic.details, {"filtered_name": ""})
+
+    async def test_prepare_call_keeps_flow_cancellation_after_context_replace(
+        self,
+    ) -> None:
+        called: list[str] = []
+
+        async def cancel() -> None:
+            called.append("cancel")
+            if len(called) == 3:
+                raise CancelledError()
+
+        def replace_context(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            called.append("filter")
+            return call, ToolCallContext()
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[replace_context]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        with self.assertRaises(CancelledError):
+            await manager.prepare_call(
+                call,
+                context=ToolCallContext(
+                    cancellation_checker=cancel,
+                    flow_tool_node=True,
+                ),
+            )
+
+        self.assertEqual(called, ["cancel", "filter", "cancel"])
+
+    async def test_prepare_call_keeps_explicit_flow_cancellation_replacement(
+        self,
+    ) -> None:
+        called: list[str] = []
+
+        async def first_check() -> None:
+            called.append("first")
+
+        async def second_check() -> None:
+            called.append("second")
+            raise CancelledError()
+
+        def replace_context(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> tuple[ToolCall, ToolCallContext]:
+            called.append("filter")
+            return call, ToolCallContext(cancellation_checker=second_check)
+
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(filters=[replace_context]),
+        )
+        call = ToolCall(id="call-1", name="adder", arguments={"a": 2, "b": 3})
+
+        with self.assertRaises(CancelledError):
+            await manager.prepare_call(
+                call,
+                context=ToolCallContext(
+                    cancellation_checker=first_check,
+                    flow_tool_node=True,
+                ),
+            )
+
+        self.assertEqual(called, ["first", "filter", "second"])
 
 
 class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
