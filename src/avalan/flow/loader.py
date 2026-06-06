@@ -621,7 +621,7 @@ def _validate_node_type(
     if ref is not None and _is_path_escape(ref):
         issues.append(_path_escape_issue(f"nodes.{name}.ref"))
     if registry.supports(node_type):
-        if ref is not None and node_type != "agent":
+        if ref is not None and not registry.supports_ref(node_type):
             issues.append(
                 _issue(
                     code="flow.untrusted_callable",

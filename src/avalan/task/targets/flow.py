@@ -1,5 +1,5 @@
 from ...event import Event, EventType
-from ...flow.definition import FlowNodeDefinition
+from ...flow.definition import FlowNodeDefinition, FlowNodeMetadata
 from ...flow.flow import Flow
 from ...flow.node import Node
 from ...flow.registry import (
@@ -240,10 +240,12 @@ def task_flow_node_registry(
     registry.register(
         "file_convert",
         _file_convert_node_factory(context),
+        metadata=FlowNodeMetadata(async_only=True),
     )
     registry.register(
         "pdf_to_images",
         _file_convert_node_factory(context, default_converter="pdf_image"),
+        metadata=FlowNodeMetadata(async_only=True),
     )
     if agent_runner is not None:
         registry.register(
@@ -253,6 +255,7 @@ def task_flow_node_registry(
                 agent_runner=agent_runner,
                 execution_roots=execution_roots,
             ),
+            metadata=FlowNodeMetadata(supports_ref=True, async_only=True),
         )
     return registry
 

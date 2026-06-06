@@ -10,6 +10,7 @@ from avalan.flow import (
     FlowLoadError,
     FlowLoadIssueCategory,
     FlowNodeDefinition,
+    FlowNodeMetadata,
     FlowNodeRegistry,
     build_flow,
     flow_input_binding,
@@ -20,6 +21,7 @@ from avalan.flow import (
 )
 from avalan.flow import loader as flow_loader
 from avalan.flow.node import Node
+from avalan.flow.registry import FlowNodeConfigurationError
 
 VALID_FLOW = """
 [flow]
@@ -114,6 +116,61 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 ),
             ),
             "ready!",
+        )
+
+    async def test_load_accepts_ref_when_registry_metadata_allows_it(
+        self,
+    ) -> None:
+        def factory(definition: FlowNodeDefinition) -> Node:
+            return Node(definition.name, func=lambda _: definition.ref)
+
+        registry = FlowNodeRegistry(
+            {"external": factory},
+            {"external": FlowNodeMetadata(supports_ref=True)},
+        )
+        result = FlowDefinitionLoader(registry).loads_result("""
+            [flow]
+            name = "custom_ref"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "external"
+            ref = "safe.toml"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.flow is not None
+        self.assertEqual(
+            await result.flow.execute_async(initial_node="start"),
+            "safe.toml",
+        )
+
+    def test_load_rejects_ref_when_registry_metadata_does_not_allow_it(
+        self,
+    ) -> None:
+        def factory(definition: FlowNodeDefinition) -> Node:
+            return Node(definition.name)
+
+        result = FlowDefinitionLoader(
+            FlowNodeRegistry({"external": factory})
+        ).loads_result(
+            """
+            [flow]
+            name = "custom_ref"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "external"
+            ref = "safe.toml"
+            """
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [issue.code for issue in result.issues],
+            ["flow.untrusted_callable"],
         )
 
     async def test_load_accepts_nested_node_config(self) -> None:
@@ -808,6 +865,65 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result.issues[0].code, "flow.invalid_node")
         self.assertNotIn("private factory failure", str(result.issues[0]))
 
+    def test_node_configuration_error_returns_declared_issue(self) -> None:
+        def factory(_: FlowNodeDefinition) -> Node:
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_node",
+                path="nodes.start.config",
+                message="Flow node configuration is invalid.",
+                hint="Fix the node configuration.",
+            )
+
+        loader = FlowDefinitionLoader(FlowNodeRegistry({"broken": factory}))
+
+        result = loader.loads_result("""
+            [flow]
+            name = "broken"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "broken"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "flow.invalid_node")
+        self.assertEqual(result.issues[0].path, "nodes.start.config")
+        self.assertEqual(
+            result.issues[0].hint,
+            "Fix the node configuration.",
+        )
+
+    def test_rejects_invalid_agent_file_selectors(self) -> None:
+        cases: tuple[tuple[str, object, tuple[str, ...]], ...] = (
+            ("non_string", 3, ("start",)),
+            ("invalid", "start", ("start",)),
+            ("reserved", "file.content", ("start",)),
+            ("unknown", "missing.content", ("start",)),
+            ("disconnected", "start.content", ("middle",)),
+        )
+
+        for name, selector, edge_sources in cases:
+            with self.subTest(name=name):
+                result = self._load_agent_selector_case(
+                    selector,
+                    edge_sources=edge_sources,
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    result.issues[0].code,
+                    {
+                        "flow.bad_reference",
+                        "flow.invalid_node",
+                        "flow.invalid_type",
+                    },
+                )
+                self.assertEqual(
+                    result.issues[0].path,
+                    "nodes.agent.config.files_input",
+                )
+
     def test_private_helpers_cover_toml_impossible_shapes(self) -> None:
         issues: list[flow_loader.FlowLoadIssue] = []
         raw = {
@@ -831,6 +947,12 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             "mime_types",
             issues,
         )
+        list_value = flow_loader._string_tuple(  # type: ignore[attr-defined]
+            {"mime_types": ["text/plain"]},
+            "flow.input.mime_types",
+            "mime_types",
+            issues,
+        )
         metadata = flow_loader._metadata(  # type: ignore[attr-defined]
             {1: "bad"},  # type: ignore[dict-item]
             "metadata",
@@ -839,8 +961,67 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
 
         self.assertFalse(result.ok)
         self.assertEqual(tuple_value, ())
+        self.assertEqual(list_value, ("text/plain",))
         self.assertIsNone(metadata)
         self.assertIn("flow.invalid_type", [issue.code for issue in issues])
+
+    def _load_agent_selector_case(
+        self,
+        selector: object,
+        *,
+        edge_sources: tuple[str, ...],
+    ) -> flow_loader.FlowLoadResult:
+        def agent_factory(definition: FlowNodeDefinition) -> Node:
+            return Node(definition.name)
+
+        def echo_factory(definition: FlowNodeDefinition) -> Node:
+            return Node(definition.name)
+
+        selector_toml = (
+            f'"{selector}"' if isinstance(selector, str) else str(selector)
+        )
+        edge_toml = "\n".join(f"""
+            [[edges]]
+            source = "{source}"
+            target = "agent"
+            """ for source in edge_sources)
+        middle_node_toml = ""
+        if "middle" in edge_sources:
+            middle_node_toml = """
+            [nodes.middle]
+            type = "echo"
+
+            [[edges]]
+            source = "start"
+            target = "middle"
+            """
+        return FlowDefinitionLoader(
+            FlowNodeRegistry(
+                {
+                    "agent": agent_factory,
+                    "echo": echo_factory,
+                }
+            )
+        ).loads_result(
+            f"""
+            [flow]
+            name = "agent_selector"
+            entrypoint = "start"
+            output_node = "agent"
+
+            [nodes.start]
+            type = "echo"
+
+            {middle_node_toml}
+
+            [nodes.agent]
+            type = "agent"
+
+            [nodes.agent.config]
+            files_input = {selector_toml}
+            {edge_toml}
+            """
+        )
 
 
 class FlowBuildTestCase(TestCase):
