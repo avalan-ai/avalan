@@ -152,7 +152,7 @@ class ToolManagerCreationTestCase(TestCase):
         )
         self.assertTrue(manager.is_empty)
 
-    def test_nested_toolset_names_are_available_but_not_enabled(self):
+    def test_nested_toolset_names_are_enabled_with_parent_namespace(self):
         inner = ToolSet(namespace="inner", tools=[CalculatorTool()])
         outer = ToolSet(namespace="outer", tools=[CalculatorTool(), inner])
         manager = ToolManager.create_instance(
@@ -163,9 +163,26 @@ class ToolManagerCreationTestCase(TestCase):
 
         self.assertEqual(
             [descriptor.name for descriptor in manager.list_tools()],
-            ["outer.calculator"],
+            ["outer.calculator", "outer.inner.calculator"],
         )
         resolution = manager.resolve_tool_name("outer.inner.calculator")
+        self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
+
+    def test_nested_toolset_can_enable_exact_nested_tool(self):
+        inner = ToolSet(namespace="inner", tools=[CalculatorTool()])
+        outer = ToolSet(namespace="outer", tools=[CalculatorTool(), inner])
+        manager = ToolManager.create_instance(
+            enable_tools=["outer.inner.calculator"],
+            available_toolsets=[outer],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertEqual(
+            [descriptor.name for descriptor in manager.list_tools()],
+            ["outer.inner.calculator"],
+        )
+        self.assertIsNone(manager.describe_tool("outer.calculator"))
+        resolution = manager.resolve_tool_name("outer.calculator")
         self.assertIs(resolution.status, ToolNameResolutionStatus.DISABLED)
 
     def test_list_and_describe_enabled_tools(self):
@@ -180,12 +197,28 @@ class ToolManagerCreationTestCase(TestCase):
 
         self.assertEqual(len(descriptors), 1)
         self.assertEqual(descriptors[0].name, "adder")
+        self.assertIs(descriptors[0].callable, adder)
         self.assertEqual(descriptors[0].aliases, ["sum"])
         assert descriptors[0].schema is not None
         self.assertEqual(
             descriptors[0].schema["function"]["name"],
             "adder",
         )
+        self.assertEqual(
+            descriptors[0].parameter_schema,
+            descriptors[0].schema["function"]["parameters"],
+        )
+        self.assertEqual(
+            descriptors[0].return_schema,
+            descriptors[0].schema["function"]["return"],
+        )
+        self.assertEqual(
+            descriptors[0].provider_safe_schema,
+            descriptors[0].schema,
+        )
+        self.assertIsNone(descriptors[0].namespace)
+        self.assertEqual(descriptors[0].policy, {})
+        self.assertEqual(descriptors[0].metadata, {})
         self.assertEqual(manager.describe_tool("adder"), descriptors[0])
         self.assertEqual(manager.describe_tool("sum"), descriptors[0])
         self.assertIsNone(manager.describe_tool("missing"))
@@ -213,6 +246,34 @@ class ToolManagerCreationTestCase(TestCase):
             descriptor.schema["function"]["name"],
             "math.multiply",
         )
+        self.assertEqual(descriptor.namespace, "math")
+        assert descriptor.provider_safe_schema is not None
+        self.assertEqual(
+            descriptor.provider_safe_schema["function"]["name"],
+            "avl_bWF0aC5tdWx0aXBseQ",
+        )
+        self.assertEqual(
+            descriptor.provider_safe_schema["function"]["parameters"],
+            descriptor.schema["function"]["parameters"],
+        )
+
+    def test_tool_descriptor_accepts_missing_schema(self):
+        adder = DummyAdder()
+
+        descriptor = ToolManager._tool_descriptor(
+            canonical_name="adder",
+            tool=adder,
+            aliases=[],
+            namespace=None,
+            schema=None,
+        )
+
+        self.assertEqual(descriptor.name, "adder")
+        self.assertIs(descriptor.callable, adder)
+        self.assertIsNone(descriptor.schema)
+        self.assertIsNone(descriptor.parameter_schema)
+        self.assertIsNone(descriptor.return_schema)
+        self.assertIsNone(descriptor.provider_safe_schema)
 
     def test_resolve_tool_name_exact_alias_ambiguous_disabled_unknown(self):
         manager = ToolManager.create_instance(

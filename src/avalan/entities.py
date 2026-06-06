@@ -692,16 +692,34 @@ ToolCallOutcome: TypeAlias = (
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolDescriptor:
     name: str
+    callable: Callable[..., Any] | None = None
     aliases: list[str] = field(default_factory=list)
     schema: dict[str, Any] | None = None
+    parameter_schema: dict[str, Any] | None = None
+    return_schema: dict[str, Any] | None = None
+    provider_safe_schema: dict[str, Any] | None = None
+    namespace: str | None = None
+    policy: dict[str, ToolValue] = field(default_factory=dict)
+    metadata: dict[str, ToolValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _assert_optional_tool_name(self.name, "name")
+        if self.callable is not None:
+            assert callable(self.callable)
         assert isinstance(self.aliases, list)
         for alias in self.aliases:
             _assert_optional_tool_name(alias, "alias")
         if self.schema is not None:
             assert isinstance(self.schema, dict)
+        if self.parameter_schema is not None:
+            assert isinstance(self.parameter_schema, dict)
+        if self.return_schema is not None:
+            assert isinstance(self.return_schema, dict)
+        if self.provider_safe_schema is not None:
+            assert isinstance(self.provider_safe_schema, dict)
+        _assert_optional_tool_name(self.namespace, "namespace")
+        assert isinstance(self.policy, dict)
+        assert isinstance(self.metadata, dict)
 
 
 @final

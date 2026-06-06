@@ -264,26 +264,61 @@ class ToolDescriptorTestCase(TestCase):
     def test_fields_are_stable(self):
         self.assertEqual(
             [field.name for field in fields(ToolDescriptor)],
-            ["name", "aliases", "schema"],
+            [
+                "name",
+                "callable",
+                "aliases",
+                "schema",
+                "parameter_schema",
+                "return_schema",
+                "provider_safe_schema",
+                "namespace",
+                "policy",
+                "metadata",
+            ],
         )
 
     def test_create_descriptor(self):
+        def calculator() -> int:
+            return 1
+
         descriptor = ToolDescriptor(
             name="math.calculator",
+            callable=calculator,
             aliases=["calc"],
             schema={"type": "function"},
+            parameter_schema={"type": "object"},
+            return_schema={"type": "integer"},
+            provider_safe_schema={"type": "function"},
+            namespace="math",
+            policy={"confirmation": False},
+            metadata={"source": "test"},
         )
 
         self.assertEqual(descriptor.name, "math.calculator")
+        self.assertIs(descriptor.callable, calculator)
         self.assertEqual(descriptor.aliases, ["calc"])
         self.assertEqual(descriptor.schema, {"type": "function"})
+        self.assertEqual(descriptor.parameter_schema, {"type": "object"})
+        self.assertEqual(descriptor.return_schema, {"type": "integer"})
+        self.assertEqual(descriptor.provider_safe_schema, {"type": "function"})
+        self.assertEqual(descriptor.namespace, "math")
+        self.assertEqual(descriptor.policy, {"confirmation": False})
+        self.assertEqual(descriptor.metadata, {"source": "test"})
 
     def test_rejects_invalid_values(self):
         invalid_cases = (
             {"name": " "},
+            {"callable": "calculator"},
             {"aliases": ("calc",)},
             {"aliases": [" "]},
             {"schema": []},
+            {"parameter_schema": []},
+            {"return_schema": []},
+            {"provider_safe_schema": []},
+            {"namespace": " "},
+            {"policy": []},
+            {"metadata": []},
         )
         for kwargs in invalid_cases:
             with self.subTest(kwargs=kwargs):

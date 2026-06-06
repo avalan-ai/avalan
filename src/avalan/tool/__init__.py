@@ -114,20 +114,36 @@ class ToolSet:
                 self.tools[i] = tool
 
     def with_enabled_tools(self, enable_tools: list[str]) -> "ToolSet":
-        prefix = f"{self.namespace}." if self.namespace else ""
+        self._filter_enabled_tools(enable_tools)
+        return self
 
-        tools = []
+    def _filter_enabled_tools(
+        self, enable_tools: list[str], prefix: str | None = None
+    ) -> None:
+        namespace = (
+            f"{prefix}.{self.namespace}"
+            if prefix and self.namespace
+            else prefix or self.namespace
+        )
+
+        tools: list[Callable[..., Any] | Tool | ToolSet] = []
         for tool in self._tools:
-            name = (
-                f"{prefix}{getattr(tool, '__name__', tool.__class__.__name__)}"
-            )
+            if isinstance(tool, ToolSet):
+                tool._filter_enabled_tools(enable_tools, namespace)
+                if tool.tools:
+                    tools.append(tool)
+                continue
+
+            name = getattr(tool, "__name__", tool.__class__.__name__)
+            canonical_name = f"{namespace}.{name}" if namespace else name
             for enabled in enable_tools:
-                if name == enabled or name.startswith(f"{enabled}."):
+                if canonical_name == enabled or canonical_name.startswith(
+                    f"{enabled}."
+                ):
                     tools.append(tool)
                     break
 
         self._tools = tools
-        return self
 
     async def __aenter__(self) -> "ToolSet":
         for tool in self.tools:
@@ -153,20 +169,21 @@ class ToolSet:
         self, prefix: str | None = None
     ) -> list[dict[str, Any]] | None:
         schemas: list[dict[str, Any]] = []
-        prefix = (
-            f"{prefix}."
-            if prefix
-            else f"{self.namespace}." if self.namespace else ""
+        namespace = (
+            f"{prefix}.{self.namespace}"
+            if prefix and self.namespace
+            else prefix or self.namespace
         )
+        schema_prefix = f"{namespace}." if namespace else ""
         for tool in self.tools:
             if isinstance(tool, ToolSet):
-                tool_schemas = tool.json_schemas(prefix)
+                tool_schemas = tool.json_schemas(namespace)
                 if tool_schemas:
                     schemas.extend(tool_schemas)
                 continue
 
             schema = (
-                tool.json_schema(prefix)
+                tool.json_schema(schema_prefix)
                 if isinstance(tool, Tool)
                 else get_json_schema(tool)
             )
@@ -178,7 +195,7 @@ class ToolSet:
                 and "name" in schema["function"]
             ):
                 schema["function"]["name"] = (
-                    prefix + schema["function"]["name"]
+                    schema_prefix + schema["function"]["name"]
                 )
             schemas.append(schema)
         return schemas
