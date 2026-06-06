@@ -6,7 +6,19 @@ from avalan.flow.node import Node
 
 
 class ConnectionTestCase(TestCase):
-    def test_check_conditions(self):
+    def test_sync_helpers_are_not_exposed(self) -> None:
+        conn = Connection(Node("A"), Node("B"))
+        self.assertFalse(hasattr(conn, "check_conditions"))
+        self.assertFalse(hasattr(conn, "apply_filters"))
+
+    def test_repr(self) -> None:
+        conn = Connection(Node("A"), Node("B"))
+
+        self.assertEqual(repr(conn), "<Conn A->B>")
+
+
+class ConnectionAsyncTestCase(IsolatedAsyncioTestCase):
+    async def test_check_conditions_async_with_sync_callbacks(self) -> None:
         calls = []
 
         def c1(x):
@@ -18,19 +30,11 @@ class ConnectionTestCase(TestCase):
             return False
 
         conn = Connection(Node("A"), Node("B"), conditions=[c1, c2])
-        self.assertFalse(conn.check_conditions(1))
+
+        self.assertFalse(await conn.check_conditions_async(1))
         self.assertEqual(calls, ["c1", "c2"])
 
-    def test_check_conditions_rejects_async_condition(self) -> None:
-        async def condition(_: object) -> bool:
-            return False
-
-        conn = Connection(Node("A"), Node("B"), conditions=[condition])
-
-        with self.assertRaisesRegex(TypeError, "check_conditions_async"):
-            conn.check_conditions(1)
-
-    def test_apply_filters(self):
+    async def test_apply_filters_async_with_sync_callbacks(self) -> None:
         def f1(x):
             return x + 1
 
@@ -38,24 +42,8 @@ class ConnectionTestCase(TestCase):
             return x * 2
 
         conn = Connection(Node("A"), Node("B"), filters=[f1, f2])
-        self.assertEqual(conn.apply_filters(1), 4)
+        self.assertEqual(await conn.apply_filters_async(1), 4)
 
-    def test_apply_filters_rejects_async_filter(self) -> None:
-        async def filter_function(_: object) -> int:
-            return 2
-
-        conn = Connection(Node("A"), Node("B"), filters=[filter_function])
-
-        with self.assertRaisesRegex(TypeError, "apply_filters_async"):
-            conn.apply_filters(1)
-
-    def test_repr(self) -> None:
-        conn = Connection(Node("A"), Node("B"))
-
-        self.assertEqual(repr(conn), "<Conn A->B>")
-
-
-class ConnectionAsyncTestCase(IsolatedAsyncioTestCase):
     async def test_check_conditions_async(self) -> None:
         calls: list[str] = []
 

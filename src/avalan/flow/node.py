@@ -35,28 +35,6 @@ class Node:
             receives_cancellation_checker
         )
 
-    def execute(self, inputs: dict[str, Any]) -> Any:
-        if self.subgraph is not None:
-            initial = self._subgraph_initial(inputs)
-            result = self.subgraph.execute(
-                initial_node=None, initial_data=initial
-            )
-            self._validate_output(result)
-            return result
-
-        self._validate_input(inputs)
-        output = self._compute_output(inputs)
-        if isawaitable(output):
-            close = getattr(output, "close", None)
-            if callable(close):
-                close()
-            raise TypeError(
-                f"{self.name} produced awaitable output; use execute_async"
-            )
-        self._validate_output(output)
-
-        return output
-
     async def execute_async(
         self,
         inputs: dict[str, Any],

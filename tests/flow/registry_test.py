@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.entities import (
     ToolCall,
@@ -158,8 +158,10 @@ class StaticToolResolver:
         )
 
 
-class FlowNodeRegistryTestCase(TestCase):
-    def test_default_nodes_execute_without_mutating_inputs(self) -> None:
+class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
+    async def test_default_nodes_execute_without_mutating_inputs(
+        self,
+    ) -> None:
         registry = default_flow_node_registry()
         payload = {"items": ["first"]}
         binding = flow_input_binding(
@@ -190,14 +192,18 @@ class FlowNodeRegistryTestCase(TestCase):
             )
         )
 
-        input_value = input_node.execute(binding)
+        input_value = await input_node.execute_async(binding)
         self.assertEqual(input_value, {"items": ["first"]})
         self.assertEqual(
-            echo_node.execute({"input": input_value}), input_value
+            await echo_node.execute_async({"input": input_value}),
+            input_value,
         )
-        self.assertEqual(select_node.execute({"input": input_value}), "first")
         self.assertEqual(
-            constant_node.execute({}),
+            await select_node.execute_async({"input": input_value}),
+            "first",
+        )
+        self.assertEqual(
+            await constant_node.execute_async({}),
             {"answer": "ok"},
         )
         self.assertEqual(payload, {"items": ["first", "changed"]})
@@ -222,19 +228,21 @@ class FlowNodeRegistryTestCase(TestCase):
         self.assertEqual(mapping["payload"], {"name": "Ada"})
         self.assertNotIn("value", mapping)
 
-    def test_echo_node_falls_back_to_available_inputs(self) -> None:
+    async def test_echo_node_falls_back_to_available_inputs(self) -> None:
         node = default_flow_node_registry().build(
             FlowNodeDefinition(name="echo", type="echo")
         )
 
-        self.assertEqual(node.execute({FLOW_INPUT_KEY: "flow"}), "flow")
-        self.assertEqual(node.execute({"only": "value"}), "value")
         self.assertEqual(
-            node.execute({"left": "L", "right": "R"}),
+            await node.execute_async({FLOW_INPUT_KEY: "flow"}), "flow"
+        )
+        self.assertEqual(await node.execute_async({"only": "value"}), "value")
+        self.assertEqual(
+            await node.execute_async({"left": "L", "right": "R"}),
             {"left": "L", "right": "R"},
         )
 
-    def test_custom_registry_and_select_errors(self) -> None:
+    async def test_custom_registry_and_select_errors(self) -> None:
         registry = FlowNodeRegistry()
 
         def factory(definition: FlowNodeDefinition) -> Node:
@@ -247,9 +255,9 @@ class FlowNodeRegistryTestCase(TestCase):
 
         self.assertTrue(registry.supports("upper"))
         self.assertEqual(
-            registry.build(
+            await registry.build(
                 FlowNodeDefinition(name="upper", type="upper")
-            ).execute({"value": "ok"}),
+            ).execute_async({"value": "ok"}),
             "OK",
         )
 
@@ -262,7 +270,7 @@ class FlowNodeRegistryTestCase(TestCase):
             )
         )
         with self.assertRaises(KeyError):
-            select_node.execute({"input": {"answer": "ok"}})
+            await select_node.execute_async({"input": {"answer": "ok"}})
 
     def test_registry_exposes_node_metadata(self) -> None:
         registry = default_flow_node_registry()
@@ -282,7 +290,7 @@ class FlowNodeRegistryTestCase(TestCase):
         self.assertEqual(echo_output.name, "value")
         self.assertTrue(echo_output.metadata["dynamic"])
 
-    def test_custom_registry_metadata_supports_refs_and_contracts(
+    async def test_custom_registry_metadata_supports_refs_and_contracts(
         self,
     ) -> None:
         def factory(definition: FlowNodeDefinition) -> Node:
@@ -315,13 +323,13 @@ class FlowNodeRegistryTestCase(TestCase):
             metadata.output_contract,
         )
         self.assertEqual(
-            registry.build(
+            await registry.build(
                 FlowNodeDefinition(
                     name="remote",
                     type="remote",
                     ref="safe.toml",
                 )
-            ).execute({}),
+            ).execute_async({}),
             "safe.toml",
         )
 

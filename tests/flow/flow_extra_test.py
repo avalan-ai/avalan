@@ -1,11 +1,11 @@
-import unittest
+from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.flow.connection import Connection
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 
 
-class FlowExtraTestCase(unittest.TestCase):
+class FlowExtraTestCase(TestCase):
     def test_parse_mermaid_ignores_invalid_lines(self) -> None:
         mermaid = """graph LR
 A --> B
@@ -32,22 +32,24 @@ invalid
             flow._parse_node("A some label"), ("A", "some label", None)
         )
 
-    def test_execute_missing_input_and_multi_terminal(self) -> None:
+
+class FlowExtraExecutionTestCase(IsolatedAsyncioTestCase):
+    async def test_execute_async_missing_input_and_multi_terminal(
+        self,
+    ) -> None:
         flow = Flow()
         flow.add_node(Node("A", func=lambda _: 2))
         flow.add_node(Node("B"))
         flow.add_connection("A", "B")
-        # Start execution from node B without initial data
-        result_none = flow.execute(initial_node="B")
+        result_none = await flow.execute_async(initial_node="B")
         self.assertIsNone(result_none)
 
-        # Add a second terminal node and run the full graph
         flow.add_node(Node("C"))
         flow.add_connection("A", "C")
-        result = flow.execute()
+        result = await flow.execute_async()
         self.assertEqual(result, {"B": 2, "C": 2})
 
-    def test_execute_detects_reachable_cycle(self) -> None:
+    async def test_execute_async_detects_reachable_cycle(self) -> None:
         flow = Flow()
         flow.add_node(Node("A", func=lambda _: 1))
         flow.add_node(Node("B", func=lambda _: 2))
@@ -57,25 +59,28 @@ invalid
         flow.add_connection("C", "B")
 
         with self.assertRaises(ValueError) as context:
-            flow.execute()
+            await flow.execute_async()
 
         self.assertIn("cycle", str(context.exception))
 
-    def test_resolve_start_nodes_with_unknown_node_inputs(self) -> None:
+    async def test_resolve_start_nodes_with_unknown_node_inputs(self) -> None:
         flow = Flow()
         flow.add_node(Node("A"))
 
         with self.assertRaises(KeyError):
-            flow.execute(initial_node=Node("B"))
+            await flow.execute_async(initial_node=Node("B"))
 
         with self.assertRaises(KeyError):
-            flow.execute(initial_node="B")
+            await flow.execute_async(initial_node="B")
 
-    def test_execute_with_existing_node_instance(self) -> None:
+    async def test_execute_async_with_existing_node_instance(self) -> None:
         flow = Flow()
         flow.add_node(Node("A", func=lambda inputs: inputs.get("__init__", 0)))
 
-        result = flow.execute(initial_node=Node("A"), initial_data=7)
+        result = await flow.execute_async(
+            initial_node=Node("A"),
+            initial_data=7,
+        )
 
         self.assertEqual(result, 7)
 
@@ -105,11 +110,11 @@ invalid
             )
 
 
-class ConnectionReprTestCase(unittest.TestCase):
+class ConnectionReprTestCase(TestCase):
     def test_repr(self) -> None:
         conn = Connection(Node("A"), Node("B"))
         self.assertEqual(repr(conn), "<Conn A->B>")
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()

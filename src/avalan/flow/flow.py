@@ -118,76 +118,6 @@ class Flow:
             edges.append((left, label, right))
         return edges
 
-    def execute(
-        self,
-        initial_node: str | Node | None = None,
-        initial_data: Any = None,
-    ) -> Any:
-        start_nodes = self._resolve_start_nodes(initial_node)
-        if not start_nodes:
-            raise ValueError(
-                "Flow has no valid starting node; graph may contain a cycle"
-            )
-        reachable = self._collect_reachable(start_nodes)
-        self._assert_sync_supported(reachable)
-
-        incoming_counts = {
-            name: len(self.incoming.get(name, [])) for name in self.nodes
-        }
-        indegree = dict(incoming_counts)
-        buffers: dict[str, dict[str, Any]] = {name: {} for name in self.nodes}
-        if initial_data is not None and len(start_nodes) == 1:
-            buffers[start_nodes[0].name] = {"__init__": initial_data}
-
-        queue: deque[Node] = deque()
-        for node in start_nodes:
-            indegree[node.name] = 0
-            queue.append(node)
-
-        outputs: dict[str, Any] = {}
-        processed: set[str] = set()
-        while queue:
-            node = queue.popleft()
-            self._assert_unprocessed_queue_node(node, processed, reachable)
-            processed.add(node.name)
-            inputs = buffers[node.name]
-            if incoming_counts[node.name] > 0 and not inputs:
-                outputs[node.name] = _SKIPPED
-            else:
-                outputs[node.name] = node.execute(inputs)
-            out_value = outputs[node.name]
-            for connection in self.outgoing.get(node.name, []):
-                indegree[connection.dest.name] -= 1
-                if out_value is not _SKIPPED and connection.check_conditions(
-                    out_value
-                ):
-                    forwarded = connection.apply_filters(out_value)
-                    buffers[connection.dest.name][node.name] = forwarded
-                if indegree[connection.dest.name] == 0:
-                    queue.append(connection.dest)
-
-        if processed != reachable:
-            remaining = sorted(reachable - processed)
-            raise ValueError(
-                "Flow contains a cycle involving: " + ", ".join(remaining)
-            )
-
-        cycle_nodes = self._detect_cycle_nodes(start_nodes)
-        if cycle_nodes:
-            remaining = sorted(cycle_nodes)
-            raise ValueError(
-                "Flow contains a cycle involving: " + ", ".join(remaining)
-            )
-
-        terminal = {
-            name: _flow_output(outputs[name])
-            for name, outs in self.outgoing.items()
-            if not outs
-        }
-        if len(terminal) == 1:
-            return next(iter(terminal.values()))
-        return terminal
-
     async def execute_async(
         self,
         initial_node: str | Node | None = None,
@@ -299,28 +229,6 @@ class Flow:
             for connection in self.outgoing.get(name, []):
                 stack.append(connection.dest.name)
         return reachable
-
-    def _assert_sync_supported(self, reachable: set[str]) -> None:
-        async_only = sorted(
-            name
-            for name in reachable
-            if self._node_requires_async(self.nodes[name])
-        )
-        if async_only:
-            raise TypeError(
-                "Flow contains async-only node(s); use execute_async: "
-                + ", ".join(async_only)
-            )
-
-    def _node_requires_async(self, node: Node) -> bool:
-        if node.async_only:
-            return True
-        if node.subgraph is None:
-            return False
-        return any(
-            node.subgraph._node_requires_async(subgraph_node)
-            for subgraph_node in node.subgraph.nodes.values()
-        )
 
     def _detect_cycle_nodes(self, start_nodes: list[Node]) -> set[str]:
         visited: set[str] = set()

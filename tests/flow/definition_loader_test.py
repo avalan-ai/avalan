@@ -1,6 +1,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.entities import ToolManagerSettings
 from avalan.flow import (
@@ -1220,8 +1220,8 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         )
 
 
-class FlowBuildTestCase(TestCase):
-    def test_build_flow_from_definition(self) -> None:
+class FlowBuildTestCase(IsolatedAsyncioTestCase):
+    async def test_build_flow_from_definition(self) -> None:
         definition = FlowDefinition(
             name="manual",
             entrypoint="start",
@@ -1237,7 +1237,7 @@ class FlowBuildTestCase(TestCase):
 
         flow = build_flow(definition)
 
-        self.assertEqual(flow.execute(), "ok")
+        self.assertEqual(await flow.execute_async(), "ok")
 
 
 if __name__ == "__main__":
