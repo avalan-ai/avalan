@@ -6,6 +6,7 @@ from ...flow import (
     FlowLoadIssue,
     FlowLoadIssueCategory,
     FlowNodeDefinition,
+    FlowNodeMetadata,
     FlowOutputType,
     Node,
     default_flow_node_registry,
@@ -409,7 +410,14 @@ def _flow_schema_issue() -> TaskValidationIssue:
 def _flow_metadata_loader() -> FlowDefinitionLoader:
     registry = default_flow_node_registry()
     for node_type in ("agent", "file_convert", "pdf_to_images"):
-        registry.register(node_type, _flow_task_context_metadata_node)
+        registry.register(
+            node_type,
+            _flow_task_context_metadata_node,
+            metadata=FlowNodeMetadata(
+                supports_ref=node_type == "agent",
+                async_only=True,
+            ),
+        )
     return FlowDefinitionLoader(registry)
 
 

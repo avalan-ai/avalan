@@ -96,6 +96,46 @@ class FlowOutputDefinition:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FlowNodeContract:
+    name: str | None = None
+    type: FlowInputType | FlowOutputType | str | None = None
+    schema: FlowMetadata | None = None
+    schema_ref: str | None = None
+    metadata: FlowMetadata = field(default_factory=_empty_mapping)
+
+    def __post_init__(self) -> None:
+        if self.name is not None:
+            _assert_non_empty_string(self.name, "name")
+        if self.type is not None:
+            assert isinstance(self.type, FlowInputType | FlowOutputType | str)
+            if isinstance(self.type, str):
+                _assert_non_empty_string(self.type, "type")
+        if self.schema is not None:
+            object.__setattr__(self, "schema", _freeze_mapping(self.schema))
+        if self.schema_ref is not None:
+            _assert_non_empty_string(self.schema_ref, "schema_ref")
+        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowNodeMetadata:
+    supports_ref: bool = False
+    async_only: bool = False
+    input_contract: FlowNodeContract | None = None
+    output_contract: FlowNodeContract | None = None
+    metadata: FlowMetadata = field(default_factory=_empty_mapping)
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.supports_ref, bool)
+        assert isinstance(self.async_only, bool)
+        if self.input_contract is not None:
+            assert isinstance(self.input_contract, FlowNodeContract)
+        if self.output_contract is not None:
+            assert isinstance(self.output_contract, FlowNodeContract)
+        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FlowNodeDefinition:
     name: str
     type: str

@@ -7,7 +7,9 @@ from avalan.flow import (
     FlowEdgeDefinition,
     FlowInputDefinition,
     FlowInputType,
+    FlowNodeContract,
     FlowNodeDefinition,
+    FlowNodeMetadata,
     FlowOutputDefinition,
     FlowOutputType,
 )
@@ -77,6 +79,12 @@ class FlowDefinitionTestCase(TestCase):
         with self.assertRaises(AssertionError):
             FlowInputDefinition(name="", type=FlowInputType.STRING)
         with self.assertRaises(AssertionError):
+            FlowInputDefinition(
+                name="input",
+                type=FlowInputType.STRING,
+                mime_types=("",),
+            )
+        with self.assertRaises(AssertionError):
             FlowOutputDefinition(
                 name="output",
                 type=FlowOutputType.JSON,
@@ -90,6 +98,61 @@ class FlowDefinitionTestCase(TestCase):
                 entrypoint="start",
                 output_node="start",
                 nodes=(object(),),  # type: ignore[arg-type]
+            )
+
+    def test_node_metadata_is_frozen_and_copy_nested_mappings(self) -> None:
+        schema = {"type": "object", "properties": {"name": {"type": "str"}}}
+        metadata = {"source": {"name": "tool"}, "tags": ["runtime"]}
+        node_metadata = FlowNodeMetadata(
+            supports_ref=True,
+            async_only=True,
+            input_contract=FlowNodeContract(
+                name="payload",
+                type=FlowInputType.OBJECT,
+                schema=schema,
+                metadata=metadata,
+            ),
+            output_contract=FlowNodeContract(
+                name="result",
+                type=FlowOutputType.JSON,
+                schema_ref="schemas/result.json",
+            ),
+            metadata={"canonical_schema": schema},
+        )
+
+        schema["properties"]["name"]["type"] = "number"
+        metadata["source"]["name"] = "changed"
+        metadata["tags"].append("changed")
+
+        input_contract = node_metadata.input_contract
+        assert input_contract is not None
+        assert input_contract.schema is not None
+        self.assertEqual(
+            cast(dict[str, object], input_contract.schema["properties"])[
+                "name"
+            ],
+            {"type": "str"},
+        )
+        self.assertEqual(
+            cast(dict[str, object], input_contract.metadata["source"])["name"],
+            "tool",
+        )
+        self.assertEqual(input_contract.metadata["tags"], ("runtime",))
+        self.assertTrue(node_metadata.supports_ref)
+        self.assertTrue(node_metadata.async_only)
+        with self.assertRaises(FrozenInstanceError):
+            node_metadata.supports_ref = False  # type: ignore[misc]
+
+    def test_invalid_node_metadata_raise_assertion_errors(self) -> None:
+        with self.assertRaises(AssertionError):
+            FlowNodeContract(name="")
+        with self.assertRaises(AssertionError):
+            FlowNodeContract(type="")
+        with self.assertRaises(AssertionError):
+            FlowNodeContract(schema_ref="")
+        with self.assertRaises(AssertionError):
+            FlowNodeMetadata(
+                input_contract=object(),  # type: ignore[arg-type]
             )
 
 

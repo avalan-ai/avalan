@@ -11,6 +11,7 @@ from avalan.flow import (
     FlowDefinitionLoader,
     FlowInputType,
     FlowNodeDefinition,
+    FlowNodeMetadata,
     FlowNodeRegistry,
     FlowOutputType,
     Node,
@@ -357,7 +358,10 @@ def _poc_flow_loader() -> FlowDefinitionLoader:
             {
                 "agent": _poc_node_factory,
                 "file_convert": _poc_node_factory,
-            }
+            },
+            {
+                "agent": FlowNodeMetadata(supports_ref=True),
+            },
         )
     )
 

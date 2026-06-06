@@ -1,4 +1,11 @@
-from .definition import FlowInputDefinition, FlowNodeDefinition
+from .definition import (
+    FlowInputDefinition,
+    FlowInputType,
+    FlowNodeContract,
+    FlowNodeDefinition,
+    FlowNodeMetadata,
+    FlowOutputType,
+)
 from .node import Node
 
 from collections.abc import Mapping
@@ -35,22 +42,60 @@ class FlowNodeRegistry:
     def __init__(
         self,
         factories: Mapping[str, FlowNodeFactory] | None = None,
+        metadata: Mapping[str, FlowNodeMetadata] | None = None,
     ) -> None:
-        self._factories: dict[str, FlowNodeFactory] = dict(factories or {})
+        self._factories: dict[str, FlowNodeFactory] = {}
+        self._metadata: dict[str, FlowNodeMetadata] = {}
+        node_metadata = metadata or {}
+        for node_type, factory in (factories or {}).items():
+            self.register(
+                node_type,
+                factory,
+                metadata=node_metadata.get(node_type),
+            )
 
     def register(
         self,
         node_type: str,
         factory: FlowNodeFactory,
+        *,
+        metadata: FlowNodeMetadata | None = None,
     ) -> "FlowNodeRegistry":
         assert isinstance(node_type, str) and node_type.strip()
         assert callable(factory)
+        if metadata is not None:
+            assert isinstance(metadata, FlowNodeMetadata)
         self._factories[node_type] = factory
+        self._metadata[node_type] = metadata or FlowNodeMetadata()
         return self
 
     def supports(self, node_type: str) -> bool:
         assert isinstance(node_type, str) and node_type.strip()
         return node_type in self._factories
+
+    def metadata(self, node_type: str) -> FlowNodeMetadata | None:
+        assert isinstance(node_type, str) and node_type.strip()
+        return self._metadata.get(node_type)
+
+    def supports_ref(self, node_type: str) -> bool:
+        assert isinstance(node_type, str) and node_type.strip()
+        metadata = self.metadata(node_type)
+        return metadata.supports_ref if metadata is not None else False
+
+    def is_async_only(self, node_type: str) -> bool:
+        assert isinstance(node_type, str) and node_type.strip()
+        metadata = self.metadata(node_type)
+        return metadata.async_only if metadata is not None else False
+
+    def input_contract(self, node_type: str) -> FlowNodeContract | None:
+        assert isinstance(node_type, str) and node_type.strip()
+        metadata = self.metadata(node_type)
+        return metadata.input_contract if metadata is not None else None
+
+    def output_contract(self, node_type: str) -> FlowNodeContract | None:
+        assert isinstance(node_type, str) and node_type.strip()
+        metadata = self.metadata(node_type)
+        return metadata.output_contract if metadata is not None else None
 
     def build(self, definition: FlowNodeDefinition) -> Node:
         assert isinstance(definition, FlowNodeDefinition)
@@ -65,7 +110,53 @@ def default_flow_node_registry() -> FlowNodeRegistry:
             "input": _input_node,
             "passthrough": _echo_node,
             "select": _select_node,
-        }
+        },
+        {
+            "constant": FlowNodeMetadata(
+                output_contract=FlowNodeContract(
+                    name="value",
+                    metadata={"dynamic": True},
+                ),
+            ),
+            "echo": FlowNodeMetadata(
+                input_contract=FlowNodeContract(
+                    name="value",
+                    metadata={"dynamic": True},
+                ),
+                output_contract=FlowNodeContract(
+                    name="value",
+                    metadata={"dynamic": True},
+                ),
+            ),
+            "input": FlowNodeMetadata(
+                output_contract=FlowNodeContract(
+                    name="value",
+                    type=FlowOutputType.OBJECT,
+                    metadata={"dynamic": True},
+                ),
+            ),
+            "passthrough": FlowNodeMetadata(
+                input_contract=FlowNodeContract(
+                    name="value",
+                    metadata={"dynamic": True},
+                ),
+                output_contract=FlowNodeContract(
+                    name="value",
+                    metadata={"dynamic": True},
+                ),
+            ),
+            "select": FlowNodeMetadata(
+                input_contract=FlowNodeContract(
+                    name="value",
+                    type=FlowInputType.OBJECT,
+                    metadata={"dynamic": True},
+                ),
+                output_contract=FlowNodeContract(
+                    name="value",
+                    metadata={"dynamic": True},
+                ),
+            ),
+        },
     )
 
 

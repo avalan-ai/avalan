@@ -3,7 +3,9 @@ from .definition import FlowDefinition as FlowDefinition
 from .definition import FlowEdgeDefinition as FlowEdgeDefinition
 from .definition import FlowInputDefinition as FlowInputDefinition
 from .definition import FlowInputType as FlowInputType
+from .definition import FlowNodeContract as FlowNodeContract
 from .definition import FlowNodeDefinition as FlowNodeDefinition
+from .definition import FlowNodeMetadata as FlowNodeMetadata
 from .definition import FlowOutputDefinition as FlowOutputDefinition
 from .definition import FlowOutputType as FlowOutputType
 from .flow import Flow as Flow
