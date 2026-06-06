@@ -1,0 +1,6 @@
+The following snippet documents a payload string:
+
+```python
+payload = "[TOOL_CALL]{\"name\":\"calculator\",\"arguments\":{\"expression\":\"2 + 2\"}}[/TOOL_CALL]"
+print(payload)
+```
