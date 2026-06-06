@@ -1,3 +1,8 @@
+from ..entities import (
+    ToolDescriptor,
+    ToolNameResolution,
+    ToolNameResolutionStatus,
+)
 from .definition import (
     FlowInputDefinition,
     FlowInputType,
@@ -8,14 +13,23 @@ from .definition import (
 )
 from .node import Node
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Protocol
 
 FLOW_INPUT_KEY = "__flow_input__"
+FLOW_TOOL_NODE_TYPE = "tool"
 
 
 class FlowNodeFactory(Protocol):
     def __call__(self, definition: FlowNodeDefinition) -> Node: ...
+
+
+class FlowToolResolver(Protocol):
+    def list_tools(self) -> list[ToolDescriptor]: ...
+
+    def resolve_tool_name(
+        self, name: str, *, provider_originated: bool = False
+    ) -> ToolNameResolution: ...
 
 
 class FlowNodeConfigurationError(ValueError):
@@ -160,6 +174,40 @@ def default_flow_node_registry() -> FlowNodeRegistry:
     )
 
 
+def tool_flow_node_registry(
+    resolver: FlowToolResolver,
+    *,
+    base_registry: FlowNodeRegistry | None = None,
+) -> FlowNodeRegistry:
+    assert _is_flow_tool_resolver(resolver)
+    if base_registry is not None:
+        assert isinstance(base_registry, FlowNodeRegistry)
+    registry = base_registry or default_flow_node_registry()
+    descriptors = {
+        descriptor.name: descriptor for descriptor in resolver.list_tools()
+    }
+    registry.register(
+        FLOW_TOOL_NODE_TYPE,
+        _tool_node_factory(resolver, descriptors),
+        metadata=FlowNodeMetadata(
+            supports_ref=True,
+            async_only=True,
+            input_contract=FlowNodeContract(
+                name="arguments",
+                type=FlowInputType.OBJECT,
+                metadata={"dynamic": True},
+            ),
+            output_contract=FlowNodeContract(
+                name="result",
+                type=FlowOutputType.JSON,
+                metadata={"dynamic": True},
+            ),
+            metadata={"tools": _tool_contracts(descriptors.values())},
+        ),
+    )
+    return registry
+
+
 def flow_input_binding(
     input_definition: FlowInputDefinition | None,
     value: object,
@@ -206,6 +254,57 @@ def _select_node(definition: FlowNodeDefinition) -> Node:
     return Node(definition.name, func=run)
 
 
+def _tool_node_factory(
+    resolver: FlowToolResolver,
+    descriptors: Mapping[str, ToolDescriptor],
+) -> FlowNodeFactory:
+    def factory(definition: FlowNodeDefinition) -> Node:
+        path = f"nodes.{definition.name}.ref"
+        requested_name = definition.ref
+        if requested_name is None:
+            raise FlowNodeConfigurationError(
+                code="flow.missing_ref",
+                path=path,
+                message="Tool flow nodes must declare a tool ref.",
+                hint="Set ref to an enabled avalan tool name.",
+            )
+        if _is_ref_import_like(requested_name):
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_ref",
+                path=path,
+                message="Tool flow node ref must be a tool name.",
+                hint="Use an enabled avalan tool name, not a path or URI.",
+            )
+        resolution = resolver.resolve_tool_name(requested_name)
+        if resolution.status not in {
+            ToolNameResolutionStatus.EXACT,
+            ToolNameResolutionStatus.ALIAS,
+        }:
+            raise FlowNodeConfigurationError(
+                code=f"flow.tool_{resolution.status.value}",
+                path=path,
+                message=(
+                    "Tool flow node ref does not resolve to one enabled tool."
+                ),
+                hint="Use an enabled avalan tool name or unambiguous alias.",
+            )
+        assert resolution.canonical_name is not None
+        descriptor = descriptors[resolution.canonical_name]
+
+        async def run(_: dict[str, object]) -> object:
+            raise NotImplementedError(
+                "Flow tool node execution is unavailable."
+            )
+
+        return Node(
+            definition.name,
+            label=descriptor.name,
+            func=run,
+        )
+
+    return factory
+
+
 def _node_input_value(
     definition: FlowNodeDefinition,
     inputs: Mapping[str, object],
@@ -240,3 +339,31 @@ def _copy_flow_value(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_copy_flow_value(item) for item in value]
     return value
+
+
+def _is_flow_tool_resolver(value: object) -> bool:
+    return (
+        hasattr(value, "list_tools")
+        and callable(getattr(value, "list_tools"))
+        and hasattr(value, "resolve_tool_name")
+        and callable(getattr(value, "resolve_tool_name"))
+    )
+
+
+def _tool_contracts(
+    descriptors: Iterable[ToolDescriptor],
+) -> dict[str, dict[str, object]]:
+    contracts: dict[str, dict[str, object]] = {}
+    for descriptor in descriptors:
+        assert isinstance(descriptor, ToolDescriptor)
+        contract: dict[str, object] = {"aliases": tuple(descriptor.aliases)}
+        if descriptor.parameter_schema is not None:
+            contract["parameter_schema"] = descriptor.parameter_schema
+        if descriptor.return_schema is not None:
+            contract["return_schema"] = descriptor.return_schema
+        contracts[descriptor.name] = contract
+    return contracts
+
+
+def _is_ref_import_like(ref: str) -> bool:
+    return "://" in ref or "/" in ref or "\\" in ref or ":" in ref

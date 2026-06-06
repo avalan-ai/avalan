@@ -2,8 +2,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
+from avalan.entities import ToolManagerSettings
 from avalan.flow import (
     FLOW_INPUT_KEY,
+    FLOW_TOOL_NODE_TYPE,
     FlowDefinition,
     FlowDefinitionLoader,
     FlowInputType,
@@ -18,10 +20,14 @@ from avalan.flow import (
     load_flow_definition_result,
     loads_flow_definition,
     loads_flow_definition_result,
+    tool_flow_node_registry,
 )
 from avalan.flow import loader as flow_loader
 from avalan.flow.node import Node
 from avalan.flow.registry import FlowNodeConfigurationError
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
+from avalan.tool.mcp import McpToolSet
 
 VALID_FLOW = """
 [flow]
@@ -50,6 +56,40 @@ input = "start"
 source = "start"
 target = "finish"
 """
+
+
+async def loader_adder(a: int, b: int) -> int:
+    return a + b
+
+
+loader_adder.aliases = ["loader_sum"]  # type: ignore[attr-defined]
+
+
+async def loader_adder_alt(a: int, b: int) -> int:
+    return a + b
+
+
+loader_adder_alt.aliases = ["loader_sum"]  # type: ignore[attr-defined]
+
+
+async def loader_disabled(a: int) -> int:
+    return a
+
+
+def _tool_loader(
+    *,
+    enable_tools: list[str] | None = None,
+) -> FlowDefinitionLoader:
+    manager = ToolManager.create_instance(
+        enable_tools=enable_tools or ["loader_adder", "mcp.call"],
+        available_toolsets=[
+            ToolSet(tools=[loader_adder, loader_adder_alt]),
+            ToolSet(namespace="disabled", tools=[loader_disabled]),
+            McpToolSet(),
+        ],
+        settings=ToolManagerSettings(),
+    )
+    return FlowDefinitionLoader(tool_flow_node_registry(manager))
 
 
 class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
@@ -117,6 +157,84 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             ),
             "ready!",
         )
+
+    def test_tool_nodes_require_tool_aware_registry(self) -> None:
+        result = loads_flow_definition_result(f"""
+            [flow]
+            name = "tool_node"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "{FLOW_TOOL_NODE_TYPE}"
+            ref = "loader_adder"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "flow.unknown_node_type")
+        self.assertEqual(result.issues[0].path, "nodes.start.type")
+
+    def test_tool_node_accepts_enabled_ref_and_mcp_remote_name(self) -> None:
+        loader = _tool_loader()
+
+        result = loader.loads_result(f"""
+            [flow]
+            name = "mcp_tool"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "{FLOW_TOOL_NODE_TYPE}"
+            ref = "mcp.call"
+
+            [nodes.start.config]
+            uri = "http://localhost:4000"
+            name = "remote.calculator"
+            arguments = {{expression = "1 + 1"}}
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        assert result.flow is not None
+        self.assertEqual(result.definition.nodes[0].ref, "mcp.call")
+        self.assertEqual(
+            result.definition.nodes[0].config["name"],
+            "remote.calculator",
+        )
+
+    def test_tool_node_rejects_invalid_refs(self) -> None:
+        loader = _tool_loader(
+            enable_tools=["loader_adder", "loader_adder_alt"]
+        )
+        cases = (
+            ("missing", "", "flow.missing_ref"),
+            ("unknown", 'ref = "missing"', "flow.tool_unknown"),
+            (
+                "disabled",
+                'ref = "disabled.loader_disabled"',
+                "flow.tool_disabled",
+            ),
+            ("ambiguous", 'ref = "loader_sum"', "flow.tool_ambiguous"),
+            ("path", 'ref = "tools/adder.py"', "flow.invalid_ref"),
+            ("uri", 'ref = "urn:mcp:tool"', "flow.invalid_ref"),
+        )
+
+        for name, ref_toml, code in cases:
+            with self.subTest(name=name):
+                result = loader.loads_result(f"""
+                    [flow]
+                    name = "tool_node"
+                    entrypoint = "start"
+                    output_node = "start"
+
+                    [nodes.start]
+                    type = "{FLOW_TOOL_NODE_TYPE}"
+                    {ref_toml}
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.issues[0].code, code)
+                self.assertEqual(result.issues[0].path, "nodes.start.ref")
 
     async def test_load_accepts_ref_when_registry_metadata_allows_it(
         self,
