@@ -234,9 +234,20 @@ def get_json_schema(function: Callable[..., Any]) -> dict[str, Any]:
 
     properties: dict[str, dict[str, Any]] = {}
     required: list[str] = []
+    additional_properties: bool | dict[str, Any] = False
     function_signature = signature(function)
     for name, parameter in function_signature.parameters.items():
         if name == "context":
+            continue
+        if parameter.kind is Parameter.VAR_KEYWORD:
+            annotation = (
+                parameter.annotation
+                if parameter.annotation is not Parameter.empty
+                else Any
+            )
+            additional_properties = (
+                True if annotation is Any else _annotation_schema(annotation)
+            )
             continue
         if parameter.kind not in {
             Parameter.POSITIONAL_OR_KEYWORD,
@@ -275,7 +286,7 @@ def get_json_schema(function: Callable[..., Any]) -> dict[str, Any]:
                 "type": "object",
                 "properties": properties,
                 "required": required,
-                "additionalProperties": False,
+                "additionalProperties": additional_properties,
             },
             "return": return_schema,
         },
