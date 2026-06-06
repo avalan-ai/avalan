@@ -3,8 +3,13 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.entities import (
     ToolCall,
+    ToolCallContext,
     ToolCallDiagnostic,
+    ToolCallOutcome,
+    ToolCallResult,
     ToolDescriptor,
+    ToolFilterResult,
+    ToolFilterResultStatus,
     ToolManagerSettings,
     ToolNameResolution,
     ToolNameResolutionStatus,
@@ -52,6 +57,14 @@ async def flow_identity(value: int) -> int:
     return value
 
 
+async def flow_none(value: int) -> None:
+    return None
+
+
+async def flow_fails(value: int) -> None:
+    raise ValueError(f"bad {value}")
+
+
 def _tool_manager(
     *,
     enable_tools: list[str] | None = None,
@@ -61,10 +74,19 @@ def _tool_manager(
         or [
             "flow_adder",
             "flow_identity",
+            "flow_none",
             "mcp.call",
         ],
         available_toolsets=[
-            ToolSet(tools=[flow_adder, flow_adder_alt, flow_identity]),
+            ToolSet(
+                tools=[
+                    flow_adder,
+                    flow_adder_alt,
+                    flow_identity,
+                    flow_none,
+                    flow_fails,
+                ]
+            ),
             ToolSet(namespace="disabled", tools=[flow_disabled]),
             McpToolSet(),
         ],
@@ -76,6 +98,7 @@ class RecordingToolResolver:
     def __init__(self, manager: ToolManager) -> None:
         self.manager = manager
         self.calls: list[ToolCall] = []
+        self.contexts: list[ToolCallContext] = []
 
     def list_tools(self) -> list[ToolDescriptor]:
         return self.manager.list_tools()
@@ -89,8 +112,16 @@ class RecordingToolResolver:
         )
 
     def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
-        self.calls.append(call)
         return self.manager.validate_tool_call(call)
+
+    async def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> ToolCallOutcome:
+        self.calls.append(call)
+        self.contexts.append(context)
+        return await self.manager.execute_call(call, context)
 
 
 class StaticToolResolver:
@@ -112,6 +143,19 @@ class StaticToolResolver:
 
     def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
         return None
+
+    async def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> ToolCallOutcome:
+        return ToolCallResult(
+            id="result-1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=call.arguments or {},
+        )
 
 
 class FlowNodeRegistryTestCase(TestCase):
@@ -348,8 +392,11 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(node.label, "flow_adder")
-        with self.assertRaises(NotImplementedError):
-            await node.execute_async({"payload": {"a": 1, "b": 2}})
+        self.assertTrue(node.async_only)
+        self.assertEqual(
+            await node.execute_async({"payload": {"a": 1, "b": 2}}),
+            3,
+        )
 
     async def test_tool_node_binds_explicit_argument_selectors(
         self,
@@ -366,14 +413,17 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        with self.assertRaises(NotImplementedError):
+        self.assertEqual(
             await node.execute_async(
                 {"payload": {"left": 2, "right": 3, "ignored": 4}}
-            )
+            ),
+            5,
+        )
 
         self.assertEqual(len(resolver.calls), 1)
         self.assertEqual(resolver.calls[0].name, "flow_adder")
         self.assertEqual(resolver.calls[0].arguments, {"b": 3, "a": 2})
+        self.assertTrue(resolver.contexts[0].flow_tool_node)
 
     async def test_tool_node_binds_implicit_object_by_parameter_name(
         self,
@@ -388,8 +438,10 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        with self.assertRaises(NotImplementedError):
-            await node.execute_async({"payload": {"b": 5, "a": 4}})
+        self.assertEqual(
+            await node.execute_async({"payload": {"b": 5, "a": 4}}),
+            9,
+        )
 
         self.assertEqual(resolver.calls[0].arguments, {"a": 4, "b": 5})
 
@@ -408,10 +460,32 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        with self.assertRaises(NotImplementedError):
-            await node.execute_async({"payload": 7})
+        self.assertEqual(await node.execute_async({"payload": 7}), 7)
 
         self.assertEqual(resolver.calls[0].arguments, {"value": 7})
+
+    async def test_tool_node_passes_flow_cancellation_checker(self) -> None:
+        resolver = RecordingToolResolver(_tool_manager())
+        registry = tool_flow_node_registry(resolver)
+        node = registry.build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+            )
+        )
+
+        async def cancel() -> None:
+            return None
+
+        self.assertEqual(
+            await node.execute_async(
+                {"payload": {"a": 2, "b": 4}},
+                cancellation_checker=cancel,
+            ),
+            6,
+        )
+        self.assertIs(resolver.contexts[0].cancellation_checker, cancel)
 
     async def test_tool_node_handles_descriptor_schema_edge_cases(
         self,
@@ -465,13 +539,130 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
                 )
 
                 if code is None:
-                    with self.assertRaises(NotImplementedError):
-                        await node.execute_async(inputs)
+                    self.assertEqual(await node.execute_async(inputs), {})
                     continue
 
                 with self.assertRaises(FlowNodeConfigurationError) as context:
                     await node.execute_async(inputs)
                 self.assertEqual(context.exception.code, code)
+
+    async def test_tool_node_output_modes_cover_outcomes(self) -> None:
+        success = tool_flow_node_registry(_tool_manager()).build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+                config={"output_mode": "envelope"},
+            )
+        )
+        diagnostic = tool_flow_node_registry(_tool_manager()).build(
+            FlowNodeDefinition(
+                name="typed",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+                config={
+                    "arguments": {"a": "left", "b": "right"},
+                    "output_mode": "envelope",
+                },
+            )
+        )
+        error = tool_flow_node_registry(
+            _tool_manager(enable_tools=["flow_fails"])
+        ).build(
+            FlowNodeDefinition(
+                name="fail",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_fails",
+                config={"output_mode": "envelope"},
+            )
+        )
+
+        success_envelope = await success.execute_async(
+            {"payload": {"a": 2, "b": 3}}
+        )
+        diagnostic_envelope = await diagnostic.execute_async(
+            {
+                "left": "one",
+                "right": 2,
+            }
+        )
+        error_envelope = await error.execute_async({"payload": 5})
+
+        assert isinstance(success_envelope, dict)
+        self.assertEqual(success_envelope["status"], "result")
+        self.assertEqual(success_envelope["canonical_name"], "flow_adder")
+        self.assertEqual(success_envelope["result"], 5)
+        self.assertIsNone(success_envelope["error"])
+        self.assertIsNone(success_envelope["diagnostic"])
+        assert isinstance(diagnostic_envelope, dict)
+        self.assertEqual(diagnostic_envelope["status"], "diagnostic")
+        self.assertEqual(
+            diagnostic_envelope["canonical_name"],
+            "flow_adder",
+        )
+        self.assertIsNotNone(diagnostic_envelope["diagnostic"])
+        assert isinstance(error_envelope, dict)
+        self.assertEqual(error_envelope["status"], "error")
+        self.assertEqual(error_envelope["canonical_name"], "flow_fails")
+        self.assertEqual(
+            error_envelope["error"],
+            {"type": "ValueError", "message": "bad 5"},
+        )
+
+    async def test_tool_node_raw_mode_preserves_null_result(self) -> None:
+        registry = tool_flow_node_registry(
+            _tool_manager(enable_tools=["flow_none"])
+        )
+        node = registry.build(
+            FlowNodeDefinition(
+                name="null",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_none",
+            )
+        )
+
+        self.assertIsNone(await node.execute_async({"payload": 1}))
+
+    async def test_tool_node_raw_mode_raises_on_execution_error(self) -> None:
+        registry = tool_flow_node_registry(
+            _tool_manager(enable_tools=["flow_fails"])
+        )
+        node = registry.build(
+            FlowNodeDefinition(
+                name="fail",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_fails",
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "ValueError: bad 3"):
+            await node.execute_async({"payload": 3})
+
+    async def test_tool_node_raw_mode_raises_on_diagnostic(self) -> None:
+        def suppress(
+            _call: ToolCall,
+            _context: ToolCallContext,
+        ) -> ToolFilterResult:
+            return ToolFilterResult(status=ToolFilterResultStatus.SUPPRESS)
+
+        manager = ToolManager.create_instance(
+            enable_tools=["flow_adder"],
+            available_toolsets=[ToolSet(tools=[flow_adder])],
+            settings=ToolManagerSettings(filters=[suppress]),
+        )
+        registry = tool_flow_node_registry(manager)
+        node = registry.build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+            )
+        )
+
+        with self.assertRaises(FlowNodeConfigurationError) as context:
+            await node.execute_async({"payload": {"a": 1, "b": 2}})
+
+        self.assertEqual(context.exception.code, "flow.tool_diagnostic")
 
     async def test_tool_node_rejects_invalid_runtime_bindings(
         self,
@@ -543,6 +734,11 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
                 {"arguments": {"a": "left"}},
                 "flow.missing_argument_binding",
                 "nodes.calculate.config.arguments.b",
+            ),
+            (
+                {"output_mode": "wrapped"},
+                "flow.invalid_output_mode",
+                "nodes.calculate.config.output_mode",
             ),
         )
 

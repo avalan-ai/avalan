@@ -1,11 +1,17 @@
 from ..entities import (
     ToolCall,
+    ToolCallContext,
     ToolCallDiagnostic,
+    ToolCallDiagnosticStage,
+    ToolCallError,
+    ToolCallOutcome,
+    ToolCallResult,
     ToolDescriptor,
     ToolNameResolution,
     ToolNameResolutionStatus,
     ToolValue,
 )
+from ..utils import tool_call_diagnostic_payload, tool_call_error_payload
 from .definition import (
     FlowInputDefinition,
     FlowInputType,
@@ -16,8 +22,8 @@ from .definition import (
 )
 from .node import Node
 
-from collections.abc import Iterable, Mapping
-from typing import Protocol, cast
+from collections.abc import Awaitable, Iterable, Mapping
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 FLOW_INPUT_KEY = "__flow_input__"
@@ -38,6 +44,12 @@ class FlowToolResolver(Protocol):
     def validate_tool_call(
         self, call: ToolCall
     ) -> ToolCallDiagnostic | None: ...
+
+    def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> Awaitable[ToolCallOutcome]: ...
 
 
 class FlowNodeConfigurationError(ValueError):
@@ -299,36 +311,37 @@ def _tool_node_factory(
         assert resolution.canonical_name is not None
         descriptor = descriptors[resolution.canonical_name]
         _validate_tool_node_bindings(definition, descriptor)
+        _validate_tool_node_output_mode(definition)
 
-        async def run(inputs: dict[str, object]) -> object:
+        async def run(
+            inputs: dict[str, object],
+            *,
+            cancellation_checker: Any = None,
+        ) -> object:
             arguments = cast(
                 dict[str, ToolValue],
                 _tool_node_arguments(definition, descriptor, inputs),
             )
-            diagnostic = resolver.validate_tool_call(
-                ToolCall(
-                    id=str(uuid4()),
-                    name=descriptor.name,
-                    arguments=arguments,
-                )
+            call = ToolCall(
+                id=str(uuid4()),
+                name=descriptor.name,
+                arguments=arguments,
             )
-            if diagnostic is not None:
-                raise FlowNodeConfigurationError(
-                    code="flow.invalid_arguments",
-                    path=f"nodes.{definition.name}.config.arguments",
-                    message="Tool node arguments are invalid.",
-                    hint=(
-                        "Provide arguments matching the tool parameter schema."
-                    ),
-                )
-            raise NotImplementedError(
-                "Flow tool node execution is unavailable."
+            outcome = await resolver.execute_call(
+                call,
+                context=ToolCallContext(
+                    cancellation_checker=cancellation_checker,
+                    flow_tool_node=True,
+                ),
             )
+            return _tool_node_output(definition, outcome)
 
         return Node(
             definition.name,
             label=descriptor.name,
             func=run,
+            async_only=True,
+            receives_cancellation_checker=True,
         )
 
     return factory
@@ -378,6 +391,8 @@ def _is_flow_tool_resolver(value: object) -> bool:
         and callable(getattr(value, "resolve_tool_name"))
         and hasattr(value, "validate_tool_call")
         and callable(getattr(value, "validate_tool_call"))
+        and hasattr(value, "execute_call")
+        and callable(getattr(value, "execute_call"))
     )
 
 
@@ -451,6 +466,76 @@ def _validate_tool_node_bindings(
             message="Tool node argument binding is missing.",
             hint="Bind every required tool parameter.",
         )
+
+
+def _validate_tool_node_output_mode(definition: FlowNodeDefinition) -> None:
+    mode = definition.config.get("output_mode", "raw")
+    if mode in {"raw", "envelope"}:
+        return
+    raise FlowNodeConfigurationError(
+        code="flow.invalid_output_mode",
+        path=f"nodes.{definition.name}.config.output_mode",
+        message="Tool node output mode is invalid.",
+        hint="Use raw or envelope.",
+    )
+
+
+def _tool_node_output(
+    definition: FlowNodeDefinition,
+    outcome: ToolCallOutcome,
+) -> object:
+    mode = cast(str, definition.config.get("output_mode", "raw"))
+    if mode == "envelope":
+        return _tool_node_envelope(outcome)
+    if isinstance(outcome, ToolCallResult):
+        return outcome.result
+    if isinstance(outcome, ToolCallDiagnostic):
+        if outcome.stage is ToolCallDiagnosticStage.VALIDATE:
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_arguments",
+                path=f"nodes.{definition.name}.config.arguments",
+                message="Tool node arguments are invalid.",
+                hint="Provide arguments matching the tool parameter schema.",
+            )
+        raise FlowNodeConfigurationError(
+            code="flow.tool_diagnostic",
+            path=f"nodes.{definition.name}",
+            message="Tool node did not execute.",
+            hint="Use envelope output mode to compose diagnostic outcomes.",
+        )
+    assert isinstance(outcome, ToolCallError)
+    raise RuntimeError(
+        f"Tool node execution failed: {outcome.error_type}: {outcome.message}"
+    )
+
+
+def _tool_node_envelope(outcome: ToolCallOutcome) -> dict[str, object]:
+    if isinstance(outcome, ToolCallResult):
+        return {
+            "status": "result",
+            "call_id": outcome.call.id,
+            "canonical_name": outcome.name,
+            "result": outcome.result,
+            "error": None,
+            "diagnostic": None,
+        }
+    if isinstance(outcome, ToolCallError):
+        return {
+            "status": "error",
+            "call_id": outcome.call.id,
+            "canonical_name": outcome.name,
+            "result": None,
+            "error": tool_call_error_payload(outcome),
+            "diagnostic": None,
+        }
+    return {
+        "status": "diagnostic",
+        "call_id": outcome.call_id,
+        "canonical_name": outcome.canonical_name,
+        "result": None,
+        "error": None,
+        "diagnostic": tool_call_diagnostic_payload(outcome),
+    }
 
 
 def _tool_node_arguments(

@@ -206,6 +206,34 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_tool_node_executes_from_loaded_flow(self) -> None:
+        loader = _tool_loader()
+
+        result = loader.loads_result(f"""
+            [flow]
+            name = "tool_node"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "{FLOW_TOOL_NODE_TYPE}"
+            ref = "loader_adder"
+
+            [nodes.start.config.arguments]
+            a = "left"
+            b = "right"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.flow is not None
+        self.assertEqual(
+            await result.flow.execute_async(
+                initial_node="start",
+                initial_inputs={"left": 2, "right": 5},
+            ),
+            7,
+        )
+
     def test_tool_node_rejects_invalid_argument_bindings_on_load(
         self,
     ) -> None:
