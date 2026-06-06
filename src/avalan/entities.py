@@ -189,6 +189,12 @@ class ToolCallDiagnosticStatus(StrEnum):
     NON_EXECUTED = "non_executed"
 
 
+class ToolFilterResultStatus(StrEnum):
+    PASS = "pass"
+    MODIFY = "modify"
+    SUPPRESS = "suppress"
+
+
 class ToolNameResolutionStatus(StrEnum):
     EXACT = "exact"
     ALIAS = "alias"
@@ -1085,13 +1091,41 @@ class ToolCallContext:
     session_id: UUID | None = None
     calls: list[ToolCall] | None = None
     cancellation_checker: Callable[[], Awaitable[None]] | None = None
+    flow_tool_node: bool = False
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolFilterResult:
+    status: ToolFilterResultStatus
+    call: ToolCall | None = None
+    context: ToolCallContext | None = None
+    code: ToolCallDiagnosticCode = ToolCallDiagnosticCode.FILTER_SUPPRESSED
+    message: str | None = None
+    details: dict[str, ToolValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.status, ToolFilterResultStatus)
+        if self.call is not None:
+            assert isinstance(self.call, ToolCall)
+        if self.context is not None:
+            assert isinstance(self.context, ToolCallContext)
+        assert isinstance(self.code, ToolCallDiagnosticCode)
+        if self.message is not None:
+            assert isinstance(self.message, str)
+            assert self.message.strip(), "message must not be empty"
+        assert isinstance(self.details, dict)
+        if self.status is ToolFilterResultStatus.MODIFY:
+            assert self.call is not None
+            assert self.context is not None
 
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolFilter:
     func: Callable[
-        [ToolCall, ToolCallContext], tuple[ToolCall, ToolCallContext] | None
+        [ToolCall, ToolCallContext],
+        tuple[ToolCall, ToolCallContext] | ToolFilterResult | None,
     ]
     namespace: str | None = None
 
@@ -1124,7 +1158,7 @@ class ToolManagerSettings:
         list[
             Callable[
                 [ToolCall, ToolCallContext],
-                tuple[ToolCall, ToolCallContext] | None,
+                tuple[ToolCall, ToolCallContext] | ToolFilterResult | None,
             ]
             | ToolFilter
         ]

@@ -5,7 +5,13 @@ from unittest import TestCase, main
 from uuid import uuid4
 
 from avalan.entities import (
+    EngineMessage,
+    EngineUri,
+    GenericProxyConfig,
+    Message,
+    MessageRole,
     PreparedToolCall,
+    ReasoningToken,
     ToolCall,
     ToolCallContext,
     ToolCallDiagnostic,
@@ -17,8 +23,11 @@ from avalan.entities import (
     ToolCallParseOutcome,
     ToolCallResult,
     ToolDescriptor,
+    ToolFilterResult,
+    ToolFilterResultStatus,
     ToolNameResolution,
     ToolNameResolutionStatus,
+    WebshareProxyConfig,
 )
 
 
@@ -260,6 +269,163 @@ class ToolCallParseOutcomeTestCase(TestCase):
 
         with self.assertRaises(FrozenInstanceError):
             outcome.calls = []
+
+
+class ToolFilterResultTestCase(TestCase):
+    def test_create_pass_result(self):
+        result = ToolFilterResult(status=ToolFilterResultStatus.PASS)
+
+        self.assertIs(result.status, ToolFilterResultStatus.PASS)
+        self.assertIsNone(result.call)
+        self.assertIsNone(result.context)
+        self.assertIs(result.code, ToolCallDiagnosticCode.FILTER_SUPPRESSED)
+        self.assertIsNone(result.message)
+        self.assertEqual(result.details, {})
+
+    def test_create_modify_result(self):
+        call = ToolCall(id="call-1", name="calculator", arguments={})
+        context = ToolCallContext(flow_tool_node=True)
+
+        result = ToolFilterResult(
+            status=ToolFilterResultStatus.MODIFY,
+            call=call,
+            context=context,
+        )
+
+        self.assertEqual(result.call, call)
+        self.assertEqual(result.context, context)
+
+    def test_create_suppress_result(self):
+        result = ToolFilterResult(
+            status=ToolFilterResultStatus.SUPPRESS,
+            code=ToolCallDiagnosticCode.POLICY_SUPPRESSED,
+            message="Suppressed by policy.",
+            details={"reason": "policy"},
+        )
+
+        self.assertIs(result.status, ToolFilterResultStatus.SUPPRESS)
+        self.assertIs(result.code, ToolCallDiagnosticCode.POLICY_SUPPRESSED)
+        self.assertEqual(result.message, "Suppressed by policy.")
+        self.assertEqual(result.details, {"reason": "policy"})
+
+    def test_default_details_are_independent(self):
+        first = ToolFilterResult(status=ToolFilterResultStatus.PASS)
+        second = ToolFilterResult(status=ToolFilterResultStatus.PASS)
+
+        first.details["reason"] = "policy"
+
+        self.assertEqual(second.details, {})
+
+    def test_rejects_invalid_status(self):
+        with self.assertRaises(AssertionError):
+            ToolFilterResult(status="pass")
+
+    def test_rejects_invalid_call_context_code_message_and_details(self):
+        invalid_cases = (
+            {"status": ToolFilterResultStatus.PASS, "call": "call"},
+            {"status": ToolFilterResultStatus.PASS, "context": "context"},
+            {"status": ToolFilterResultStatus.PASS, "code": "code"},
+            {"status": ToolFilterResultStatus.PASS, "message": ""},
+            {"status": ToolFilterResultStatus.PASS, "details": []},
+            {"status": ToolFilterResultStatus.MODIFY},
+            {
+                "status": ToolFilterResultStatus.MODIFY,
+                "call": ToolCall(id="call-1", name="calculator"),
+            },
+            {
+                "status": ToolFilterResultStatus.MODIFY,
+                "context": ToolCallContext(),
+            },
+        )
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ToolFilterResult(**kwargs)
+
+    def test_is_frozen(self):
+        result = ToolFilterResult(status=ToolFilterResultStatus.PASS)
+
+        with self.assertRaises(FrozenInstanceError):
+            result.message = "Changed."
+
+
+class EntityHelperTestCase(TestCase):
+    def test_engine_uri_is_local(self):
+        self.assertTrue(
+            EngineUri(
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                vendor=None,
+                model_id=None,
+                params={},
+            ).is_local
+        )
+        self.assertFalse(
+            EngineUri(
+                host=None,
+                port=None,
+                user=None,
+                password=None,
+                vendor="openai",
+                model_id="gpt",
+                params={},
+            ).is_local
+        )
+
+    def test_generic_proxy_config_to_dict(self):
+        proxy = GenericProxyConfig(
+            scheme="http",
+            host="proxy.example",
+            port=8080,
+            username="user",
+            password="pass",
+        )
+
+        self.assertEqual(
+            proxy.to_dict(),
+            {
+                "http": "http://user:pass@proxy.example:8080",
+                "https": "http://user:pass@proxy.example:8080",
+            },
+        )
+
+    def test_engine_message_is_from_agent(self):
+        message = EngineMessage(
+            agent_id=uuid4(),
+            model_id="model",
+            message=Message(role=MessageRole.ASSISTANT, content="content"),
+        )
+
+        self.assertTrue(message.is_from_agent)
+
+    def test_reasoning_token_initializes_base_token(self):
+        token = ReasoningToken(token="thinking", id=1, probability=0.5)
+
+        self.assertEqual(token.id, 1)
+        self.assertEqual(token.token, "thinking")
+        self.assertEqual(token.probability, 0.5)
+
+    def test_webshare_proxy_config_to_generic(self):
+        proxy = WebshareProxyConfig(
+            scheme="https",
+            host="proxy.example",
+            port=8080,
+            username="user",
+            password="pass",
+        )
+
+        self.assertEqual(
+            proxy.to_generic(),
+            GenericProxyConfig(
+                scheme="https",
+                host="proxy.example",
+                port=8080,
+                username="user",
+                password="pass",
+            ),
+        )
 
 
 class ToolDescriptorTestCase(TestCase):

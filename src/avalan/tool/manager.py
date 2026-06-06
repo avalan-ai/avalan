@@ -9,6 +9,8 @@ from ..entities import (
     ToolCallResult,
     ToolDescriptor,
     ToolFilter,
+    ToolFilterResult,
+    ToolFilterResultStatus,
     ToolFormat,
     ToolManagerSettings,
     ToolNameResolution,
@@ -478,7 +480,10 @@ class ToolManager:
         if isinstance(prepared, ToolCallDiagnostic):
             return prepared
 
-        call, context = self._apply_filters(prepared.call, prepared.context)
+        filtered = self._apply_filters(prepared.call, prepared.context)
+        if isinstance(filtered, ToolCallDiagnostic):
+            return filtered
+        call, context = filtered
         await _check_cancelled(context)
 
         return self._prepare_resolved_call(call, context)
@@ -538,24 +543,25 @@ class ToolManager:
         ):
             return None
 
-        tool = self._tools.get(call.name, None) if self._tools else None
-
-        if not tool:
+        if not self._tools or call.name not in self._tools:
             return None
 
         await _check_cancelled(context)
 
-        call, context = self._apply_filters(call, context)
+        filtered = self._apply_filters(call, context)
+        if isinstance(filtered, ToolCallDiagnostic):
+            return None
+        call, context = filtered
 
         await _check_cancelled(context)
 
-        prepared = PreparedToolCall(
-            call=call,
-            callable=tool,
-            descriptor=self._legacy_descriptor(call.name, tool),
-            arguments=call.arguments or {},
-            context=context,
+        prepared = self._prepare_resolved_call(
+            call,
+            context,
+            validate=False,
         )
+        if isinstance(prepared, ToolCallDiagnostic):
+            return None
         return await self._execute_prepared_call(prepared)
 
     def _prepare_resolved_call(
@@ -629,6 +635,7 @@ class ToolManager:
         stage: ToolCallDiagnosticStage,
         message: str,
         canonical_name: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> ToolCallDiagnostic:
         return ToolCallDiagnostic(
             id=uuid4(),
@@ -638,6 +645,7 @@ class ToolManager:
             code=code,
             stage=stage,
             message=message,
+            details=details or {},
         )
 
     def _validate_tool_arguments(
@@ -671,7 +679,7 @@ class ToolManager:
 
     def _apply_filters(
         self, call: ToolCall, context: ToolCallContext
-    ) -> tuple[ToolCall, ToolCallContext]:
+    ) -> tuple[ToolCall, ToolCallContext] | ToolCallDiagnostic:
         if not self._settings.filters:
             return call, context
 
@@ -685,22 +693,40 @@ class ToolManager:
             if not matches_tool_namespace(call.name, filter_namespace):
                 continue
             modified = filter_func(call, context)
-            if modified is not None:
-                assert isinstance(modified, tuple) and len(modified) == 2
-                call, context = modified
+            if modified is None:
+                continue
+            if isinstance(modified, ToolFilterResult):
+                if modified.status is ToolFilterResultStatus.PASS:
+                    continue
+                if modified.status is ToolFilterResultStatus.SUPPRESS:
+                    return self._diagnostic(
+                        call=call,
+                        code=modified.code,
+                        stage=ToolCallDiagnosticStage.FILTER,
+                        message=(
+                            modified.message
+                            or "Tool call was suppressed by a filter."
+                        ),
+                        details=modified.details,
+                    )
+                assert modified.status is ToolFilterResultStatus.MODIFY
+                assert modified.call is not None
+                assert modified.context is not None
+                modified = (modified.call, modified.context)
+            assert isinstance(modified, tuple) and len(modified) == 2
+            next_call, next_context = modified
+            assert isinstance(next_call, ToolCall)
+            assert isinstance(next_context, ToolCallContext)
+            if context.flow_tool_node and next_call.name != call.name:
+                return self._diagnostic(
+                    call=call,
+                    code=ToolCallDiagnosticCode.FILTER_SUPPRESSED,
+                    stage=ToolCallDiagnosticStage.FILTER,
+                    message="Tool filter name rewrites are disabled.",
+                    details={"filtered_name": next_call.name},
+                )
+            call, context = next_call, next_context
         return call, context
-
-    def _legacy_descriptor(
-        self, name: str, tool: Callable[..., Any]
-    ) -> ToolDescriptor:
-        descriptor = self._descriptors.get(name)
-        if descriptor is not None and descriptor.callable is tool:
-            return descriptor
-        return ToolDescriptor(
-            name=name,
-            callable=tool,
-            aliases=[],
-        )
 
     async def _execute_prepared_call(
         self, prepared: PreparedToolCall
