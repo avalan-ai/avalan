@@ -161,13 +161,25 @@ class ToolSetJsonSchemasTestCase(TestCase):
         schemas_outer = outer.json_schemas()
         self.assertEqual(
             [s["function"]["name"] for s in schemas_outer],
-            ["outer.calculator", "outer..calculator"],
+            ["outer.calculator", "outer.inner.calculator"],
         )
 
         schemas_mix = mix.json_schemas()
         self.assertEqual(
             [s["function"]["name"] for s in schemas_mix],
             ["mix.greet"],
+        )
+
+    def test_nested_enabled_tools_filters_by_canonical_name(self):
+        inner = ToolSet(namespace="inner", tools=[CalculatorTool()])
+        outer = ToolSet(namespace="outer", tools=[CalculatorTool(), inner])
+
+        outer.with_enabled_tools(["outer.inner.calculator"])
+
+        schemas = outer.json_schemas()
+        self.assertEqual(
+            [schema["function"]["name"] for schema in schemas],
+            ["outer.inner.calculator"],
         )
 
 

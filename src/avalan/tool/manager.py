@@ -19,9 +19,12 @@ from .json_schema import get_json_schema
 from .parser import ToolCallParser
 
 from asyncio import CancelledError, wait_for
+from base64 import urlsafe_b64encode
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
+from copy import deepcopy
 from inspect import signature
+from re import compile as compile_regex
 from types import TracebackType
 from typing import Any, cast
 from uuid import uuid4
@@ -29,6 +32,8 @@ from uuid import uuid4
 
 class ToolManager:
     _INTERRUPT_CLOSE_TIMEOUT = 0.5
+    _PROVIDER_TOOL_NAME_PATTERN = compile_regex(r"^[A-Za-z0-9_-]+$")
+    _PROVIDER_TOOL_NAME_PREFIX = "avl_"
 
     _parser: ToolCallParser
     _stack: AsyncExitStack
@@ -218,23 +223,8 @@ class ToolManager:
 
         self._tools = {}
         if enabled_toolsets:
-            for i, toolset in enumerate(enabled_toolsets):
-                prefix = f"{toolset.namespace}." if toolset.namespace else ""
-                for tool in toolset.tools:
-                    if isinstance(tool, ToolSet):
-                        continue
-                    name = getattr(tool, "__name__", tool.__class__.__name__)
-                    canonical_name = f"{prefix}{name}"
-                    self._tools[canonical_name] = cast(
-                        Callable[..., Any], tool
-                    )
-                    aliases = self._tool_aliases(tool)
-                    self._add_aliases(self._aliases, canonical_name, aliases)
-                    self._descriptors[canonical_name] = ToolDescriptor(
-                        name=canonical_name,
-                        aliases=aliases,
-                        schema=self._tool_schema(tool, prefix),
-                    )
+            for toolset in enabled_toolsets:
+                self._register_toolset(toolset)
 
         self._toolsets = enabled_toolsets
 
@@ -283,6 +273,35 @@ class ToolManager:
             names.append((f"{tool_prefix}{name}", cls._tool_aliases(tool)))
         return names
 
+    def _register_toolset(
+        self, toolset: ToolSet, prefix: str | None = None
+    ) -> None:
+        namespace = (
+            f"{prefix}.{toolset.namespace}"
+            if prefix and toolset.namespace
+            else prefix or toolset.namespace
+        )
+        tool_prefix = f"{namespace}." if namespace else ""
+        for tool in toolset.tools:
+            if isinstance(tool, ToolSet):
+                self._register_toolset(tool, namespace)
+                continue
+
+            assert self._tools is not None
+            name = getattr(tool, "__name__", tool.__class__.__name__)
+            canonical_name = f"{tool_prefix}{name}"
+            self._tools[canonical_name] = cast(Callable[..., Any], tool)
+            aliases = self._tool_aliases(tool)
+            self._add_aliases(self._aliases, canonical_name, aliases)
+            schema = self._tool_schema(tool, tool_prefix)
+            self._descriptors[canonical_name] = self._tool_descriptor(
+                canonical_name=canonical_name,
+                tool=tool,
+                aliases=aliases,
+                namespace=namespace,
+                schema=schema,
+            )
+
     @staticmethod
     def _tool_schema(
         tool: Callable[..., Any] | Tool, prefix: str
@@ -298,6 +317,76 @@ class ToolManager:
         ):
             schema["function"]["name"] = prefix + schema["function"]["name"]
         return schema
+
+    @classmethod
+    def _tool_descriptor(
+        cls,
+        *,
+        canonical_name: str,
+        tool: Callable[..., Any] | Tool,
+        aliases: list[str],
+        namespace: str | None,
+        schema: dict[str, Any] | None,
+    ) -> ToolDescriptor:
+        function_schema = (
+            schema.get("function")
+            if schema and schema.get("type") == "function"
+            else None
+        )
+        parameters = (
+            function_schema.get("parameters")
+            if isinstance(function_schema, dict)
+            else None
+        )
+        returns = (
+            function_schema.get("return")
+            if isinstance(function_schema, dict)
+            else None
+        )
+        return ToolDescriptor(
+            name=canonical_name,
+            callable=cast(Callable[..., Any], tool),
+            aliases=aliases,
+            schema=schema,
+            parameter_schema=(
+                cast(dict[str, Any], parameters)
+                if isinstance(parameters, dict)
+                else None
+            ),
+            return_schema=(
+                cast(dict[str, Any], returns)
+                if isinstance(returns, dict)
+                else None
+            ),
+            provider_safe_schema=cls._provider_safe_schema(schema),
+            namespace=namespace,
+        )
+
+    @classmethod
+    def _provider_safe_schema(
+        cls, schema: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if not schema:
+            return None
+        provider_schema = deepcopy(schema)
+        function = provider_schema.get("function")
+        if (
+            provider_schema.get("type") == "function"
+            and isinstance(function, dict)
+            and isinstance(function.get("name"), str)
+        ):
+            function["name"] = cls._encode_provider_tool_name(function["name"])
+        return provider_schema
+
+    @classmethod
+    def _encode_provider_tool_name(cls, tool_name: str) -> str:
+        assert tool_name.strip(), "tool name must not be empty"
+        if cls._PROVIDER_TOOL_NAME_PATTERN.fullmatch(
+            tool_name
+        ) and not tool_name.startswith(cls._PROVIDER_TOOL_NAME_PREFIX):
+            return tool_name
+        encoded = urlsafe_b64encode(tool_name.encode()).decode().rstrip("=")
+        return f"{cls._PROVIDER_TOOL_NAME_PREFIX}{encoded}"
 
     def is_potential_tool_call(self, buffer: str, token_str: str) -> bool:
         """Proxy :meth:`ToolCallParser.is_potential_tool_call`."""
