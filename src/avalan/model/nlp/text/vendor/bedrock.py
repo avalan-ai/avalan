@@ -734,7 +734,7 @@ class BedrockClient(TextGenerationVendor):
         }
         if isinstance(result, ToolCallError):
             content["error"] = {
-                "name": result.error.__class__.__name__,
+                "name": result.error_type,
                 "message": result.message,
             }
         return {
