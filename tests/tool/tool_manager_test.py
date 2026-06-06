@@ -52,6 +52,11 @@ class ToolManagerCreationTestCase(TestCase):
             settings.provider_arguments_mode,
             ToolProviderArgumentsMode.EMPTY_ON_MALFORMED,
         )
+        self.assertIsNone(settings.maximum_argument_depth)
+        self.assertIsNone(settings.maximum_argument_size)
+        self.assertIsNone(settings.maximum_parser_input_size)
+        self.assertIsNone(settings.maximum_parser_payload_depth)
+        self.assertIsNone(settings.maximum_parser_payload_size)
 
     def test_settings_accept_outcome_compatibility_modes(self):
         settings = ToolManagerSettings(
@@ -61,6 +66,11 @@ class ToolManagerCreationTestCase(TestCase):
             provider_arguments_mode=(
                 ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED
             ),
+            maximum_argument_depth=3,
+            maximum_argument_size=64,
+            maximum_parser_input_size=128,
+            maximum_parser_payload_depth=4,
+            maximum_parser_payload_size=96,
         )
 
         self.assertIs(
@@ -78,6 +88,11 @@ class ToolManagerCreationTestCase(TestCase):
             settings.provider_arguments_mode,
             ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED,
         )
+        self.assertEqual(settings.maximum_argument_depth, 3)
+        self.assertEqual(settings.maximum_argument_size, 64)
+        self.assertEqual(settings.maximum_parser_input_size, 128)
+        self.assertEqual(settings.maximum_parser_payload_depth, 4)
+        self.assertEqual(settings.maximum_parser_payload_size, 96)
 
     def test_settings_reject_invalid_compatibility_modes(self):
         invalid_cases = (
@@ -85,6 +100,12 @@ class ToolManagerCreationTestCase(TestCase):
             {"missing_call_mode": "legacy_none"},
             {"parser_return_mode": "legacy"},
             {"provider_arguments_mode": "empty_on_malformed"},
+            {"maximum_depth": 0},
+            {"maximum_argument_depth": 0},
+            {"maximum_argument_size": -1},
+            {"maximum_parser_input_size": True},
+            {"maximum_parser_payload_depth": "1"},
+            {"maximum_parser_payload_size": 0},
         )
 
         for kwargs in invalid_cases:
@@ -732,6 +753,48 @@ class ToolManagerCreationTestCase(TestCase):
         )
         self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
 
+    def test_validate_tool_call_rejects_excessive_argument_depth(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["nested_value"],
+            available_toolsets=[ToolSet(tools=[nested_value])],
+            settings=ToolManagerSettings(maximum_argument_depth=2),
+        )
+
+        diagnostic = manager.validate_tool_call(
+            ToolCall(
+                id="call-1",
+                name="nested_value",
+                arguments={"payload": {"nested": {"value": 1}}},
+            )
+        )
+
+        assert diagnostic is not None
+        self.assertEqual(diagnostic.canonical_name, "nested_value")
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.MAXIMUM_DEPTH)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+        self.assertEqual(diagnostic.details["limit"], 2)
+
+    def test_validate_tool_call_rejects_oversized_arguments(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["nested_value"],
+            available_toolsets=[ToolSet(tools=[nested_value])],
+            settings=ToolManagerSettings(maximum_argument_size=8),
+        )
+
+        diagnostic = manager.validate_tool_call(
+            ToolCall(
+                id="call-1",
+                name="nested_value",
+                arguments={"payload": "large value"},
+            )
+        )
+
+        assert diagnostic is not None
+        self.assertEqual(diagnostic.canonical_name, "nested_value")
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.MAXIMUM_SIZE)
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+        self.assertEqual(diagnostic.details["limit"], 8)
+
     def test_validate_tool_call_rejects_wrong_json_types(self):
         async def typed_tool(
             payload: RuntimePayload,
@@ -1002,6 +1065,10 @@ class RuntimeMode(str, Enum):
     SLOW = "slow"
 
 
+async def nested_value(payload: Any) -> Any:
+    return payload
+
+
 class NativeAdderTool(Tool):
     def __init__(self) -> None:
         super().__init__()
@@ -1180,6 +1247,42 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
             diagnostic.code,
             ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
         )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+
+    async def test_prepare_call_applies_argument_limits_after_filters(self):
+        def deepen_argument(call: ToolCall, context: ToolCallContext):
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={"payload": {"nested": {"value": 1}}},
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["nested_value"],
+            available_toolsets=[ToolSet(tools=[nested_value])],
+            settings=ToolManagerSettings(
+                filters=[deepen_argument],
+                maximum_argument_depth=2,
+            ),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="nested_value",
+            arguments={"payload": 1},
+        )
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertEqual(diagnostic.canonical_name, "nested_value")
+        self.assertIs(diagnostic.code, ToolCallDiagnosticCode.MAXIMUM_DEPTH)
         self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
 
     async def test_execute_prepared_call_does_not_rerun_filters(self):
@@ -1580,6 +1683,34 @@ class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(diagnostic.message, "$.count must be integer.")
         self.assertEqual(calls, [valid_arguments])
+
+    async def test_execute_call_rejects_argument_limits_before_dispatch(self):
+        calls: list[Any] = []
+
+        async def limited_tool(payload: Any) -> Any:
+            calls.append(payload)
+            return payload
+
+        manager = ToolManager.create_instance(
+            enable_tools=["limited_tool"],
+            available_toolsets=[ToolSet(tools=[limited_tool])],
+            settings=ToolManagerSettings(maximum_argument_size=8),
+        )
+
+        outcome = await manager.execute_call(
+            ToolCall(
+                id="call-1",
+                name="limited_tool",
+                arguments={"payload": "large value"},
+            ),
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.MAXIMUM_SIZE)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.VALIDATE)
+        self.assertEqual(calls, [])
 
     async def test_execute_call_returns_execution_error(self):
         async def failing_tool(a: int) -> None:
@@ -2057,6 +2188,46 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
                     enable_tools=["calculator"],
                     available_toolsets=[ToolSet(tools=[CalculatorTool()])],
                     settings=ToolManagerSettings(tool_format=tool_format),
+                )
+
+                self.assertIsNone(manager.get_calls(text))
+
+    async def test_get_calls_returns_none_for_parser_resource_diagnostics(
+        self,
+    ):
+        cases = (
+            (
+                ToolManagerSettings(
+                    tool_format=ToolFormat.JSON,
+                    maximum_parser_input_size=4,
+                ),
+                '{"tool": "calculator", "arguments": {}}',
+            ),
+            (
+                ToolManagerSettings(
+                    tool_format=ToolFormat.JSON,
+                    maximum_parser_payload_depth=1,
+                ),
+                (
+                    '{"tool": "calculator", "arguments": '
+                    '{"payload": {"value": 1}}}'
+                ),
+            ),
+            (
+                ToolManagerSettings(
+                    tool_format=ToolFormat.JSON,
+                    maximum_parser_payload_size=8,
+                ),
+                '{"tool": "calculator", "arguments": {"payload": "large"}}',
+            ),
+        )
+
+        for settings, text in cases:
+            with self.subTest(settings=settings):
+                manager = ToolManager.create_instance(
+                    enable_tools=["calculator"],
+                    available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+                    settings=settings,
                 )
 
                 self.assertIsNone(manager.get_calls(text))

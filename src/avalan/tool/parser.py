@@ -36,15 +36,34 @@ _MARKDOWN_FENCED_BLOCK_PATTERN = compile(
 
 class ToolCallParser:
     _eos_token: str | None
+    _maximum_payload_depth: int | None
+    _maximum_payload_size: int | None
+    _maximum_text_size: int | None
     _tool_format: ToolFormat | None
 
     def __init__(
         self,
         tool_format: ToolFormat | None = None,
         eos_token: str | None = None,
+        maximum_text_size: int | None = None,
+        maximum_payload_depth: int | None = None,
+        maximum_payload_size: int | None = None,
     ) -> None:
+        for limit in (
+            maximum_text_size,
+            maximum_payload_depth,
+            maximum_payload_size,
+        ):
+            assert limit is None or (
+                isinstance(limit, int)
+                and not isinstance(limit, bool)
+                and limit > 0
+            )
         self._tool_format = tool_format
         self._eos_token = eos_token
+        self._maximum_text_size = maximum_text_size
+        self._maximum_payload_depth = maximum_payload_depth
+        self._maximum_payload_size = maximum_payload_size
 
     @property
     def tool_format(self) -> ToolFormat | None:
@@ -54,6 +73,9 @@ class ToolCallParser:
     def __call__(
         self, text: str
     ) -> tuple[str, dict[str, Any]] | list[ToolCall] | None:
+        if self._text_exceeds_limit(text):
+            return None
+
         calls: tuple[str, dict[str, Any]] | list[ToolCall] | None
         match self._tool_format:
             case ToolFormat.JSON:
@@ -76,6 +98,10 @@ class ToolCallParser:
 
     def parse(self, text: str) -> ToolCallParseOutcome:
         """Return normalized tool calls and parse diagnostics."""
+        text_diagnostic = self._text_limit_diagnostic(text)
+        if text_diagnostic is not None:
+            return ToolCallParseOutcome(diagnostics=[text_diagnostic])
+
         parsed = self(text)
         calls: list[ToolCall] = []
         diagnostics: list[ToolCallDiagnostic] = []
@@ -558,6 +584,16 @@ class ToolCallParser:
                 call_id=call.id,
                 requested_name=call.name,
             )
+        diagnostic = self.resource_limit_diagnostic(
+            value=call.arguments or {},
+            maximum_depth=self._maximum_payload_depth,
+            maximum_size=self._maximum_payload_size,
+            stage=ToolCallDiagnosticStage.PARSE,
+            call_id=call.id,
+            requested_name=call.name,
+        )
+        if diagnostic is not None:
+            return None, diagnostic
         return call, None
 
     def _normalize_tuple_call(
@@ -568,6 +604,15 @@ class ToolCallParser:
             return None, self._malformed_call_diagnostic()
         if not isinstance(arguments, dict):
             return None, self._arguments_diagnostic(requested_name=name)
+        diagnostic = self.resource_limit_diagnostic(
+            value=arguments,
+            maximum_depth=self._maximum_payload_depth,
+            maximum_size=self._maximum_payload_size,
+            stage=ToolCallDiagnosticStage.PARSE,
+            requested_name=name,
+        )
+        if diagnostic is not None:
+            return None, diagnostic
         return (
             ToolCall(
                 id=uuid4(),
@@ -601,6 +646,26 @@ class ToolCallParser:
         if not diagnostics:
             diagnostics = self._tag_failure_diagnostics(text)
         return diagnostics
+
+    def _text_exceeds_limit(self, text: str) -> bool:
+        return (
+            self._maximum_text_size is not None
+            and self._text_size(text) > self._maximum_text_size
+        )
+
+    def _text_limit_diagnostic(self, text: str) -> ToolCallDiagnostic | None:
+        if not self._text_exceeds_limit(text):
+            return None
+        assert self._maximum_text_size is not None
+        return self._resource_limit_diagnostic(
+            code=ToolCallDiagnosticCode.MAXIMUM_SIZE,
+            stage=ToolCallDiagnosticStage.PARSE,
+            message="Tool parser input exceeds the maximum size.",
+            details={
+                "limit": self._maximum_text_size,
+                "size": self._text_size(text),
+            },
+        )
 
     def _json_failure_diagnostics(
         self,
@@ -759,14 +824,21 @@ class ToolCallParser:
         if not isinstance(name, str) or not name.strip():
             return self._malformed_call_diagnostic()
 
+        call_id = payload.get("id")
         arguments = payload.get("arguments")
         if not isinstance(arguments, dict):
-            call_id = payload.get("id")
             return self._arguments_diagnostic(
                 call_id=call_id if isinstance(call_id, (UUID, str)) else None,
                 requested_name=requested_name,
             )
-        return None
+        return self.resource_limit_diagnostic(
+            value=arguments,
+            maximum_depth=self._maximum_payload_depth,
+            maximum_size=self._maximum_payload_size,
+            stage=ToolCallDiagnosticStage.PARSE,
+            call_id=call_id if isinstance(call_id, (UUID, str)) else None,
+            requested_name=requested_name,
+        )
 
     @staticmethod
     def _arguments_diagnostic(
@@ -782,6 +854,107 @@ class ToolCallParser:
             stage=ToolCallDiagnosticStage.PARSE,
             message="Tool call arguments must be an object.",
         )
+
+    @classmethod
+    def resource_limit_diagnostic(
+        cls,
+        *,
+        value: Any,
+        maximum_depth: int | None,
+        maximum_size: int | None,
+        stage: ToolCallDiagnosticStage,
+        call_id: UUID | str | None = None,
+        requested_name: str | None = None,
+        canonical_name: str | None = None,
+    ) -> ToolCallDiagnostic | None:
+        assert isinstance(stage, ToolCallDiagnosticStage)
+        if maximum_depth is not None:
+            assert isinstance(maximum_depth, int)
+            assert not isinstance(maximum_depth, bool)
+            assert maximum_depth > 0
+            depth = cls._value_depth(value)
+            if depth > maximum_depth:
+                return cls._resource_limit_diagnostic(
+                    code=ToolCallDiagnosticCode.MAXIMUM_DEPTH,
+                    stage=stage,
+                    message="Tool call arguments exceed the maximum depth.",
+                    call_id=call_id,
+                    requested_name=requested_name,
+                    canonical_name=canonical_name,
+                    details={"limit": maximum_depth, "depth": depth},
+                )
+
+        if maximum_size is not None:
+            assert isinstance(maximum_size, int)
+            assert not isinstance(maximum_size, bool)
+            assert maximum_size > 0
+            size = cls._value_size(value)
+            if size > maximum_size:
+                return cls._resource_limit_diagnostic(
+                    code=ToolCallDiagnosticCode.MAXIMUM_SIZE,
+                    stage=stage,
+                    message="Tool call arguments exceed the maximum size.",
+                    call_id=call_id,
+                    requested_name=requested_name,
+                    canonical_name=canonical_name,
+                    details={"limit": maximum_size, "size": size},
+                )
+        return None
+
+    @staticmethod
+    def _resource_limit_diagnostic(
+        *,
+        code: ToolCallDiagnosticCode,
+        stage: ToolCallDiagnosticStage,
+        message: str,
+        call_id: UUID | str | None = None,
+        requested_name: str | None = None,
+        canonical_name: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> ToolCallDiagnostic:
+        return ToolCallDiagnostic(
+            id=uuid4(),
+            call_id=call_id,
+            requested_name=requested_name,
+            canonical_name=canonical_name,
+            code=code,
+            stage=stage,
+            message=message,
+            details=details or {},
+        )
+
+    @classmethod
+    def _value_depth(cls, value: Any) -> int:
+        if isinstance(value, dict):
+            if not value:
+                return 1
+            return 1 + max(cls._value_depth(v) for v in value.values())
+        if isinstance(value, list):
+            if not value:
+                return 1
+            return 1 + max(cls._value_depth(v) for v in value)
+        return 0
+
+    @classmethod
+    def _value_size(cls, value: Any) -> int:
+        if isinstance(value, dict):
+            return sum(
+                cls._text_size(k) + cls._value_size(v)
+                for k, v in value.items()
+            )
+        if isinstance(value, list):
+            return sum(cls._value_size(v) for v in value)
+        if isinstance(value, str):
+            return cls._text_size(value)
+        if value is None:
+            return 4
+        if isinstance(value, bool):
+            return 4 if value else 5
+        return cls._text_size(str(value))
+
+    @staticmethod
+    def _text_size(text: str) -> int:
+        return len(text.encode())
 
     @staticmethod
     def _malformed_call_diagnostic(
