@@ -24,6 +24,7 @@ from avalan.entities import (
     ToolParserReturnMode,
     ToolProviderArgumentsMode,
     ToolTransformer,
+    ToolTransformerResult,
 )
 from avalan.model.vendor import TextGenerationVendor
 from avalan.tool import Tool, ToolSet
@@ -88,6 +89,38 @@ class ToolManagerCreationTestCase(TestCase):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaises(AssertionError):
                     ToolManagerSettings(**kwargs)
+
+    def test_tool_call_error_type_uses_exception_or_projection(self):
+        call = ToolCall(id="call-1", name="tool", arguments={})
+
+        exception_error = ToolCallError(
+            id="error-1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            error=ValueError("boom"),
+            message="boom",
+        )
+        projected_error = ToolCallError(
+            id="error-2",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            error={"type": "ProjectedError"},
+            message="boom",
+        )
+        unknown_error = ToolCallError(
+            id="error-3",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            error={"message": "boom"},
+            message="boom",
+        )
+
+        self.assertEqual(exception_error.error_type, "ValueError")
+        self.assertEqual(projected_error.error_type, "ProjectedError")
+        self.assertEqual(unknown_error.error_type, "ToolCallError")
 
     def test_default_instance_empty(self):
         manager = ToolManager.create_instance(
@@ -1102,7 +1135,8 @@ class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(outcome, ToolCallError)
         assert isinstance(outcome, ToolCallError)
-        self.assertIsInstance(outcome.error, ValueError)
+        self.assertEqual(outcome.error, {"type": "ValueError"})
+        self.assertEqual(outcome.error_type, "ValueError")
         self.assertEqual(outcome.message, "boom")
 
     async def test_execute_call_returns_resolution_diagnostics(self):
@@ -1358,6 +1392,76 @@ class ToolManagerToolTypesTestCase(IsolatedAsyncioTestCase):
         result = await manager(call, context=ToolCallContext())
         self.assertEqual(result.result, 3)
 
+    async def test_non_native_tool_dispatches_arguments_by_keyword(self):
+        async def subtract(a: int, b: int) -> int:
+            return a - b
+
+        manager = ToolManager.create_instance(
+            enable_tools=[subtract.__name__],
+            available_toolsets=[ToolSet(tools=[subtract])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(), name=subtract.__name__, arguments={"b": 2, "a": 5}
+        )
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, 3)
+
+    async def test_non_native_tool_supports_positional_only_arguments(self):
+        async def subtract(a: int, /, b: int) -> int:
+            return a - b
+
+        manager = ToolManager.create_instance(
+            enable_tools=[subtract.__name__],
+            available_toolsets=[ToolSet(tools=[subtract])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(), name=subtract.__name__, arguments={"b": 2, "a": 5}
+        )
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, 3)
+
+    async def test_execute_call_rejects_varargs_arguments(self):
+        async def collect(*values: int) -> int:
+            return sum(values)
+
+        manager = ToolManager.create_instance(
+            enable_tools=[collect.__name__],
+            available_toolsets=[ToolSet(tools=[collect])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(),
+            name=collect.__name__,
+            arguments={"values": cast(Any, [1, 2])},
+        )
+
+        outcome = await manager.execute_call(call, context=ToolCallContext())
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertIs(
+            outcome.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.VALIDATE)
+
+    async def test_non_native_tool_supports_variadic_keywords(self):
+        async def collect(**values: int) -> dict[str, int]:
+            return values
+
+        manager = ToolManager.create_instance(
+            enable_tools=[collect.__name__],
+            available_toolsets=[ToolSet(tools=[collect])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id=_uuid4(), name=collect.__name__, arguments={"b": 2, "a": 1}
+        )
+        result = await manager(call, context=ToolCallContext())
+        self.assertEqual(result.result, {"b": 2, "a": 1})
+
     async def test_non_native_tool_without_arguments(self):
         def greet() -> str:
             return "hi"
@@ -1513,7 +1617,9 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         call = ToolCall(id=_uuid4(), name="failing_tool", arguments={"a": 1})
         result = await manager(call, context=ToolCallContext())
         self.assertIsInstance(result, ToolCallError)
-        self.assertIsInstance(result.error, ValueError)
+        assert isinstance(result, ToolCallError)
+        self.assertEqual(result.error, {"type": "ValueError"})
+        self.assertEqual(result.error_type, "ValueError")
         self.assertEqual(result.message, "boom")
 
     async def test_tool_keyboard_interrupt_propagates(self):
@@ -1948,6 +2054,48 @@ class ToolManagerFiltersTransformersTestCase(IsolatedAsyncioTestCase):
             result = await manager(call, context=ToolCallContext())
 
         self.assertEqual(result.result, "2!")
+
+    async def test_transformer_none_keeps_current_result(self):
+        def transform(
+            _: ToolCall,
+            __: ToolCallContext,
+            ___: str | None,
+        ) -> None:
+            return None
+
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+            settings=ToolManagerSettings(transformers=[transform]),
+        )
+
+        call = ToolCall(
+            id=_uuid4(), name="calculator", arguments={"expression": "1 + 1"}
+        )
+        result = await manager(call, context=ToolCallContext())
+
+        self.assertEqual(result.result, "2")
+
+    async def test_transformer_result_can_set_null_result(self):
+        def transform(
+            _: ToolCall,
+            __: ToolCallContext,
+            ___: str | None,
+        ) -> ToolTransformerResult:
+            return ToolTransformerResult(result=None)
+
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+            settings=ToolManagerSettings(transformers=[transform]),
+        )
+
+        call = ToolCall(
+            id=_uuid4(), name="calculator", arguments={"expression": "1 + 1"}
+        )
+        result = await manager(call, context=ToolCallContext())
+
+        self.assertIsNone(result.result)
 
     async def test_filters_and_transformers(self):
         def modify(call: ToolCall, context: ToolCallContext):

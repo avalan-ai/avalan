@@ -630,8 +630,18 @@ class ToolCallResult(ToolCall):
 class ToolCallError(ToolCall):
     id: UUID | str
     call: ToolCall
-    error: BaseException
+    error: ToolValue | BaseException
     message: str
+
+    @property
+    def error_type(self) -> str:
+        if isinstance(self.error, BaseException):
+            return self.error.__class__.__name__
+        if isinstance(self.error, dict):
+            error_type = self.error.get("type")
+            if isinstance(error_type, str) and error_type.strip():
+                return error_type
+        return "ToolCallError"
 
 
 @final
@@ -1132,9 +1142,16 @@ class ToolFilter:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ToolTransformerResult:
+    result: ToolValue | None = None
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolTransformer:
     func: Callable[
-        [ToolCall, ToolCallContext, ToolValue | None], ToolValue | None
+        [ToolCall, ToolCallContext, ToolValue | None],
+        ToolValue | ToolTransformerResult | None,
     ]
     namespace: str | None = None
 
@@ -1167,7 +1184,8 @@ class ToolManagerSettings:
     transformers: (
         list[
             Callable[
-                [ToolCall, ToolCallContext, ToolValue | None], ToolValue | None
+                [ToolCall, ToolCallContext, ToolValue | None],
+                ToolValue | ToolTransformerResult | None,
             ]
             | ToolTransformer
         ]

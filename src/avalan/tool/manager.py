@@ -17,6 +17,7 @@ from ..entities import (
     ToolNameResolution,
     ToolNameResolutionStatus,
     ToolTransformer,
+    ToolTransformerResult,
 )
 from . import Tool, ToolSet
 from .json_schema import get_json_schema
@@ -29,7 +30,7 @@ from binascii import Error as BinasciiError
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack
 from copy import deepcopy
-from inspect import signature
+from inspect import Parameter, signature
 from re import compile as compile_regex
 from types import TracebackType
 from typing import Any, cast
@@ -722,7 +723,7 @@ class ToolManager:
                     context=context or ToolCallContext(),
                 )
             else:
-                signature(tool).bind(**arguments)
+                self._bind_callable_arguments(tool, arguments)
         except TypeError as exc:
             return ToolCallDiagnostic(
                 id=uuid4(),
@@ -809,7 +810,7 @@ class ToolManager:
                 call=call,
                 name=call.name,
                 arguments=call.arguments,
-                error=exc,
+                error=self._project_error(exc),
                 message=str(exc),
             )
 
@@ -825,9 +826,28 @@ class ToolManager:
             return await tool(**arguments, context=context)
         if is_native_tool:
             return await tool(context=context)
-        if arguments:
-            return await tool(*arguments.values())
-        return tool()
+        call_args, call_kwargs = self._bind_callable_arguments(tool, arguments)
+        result = tool(*call_args, **call_kwargs)
+        if isinstance(result, Awaitable):
+            return await result
+        return result
+
+    @staticmethod
+    def _bind_callable_arguments(
+        tool: Callable[..., Any],
+        arguments: dict[str, Any],
+    ) -> tuple[list[Any], dict[str, Any]]:
+        function_signature = signature(tool)
+        call_args: list[Any] = []
+        call_kwargs = dict(arguments)
+        for parameter in function_signature.parameters.values():
+            if (
+                parameter.kind is Parameter.POSITIONAL_ONLY
+                and parameter.name in call_kwargs
+            ):
+                call_args.append(call_kwargs.pop(parameter.name))
+        function_signature.bind(*call_args, **call_kwargs)
+        return call_args, call_kwargs
 
     def _apply_transformers(
         self,
@@ -850,9 +870,15 @@ class ToolManager:
             ):
                 continue
             transformed = transformer_func(call, context, result)
-            if transformed is not None:
+            if isinstance(transformed, ToolTransformerResult):
+                result = transformed.result
+            elif transformed is not None:
                 result = transformed
         return result
+
+    @staticmethod
+    def _project_error(exc: Exception) -> dict[str, object]:
+        return {"type": exc.__class__.__name__}
 
 
 async def _check_cancelled(context: ToolCallContext) -> None:
