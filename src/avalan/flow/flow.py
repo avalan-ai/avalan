@@ -6,6 +6,8 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+_SKIPPED = object()
+
 
 class Flow:
     """Directed graph of nodes and connections."""
@@ -126,6 +128,8 @@ class Flow:
             raise ValueError(
                 "Flow has no valid starting node; graph may contain a cycle"
             )
+        reachable = self._collect_reachable(start_nodes)
+        self._assert_sync_supported(reachable)
 
         incoming_counts = {
             name: len(self.incoming.get(name, [])) for name in self.nodes
@@ -142,20 +146,19 @@ class Flow:
 
         outputs: dict[str, Any] = {}
         processed: set[str] = set()
-        reachable = self._collect_reachable(start_nodes)
         while queue:
             node = queue.popleft()
             self._assert_unprocessed_queue_node(node, processed, reachable)
             processed.add(node.name)
             inputs = buffers[node.name]
             if incoming_counts[node.name] > 0 and not inputs:
-                outputs[node.name] = None
+                outputs[node.name] = _SKIPPED
             else:
                 outputs[node.name] = node.execute(inputs)
             out_value = outputs[node.name]
             for connection in self.outgoing.get(node.name, []):
                 indegree[connection.dest.name] -= 1
-                if out_value is not None and connection.check_conditions(
+                if out_value is not _SKIPPED and connection.check_conditions(
                     out_value
                 ):
                     forwarded = connection.apply_filters(out_value)
@@ -177,7 +180,7 @@ class Flow:
             )
 
         terminal = {
-            name: outputs[name]
+            name: _flow_output(outputs[name])
             for name, outs in self.outgoing.items()
             if not outs
         }
@@ -227,7 +230,7 @@ class Flow:
             processed.add(node.name)
             inputs = buffers[node.name]
             if incoming_counts[node.name] > 0 and not inputs:
-                outputs[node.name] = None
+                outputs[node.name] = _SKIPPED
             else:
                 outputs[node.name] = await node.execute_async(
                     inputs,
@@ -237,7 +240,7 @@ class Flow:
             out_value = outputs[node.name]
             for connection in self.outgoing.get(node.name, []):
                 indegree[connection.dest.name] -= 1
-                if out_value is not None and (
+                if out_value is not _SKIPPED and (
                     await connection.check_conditions_async(out_value)
                 ):
                     forwarded = await connection.apply_filters_async(out_value)
@@ -259,7 +262,7 @@ class Flow:
             )
 
         terminal = {
-            name: outputs[name]
+            name: _flow_output(outputs[name])
             for name, outs in self.outgoing.items()
             if not outs
         }
@@ -296,6 +299,28 @@ class Flow:
             for connection in self.outgoing.get(name, []):
                 stack.append(connection.dest.name)
         return reachable
+
+    def _assert_sync_supported(self, reachable: set[str]) -> None:
+        async_only = sorted(
+            name
+            for name in reachable
+            if self._node_requires_async(self.nodes[name])
+        )
+        if async_only:
+            raise TypeError(
+                "Flow contains async-only node(s); use execute_async: "
+                + ", ".join(async_only)
+            )
+
+    def _node_requires_async(self, node: Node) -> bool:
+        if node.async_only:
+            return True
+        if node.subgraph is None:
+            return False
+        return any(
+            node.subgraph._node_requires_async(subgraph_node)
+            for subgraph_node in node.subgraph.nodes.values()
+        )
 
     def _detect_cycle_nodes(self, start_nodes: list[Node]) -> set[str]:
         visited: set[str] = set()
@@ -337,3 +362,9 @@ async def _check_cancelled(
 ) -> None:
     if cancellation_checker is not None:
         await cancellation_checker()
+
+
+def _flow_output(value: Any) -> Any:
+    if value is _SKIPPED:
+        return None
+    return value

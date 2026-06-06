@@ -18,7 +18,11 @@ class Node:
         output_schema: type | None = None,
         func: Callable[..., Any] | None = None,
         subgraph: "Flow | None" = None,
+        async_only: bool = False,
+        receives_cancellation_checker: bool = False,
     ) -> None:
+        assert isinstance(async_only, bool)
+        assert isinstance(receives_cancellation_checker, bool)
         self.name: str = name
         self.label: str = label or name
         self.shape: str | None = shape
@@ -26,6 +30,10 @@ class Node:
         self.output_schema: type | None = output_schema
         self.func: Callable[..., Any] | None = func
         self.subgraph: "Flow | None" = subgraph
+        self.async_only: bool = async_only
+        self.receives_cancellation_checker: bool = (
+            receives_cancellation_checker
+        )
 
     def execute(self, inputs: dict[str, Any]) -> Any:
         if self.subgraph is not None:
@@ -68,7 +76,10 @@ class Node:
 
         self._validate_input(inputs)
         await _check_cancelled(cancellation_checker)
-        output = self._compute_output(inputs)
+        output = self._compute_output_async(
+            inputs,
+            cancellation_checker=cancellation_checker,
+        )
         if isawaitable(output):
             output = await output
         self._validate_output(output)
@@ -86,6 +97,19 @@ class Node:
             return self.func(inputs)
         except TypeError:
             return self.func(*inputs.values())
+
+    def _compute_output_async(
+        self,
+        inputs: dict[str, Any],
+        *,
+        cancellation_checker: CancellationChecker | None,
+    ) -> Any:
+        if callable(self.func) and self.receives_cancellation_checker:
+            return self.func(
+                inputs,
+                cancellation_checker=cancellation_checker,
+            )
+        return self._compute_output(inputs)
 
     def _subgraph_initial(self, inputs: dict[str, Any]) -> Any:
         return next(iter(inputs.values())) if len(inputs) == 1 else inputs

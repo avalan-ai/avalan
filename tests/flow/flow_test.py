@@ -119,6 +119,60 @@ class FlowExecutionTestCase(TestCase):
         self.assertIsNone(result)
         self.assertEqual(executed, ["A"])
 
+    def test_none_output_forwards_to_downstream_node(self) -> None:
+        executed: list[str] = []
+
+        def start(_: dict[str, object]) -> None:
+            executed.append("A")
+            return None
+
+        def finish(inputs: dict[str, object]) -> str:
+            executed.append("B")
+            self.assertEqual(inputs, {"A": None})
+            return "forwarded"
+
+        flow = Flow()
+        flow.add_node(Node("A", func=start))
+        flow.add_node(Node("B", func=finish))
+        flow.add_connection("A", "B")
+
+        result = flow.execute()
+
+        self.assertEqual(result, "forwarded")
+        self.assertEqual(executed, ["A", "B"])
+
+    def test_execute_rejects_async_only_nodes_before_work(self) -> None:
+        executed: list[str] = []
+
+        def start(_: dict[str, object]) -> int:
+            executed.append("A")
+            return 1
+
+        flow = Flow()
+        flow.add_node(Node("A", func=start))
+        flow.add_node(Node("B", func=lambda _: 2, async_only=True))
+        flow.add_connection("A", "B")
+
+        with self.assertRaisesRegex(TypeError, "execute_async: B"):
+            flow.execute()
+
+        self.assertEqual(executed, [])
+
+    def test_execute_rejects_async_only_subgraph_before_work(self) -> None:
+        executed: list[str] = []
+        subgraph = Flow()
+        subgraph.add_node(Node("inner", func=lambda _: 1, async_only=True))
+
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: executed.append("A") or 1))
+        flow.add_node(Node("B", subgraph=subgraph))
+        flow.add_connection("A", "B")
+
+        with self.assertRaisesRegex(TypeError, "execute_async: B"):
+            flow.execute()
+
+        self.assertEqual(executed, [])
+
     def test_execute_with_initial_node(self):
         executed = []
 
@@ -281,6 +335,30 @@ class FlowAsyncExecutionTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         self.assertEqual(executed, ["A"])
+
+    async def test_execute_async_forwards_none_output(self) -> None:
+        executed: list[str] = []
+
+        async def start(_: dict[str, object]) -> None:
+            await sleep(0)
+            executed.append("A")
+            return None
+
+        async def finish(inputs: dict[str, object]) -> str:
+            await sleep(0)
+            executed.append("B")
+            self.assertEqual(inputs, {"A": None})
+            return "forwarded"
+
+        flow = Flow()
+        flow.add_node(Node("A", func=start))
+        flow.add_node(Node("B", func=finish))
+        flow.add_connection("A", "B")
+
+        result = await flow.execute_async()
+
+        self.assertEqual(result, "forwarded")
+        self.assertEqual(executed, ["A", "B"])
 
     async def test_execute_async_missing_input_and_multi_terminal(
         self,
