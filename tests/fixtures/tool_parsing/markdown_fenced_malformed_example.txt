@@ -1,0 +1,5 @@
+Do not run this example:
+
+```xml
+<tool_call>{"name": "calculator", "arguments": }</tool_call>
+```

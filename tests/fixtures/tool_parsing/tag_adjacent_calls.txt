@@ -1,0 +1,1 @@
+<tool_call>{"name": "calculator", "arguments": {"expression": "1 + 1"}}</tool_call><tool_call>{"name": "database.run", "arguments": {"sql": "SELECT 1"}}</tool_call>

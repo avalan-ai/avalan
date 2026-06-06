@@ -16,7 +16,7 @@ from ast import literal_eval
 from dataclasses import dataclass, field
 from enum import Enum
 from json import JSONDecodeError, loads
-from re import DOTALL, compile, finditer, search, sub
+from re import DOTALL, MULTILINE, compile, finditer, search, sub
 from typing import Any, cast, final
 from uuid import UUID, uuid4
 from xml.etree import ElementTree
@@ -26,6 +26,12 @@ _HARMONY_SEGMENT_PATTERN = compile(
     DOTALL,
 )
 _SPECIAL_TOKEN_PATTERN = compile(r"<\|[^>]+?\|>")
+_MARKDOWN_FENCED_BLOCK_PATTERN = compile(
+    r"^[ \t]*(?P<fence>`{3,}|~{3,})[^\n\r]*(?:\r?\n)"
+    r".*?"
+    r"^[ \t]*(?P=fence)[ \t]*$",
+    DOTALL | MULTILINE,
+)
 
 
 class ToolCallParser:
@@ -88,6 +94,9 @@ class ToolCallParser:
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
         else:
+            diagnostics.extend(self._parse_failure_diagnostics(text))
+
+        if calls and not diagnostics:
             diagnostics.extend(self._parse_failure_diagnostics(text))
 
         return ToolCallParseOutcome(calls=calls, diagnostics=diagnostics)
@@ -442,6 +451,7 @@ class ToolCallParser:
 
         if self._eos_token:
             text = text.strip().removesuffix(self._eos_token)
+        text = self._without_markdown_fenced_blocks(text)
         try:
             root = ElementTree.fromstring(f"<root>{text}</root>")
             for element in root.findall(".//tool_call"):
@@ -675,6 +685,7 @@ class ToolCallParser:
         return diagnostics
 
     def _tag_failure_diagnostics(self, text: str) -> list[ToolCallDiagnostic]:
+        text = self._without_markdown_fenced_blocks(text)
         if "<tool_call" not in text and "<tool " not in text:
             return []
 
@@ -685,6 +696,10 @@ class ToolCallParser:
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
         return diagnostics
+
+    @staticmethod
+    def _without_markdown_fenced_blocks(text: str) -> str:
+        return _MARKDOWN_FENCED_BLOCK_PATTERN.sub("", text)
 
     def _tag_payloads(self, text: str) -> list[Any]:
         payloads: list[Any] = []

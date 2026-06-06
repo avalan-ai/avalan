@@ -1,0 +1,2 @@
+<|channel|>commentary to=functions.broken <|constrain|>json<|message|>{"expression": }<|call|>commentary
+<|channel|>commentary to=functions.calculator <|constrain|>json<|message|>{"expression":"4 + 4"}<|call|>
