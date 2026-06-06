@@ -173,10 +173,40 @@ class VendorBuildToolCallTokenTestCase(TestCase):
                 name="tool",
                 arguments={},
                 provider_name="tool",
+                provider_arguments_malformed=True,
             ),
             provider_name="tool",
         )
         self.assertEqual(token, expected)
+
+    def test_build_tool_call_token_marks_non_object_json_str(self) -> None:
+        for arguments in ("null", '["a"]', '"text"'):
+            with self.subTest(arguments=arguments):
+                token = TextGenerationVendor.build_tool_call_token(
+                    call_id="call-1",
+                    tool_name="tool",
+                    arguments=arguments,
+                )
+
+                self.assertEqual(token.call.arguments, {})
+                self.assertTrue(token.call.provider_arguments_malformed)
+                self.assertEqual(
+                    token.token,
+                    '<tool_call>{"name": "tool", "arguments": {},'
+                    ' "id": "call-1"}</tool_call>',
+                )
+
+    def test_build_tool_call_token_keeps_empty_object_arguments_valid(
+        self,
+    ) -> None:
+        token = TextGenerationVendor.build_tool_call_token(
+            call_id="call-1",
+            tool_name="tool",
+            arguments="{}",
+        )
+
+        self.assertEqual(token.call.arguments, {})
+        self.assertFalse(token.call.provider_arguments_malformed)
 
     def test_build_tool_call_token_from_dict(self) -> None:
         token = TextGenerationVendor.build_tool_call_token(

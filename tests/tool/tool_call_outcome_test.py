@@ -222,6 +222,7 @@ class ToolCallTestCase(TestCase):
             arguments={"a": 1},
             provider_name="avl_cGtnLnRvb2w",
             provider_name_encoded=True,
+            provider_arguments_malformed=True,
         )
 
         self.assertEqual(call.id, "call-1")
@@ -229,6 +230,7 @@ class ToolCallTestCase(TestCase):
         self.assertEqual(call.arguments, {"a": 1})
         self.assertEqual(call.provider_name, "avl_cGtnLnRvb2w")
         self.assertTrue(call.provider_name_encoded)
+        self.assertTrue(call.provider_arguments_malformed)
 
     def test_allows_missing_id_and_name_for_legacy_provider_calls(self):
         call = ToolCall(id=None, name="", arguments={})
@@ -251,6 +253,17 @@ class ToolCallTestCase(TestCase):
                 "name": "tool",
                 "provider_name": "tool",
                 "provider_name_encoded": 1,
+            },
+            {
+                "id": "call-1",
+                "name": "tool",
+                "provider_name": "tool",
+                "provider_arguments_malformed": 1,
+            },
+            {
+                "id": "call-1",
+                "name": "tool",
+                "provider_arguments_malformed": True,
             },
         )
 

@@ -162,11 +162,19 @@ class TextGenerationVendor(ABC):
         provider_name_encoded = tool_name_text.startswith(
             TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX
         )
+        provider_arguments_malformed = False
         if isinstance(arguments, str):
             try:
-                args = cast(dict[str, Any], loads(arguments))
+                parsed_arguments = loads(arguments)
             except JSONDecodeError:
+                provider_arguments_malformed = True
                 args = {}
+            else:
+                if isinstance(parsed_arguments, dict):
+                    args = parsed_arguments
+                else:
+                    provider_arguments_malformed = True
+                    args = {}
         else:
             args = (
                 arguments
@@ -184,6 +192,7 @@ class TextGenerationVendor(ABC):
             arguments=cast(dict[str, ToolValue], args),
             provider_name=tool_name_text or None,
             provider_name_encoded=provider_name_encoded,
+            provider_arguments_malformed=provider_arguments_malformed,
         )
         token_payload: dict[str, Any] = {
             "name": name,

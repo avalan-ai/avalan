@@ -16,6 +16,7 @@ from ..entities import (
     ToolManagerSettings,
     ToolNameResolution,
     ToolNameResolutionStatus,
+    ToolProviderArgumentsMode,
     ToolTransformer,
     ToolTransformerResult,
 )
@@ -185,6 +186,14 @@ class ToolManager:
                 ),
                 details={"candidates": cast(Any, resolution.candidates)},
             )
+
+        assert resolution.canonical_name is not None
+        provider_diagnostic = self._provider_arguments_diagnostic(
+            call=call,
+            canonical_name=resolution.canonical_name,
+        )
+        if provider_diagnostic is not None:
+            return provider_diagnostic
 
         arguments = call.arguments if call.arguments is not None else {}
         if not isinstance(arguments, dict):
@@ -641,6 +650,13 @@ class ToolManager:
             return self._resolution_diagnostic(call, resolution)
         assert resolution.canonical_name is not None
 
+        provider_diagnostic = self._provider_arguments_diagnostic(
+            call=call,
+            canonical_name=resolution.canonical_name,
+        )
+        if provider_diagnostic is not None:
+            return provider_diagnostic
+
         arguments = call.arguments if call.arguments is not None else {}
         if not isinstance(arguments, dict):
             return self._diagnostic(
@@ -668,6 +684,7 @@ class ToolManager:
             arguments=arguments,
             provider_name=call.provider_name,
             provider_name_encoded=call.provider_name_encoded,
+            provider_arguments_malformed=call.provider_arguments_malformed,
         )
         if validate:
             diagnostic = self._validate_tool_arguments(
@@ -747,6 +764,26 @@ class ToolManager:
             code=ToolCallDiagnosticCode.CANCELLED,
             stage=ToolCallDiagnosticStage.GUARD,
             message="Tool call was cancelled before execution.",
+        )
+
+    def _provider_arguments_diagnostic(
+        self,
+        *,
+        call: ToolCall,
+        canonical_name: str,
+    ) -> ToolCallDiagnostic | None:
+        if (
+            self._settings.provider_arguments_mode
+            is not ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED
+            or not call.provider_arguments_malformed
+        ):
+            return None
+        return self._diagnostic(
+            call=call,
+            canonical_name=canonical_name,
+            code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+            stage=ToolCallDiagnosticStage.VALIDATE,
+            message="Provider tool call arguments are malformed.",
         )
 
     def _validate_tool_arguments(
@@ -1069,6 +1106,9 @@ class ToolManager:
                 arguments=call.arguments,
                 provider_name=call.provider_name,
                 provider_name_encoded=call.provider_name_encoded,
+                provider_arguments_malformed=(
+                    call.provider_arguments_malformed
+                ),
                 result=result,
             )
         except Exception as exc:
@@ -1079,6 +1119,9 @@ class ToolManager:
                 arguments=call.arguments,
                 provider_name=call.provider_name,
                 provider_name_encoded=call.provider_name_encoded,
+                provider_arguments_malformed=(
+                    call.provider_arguments_malformed
+                ),
                 error=self._project_error(exc),
                 message=str(exc),
             )

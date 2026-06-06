@@ -697,6 +697,60 @@ class ToolManagerCreationTestCase(TestCase):
 
         self.assertIsNone(manager.validate_tool_call(call))
 
+    def test_validate_tool_call_rejects_malformed_provider_arguments(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(
+                provider_arguments_mode=(
+                    ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED
+                )
+            ),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="adder",
+            arguments={},
+            provider_name="adder",
+            provider_arguments_malformed=True,
+        )
+
+        diagnostic = manager.validate_tool_call(call)
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertEqual(diagnostic.call_id, "call-1")
+        self.assertEqual(diagnostic.requested_name, "adder")
+        self.assertEqual(diagnostic.canonical_name, "adder")
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+        self.assertEqual(
+            diagnostic.message,
+            "Provider tool call arguments are malformed.",
+        )
+
+    def test_validate_tool_call_accepts_legacy_provider_arguments_mode(self):
+        async def provider_no_args() -> str:
+            return "ok"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["provider_no_args"],
+            available_toolsets=[ToolSet(tools=[provider_no_args])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="provider_no_args",
+            arguments={},
+            provider_name="provider_no_args",
+            provider_arguments_malformed=True,
+        )
+
+        self.assertIsNone(manager.validate_tool_call(call))
+
     def test_validate_tool_call_rejects_ambiguous_provider_alias(self):
         manager = ToolManager.create_instance(
             enable_tools=["adder", "adder_alt"],
@@ -1318,6 +1372,38 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
                     ToolCallDiagnosticStage.VALIDATE,
                 )
 
+    async def test_prepare_call_rejects_malformed_provider_arguments(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(
+                provider_arguments_mode=(
+                    ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED
+                )
+            ),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="adder",
+            arguments={},
+            provider_name="adder",
+            provider_arguments_malformed=True,
+        )
+
+        diagnostic = await manager.prepare_call(
+            call,
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        assert isinstance(diagnostic, ToolCallDiagnostic)
+        self.assertIs(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+        self.assertIs(diagnostic.stage, ToolCallDiagnosticStage.VALIDATE)
+        self.assertEqual(diagnostic.canonical_name, "adder")
+
     async def test_prepare_call_returns_repeated_call_diagnostic(self):
         manager = ToolManager.create_instance(
             enable_tools=["adder"],
@@ -1863,6 +1949,55 @@ class ToolManagerExecuteCallTestCase(IsolatedAsyncioTestCase):
         self.assertIs(outcome.code, ToolCallDiagnosticCode.MAXIMUM_SIZE)
         self.assertIs(outcome.stage, ToolCallDiagnosticStage.VALIDATE)
         self.assertEqual(calls, [])
+
+    async def test_execute_call_rejects_malformed_provider_arguments(self):
+        calls = 0
+
+        async def provider_no_args() -> str:
+            nonlocal calls
+            calls += 1
+            return "ok"
+
+        manager = ToolManager.create_instance(
+            enable_tools=["provider_no_args"],
+            available_toolsets=[ToolSet(tools=[provider_no_args])],
+            settings=ToolManagerSettings(
+                provider_arguments_mode=(
+                    ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED
+                )
+            ),
+        )
+        malformed = await manager.execute_call(
+            ToolCall(
+                id="call-1",
+                name="provider_no_args",
+                arguments={},
+                provider_name="provider_no_args",
+                provider_arguments_malformed=True,
+            ),
+            context=ToolCallContext(),
+        )
+        valid_empty = await manager.execute_call(
+            ToolCall(
+                id="call-2",
+                name="provider_no_args",
+                arguments={},
+                provider_name="provider_no_args",
+            ),
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(malformed, ToolCallDiagnostic)
+        assert isinstance(malformed, ToolCallDiagnostic)
+        self.assertIs(
+            malformed.code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+        self.assertIs(malformed.stage, ToolCallDiagnosticStage.VALIDATE)
+        self.assertIsInstance(valid_empty, ToolCallResult)
+        assert isinstance(valid_empty, ToolCallResult)
+        self.assertEqual(valid_empty.result, "ok")
+        self.assertEqual(calls, 1)
 
     async def test_execute_call_returns_execution_error(self):
         async def failing_tool(a: int) -> None:
