@@ -16,6 +16,7 @@ from ..entities import (
 )
 from . import Tool, ToolSet
 from .json_schema import get_json_schema
+from .names import matches_tool_namespace
 from .parser import ToolCallParser
 
 from asyncio import CancelledError, wait_for
@@ -44,12 +45,6 @@ class ToolManager:
     _descriptors: dict[str, ToolDescriptor]
     _tools: dict[str, Callable[..., Any]] | None = None
     _toolsets: list[ToolSet] | None = None
-
-    @staticmethod
-    def _matches_namespace(tool_name: str, namespace: str | None) -> bool:
-        if not namespace:
-            return True
-        return tool_name == namespace or tool_name.startswith(f"{namespace}.")
 
     @classmethod
     def create_instance(
@@ -512,7 +507,7 @@ class ToolManager:
                     filter_namespace = f.namespace
                 else:
                     filter_func = f
-                if not self._matches_namespace(call.name, filter_namespace):
+                if not matches_tool_namespace(call.name, filter_namespace):
                     continue
                 modified = filter_func(call, context)
                 if modified is not None:
@@ -546,8 +541,9 @@ class ToolManager:
                         transformer_namespace = t.namespace
                     else:
                         transformer_func = t
-                    if not self._matches_namespace(
-                        call.name, transformer_namespace
+                    if not matches_tool_namespace(
+                        call.name,
+                        transformer_namespace,
                     ):
                         continue
                     transformed = transformer_func(call, context, result)

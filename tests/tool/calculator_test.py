@@ -4,7 +4,7 @@ from pytest import raises
 from sympy.core.sympify import SympifyError
 
 from avalan.entities import ToolCallContext
-from avalan.tool.math import CalculatorTool
+from avalan.tool.math import CalculatorTool, MathToolSet
 
 
 class CalculatorToolTestCase(IsolatedAsyncioTestCase):
@@ -30,6 +30,15 @@ class CalculatorToolTestCase(IsolatedAsyncioTestCase):
             + "because of exception being raised"
             in str(exc.value)
         )
+
+
+class MathToolSetTestCase(IsolatedAsyncioTestCase):
+    async def test_defaults_to_calculator_tool(self):
+        toolset = MathToolSet(namespace="math")
+
+        self.assertEqual(toolset.namespace, "math")
+        self.assertEqual(len(toolset.tools), 1)
+        self.assertIsInstance(toolset.tools[0], CalculatorTool)
 
 
 if __name__ == "__main__":

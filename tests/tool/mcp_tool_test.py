@@ -3,7 +3,13 @@ from types import ModuleType
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from avalan.entities import ToolCallContext
+from avalan.entities import (
+    ToolCall,
+    ToolCallContext,
+    ToolFilter,
+    ToolManagerSettings,
+)
+from avalan.tool.manager import ToolManager
 from avalan.tool.mcp import McpCallTool, McpToolSet
 
 
@@ -43,6 +49,49 @@ class McpCallToolTestCase(IsolatedAsyncioTestCase):
         await tool("http://host", "calc", None, context=context)
         self.Client.assert_called_once_with("http://host", token="x")
         self.client.call_tool.assert_awaited_once_with("calc", {}, timeout=1)
+
+    async def test_manager_filters_match_mcp_tool_not_remote_name(self):
+        filtered_names: list[str] = []
+
+        def filter_call(call: ToolCall, context: ToolCallContext):
+            filtered_names.append(call.name)
+            return (
+                ToolCall(
+                    id=call.id,
+                    name=call.name,
+                    arguments={
+                        "uri": "http://host",
+                        "name": "blocked",
+                        "arguments": {},
+                    },
+                ),
+                context,
+            )
+
+        manager = ToolManager.create_instance(
+            enable_tools=["mcp.call"],
+            available_toolsets=[McpToolSet()],
+            settings=ToolManagerSettings(
+                filters=[ToolFilter(func=filter_call, namespace="math")]
+            ),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="mcp.call",
+            arguments={
+                "uri": "http://host",
+                "name": "math.calculator",
+                "arguments": {"a": 1},
+            },
+        )
+
+        result = await manager(call, context=ToolCallContext())
+
+        self.assertEqual(result.result, ["result"])
+        self.assertEqual(filtered_names, [])
+        self.client.call_tool.assert_awaited_once_with(
+            "math.calculator", {"a": 1}
+        )
 
 
 class McpToolSetTestCase(TestCase):
