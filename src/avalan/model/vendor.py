@@ -154,14 +154,17 @@ class TextGenerationVendor(ABC):
         tool_name_text = (
             tool_name if isinstance(tool_name, str) else str(tool_name or "")
         )
-        name = (
-            TextGenerationVendor.decode_tool_name(tool_name_text)
-            if tool_name_text
-            else ""
-        )
         provider_name_encoded = tool_name_text.startswith(
             TextGenerationVendor._PROVIDER_TOOL_NAME_PREFIX
         )
+        if tool_name_text:
+            try:
+                name = TextGenerationVendor.decode_tool_name(tool_name_text)
+            except AssertionError:
+                assert provider_name_encoded
+                name = tool_name_text
+        else:
+            name = ""
         provider_arguments_malformed = False
         if isinstance(arguments, str):
             try:

@@ -24,10 +24,24 @@ class ToolCallParserFormatTestCase(TestCase):
         text = 'Action: calculator\nAction Input: {"expression": "2"}'
         self.assertEqual(parser(text), ("calculator", {"expression": "2"}))
 
+    def test_react_dotted_tool_name(self):
+        parser = ToolCallParser(tool_format=ToolFormat.REACT)
+        text = 'Action: math.calculator\nAction Input: {"expression": "2"}'
+        self.assertEqual(
+            parser(text), ("math.calculator", {"expression": "2"})
+        )
+
     def test_bracket(self):
         parser = ToolCallParser(tool_format=ToolFormat.BRACKET)
         text = "[calculator](2)"
         self.assertEqual(parser(text), ("calculator", {"input": "2"}))
+
+    def test_bracket_dotted_tool_name(self):
+        parser = ToolCallParser(tool_format=ToolFormat.BRACKET)
+        text = "[memory.message.read](recent)"
+        self.assertEqual(
+            parser(text), ("memory.message.read", {"input": "recent"})
+        )
 
     def test_openai_json(self):
         parser = ToolCallParser(tool_format=ToolFormat.OPENAI)
@@ -43,6 +57,66 @@ class ToolCallParserFormatTestCase(TestCase):
         parser = ToolCallParser(tool_format=ToolFormat.REACT)
         text = 'Action: calculator\nAction Input: {"expression": 2'
         self.assertIsNone(parser(text))
+
+    def test_react_legacy_returns_first_valid_call_after_malformed_input(
+        self,
+    ):
+        parser = ToolCallParser(tool_format=ToolFormat.REACT)
+        text = (
+            'Action: calculator\nAction Input: {"expression": '
+            "\nAction: math.calculator\n"
+            'Action Input: {"expression": "2"}'
+        )
+
+        self.assertEqual(
+            parser(text),
+            ("math.calculator", {"expression": "2"}),
+        )
+
+    def test_react_rejects_empty_tool_name_segment(self):
+        parser = ToolCallParser(tool_format=ToolFormat.REACT)
+        text = 'Action: math..calculator\nAction Input: {"expression": "2"}'
+
+        outcome = parser.parse(text)
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(
+            outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(
+            outcome.diagnostics[0].stage,
+            ToolCallDiagnosticStage.PARSE,
+        )
+
+    def test_bracket_rejects_empty_tool_name_segment(self):
+        parser = ToolCallParser(tool_format=ToolFormat.BRACKET)
+
+        self.assertIsNone(parser("[math..calculator](2)"))
+
+    def test_bracket_reports_malformed_call_diagnostics(self):
+        parser = ToolCallParser(tool_format=ToolFormat.BRACKET)
+
+        for text in (
+            "[math..calculator](2)",
+            "[](2)",
+            "[calculator]()",
+            "[calculator](2",
+        ):
+            with self.subTest(text=text):
+                outcome = parser.parse(text)
+
+                self.assertEqual(outcome.calls, [])
+                self.assertEqual(len(outcome.diagnostics), 1)
+                self.assertEqual(
+                    outcome.diagnostics[0].code,
+                    ToolCallDiagnosticCode.MALFORMED_CALL,
+                )
+                self.assertEqual(
+                    outcome.diagnostics[0].stage,
+                    ToolCallDiagnosticStage.PARSE,
+                )
 
     def test_openai_json_invalid(self):
         parser = ToolCallParser(tool_format=ToolFormat.OPENAI)
@@ -116,6 +190,13 @@ class ToolCallParserFormatTestCase(TestCase):
         parser = ToolCallParser(tool_format=ToolFormat.OPENAI)
 
         parsed = parser('{"name": "calculator", "arguments": ["1 + 1"]}')
+
+        self.assertIsNone(parsed)
+
+    def test_openai_json_non_object_payload_is_rejected(self):
+        parser = ToolCallParser(tool_format=ToolFormat.OPENAI)
+
+        parsed = parser('["calculator", {"expression": "1 + 1"}]')
 
         self.assertIsNone(parsed)
 
@@ -212,6 +293,14 @@ class ToolCallParserFormatTestCase(TestCase):
                     "</tool_call>\n```"
                 ),
             ),
+            (
+                "unterminated_fenced",
+                (
+                    "```xml\n"
+                    '<tool_call>{"name": "calculator", "arguments": {}}'
+                    "</tool_call>"
+                ),
+            ),
         )
 
         parser = ToolCallParser()
@@ -221,6 +310,45 @@ class ToolCallParserFormatTestCase(TestCase):
 
                 self.assertEqual(outcome.calls, [])
                 self.assertEqual(outcome.diagnostics, [])
+
+    def test_unterminated_fenced_recovery_reports_diagnostic(self):
+        parser = ToolCallParser(
+            recovery_formats=[ToolCallRecoveryFormat.FENCED]
+        )
+        outcome = parser.parse(
+            "```xml\n"
+            '<tool_call>{"name": "calculator", "arguments": {}}</tool_call>'
+        )
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(
+            outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(
+            outcome.diagnostics[0].details["source_format"],
+            ToolCallRecoveryFormat.FENCED.value,
+        )
+
+    def test_longer_closing_fence_does_not_leak_tool_call(self):
+        parser = ToolCallParser()
+        call_id = _uuid4()
+        text = (
+            "```\n"
+            '<tool_call>{"name": "blocked", "arguments": {}}</tool_call>\n'
+            "````\n"
+            '<tool_call>{"name": "calculator", "arguments": {}}</tool_call>'
+        )
+
+        with patch("avalan.tool.parser.uuid4", return_value=call_id):
+            outcome = parser.parse(text)
+
+        self.assertEqual(
+            outcome.calls,
+            [ToolCall(id=call_id, name="calculator", arguments={})],
+        )
+        self.assertEqual(outcome.diagnostics, [])
 
     def test_recovery_diagnostic_details_identify_source_format(self):
         details = {"reason": "malformed"}
@@ -416,6 +544,89 @@ class ToolCallParserFormatTestCase(TestCase):
             ToolCallRecoveryFormat.TOOL_CALL_BLOCK.value,
         )
 
+    def test_recovery_reports_malformed_marker_after_valid_call(self):
+        cases = (
+            (
+                ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
+                (
+                    '[TOOL_CALL]{"name": "calculator", "arguments": '
+                    '{"expression": "1 + 1"}}[/TOOL_CALL]'
+                    "[TOOL_CALL]{bad"
+                ),
+            ),
+            (
+                ToolCallRecoveryFormat.MINIMAX_XML,
+                (
+                    '<invoke name="calculator"><parameter '
+                    'name="expression">2 + 2</parameter></invoke>'
+                    '<invoke name="broken">'
+                ),
+            ),
+            (
+                ToolCallRecoveryFormat.TOOL_CODE,
+                (
+                    '<tool_code>{"name": "calculator", "arguments": '
+                    '{"expression": "3 + 3"}}</tool_code>'
+                    "<tool_code>{bad"
+                ),
+            ),
+            (
+                ToolCallRecoveryFormat.BROAD_XML,
+                (
+                    '<function name="calculator"><arguments>'
+                    '{"expression": "4 + 4"}</arguments></function>'
+                    '<function name="broken">'
+                ),
+            ),
+            (
+                ToolCallRecoveryFormat.DSML_LEAKAGE,
+                (
+                    "<DSML:tool_calls>"
+                    '<DSML:invoke name="calculator">'
+                    '<DSML:parameter name="expression">5 + 5'
+                    "</DSML:parameter></DSML:invoke></DSML:tool_calls>"
+                    '<DSML:invoke name="broken">'
+                ),
+            ),
+            (
+                ToolCallRecoveryFormat.FENCED,
+                (
+                    "```json\n"
+                    '{"name": "calculator", "arguments": '
+                    '{"expression": "6 + 6"}}\n'
+                    "```\n"
+                    "```json\n"
+                    "{bad"
+                ),
+            ),
+        )
+
+        for recovery_format, text in cases:
+            with self.subTest(recovery_format=recovery_format):
+                call_id = _uuid4()
+                diagnostic_id = _uuid4()
+                parser = ToolCallParser(recovery_formats=[recovery_format])
+
+                with patch(
+                    "avalan.tool.parser.uuid4",
+                    side_effect=[call_id, diagnostic_id],
+                ):
+                    outcome = parser.parse(text)
+
+                self.assertEqual(len(outcome.calls), 1)
+                self.assertEqual(outcome.calls[0].id, call_id)
+                self.assertEqual(outcome.calls[0].name, "calculator")
+                self.assertEqual(len(outcome.diagnostics), 1)
+                self.assertEqual(outcome.diagnostics[0].id, diagnostic_id)
+                self.assertEqual(
+                    outcome.diagnostics[0].code,
+                    ToolCallDiagnosticCode.MALFORMED_CALL,
+                )
+                self.assertEqual(
+                    outcome.diagnostics[0].details["source_format"],
+                    recovery_format.value,
+                )
+
     def test_fenced_recovery_preserves_multiple_calls_in_order(self):
         first_id = _uuid4()
         second_id = _uuid4()
@@ -503,6 +714,73 @@ class ToolCallParserParseOutcomeTestCase(TestCase):
                     ],
                 )
                 self.assertEqual(outcome.diagnostics, [])
+
+    def test_parse_preserves_multiple_react_calls_and_diagnostics(self):
+        parser = ToolCallParser(tool_format=ToolFormat.REACT)
+        text = (
+            'Action: broken\nAction Input: {"expression": '
+            "\nAction: calculator\n"
+            'Action Input: {"expression": "2"}\n'
+            "Action: search\n"
+            'Action Input: ["not an object"]\n'
+            "Action: memory.write\n"
+            'Action Input: {"value": "saved"}'
+        )
+
+        outcome = parser.parse(text)
+
+        self.assertEqual(
+            [(call.name, call.arguments) for call in outcome.calls],
+            [
+                ("calculator", {"expression": "2"}),
+                ("memory.write", {"value": "saved"}),
+            ],
+        )
+        self.assertEqual(len(outcome.diagnostics), 2)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in outcome.diagnostics],
+            [
+                ToolCallDiagnosticCode.MALFORMED_CALL,
+                ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+            ],
+        )
+        self.assertEqual(
+            [diagnostic.requested_name for diagnostic in outcome.diagnostics],
+            ["broken", "search"],
+        )
+
+    def test_parse_rejects_malformed_json_tool_names(self):
+        cases = (
+            (
+                ToolFormat.JSON,
+                '{"tool": "math..calculator", "arguments": {}}',
+                "math..calculator",
+            ),
+            (
+                ToolFormat.OPENAI,
+                '{"name": "math/calculator", "arguments": {}}',
+                "math/calculator",
+            ),
+        )
+
+        for tool_format, text, requested_name in cases:
+            with self.subTest(tool_format=tool_format):
+                outcome = ToolCallParser(tool_format=tool_format).parse(text)
+
+                self.assertEqual(outcome.calls, [])
+                self.assertEqual(len(outcome.diagnostics), 1)
+                self.assertEqual(
+                    outcome.diagnostics[0].code,
+                    ToolCallDiagnosticCode.MALFORMED_CALL,
+                )
+                self.assertEqual(
+                    outcome.diagnostics[0].stage,
+                    ToolCallDiagnosticStage.PARSE,
+                )
+                self.assertEqual(
+                    outcome.diagnostics[0].requested_name,
+                    requested_name,
+                )
 
     def test_parse_preserves_call_ids_from_list_formats(self):
         tag_parser = ToolCallParser()
@@ -611,6 +889,7 @@ class ToolCallParserParseOutcomeTestCase(TestCase):
                 'Action: calculator\nAction Input: {"expression": ',
             ),
             (ToolFormat.OPENAI, '{"name": 3, "arguments": {}}'),
+            (ToolFormat.OPENAI, '["calculator", {"expression": "3"}]'),
             (
                 None,
                 '<tool_call>{"name": "calculator", "arguments": }</tool_call>',
@@ -631,6 +910,30 @@ class ToolCallParserParseOutcomeTestCase(TestCase):
                 self.assertEqual(
                     diagnostic.stage, ToolCallDiagnosticStage.PARSE
                 )
+
+    def test_parse_reports_malformed_recovered_tool_name(self):
+        parser = ToolCallParser(
+            recovery_formats=[ToolCallRecoveryFormat.TOOL_CALL_BLOCK]
+        )
+
+        outcome = parser.parse(
+            '[TOOL_CALL]{"name": "math..calculator", "arguments": {}}'
+            "[/TOOL_CALL]"
+        )
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        diagnostic = outcome.diagnostics[0]
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(diagnostic.stage, ToolCallDiagnosticStage.PARSE)
+        self.assertEqual(diagnostic.requested_name, "math..calculator")
+        self.assertEqual(
+            diagnostic.details["source_format"],
+            ToolCallRecoveryFormat.TOOL_CALL_BLOCK.value,
+        )
 
     def test_parse_reports_text_size_limit(self):
         parser = ToolCallParser(
@@ -662,6 +965,10 @@ class ToolCallParserParseOutcomeTestCase(TestCase):
                     '<tool_call>{"name": "calculator", "arguments": '
                     '{"payload": {"value": 1}}}</tool_call>'
                 ),
+            ),
+            (
+                ToolFormat.REACT,
+                'Action: calculator\nAction Input: {"payload": {"value": 1}}',
             ),
         )
 
@@ -711,6 +1018,36 @@ class ToolCallParserParseOutcomeTestCase(TestCase):
 
                 self.assertEqual(outcome.calls, [])
                 self.assertEqual(outcome.diagnostics, [])
+
+    def test_parse_keeps_valid_bracket_call_after_malformed_call(self):
+        parser = ToolCallParser(tool_format=ToolFormat.BRACKET)
+        call_id = _uuid4()
+        diagnostic_id = _uuid4()
+
+        with patch(
+            "avalan.tool.parser.uuid4",
+            side_effect=[call_id, diagnostic_id],
+        ):
+            outcome = parser.parse(
+                "[math..calculator](bad)\n[math.calculator](2)"
+            )
+
+        self.assertEqual(
+            outcome.calls,
+            [
+                ToolCall(
+                    id=call_id,
+                    name="math.calculator",
+                    arguments={"input": "2"},
+                )
+            ],
+        )
+        self.assertEqual(len(outcome.diagnostics), 1)
+        self.assertEqual(outcome.diagnostics[0].id, diagnostic_id)
+        self.assertEqual(
+            outcome.diagnostics[0].code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
 
 
 class ToolCallParserHarmonyTestCase(TestCase):
@@ -965,6 +1302,25 @@ class ToolCallParserTagTestCase(TestCase):
             ]
             self.assertEqual(self.parser(text), expected)
 
+    def test_multiple_with_malformed_xml_wrapper(self):
+        text = (
+            '<tool_call name="first">{"value": "1"}</tool_call>'
+            "&"
+            '<tool_call name="second">{"value": "2"}</tool_call>'
+        )
+        first_id = _uuid4()
+        second_id = _uuid4()
+        with patch(
+            "avalan.tool.parser.uuid4", side_effect=[first_id, second_id]
+        ):
+            expected = [
+                ToolCall(id=first_id, name="first", arguments={"value": "1"}),
+                ToolCall(
+                    id=second_id, name="second", arguments={"value": "2"}
+                ),
+            ]
+            self.assertEqual(self.parser(text), expected)
+
     def test_with_name_attr(self):
         text = '<tool_call name="calculator">{"expression": "2"}</tool_call>'
         call_id = _uuid4()
@@ -992,6 +1348,33 @@ class ToolCallParserTagTestCase(TestCase):
                 )
             ]
             self.assertEqual(self.parser(text), expected)
+
+    def test_self_closing_rejects_non_object_arguments(self):
+        text = '<tool_call name="calculator" arguments=\'["2"]\'/>'
+        outcome = self.parser.parse(text)
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        diagnostic = outcome.diagnostics[0]
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        )
+        self.assertEqual(diagnostic.stage, ToolCallDiagnosticStage.PARSE)
+        self.assertEqual(diagnostic.requested_name, "calculator")
+
+    def test_self_closing_rejects_missing_name(self):
+        text = '<tool_call arguments=\'{"expression": "2"}\'/>'
+        outcome = self.parser.parse(text)
+
+        self.assertEqual(outcome.calls, [])
+        self.assertEqual(len(outcome.diagnostics), 1)
+        diagnostic = outcome.diagnostics[0]
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(diagnostic.stage, ToolCallDiagnosticStage.PARSE)
 
     def test_tool_tag(self):
         text = '<tool name="calculator">{"expression": "2"}</tool>'

@@ -14,6 +14,7 @@ from ..entities import (
     ToolFilterResult,
     ToolFilterResultStatus,
     ToolFormat,
+    ToolManagerExecutionMode,
     ToolManagerSettings,
     ToolNameResolution,
     ToolNameResolutionStatus,
@@ -134,6 +135,14 @@ class ToolManager:
                 candidates=[canonical_request],
             )
 
+        if canonical_request in self._available_tool_names:
+            return ToolNameResolution(
+                requested_name=name,
+                status=ToolNameResolutionStatus.DISABLED,
+                candidates=[canonical_request],
+                diagnostic_code=ToolCallDiagnosticCode.DISABLED_TOOL,
+            )
+
         aliases = self._aliases.get(canonical_request, [])
         if len(aliases) == 1:
             return ToolNameResolution(
@@ -150,18 +159,11 @@ class ToolManager:
                 diagnostic_code=ToolCallDiagnosticCode.AMBIGUOUS_TOOL_NAME,
             )
 
-        if (
-            canonical_request in self._available_tool_names
-            or canonical_request in self._available_aliases
-        ):
-            candidates = self._available_aliases.get(
-                canonical_request,
-                [canonical_request],
-            )
+        if canonical_request in self._available_aliases:
             return ToolNameResolution(
                 requested_name=name,
                 status=ToolNameResolutionStatus.DISABLED,
-                candidates=candidates,
+                candidates=self._available_aliases[canonical_request],
                 diagnostic_code=ToolCallDiagnosticCode.DISABLED_TOOL,
             )
 
@@ -612,9 +614,12 @@ class ToolManager:
 
     async def __call__(
         self, call: ToolCall, context: ToolCallContext
-    ) -> ToolCallResult | ToolCallError | None:
+    ) -> ToolCallOutcome | None:
         """Execute a single tool call and return the result."""
         assert call
+
+        if self._settings.execution_mode is ToolManagerExecutionMode.OUTCOMES:
+            return await self.execute_call(call, context)
 
         history = context.calls or []
 
@@ -738,10 +743,17 @@ class ToolManager:
         provider_name = call.provider_name
         if provider_name is None:
             return self.resolve_tool_name(call.name)
-        return self.resolve_tool_name(
-            provider_name,
-            provider_originated=True,
-        )
+        try:
+            return self.resolve_tool_name(
+                provider_name,
+                provider_originated=True,
+            )
+        except AssertionError:
+            return ToolNameResolution(
+                requested_name=provider_name,
+                status=ToolNameResolutionStatus.UNKNOWN,
+                diagnostic_code=ToolCallDiagnosticCode.MALFORMED_CALL,
+            )
 
     def _diagnostic(
         self,
