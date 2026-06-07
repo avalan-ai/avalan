@@ -1,5 +1,10 @@
 from .condition import FlowConditionOperator, FlowConditionValueType
-from .definition import FlowEdgeKind, FlowMappingKind, FlowRouteMatchPolicy
+from .definition import (
+    FlowEdgeKind,
+    FlowJoinPolicyType,
+    FlowMappingKind,
+    FlowRouteMatchPolicy,
+)
 from .diagnostics import (
     FlowDiagnostic,
     FlowDiagnosticCategory,
@@ -16,7 +21,7 @@ from .plan import (
 from .selector import FlowSelector, resolve_flow_selector_value
 from .state import FlowEdgeState, FlowExecutionTrace, FlowNodeState
 
-from asyncio import CancelledError
+from asyncio import CancelledError, gather
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -30,6 +35,16 @@ FlowPlanNodeRunner: TypeAlias = Callable[
     [FlowNodePlan, Mapping[str, object]],
     object | Awaitable[object],
 ]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _NodeRunOutcome:
+    node: FlowNodePlan
+    state: FlowNodeState
+    route_kind: FlowEdgeKind
+    attempts: int
+    diagnostics: tuple[FlowDiagnostic, ...]
+    output: object = None
 
 
 def _empty_mapping() -> Mapping[str, object]:
@@ -134,11 +149,17 @@ async def execute_flow_plan(
     *,
     inputs: Mapping[str, object] | None = None,
     cancellation_checker: CancellationChecker | None = None,
+    concurrency_limit: int = 1,
 ) -> FlowPlanExecutionResult:
     assert isinstance(plan, FlowExecutionPlan)
     assert callable(runner)
     if inputs is not None:
         assert isinstance(inputs, Mapping)
+    assert isinstance(concurrency_limit, int) and not isinstance(
+        concurrency_limit,
+        bool,
+    )
+    assert concurrency_limit > 0
     input_values = _freeze_mapping(inputs or {})
     node_outputs: dict[str, Mapping[str, object]] = {}
     diagnostics: list[FlowDiagnostic] = []
@@ -150,52 +171,81 @@ async def execute_flow_plan(
 
     while ready:
         await _check_cancelled(cancellation_checker)
-        node_name = ready.popleft()
-        queued.discard(node_name)
-        node = node_map[node_name]
-        trace = trace.with_node_state(node.name, FlowNodeState.READY)
+        batch: list[tuple[FlowNodePlan, Mapping[str, object]]] = []
+        batch_outcomes: list[_NodeRunOutcome] = []
         context = FlowRuntimeContext(
             inputs=input_values,
             node_outputs=node_outputs,
         )
-        mapped_inputs, mapping_diagnostic = _node_inputs(node, context)
-        output: object = None
-        if mapping_diagnostic is None:
-            trace, route_kind, node_diagnostics, output = await _run_plan_node(
-                node,
-                mapped_inputs,
-                runner,
-                trace,
-            )
-            diagnostics.extend(node_diagnostics)
-            if route_kind == FlowEdgeKind.SUCCESS:
-                node_outputs[node.name] = _node_output_mapping(node, output)
-        else:
-            route_kind = FlowEdgeKind.ERROR
-            diagnostics.append(mapping_diagnostic)
+        while ready and len(batch) < concurrency_limit:
+            node_name = ready.popleft()
+            queued.discard(node_name)
+            node = node_map[node_name]
+            mapped_inputs, mapping_diagnostic = _node_inputs(node, context)
+            trace = trace.with_node_state(node.name, FlowNodeState.READY)
+            if mapping_diagnostic is not None:
+                batch_outcomes.append(
+                    _NodeRunOutcome(
+                        node=node,
+                        state=FlowNodeState.FAILED,
+                        route_kind=FlowEdgeKind.ERROR,
+                        attempts=1,
+                        diagnostics=(mapping_diagnostic,),
+                    )
+                )
+                continue
             trace = trace.with_node_state(
                 node.name,
-                FlowNodeState.FAILED,
+                FlowNodeState.RUNNING,
                 attempts=1,
-                diagnostics=(mapping_diagnostic,),
             )
-        processed.add(node.name)
-        context = FlowRuntimeContext(
-            inputs=input_values,
-            node_outputs=node_outputs,
-        )
-        routed, trace, route_diagnostics = _route_from_node(
-            plan,
-            node.name,
-            route_kind,
-            context,
-            trace,
-        )
-        diagnostics.extend(route_diagnostics)
-        for target in routed:
-            if target not in processed and target not in queued:
-                ready.append(target)
-                queued.add(target)
+            batch.append((node, mapped_inputs))
+        if batch:
+            batch_outcomes.extend(
+                await gather(
+                    *(
+                        _run_plan_node(node, mapped_inputs, runner)
+                        for node, mapped_inputs in batch
+                    )
+                )
+            )
+        for outcome in batch_outcomes:
+            trace = trace.with_node_state(
+                outcome.node.name,
+                outcome.state,
+                attempts=outcome.attempts,
+                diagnostics=outcome.diagnostics,
+            )
+            diagnostics.extend(outcome.diagnostics)
+            if outcome.route_kind == FlowEdgeKind.SUCCESS:
+                node_outputs[outcome.node.name] = _node_output_mapping(
+                    outcome.node,
+                    outcome.output,
+                )
+            processed.add(outcome.node.name)
+        for outcome in batch_outcomes:
+            context = FlowRuntimeContext(
+                inputs=input_values,
+                node_outputs=node_outputs,
+            )
+            routed, trace, route_diagnostics = _route_from_node(
+                plan,
+                outcome.node.name,
+                outcome.route_kind,
+                context,
+                trace,
+            )
+            diagnostics.extend(route_diagnostics)
+            for target in routed:
+                trace, join_diagnostics = _queue_target_if_ready(
+                    plan,
+                    target,
+                    ready=ready,
+                    queued=queued,
+                    processed=processed,
+                    trace=trace,
+                )
+                diagnostics.extend(join_diagnostics)
 
     trace = _mark_unscheduled_nodes_skipped(trace)
     outputs, output_diagnostics = _select_flow_outputs(
@@ -230,18 +280,7 @@ async def _run_plan_node(
     node: FlowNodePlan,
     inputs: Mapping[str, object],
     runner: FlowPlanNodeRunner,
-    trace: FlowExecutionTrace,
-) -> tuple[
-    FlowExecutionTrace,
-    FlowEdgeKind,
-    tuple[FlowDiagnostic, ...],
-    object,
-]:
-    trace = trace.with_node_state(
-        node.name,
-        FlowNodeState.RUNNING,
-        attempts=1,
-    )
+) -> _NodeRunOutcome:
     try:
         output = runner(node, inputs)
         if isawaitable(output):
@@ -253,16 +292,12 @@ async def _run_plan_node(
             message="Flow node was cancelled.",
             hint="Inspect cancellation routes for this node.",
         )
-        return (
-            trace.with_node_state(
-                node.name,
-                FlowNodeState.CANCELLED,
-                attempts=1,
-                diagnostics=(diagnostic,),
-            ),
-            FlowEdgeKind.CANCELLATION,
-            (diagnostic,),
-            None,
+        return _NodeRunOutcome(
+            node=node,
+            state=FlowNodeState.CANCELLED,
+            route_kind=FlowEdgeKind.CANCELLATION,
+            attempts=1,
+            diagnostics=(diagnostic,),
         )
     except TimeoutError:
         diagnostic = _execution_diagnostic(
@@ -271,16 +306,12 @@ async def _run_plan_node(
             message="Flow node timed out.",
             hint="Inspect timeout routes for this node.",
         )
-        return (
-            trace.with_node_state(
-                node.name,
-                FlowNodeState.FAILED,
-                attempts=1,
-                diagnostics=(diagnostic,),
-            ),
-            FlowEdgeKind.TIMEOUT,
-            (diagnostic,),
-            None,
+        return _NodeRunOutcome(
+            node=node,
+            state=FlowNodeState.FAILED,
+            route_kind=FlowEdgeKind.TIMEOUT,
+            attempts=1,
+            diagnostics=(diagnostic,),
         )
     except Exception:
         diagnostic = _execution_diagnostic(
@@ -289,26 +320,20 @@ async def _run_plan_node(
             message="Flow node failed.",
             hint="Inspect error routes for this node.",
         )
-        return (
-            trace.with_node_state(
-                node.name,
-                FlowNodeState.FAILED,
-                attempts=1,
-                diagnostics=(diagnostic,),
-            ),
-            FlowEdgeKind.ERROR,
-            (diagnostic,),
-            None,
-        )
-    return (
-        trace.with_node_state(
-            node.name,
-            FlowNodeState.SUCCEEDED,
+        return _NodeRunOutcome(
+            node=node,
+            state=FlowNodeState.FAILED,
+            route_kind=FlowEdgeKind.ERROR,
             attempts=1,
-        ),
-        FlowEdgeKind.SUCCESS,
-        (),
-        output,
+            diagnostics=(diagnostic,),
+        )
+    return _NodeRunOutcome(
+        node=node,
+        state=FlowNodeState.SUCCEEDED,
+        route_kind=FlowEdgeKind.SUCCESS,
+        attempts=1,
+        diagnostics=(),
+        output=output,
     )
 
 
@@ -372,6 +397,93 @@ def _route_from_node(
         routed.extend(edge.target for edge in selected)
         diagnostics.extend(route_diagnostics)
     return tuple(routed), trace, tuple(diagnostics)
+
+
+def _queue_target_if_ready(
+    plan: FlowExecutionPlan,
+    target: str,
+    *,
+    ready: deque[str],
+    queued: set[str],
+    processed: set[str],
+    trace: FlowExecutionTrace,
+) -> tuple[FlowExecutionTrace, tuple[FlowDiagnostic, ...]]:
+    if target in processed or target in queued:
+        return trace, ()
+    node = plan.node_map[target]
+    if node.join is None:
+        ready.append(target)
+        queued.add(target)
+        return trace, ()
+    ready_for_join, failed_diagnostic = _join_ready(
+        plan,
+        target,
+        trace,
+    )
+    if failed_diagnostic is not None:
+        processed.add(target)
+        return (
+            trace.with_node_state(
+                target,
+                FlowNodeState.FAILED,
+                diagnostics=(failed_diagnostic,),
+            ),
+            (failed_diagnostic,),
+        )
+    if ready_for_join:
+        ready.append(target)
+        queued.add(target)
+    return trace, ()
+
+
+def _join_ready(
+    plan: FlowExecutionPlan,
+    target: str,
+    trace: FlowExecutionTrace,
+) -> tuple[bool, FlowDiagnostic | None]:
+    node = plan.node_map[target]
+    assert node.join is not None
+    inbound_edges = plan.edges_by_target.get(target, ())
+    edge_states = {edge.index: edge.state for edge in trace.edges}
+    node_states = {node.node: node.state for node in trace.nodes}
+    success_count = 0
+    failure_count = 0
+    done_count = 0
+    for edge in inbound_edges:
+        edge_state = edge_states[edge.index]
+        source_state = node_states[edge.source]
+        if edge_state != FlowEdgeState.PENDING:
+            done_count += 1
+        if edge_state == FlowEdgeState.TAKEN:
+            if source_state == FlowNodeState.SUCCEEDED:
+                success_count += 1
+            elif source_state in (
+                FlowNodeState.FAILED,
+                FlowNodeState.CANCELLED,
+            ):
+                failure_count += 1
+        elif edge_state == FlowEdgeState.FAILED:
+            failure_count += 1
+    inbound_count = len(inbound_edges)
+    match node.join.type:
+        case FlowJoinPolicyType.ALL_SUCCESS:
+            return success_count == inbound_count, None
+        case FlowJoinPolicyType.ALL_DONE | FlowJoinPolicyType.COLLECT:
+            return done_count == inbound_count, None
+        case FlowJoinPolicyType.ANY_SUCCESS | FlowJoinPolicyType.FIRST_SUCCESS:
+            return success_count > 0, None
+        case FlowJoinPolicyType.QUORUM:
+            assert node.join.quorum is not None
+            return success_count >= node.join.quorum, None
+        case FlowJoinPolicyType.FAIL_FAST:
+            if failure_count:
+                return False, _execution_diagnostic(
+                    code="flow.execution.join_failed",
+                    path=f"nodes.{target}.join_policy",
+                    message="Flow join failed before all inputs succeeded.",
+                    hint="Inspect inbound routes and join policy.",
+                )
+            return success_count == inbound_count, None
 
 
 def _select_routes(

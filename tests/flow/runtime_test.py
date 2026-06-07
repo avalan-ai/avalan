@@ -1,4 +1,4 @@
-from asyncio import CancelledError
+from asyncio import CancelledError, sleep
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from typing import cast
@@ -17,6 +17,8 @@ from avalan.flow import (
     FlowExecutionTrace,
     FlowInputDefinition,
     FlowInputType,
+    FlowJoinPlan,
+    FlowJoinPolicyType,
     FlowMappingKind,
     FlowMappingPlan,
     FlowNodeContract,
@@ -529,6 +531,312 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result.outputs, {"answer": "finish"})
         self.assertGreaterEqual(checks, 2)
 
+    async def test_execute_flow_plan_runs_join_policies(self) -> None:
+        cases = (
+            FlowJoinPlan(type=FlowJoinPolicyType.ALL_SUCCESS),
+            FlowJoinPlan(type=FlowJoinPolicyType.ALL_DONE),
+            FlowJoinPlan(type=FlowJoinPolicyType.ANY_SUCCESS),
+            FlowJoinPlan(type=FlowJoinPolicyType.QUORUM, quorum=2),
+            FlowJoinPlan(type=FlowJoinPolicyType.FIRST_SUCCESS),
+            FlowJoinPlan(type=FlowJoinPolicyType.FAIL_FAST),
+            FlowJoinPlan(type=FlowJoinPolicyType.COLLECT),
+        )
+
+        for join in cases:
+            with self.subTest(join=join.type.value):
+                calls: list[tuple[str, dict[str, object]]] = []
+
+                def runner(
+                    node: FlowNodePlan,
+                    inputs: Mapping[str, object],
+                ) -> object:
+                    calls.append((node.name, dict(inputs)))
+                    if node.name in {"left", "right"}:
+                        return {
+                            "side": node.name,
+                            "shared": node.name,
+                        }
+                    if node.name == "joined":
+                        value = cast(dict[str, object], inputs["value"])
+                        return {
+                            "value": {
+                                **value,
+                                "merged": inputs["merged"],
+                            }
+                        }
+                    return {"status": "ready"}
+
+                plan = self._join_plan(join)
+
+                result = await execute_flow_plan(plan, runner)
+
+                self.assertTrue(result.ok, result.public_diagnostics)
+                self.assertEqual(
+                    result.outputs,
+                    {
+                        "answer": {
+                            "left": {
+                                "side": "left",
+                                "shared": "left",
+                            },
+                            "right": {
+                                "side": "right",
+                                "shared": "right",
+                            },
+                            "merged": {
+                                "side": "right",
+                                "shared": "right",
+                            },
+                        }
+                    },
+                )
+                self.assertEqual(
+                    [name for name, _ in calls],
+                    ["source", "left", "right", "joined"],
+                )
+                self.assertEqual(
+                    self._node_states(result)["joined"],
+                    FlowNodeState.SUCCEEDED,
+                )
+                self.assertEqual(
+                    self._edge_states(result),
+                    {
+                        0: FlowEdgeState.TAKEN,
+                        1: FlowEdgeState.TAKEN,
+                        2: FlowEdgeState.TAKEN,
+                        3: FlowEdgeState.TAKEN,
+                    },
+                )
+
+    async def test_execute_flow_plan_waits_for_all_done_join_with_error(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "left":
+                raise ValueError("private branch body")
+            if node.name == "joined":
+                return "joined"
+            return node.name
+
+        plan = self._plan(
+            entry_node="source",
+            outputs={"answer": "joined.value"},
+            nodes=(
+                self._node("source"),
+                self._node("left"),
+                self._node("right"),
+                self._node(
+                    "joined",
+                    join=FlowJoinPlan(type=FlowJoinPolicyType.ALL_DONE),
+                ),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="source",
+                    target="left",
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+                FlowEdgePlan(
+                    index=1,
+                    source="source",
+                    target="right",
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+                FlowEdgePlan(
+                    index=2,
+                    source="left",
+                    target="joined",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+                FlowEdgePlan(
+                    index=3,
+                    source="right",
+                    target="joined",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "joined"})
+        self.assertEqual(calls, ["source", "left", "right", "joined"])
+        self.assertEqual(
+            self._node_states(result)["joined"],
+            FlowNodeState.SUCCEEDED,
+        )
+        self.assertIn(
+            "flow.execution.node_failed",
+            str(result.public_diagnostics),
+        )
+        self.assertNotIn("private branch body", str(result.public_diagnostics))
+
+    async def test_execute_flow_plan_fail_fast_join_does_not_run(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "left":
+                raise RuntimeError("private failure payload")
+            return node.name
+
+        plan = self._plan(
+            entry_node="source",
+            outputs={"answer": "joined.value"},
+            nodes=(
+                self._node("source"),
+                self._node("left"),
+                self._node("right"),
+                self._node(
+                    "joined",
+                    join=FlowJoinPlan(type=FlowJoinPolicyType.FAIL_FAST),
+                ),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="source",
+                    target="left",
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+                FlowEdgePlan(
+                    index=1,
+                    source="source",
+                    target="right",
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+                FlowEdgePlan(
+                    index=2,
+                    source="left",
+                    target="joined",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+                FlowEdgePlan(
+                    index=3,
+                    source="right",
+                    target="joined",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+                FlowEdgePlan(
+                    index=4,
+                    source="source",
+                    target="joined",
+                    kind=FlowEdgeKind.SUCCESS,
+                    condition=self._condition(
+                        FlowConditionOperator.EQ,
+                        selector="source.value.missing",
+                        value="ready",
+                    ),
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(calls, ["source", "left", "right"])
+        self.assertEqual(
+            self._node_states(result)["joined"],
+            FlowNodeState.FAILED,
+        )
+        self.assertEqual(result.outputs, {})
+        self.assertIn(
+            "flow.execution.join_failed",
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+        )
+        self.assertNotIn(
+            "private failure payload",
+            str(result.public_diagnostics),
+        )
+
+    async def test_execute_flow_plan_honors_concurrency_limit(self) -> None:
+        active = 0
+        max_active = 0
+
+        async def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            nonlocal active, max_active
+            if node.name in {"left", "right"}:
+                active += 1
+                max_active = max(max_active, active)
+                await sleep(0.01)
+                active -= 1
+            return node.name
+
+        plan = self._plan(
+            entry_node="source",
+            outputs={"answer": "joined.value"},
+            nodes=(
+                self._node("source"),
+                self._node("left"),
+                self._node("right"),
+                self._node(
+                    "joined",
+                    join=FlowJoinPlan(type=FlowJoinPolicyType.ALL_SUCCESS),
+                ),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="source",
+                    target="left",
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+                FlowEdgePlan(
+                    index=1,
+                    source="source",
+                    target="right",
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+                FlowEdgePlan(
+                    index=2,
+                    source="left",
+                    target="joined",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+                FlowEdgePlan(
+                    index=3,
+                    source="right",
+                    target="joined",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            ),
+        )
+
+        sequential = await execute_flow_plan(
+            plan,
+            runner,
+            concurrency_limit=1,
+        )
+        self.assertTrue(sequential.ok, sequential.public_diagnostics)
+        self.assertEqual(max_active, 1)
+
+        active = 0
+        max_active = 0
+        concurrent = await execute_flow_plan(
+            plan,
+            runner,
+            concurrency_limit=2,
+        )
+        self.assertTrue(concurrent.ok, concurrent.public_diagnostics)
+        self.assertEqual(max_active, 2)
+
     async def test_execute_flow_plan_validates_arguments(self) -> None:
         plan = self._plan(
             entry_node="start",
@@ -551,6 +859,14 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                 plan,
                 runner,
                 inputs=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            await execute_flow_plan(plan, runner, concurrency_limit=0)
+        with self.assertRaises(AssertionError):
+            await execute_flow_plan(
+                plan,
+                runner,
+                concurrency_limit=True,  # type: ignore[arg-type]
             )
 
     def test_flow_plan_execution_result_is_immutable(self) -> None:
@@ -642,18 +958,81 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             edges=edges,
         )
 
+    def _join_plan(self, join: FlowJoinPlan) -> FlowExecutionPlan:
+        return self._plan(
+            entry_node="source",
+            outputs={"answer": "joined.value"},
+            nodes=(
+                self._node("source"),
+                self._node("left"),
+                self._node("right"),
+                self._node(
+                    "joined",
+                    join=join,
+                    mappings=(
+                        FlowMappingPlan(
+                            target="value",
+                            kind=FlowMappingKind.OBJECT,
+                            fields={
+                                "left": parse_flow_selector("left.value"),
+                                "right": parse_flow_selector("right.value"),
+                            },
+                        ),
+                        FlowMappingPlan(
+                            target="merged",
+                            kind=FlowMappingKind.MERGE,
+                            sources=(
+                                parse_flow_selector("left.value"),
+                                parse_flow_selector("right.value"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="source",
+                    target="left",
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+                FlowEdgePlan(
+                    index=1,
+                    source="source",
+                    target="right",
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                ),
+                FlowEdgePlan(
+                    index=2,
+                    source="left",
+                    target="joined",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+                FlowEdgePlan(
+                    index=3,
+                    source="right",
+                    target="joined",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            ),
+        )
+
     def _node(
         self,
         name: str,
         *,
         output_contracts: tuple[FlowNodeContract, ...] | None = None,
         mappings: tuple[FlowMappingPlan, ...] = (),
+        join: FlowJoinPlan | None = None,
     ) -> FlowNodePlan:
         return FlowNodePlan(
             name=name,
             type="test",
             kind=FlowNodeKind.PASS_THROUGH,
             mappings=mappings,
+            join=join,
             output_contracts=(
                 (FlowNodeContract(name="value", type=FlowOutputType.JSON),)
                 if output_contracts is None
