@@ -36,6 +36,29 @@ class FlowOutputBehaviorType(StrEnum):
     MAP = "map"
 
 
+class FlowNodeKind(StrEnum):
+    INPUT = "input"
+    CONSTANT = "constant"
+    PASS_THROUGH = "pass-through"
+    SELECT = "select"
+    VALIDATION = "validation"
+    DECISION = "decision"
+    JOIN = "join"
+    AGENT = "agent"
+    TOOL = "tool"
+    FILE_CONVERSION = "file_conversion"
+    HUMAN_REVIEW = "human_review"
+    NOTIFICATION = "notification"
+    SUBFLOW = "subflow"
+
+
+class FlowNodeCapability(StrEnum):
+    DIRECT_ASYNC = "direct_async"
+    ASYNC_ONLY = "async_only"
+    TASK_BACKED = "task_backed"
+    DURABLE_PAUSE = "durable_pause"
+
+
 def _empty_mapping() -> FlowMetadata:
     return MappingProxyType({})
 
@@ -67,6 +90,24 @@ def _assert_string_tuple(values: tuple[str, ...], field_name: str) -> None:
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
         _assert_non_empty_string(value, field_name)
+
+
+def _assert_contract_tuple(
+    values: tuple["FlowNodeContract", ...],
+    field_name: str,
+) -> None:
+    assert isinstance(values, tuple), f"{field_name} must be a tuple"
+    for value in values:
+        assert isinstance(value, FlowNodeContract)
+
+
+def _assert_capability_tuple(
+    values: tuple["FlowNodeCapability", ...],
+    field_name: str,
+) -> None:
+    assert isinstance(values, tuple), f"{field_name} must be a tuple"
+    for value in values:
+        assert isinstance(value, FlowNodeCapability)
 
 
 def _freeze_string_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
@@ -159,19 +200,52 @@ class FlowNodeContract:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FlowNodeMetadata:
+    kind: FlowNodeKind | None = None
     supports_ref: bool = False
     async_only: bool = False
     input_contract: FlowNodeContract | None = None
     output_contract: FlowNodeContract | None = None
+    input_contracts: tuple[FlowNodeContract, ...] = ()
+    output_contracts: tuple[FlowNodeContract, ...] = ()
+    capabilities: tuple[FlowNodeCapability, ...] = ()
+    requires_ref: bool = False
+    required_config_keys: tuple[str, ...] = ()
     metadata: FlowMetadata = field(default_factory=_empty_mapping)
 
     def __post_init__(self) -> None:
+        if self.kind is not None:
+            assert isinstance(self.kind, FlowNodeKind)
         assert isinstance(self.supports_ref, bool)
         assert isinstance(self.async_only, bool)
         if self.input_contract is not None:
             assert isinstance(self.input_contract, FlowNodeContract)
         if self.output_contract is not None:
             assert isinstance(self.output_contract, FlowNodeContract)
+        _assert_contract_tuple(self.input_contracts, "input_contracts")
+        _assert_contract_tuple(self.output_contracts, "output_contracts")
+        _assert_capability_tuple(self.capabilities, "capabilities")
+        assert isinstance(self.requires_ref, bool)
+        _assert_string_tuple(self.required_config_keys, "required_config_keys")
+        input_contracts = self.input_contracts
+        if self.input_contract is not None and not input_contracts:
+            input_contracts = (self.input_contract,)
+        output_contracts = self.output_contracts
+        if self.output_contract is not None and not output_contracts:
+            output_contracts = (self.output_contract,)
+        capabilities = self.capabilities
+        if (
+            self.async_only
+            and FlowNodeCapability.ASYNC_ONLY not in capabilities
+        ):
+            capabilities = capabilities + (FlowNodeCapability.ASYNC_ONLY,)
+        if (
+            not self.async_only
+            and FlowNodeCapability.DIRECT_ASYNC not in capabilities
+        ):
+            capabilities = capabilities + (FlowNodeCapability.DIRECT_ASYNC,)
+        object.__setattr__(self, "input_contracts", input_contracts)
+        object.__setattr__(self, "output_contracts", output_contracts)
+        object.__setattr__(self, "capabilities", capabilities)
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
 
 

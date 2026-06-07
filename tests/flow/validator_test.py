@@ -8,7 +8,10 @@ from avalan.flow import (
     FlowEntryBehavior,
     FlowInputDefinition,
     FlowInputType,
+    FlowNodeCapability,
+    FlowNodeContract,
     FlowNodeDefinition,
+    FlowNodeKind,
     FlowNodeMetadata,
     FlowNodeRegistry,
     FlowOutputBehavior,
@@ -22,6 +25,34 @@ from avalan.flow.node import Node
 
 
 class FlowValidatorTestCase(TestCase):
+    def _strict_definition(
+        self,
+        *,
+        nodes: tuple[FlowNodeDefinition, ...],
+        output_selector: str = "start.result",
+    ) -> FlowDefinition:
+        return FlowDefinition(
+            name="strict",
+            version="2026-06-07",
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="answer",
+                    type=FlowOutputType.OBJECT,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node=nodes[0].name),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": output_selector},
+            ),
+            nodes=nodes,
+        )
+
     def test_validate_flow_definition_accepts_valid_definition(self) -> None:
         result = validate_flow_definition(
             FlowDefinition(
@@ -324,6 +355,102 @@ class FlowValidatorTestCase(TestCase):
                 self.assertFalse(result.ok)
                 self.assertEqual(result.diagnostics[0].code, code)
                 self.assertEqual(result.diagnostics[0].path, path)
+
+    def test_validate_flow_definition_uses_node_metadata_contracts(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {"tool": lambda definition: Node(definition.name)},
+            {
+                "tool": FlowNodeMetadata(
+                    kind=FlowNodeKind.TOOL,
+                    supports_ref=True,
+                    async_only=True,
+                    output_contract=FlowNodeContract(name="result"),
+                    capabilities=(FlowNodeCapability.ASYNC_ONLY,),
+                    requires_ref=True,
+                    required_config_keys=("mode",),
+                ),
+            },
+        )
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(
+                        name="start",
+                        type="tool",
+                        ref="weather",
+                        config={"mode": "safe"},
+                    ),
+                )
+            ),
+            registry,
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_metadata_gaps(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {
+                "custom": lambda definition: Node(definition.name),
+                "tool": lambda definition: Node(definition.name),
+            },
+            {
+                "tool": FlowNodeMetadata(
+                    kind=FlowNodeKind.TOOL,
+                    supports_ref=True,
+                    output_contract=FlowNodeContract(name="result"),
+                    requires_ref=True,
+                    required_config_keys=("mode",),
+                ),
+            },
+        )
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(
+                    FlowNodeDefinition(name="start", type="custom"),
+                    FlowNodeDefinition(name="tool", type="tool"),
+                ),
+                output_selector="tool.missing",
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.missing_node_kind",
+                "flow.missing_ref",
+                "flow.missing_node_config",
+                "flow.unknown_node_output",
+            ],
+        )
+
+    def test_validate_flow_definition_rejects_conflicting_node_kind(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {"input": lambda definition: Node(definition.name)},
+            {"input": FlowNodeMetadata(kind=FlowNodeKind.TOOL)},
+        )
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(FlowNodeDefinition(name="start", type="input"),)
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.invalid_node_kind"],
+        )
 
     def test_validate_flow_definition_rejects_duplicate_nodes(self) -> None:
         result = validate_flow_definition(

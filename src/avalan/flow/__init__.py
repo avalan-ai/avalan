@@ -5,8 +5,10 @@ from .definition import FlowEntryBehavior as FlowEntryBehavior
 from .definition import FlowEntryBehaviorType as FlowEntryBehaviorType
 from .definition import FlowInputDefinition as FlowInputDefinition
 from .definition import FlowInputType as FlowInputType
+from .definition import FlowNodeCapability as FlowNodeCapability
 from .definition import FlowNodeContract as FlowNodeContract
 from .definition import FlowNodeDefinition as FlowNodeDefinition
+from .definition import FlowNodeKind as FlowNodeKind
 from .definition import FlowNodeMetadata as FlowNodeMetadata
 from .definition import FlowOutputBehavior as FlowOutputBehavior
 from .definition import FlowOutputBehaviorType as FlowOutputBehaviorType
