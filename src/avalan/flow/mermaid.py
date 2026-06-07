@@ -1,3 +1,4 @@
+from .definition import FlowDefinition
 from .diagnostics import (
     FlowDiagnostic,
     FlowDiagnosticCategory,
@@ -17,6 +18,7 @@ from .view import (
     FlowViewNode,
     FlowViewNodeShape,
     FlowViewStyle,
+    FlowViewStyleProperties,
 )
 
 from dataclasses import dataclass, field
@@ -372,6 +374,34 @@ class MermaidFlowViewNormalizationResult:
             MermaidImportValidationResult,
         )
         assert isinstance(self.view, FlowView)
+        assert isinstance(
+            self.diagnostics,
+            tuple,
+        ), "diagnostics must be a tuple"
+        for diagnostic in self.diagnostics:
+            assert isinstance(diagnostic, FlowDiagnostic)
+
+    @property
+    def ok(self) -> bool:
+        return not any(
+            diagnostic.severity == FlowDiagnosticSeverity.ERROR
+            for diagnostic in self.diagnostics
+        )
+
+    @property
+    def public_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidRenderResult:
+    source: str
+    diagnostics: tuple[FlowDiagnostic, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.source, str), "source must be a string"
         assert isinstance(
             self.diagnostics,
             tuple,
@@ -1169,6 +1199,55 @@ def normalize_mermaid_import_to_flow_view(
     )
 
 
+def flow_definition_to_flow_view(
+    definition: FlowDefinition,
+    *,
+    import_mode: FlowViewImportMode = FlowViewImportMode.EXECUTABLE,
+) -> FlowView:
+    assert isinstance(definition, FlowDefinition)
+    assert isinstance(import_mode, FlowViewImportMode)
+    edge_ids: set[str] = set()
+    return FlowView(
+        import_mode=import_mode,
+        nodes=tuple(
+            FlowViewNode(id=node.name, implicit=False)
+            for node in definition.nodes
+        ),
+        edges=tuple(
+            FlowViewEdge(
+                id=_next_rendered_edge_id(
+                    edge.source,
+                    edge.target,
+                    edge_ids,
+                ),
+                source=edge.source,
+                target=edge.target,
+                label=edge.label,
+            )
+            for edge in definition.edges
+        ),
+        metadata={
+            "format": {
+                "name": "mermaid",
+                "diagram_kind": MermaidDiagramKind.FLOWCHART.value,
+            },
+            "source": "flow_definition",
+        },
+    )
+
+
+def render_flow_definition_mermaid(
+    definition: FlowDefinition,
+) -> MermaidRenderResult:
+    assert isinstance(definition, FlowDefinition)
+    return render_mermaid_view(flow_definition_to_flow_view(definition))
+
+
+def render_mermaid_view(view: FlowView) -> MermaidRenderResult:
+    assert isinstance(view, FlowView)
+    return _MermaidFlowViewRenderer(view=view).render()
+
+
 def parse_mermaid_tokens(
     tokens: tuple[MermaidToken, ...],
     diagnostics: tuple[FlowDiagnostic, ...] = (),
@@ -1502,6 +1581,224 @@ class _MermaidFlowViewNormalizer:
             index += 1
         self.edge_ids.add(candidate)
         return candidate
+
+
+@dataclass(slots=True)
+class _MermaidFlowViewRenderer:
+    view: FlowView
+    diagnostics: list[FlowDiagnostic] = field(default_factory=list)
+
+    def render(self) -> MermaidRenderResult:
+        lines: list[str] = [self._header()]
+        rendered_nodes: set[str] = set()
+        root_groups = tuple(
+            group for group in self.view.groups if group.parent is None
+        )
+        for group in root_groups:
+            self._append_group(lines, group, rendered_nodes, indent="  ")
+        for node in self.view.nodes:
+            if node.id not in rendered_nodes:
+                self._append_node(lines, node, indent="  ")
+                rendered_nodes.add(node.id)
+        for edge in self.view.edges:
+            self._append_edge(lines, edge)
+        self._append_class_definitions(lines)
+        self._append_node_classes(lines)
+        self._append_styles(lines)
+        self._append_link_styles(lines)
+        self._append_comments(lines)
+        return MermaidRenderResult(
+            source="\n".join(lines) + "\n",
+            diagnostics=tuple(self.diagnostics),
+        )
+
+    def _header(self) -> str:
+        direction = self.view.direction or FlowViewDirection.TD
+        return f"flowchart {direction.value}"
+
+    def _append_group(
+        self,
+        lines: list[str],
+        group: FlowViewGroup,
+        rendered_nodes: set[str],
+        *,
+        indent: str,
+    ) -> None:
+        if not _is_safe_mermaid_identifier(group.id):
+            self._diagnose(
+                "invalid_group_identifier",
+                "Flow View group identifier cannot be rendered safely.",
+                "view.groups",
+            )
+            return
+
+        lines.append(
+            f"{indent}subgraph {group.id}{_render_group_label(group)}"
+        )
+        if group.direction is not None:
+            self._diagnose(
+                "unsupported_group_direction",
+                "Flow View group direction is not rendered.",
+                "view.groups.direction",
+                severity=FlowDiagnosticSeverity.WARNING,
+            )
+        child_indent = f"{indent}  "
+        for child_group_id in group.groups:
+            child = self.view.group_map.get(child_group_id)
+            if child is not None:
+                self._append_group(
+                    lines,
+                    child,
+                    rendered_nodes,
+                    indent=child_indent,
+                )
+        for node_id in group.nodes:
+            node = self.view.node_map.get(node_id)
+            if node is not None and node.id not in rendered_nodes:
+                self._append_node(lines, node, indent=child_indent)
+                rendered_nodes.add(node.id)
+        lines.append(f"{indent}end")
+
+    def _append_node(
+        self,
+        lines: list[str],
+        node: FlowViewNode,
+        *,
+        indent: str,
+    ) -> None:
+        if not _is_safe_mermaid_identifier(node.id):
+            self._diagnose(
+                "invalid_node_identifier",
+                "Flow View node identifier cannot be rendered safely.",
+                "view.nodes",
+            )
+            return
+        lines.append(f"{indent}{node.id}{_render_node_label(node)}")
+
+    def _append_edge(self, lines: list[str], edge: FlowViewEdge) -> None:
+        if not _is_safe_mermaid_identifier(edge.source):
+            self._diagnose(
+                "invalid_edge_source",
+                "Flow View edge source cannot be rendered safely.",
+                "view.edges.source",
+            )
+            return
+        if not _is_safe_mermaid_identifier(edge.target):
+            self._diagnose(
+                "invalid_edge_target",
+                "Flow View edge target cannot be rendered safely.",
+                "view.edges.target",
+            )
+            return
+        arrow = _render_edge_arrow(edge)
+        label = (
+            f"|{_escape_edge_label(edge.label)}|"
+            if edge.label is not None
+            else ""
+        )
+        lines.append(f"  {edge.source} {arrow}{label} {edge.target}")
+
+    def _append_class_definitions(self, lines: list[str]) -> None:
+        for class_definition in self.view.class_definitions:
+            if not _is_safe_mermaid_identifier(class_definition.name):
+                self._diagnose(
+                    "invalid_class_identifier",
+                    "Flow View class identifier cannot be rendered safely.",
+                    "view.class_definitions",
+                )
+                continue
+            properties = _render_properties(
+                class_definition.properties,
+                path=f"view.class_definitions.{class_definition.name}",
+                diagnostics=self.diagnostics,
+            )
+            if properties:
+                lines.append(
+                    f"  classDef {class_definition.name} {properties}"
+                )
+
+    def _append_node_classes(self, lines: list[str]) -> None:
+        for node in self.view.nodes:
+            if not node.classes:
+                continue
+            if not _is_safe_mermaid_identifier(node.id):
+                continue
+            class_names = tuple(
+                class_name
+                for class_name in node.classes
+                if _is_safe_mermaid_identifier(class_name)
+            )
+            if len(class_names) != len(node.classes):
+                self._diagnose(
+                    "invalid_class_identifier",
+                    "Flow View class identifier cannot be rendered safely.",
+                    "view.nodes.classes",
+                )
+            if class_names:
+                lines.append(f"  class {node.id} {','.join(class_names)}")
+
+    def _append_styles(self, lines: list[str]) -> None:
+        for style in self.view.styles:
+            if not _is_safe_mermaid_identifier(style.target):
+                self._diagnose(
+                    "invalid_style_target",
+                    "Flow View style target cannot be rendered safely.",
+                    "view.styles",
+                )
+                continue
+            properties = _render_properties(
+                style.properties,
+                path=f"view.styles.{style.target}",
+                diagnostics=self.diagnostics,
+            )
+            if properties:
+                lines.append(f"  style {style.target} {properties}")
+
+    def _append_link_styles(self, lines: list[str]) -> None:
+        for link_style in self.view.link_styles:
+            target = (
+                str(link_style.edge_index)
+                if link_style.edge_index is not None
+                else link_style.edge
+            )
+            assert target is not None
+            if not (target.isdigit() or _is_safe_mermaid_identifier(target)):
+                self._diagnose(
+                    "invalid_link_style_target",
+                    "Flow View link style target cannot be rendered safely.",
+                    "view.link_styles",
+                )
+                continue
+            properties = _render_properties(
+                link_style.properties,
+                path="view.link_styles",
+                diagnostics=self.diagnostics,
+            )
+            if properties:
+                lines.append(f"  linkStyle {target} {properties}")
+
+    def _append_comments(self, lines: list[str]) -> None:
+        for comment in self.view.comments:
+            lines.append(f"  %% {_escape_comment(comment.text)}")
+
+    def _diagnose(
+        self,
+        code_suffix: str,
+        message: str,
+        path: str,
+        *,
+        severity: FlowDiagnosticSeverity = FlowDiagnosticSeverity.ERROR,
+    ) -> None:
+        self.diagnostics.append(
+            FlowDiagnostic(
+                code=f"flow.mermaid.parser.renderer_{code_suffix}",
+                category=FlowDiagnosticCategory.MERMAID_PARSER,
+                path=path,
+                severity=severity,
+                message=message,
+                hint="Use Mermaid-safe identifiers and labels.",
+            )
+        )
 
 
 def _import_parser_diagnostics(
@@ -1963,7 +2260,10 @@ def _label_from_tokens(tokens: tuple[MermaidToken, ...]) -> str | None:
 
 def _strip_label(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in '"`|':
-        return value[1:-1]
+        stripped = value[1:-1]
+        if value[0] == '"':
+            return stripped.replace('\\"', '"').replace("\\\\", "\\")
+        return stripped
     return value
 
 
@@ -1985,6 +2285,8 @@ def _shape_from_tokens(
             return FlowViewNodeShape.CYLINDER
         case ("(", "(", ")", ")"):
             return FlowViewNodeShape.CIRCLE
+        case ("(", "(", "(", ")", ")", ")"):
+            return FlowViewNodeShape.DOUBLE_CIRCLE
         case ("{", "{", "}", "}"):
             return FlowViewNodeShape.HEXAGON
         case ("(", ")"):
@@ -2033,6 +2335,159 @@ def _class_names(arguments: tuple[str, ...]) -> tuple[str, ...]:
 def _append_unique(values: list[str], value: str) -> None:
     if value not in values:
         values.append(value)
+
+
+def _render_group_label(group: FlowViewGroup) -> str:
+    if group.label is None:
+        return ""
+    return f'["{_escape_quoted_label(group.label)}"]'
+
+
+def _render_node_label(node: FlowViewNode) -> str:
+    if node.label is None and node.shape == FlowViewNodeShape.RECTANGLE:
+        return ""
+    label = _escape_quoted_label(node.label or node.id)
+    prefix, suffix = _shape_delimiters(node.shape)
+    return f'{prefix}"{label}"{suffix}'
+
+
+def _render_edge_arrow(edge: FlowViewEdge) -> str:
+    if edge.bidirectional:
+        match edge.style:
+            case FlowViewEdgeStyle.THICK:
+                return "<==>"
+            case FlowViewEdgeStyle.DOTTED:
+                return "<-.->"
+            case _:
+                return "<-->"
+    match edge.style:
+        case FlowViewEdgeStyle.THICK:
+            return "==>"
+        case FlowViewEdgeStyle.DOTTED:
+            return "-.->"
+        case _:
+            return "-->"
+
+
+def _render_properties(
+    properties: FlowViewStyleProperties,
+    *,
+    path: str,
+    diagnostics: list[FlowDiagnostic],
+) -> str:
+    rendered: list[str] = []
+    for key, value in properties.items():
+        if _is_safe_style_key(key) and _is_safe_style_value(value):
+            rendered.append(f"{key}:{value}")
+        else:
+            diagnostics.append(
+                FlowDiagnostic(
+                    code="flow.mermaid.parser.renderer_unsafe_style_property",
+                    category=FlowDiagnosticCategory.MERMAID_PARSER,
+                    path=path,
+                    severity=FlowDiagnosticSeverity.WARNING,
+                    message=(
+                        "Flow View style property is not rendered because "
+                        "it is not Mermaid-safe."
+                    ),
+                    hint="Use plain CSS presentation values without links.",
+                )
+            )
+    return ",".join(rendered)
+
+
+def _shape_delimiters(shape: FlowViewNodeShape) -> tuple[str, str]:
+    match shape:
+        case FlowViewNodeShape.STADIUM:
+            return "([", "])"
+        case FlowViewNodeShape.SUBROUTINE:
+            return "[[", "]]"
+        case FlowViewNodeShape.CYLINDER:
+            return "[(", ")]"
+        case FlowViewNodeShape.CIRCLE:
+            return "((", "))"
+        case FlowViewNodeShape.DOUBLE_CIRCLE:
+            return "(((", ")))"
+        case FlowViewNodeShape.HEXAGON:
+            return "{{", "}}"
+        case FlowViewNodeShape.ROUNDED:
+            return "(", ")"
+        case FlowViewNodeShape.DIAMOND:
+            return "{", "}"
+        case _:
+            return "[", "]"
+
+
+def _escape_quoted_label(value: str) -> str:
+    return _escape_label_text(value).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _escape_edge_label(value: str) -> str:
+    return _escape_label_text(value).replace("|", "&#124;")
+
+
+def _escape_comment(value: str) -> str:
+    return value.replace("\r", " ").replace("\n", " ").strip()
+
+
+def _escape_label_text(value: str) -> str:
+    escaped = " ".join(value.split())
+    replacements = {
+        "<": "&lt;",
+        ">": "&gt;",
+        "javascript:": "javascript&#58;",
+        "Javascript:": "Javascript&#58;",
+        "JAVASCRIPT:": "JAVASCRIPT&#58;",
+        "onerror=": "onerror&#61;",
+        "onload=": "onload&#61;",
+        "{{": "{ {",
+        "{%": "{ %",
+    }
+    for source, target in replacements.items():
+        escaped = escaped.replace(source, target)
+    return escaped
+
+
+def _is_safe_mermaid_identifier(value: str) -> bool:
+    if not value or not _is_identifier_start(value[0]):
+        return False
+    if any(not _is_identifier_part(character) for character in value):
+        return False
+    return (
+        _token_type_for_identifier(value, True) == MermaidTokenType.IDENTIFIER
+        and _token_type_for_identifier(value, False)
+        == MermaidTokenType.IDENTIFIER
+    )
+
+
+def _is_safe_style_key(value: str) -> bool:
+    return bool(value) and all(
+        character.isalnum() or character in "-_" for character in value
+    )
+
+
+def _is_safe_style_value(value: str) -> bool:
+    lowered = value.lower()
+    if any(marker in lowered for marker in ("url(", "http:", "https:")):
+        return False
+    if any(character in value for character in "\r\n;{}<>`"):
+        return False
+    return bool(value.strip())
+
+
+def _next_rendered_edge_id(
+    source: str,
+    target: str,
+    edge_ids: set[str],
+) -> str:
+    base = f"{_id_fragment(source)}_to_{_id_fragment(target)}"
+    candidate = base
+    index = 2
+    while candidate in edge_ids:
+        candidate = f"{base}_{index}"
+        index += 1
+    edge_ids.add(candidate)
+    return candidate
 
 
 def _id_fragment(value: str) -> str:
