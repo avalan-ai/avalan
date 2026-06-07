@@ -124,6 +124,9 @@ from .plan import FlowTimeoutPlan as FlowTimeoutPlan
 from .plan import compile_flow_definition as compile_flow_definition
 from .registry import FLOW_INPUT_KEY as FLOW_INPUT_KEY
 from .registry import FLOW_TOOL_NODE_TYPE as FLOW_TOOL_NODE_TYPE
+from .registry import (
+    FlowNodeDefinitionValidator as FlowNodeDefinitionValidator,
+)
 from .registry import FlowNodeFactory as FlowNodeFactory
 from .registry import FlowNodeRegistry as FlowNodeRegistry
 from .registry import FlowToolResolver as FlowToolResolver

@@ -14,6 +14,7 @@ from ..entities import (
 )
 from ..utils import tool_call_diagnostic_payload, tool_call_error_payload
 from .definition import (
+    FlowDefinition,
     FlowInputDefinition,
     FlowInputType,
     FlowNodeCapability,
@@ -26,8 +27,8 @@ from .definition import (
 from .node import Node
 
 from asyncio import CancelledError
-from collections.abc import Awaitable, Iterable, Mapping
-from typing import Any, Protocol, cast
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from typing import Any, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 FLOW_INPUT_KEY = "__flow_input__"
@@ -76,22 +77,32 @@ class FlowNodeConfigurationError(ValueError):
         super().__init__(code)
 
 
+FlowNodeDefinitionValidator: TypeAlias = Callable[
+    [FlowDefinition, FlowNodeDefinition],
+    tuple[FlowNodeConfigurationError, ...],
+]
+
+
 class FlowNodeRegistry:
     def __init__(
         self,
         factories: Mapping[str, FlowNodeFactory] | None = None,
         metadata: Mapping[str, FlowNodeMetadata] | None = None,
+        validators: Mapping[str, FlowNodeDefinitionValidator] | None = None,
     ) -> None:
         self._factories: dict[str, FlowNodeFactory] = {}
         self._metadata: dict[str, FlowNodeMetadata] = {}
+        self._validators: dict[str, FlowNodeDefinitionValidator] = {}
         self._tool_resolvers: dict[str, FlowToolResolver] = {}
         self._tool_descriptors: dict[str, Mapping[str, ToolDescriptor]] = {}
         node_metadata = metadata or {}
+        node_validators = validators or {}
         for node_type, factory in (factories or {}).items():
             self.register(
                 node_type,
                 factory,
                 metadata=node_metadata.get(node_type),
+                validator=node_validators.get(node_type),
             )
 
     def register(
@@ -100,13 +111,18 @@ class FlowNodeRegistry:
         factory: FlowNodeFactory,
         *,
         metadata: FlowNodeMetadata | None = None,
+        validator: FlowNodeDefinitionValidator | None = None,
     ) -> "FlowNodeRegistry":
         assert isinstance(node_type, str) and node_type.strip()
         assert callable(factory)
         if metadata is not None:
             assert isinstance(metadata, FlowNodeMetadata)
+        if validator is not None:
+            assert callable(validator)
         self._factories[node_type] = factory
         self._metadata[node_type] = metadata or FlowNodeMetadata()
+        if validator is not None:
+            self._validators[node_type] = validator
         return self
 
     def supports(self, node_type: str) -> bool:
@@ -140,6 +156,18 @@ class FlowNodeRegistry:
     def build(self, definition: FlowNodeDefinition) -> Node:
         assert isinstance(definition, FlowNodeDefinition)
         return self._factories[definition.type](definition)
+
+    def validate_node_definition(
+        self,
+        definition: FlowDefinition,
+        node: FlowNodeDefinition,
+    ) -> tuple[FlowNodeConfigurationError, ...]:
+        assert isinstance(definition, FlowDefinition)
+        assert isinstance(node, FlowNodeDefinition)
+        validator = self._validators.get(node.type)
+        if validator is None:
+            return ()
+        return validator(definition, node)
 
     def register_tool_resolver(
         self,

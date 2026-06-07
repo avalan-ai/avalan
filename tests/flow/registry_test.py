@@ -20,6 +20,7 @@ from avalan.entities import (
 from avalan.flow import (
     FLOW_INPUT_KEY,
     FLOW_TOOL_NODE_TYPE,
+    FlowDefinition,
     FlowInputDefinition,
     FlowInputType,
     FlowNodeCapability,
@@ -32,6 +33,7 @@ from avalan.flow import (
     default_flow_node_registry,
     flow_input_binding,
     tool_flow_node_registry,
+    validate_flow_definition,
 )
 from avalan.flow.node import Node
 from avalan.flow.registry import FlowNodeConfigurationError
@@ -269,6 +271,57 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(no_definition["value"], "ready")
         self.assertEqual(mapping["payload"], {"name": "Ada"})
         self.assertNotIn("value", mapping)
+
+    def test_registry_definition_validator_reports_without_building(
+        self,
+    ) -> None:
+        def factory(definition: FlowNodeDefinition) -> Node:
+            raise AssertionError(definition.name)
+
+        def validator(
+            definition: FlowDefinition,
+            node: FlowNodeDefinition,
+        ) -> tuple[FlowNodeConfigurationError, ...]:
+            self.assertEqual(definition.name, "checked")
+            return (
+                FlowNodeConfigurationError(
+                    code="flow.invalid_node",
+                    path=f"nodes.{node.name}.config",
+                    message="Flow node configuration is invalid.",
+                    hint="Use valid node configuration.",
+                ),
+            )
+
+        registry = FlowNodeRegistry(
+            {"checked": factory},
+            {"checked": FlowNodeMetadata(kind=FlowNodeKind.PASS_THROUGH)},
+            {"checked": validator},
+        )
+
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="checked",
+                entrypoint="start",
+                output_node="start",
+                nodes=(FlowNodeDefinition(name="start", type="checked"),),
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.invalid_node")
+        self.assertEqual(
+            registry.validate_node_definition(
+                FlowDefinition(
+                    name="empty",
+                    entrypoint="start",
+                    output_node="start",
+                    nodes=(FlowNodeDefinition(name="start", type="missing"),),
+                ),
+                FlowNodeDefinition(name="start", type="missing"),
+            ),
+            (),
+        )
 
     async def test_echo_node_falls_back_to_available_inputs(self) -> None:
         node = default_flow_node_registry().build(

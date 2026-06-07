@@ -268,6 +268,13 @@ def _validate_node_type(
                 strict=definition.is_strict,
             )
         )
+        diagnostics.extend(
+            _validate_registered_node_definition(
+                definition,
+                node,
+                registry,
+            )
+        )
         return tuple(diagnostics)
     if node_type in _KNOWN_DEFERRED_NODE_TYPES:
         diagnostics.append(
@@ -330,6 +337,17 @@ def _validate_registered_node_metadata(
                 )
             )
     return tuple(diagnostics)
+
+
+def _validate_registered_node_definition(
+    definition: FlowDefinition,
+    node: FlowNodeDefinition,
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    return tuple(
+        _configuration_error_diagnostic(error)
+        for error in registry.validate_node_definition(definition, node)
+    )
 
 
 def _validate_node_kind(
