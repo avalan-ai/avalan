@@ -111,6 +111,17 @@ from .mermaid import tokenize_mermaid as tokenize_mermaid
 from .mermaid import validate_mermaid_import as validate_mermaid_import
 from .node import CancellationChecker as CancellationChecker
 from .node import Node as Node
+from .plan import FlowConditionPlan as FlowConditionPlan
+from .plan import FlowEdgePlan as FlowEdgePlan
+from .plan import FlowExecutionPlan as FlowExecutionPlan
+from .plan import FlowJoinPlan as FlowJoinPlan
+from .plan import FlowLoopPlan as FlowLoopPlan
+from .plan import FlowMappingPlan as FlowMappingPlan
+from .plan import FlowNodePlan as FlowNodePlan
+from .plan import FlowPlanCompileResult as FlowPlanCompileResult
+from .plan import FlowRetryPlan as FlowRetryPlan
+from .plan import FlowTimeoutPlan as FlowTimeoutPlan
+from .plan import compile_flow_definition as compile_flow_definition
 from .registry import FLOW_INPUT_KEY as FLOW_INPUT_KEY
 from .registry import FLOW_TOOL_NODE_TYPE as FLOW_TOOL_NODE_TYPE
 from .registry import FlowNodeFactory as FlowNodeFactory
