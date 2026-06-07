@@ -1150,6 +1150,232 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         assert result.definition is not None
         self.assertEqual(result.definition.revision, "rev-1")
 
+    def test_loads_declarative_node_mappings(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.value"
+
+            [nodes.start]
+            type = "input"
+
+            [nodes.finish]
+            type = "select"
+
+            [nodes.finish.mapping.value]
+            type = "object"
+
+            [nodes.finish.mapping.value.fields]
+            name = "input.payload.name"
+            first = "start.value.items[0]"
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        mapping = result.definition.nodes[1].mappings[0]
+        self.assertEqual(mapping.target, "value")
+        self.assertEqual(mapping.fields["name"], "input.payload.name")
+        self.assertEqual(mapping.fields["first"], "start.value.items[0]")
+
+    def test_loads_shorthand_node_mapping(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.value"
+
+            [nodes.start]
+            type = "input"
+
+            [nodes.finish]
+            type = "select"
+
+            [nodes.finish.mapping]
+            value = "input.payload"
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        self.assertEqual(
+            result.definition.nodes[1].mappings[0].source,
+            "input.payload",
+        )
+
+    def test_loader_rejects_invalid_declarative_node_mappings(self) -> None:
+        cases = (
+            (
+                """
+                [nodes.finish]
+                type = "select"
+                mapping = "invalid"
+                """,
+                ["flow.invalid_type"],
+            ),
+            (
+                """
+                [nodes.finish]
+                type = "select"
+
+                [nodes.finish.mapping.value]
+                type = "object"
+                secret = "private-token"
+                """,
+                ["flow.unsupported_field", "flow.empty_mapping"],
+            ),
+            (
+                """
+                [nodes.finish]
+                type = "select"
+
+                [nodes.finish.mapping.value]
+                type = "select"
+                source = "env.SECRET"
+                """,
+                ["flow.reserved_selector"],
+            ),
+            (
+                """
+                [nodes.finish]
+                type = "select"
+
+                [nodes.finish.mapping.value]
+                type = "array"
+                items = ["input.payload"]
+                """,
+                ["flow.incompatible_mapping"],
+            ),
+            (
+                """
+                [nodes.finish]
+                type = "select"
+
+                [nodes.finish.mapping]
+                value = 3
+                """,
+                ["flow.invalid_type"],
+            ),
+            (
+                """
+                [nodes.finish]
+                type = "select"
+
+                [nodes.finish.mapping.value]
+                source = "input.payload"
+                """,
+                ["flow.missing_field"],
+            ),
+            (
+                """
+                [nodes.finish]
+                type = "select"
+
+                [nodes.finish.mapping.value]
+                type = "object"
+                fields = "invalid"
+                """,
+                ["flow.invalid_type", "flow.empty_mapping"],
+            ),
+            (
+                """
+                [nodes.finish]
+                type = "select"
+
+                [nodes.finish.mapping.value]
+                type = "object"
+
+                [nodes.finish.mapping.value.fields]
+                name = 3
+                """,
+                ["flow.invalid_type", "flow.empty_mapping"],
+            ),
+        )
+        for node_source, expected_codes in cases:
+            with self.subTest(expected_codes=expected_codes):
+                result = loads_flow_definition_result(f"""
+                    [flow]
+                    name = "strict"
+                    version = "2026-06-07"
+
+                    [[inputs]]
+                    name = "payload"
+                    type = "object"
+
+                    [[outputs]]
+                    name = "answer"
+                    type = "object"
+
+                    [entry]
+                    type = "node"
+                    node = "start"
+
+                    [output_behavior]
+                    type = "map"
+
+                    [output_behavior.outputs]
+                    answer = "finish.value"
+
+                    [nodes.start]
+                    type = "input"
+
+                    {node_source}
+
+                    [[edges]]
+                    source = "start"
+                    target = "finish"
+                    """)
+
+                self.assertFalse(result.ok)
+                codes = [issue.code for issue in result.issues]
+                for code in expected_codes:
+                    self.assertIn(code, codes)
+                self.assertNotIn(
+                    "private-token", str(result.public_diagnostics)
+                )
+                self.assertNotIn("SECRET", str(result.public_diagnostics))
+
     def test_strict_loader_rejects_scalar_input_and_output_aliases(
         self,
     ) -> None:
@@ -1875,12 +2101,25 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             "outputs",
             issues,
         )
+        node_mappings = flow_loader._node_mappings(  # type: ignore[attr-defined]
+            {1: "input.payload"},  # type: ignore[dict-item]
+            issues,
+            path="nodes.start.mapping",
+        )
+        optional_mapping = flow_loader._optional_string_mapping(  # type: ignore[attr-defined]
+            {"fields": {1: "bad"}},  # type: ignore[dict-item]
+            "nodes.start.mapping.value.fields",
+            "fields",
+            issues,
+        )
 
         self.assertFalse(result.ok)
         self.assertEqual(tuple_value, ())
         self.assertEqual(list_value, ("text/plain",))
         self.assertIsNone(metadata)
         self.assertIsNone(string_mapping)
+        self.assertEqual(node_mappings, ())
+        self.assertIsNone(optional_mapping)
         self.assertIn("flow.invalid_type", [issue.code for issue in issues])
 
     def _load_agent_selector_case(

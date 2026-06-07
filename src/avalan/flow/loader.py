@@ -4,7 +4,9 @@ from .definition import (
     FlowEntryBehavior,
     FlowEntryBehaviorType,
     FlowInputDefinition,
+    FlowInputMapping,
     FlowInputType,
+    FlowMappingKind,
     FlowNodeDefinition,
     FlowOutputBehavior,
     FlowOutputBehaviorType,
@@ -85,11 +87,21 @@ _ALLOWED_NODE_FIELDS = frozenset(
         "config",
         "field",
         "input",
+        "mapping",
         "output",
         "path",
         "ref",
         "type",
         "value",
+    }
+)
+_ALLOWED_MAPPING_FIELDS = frozenset(
+    {
+        "fields",
+        "items",
+        "source",
+        "sources",
+        "type",
     }
 )
 
@@ -731,6 +743,11 @@ def _node_definitions(
             "output",
             issues,
         )
+        mappings = _node_mappings(
+            value.get("mapping"),
+            issues,
+            path=f"nodes.{name}.mapping",
+        )
         if node_type is None:
             continue
         config = _node_config(value, issues, path=f"nodes.{name}")
@@ -741,10 +758,81 @@ def _node_definitions(
                 ref=ref,
                 input=input_name,
                 output=output_name,
+                mappings=mappings,
                 config=config,
             )
         )
     return tuple(nodes)
+
+
+def _node_mappings(
+    value: object,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> tuple[FlowInputMapping, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_type(path, "Use a TOML table."))
+        return ()
+    mappings: list[FlowInputMapping] = []
+    for target, raw in value.items():
+        target_path = f"{path}.{target}"
+        if not isinstance(target, str) or not target.strip():
+            issues.append(_invalid_type(path, "Use string keys."))
+            continue
+        if isinstance(raw, str):
+            mappings.append(FlowInputMapping(target=target, source=raw))
+            continue
+        if not isinstance(raw, Mapping):
+            issues.append(_invalid_type(target_path, "Use a TOML table."))
+            continue
+        _validate_unknown_fields(
+            raw,
+            allowed=_ALLOWED_MAPPING_FIELDS,
+            path=target_path,
+            issues=issues,
+        )
+        kind = _enum_value(
+            raw,
+            f"{target_path}.type",
+            "type",
+            FlowMappingKind,
+            issues,
+        )
+        source = _optional_str(raw, f"{target_path}.source", "source", issues)
+        sources = _string_tuple(
+            raw,
+            f"{target_path}.sources",
+            "sources",
+            issues,
+        )
+        fields = _optional_string_mapping(
+            raw,
+            f"{target_path}.fields",
+            "fields",
+            issues,
+        )
+        items = _string_tuple(
+            raw,
+            f"{target_path}.items",
+            "items",
+            issues,
+        )
+        if kind is None:
+            continue
+        mappings.append(
+            FlowInputMapping(
+                target=target,
+                kind=kind,
+                source=source,
+                sources=sources,
+                fields=fields or {},
+                items=items,
+            )
+        )
+    return tuple(mappings)
 
 
 def _edge_definitions(
@@ -917,6 +1005,30 @@ def _string_mapping(
     value = raw.get(field)
     if value is None:
         issues.append(_missing_field(path))
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_type(path, "Use a TOML table."))
+        return None
+    mapping: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            issues.append(_invalid_type(path, "Use string keys."))
+            return None
+        if not isinstance(item, str) or not item.strip():
+            issues.append(_invalid_type(f"{path}.{key}", "Use a string."))
+            return None
+        mapping[key] = item
+    return mapping
+
+
+def _optional_string_mapping(
+    raw: RawSection,
+    path: str,
+    field: str,
+    issues: list[FlowLoadIssue],
+) -> Mapping[str, str] | None:
+    value = raw.get(field)
+    if value is None:
         return None
     if not isinstance(value, Mapping):
         issues.append(_invalid_type(path, "Use a TOML table."))

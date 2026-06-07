@@ -8,7 +8,9 @@ from avalan.flow import (
     FlowEntryBehavior,
     FlowEntryBehaviorType,
     FlowInputDefinition,
+    FlowInputMapping,
     FlowInputType,
+    FlowMappingKind,
     FlowNodeCapability,
     FlowNodeContract,
     FlowNodeDefinition,
@@ -69,6 +71,13 @@ class FlowDefinitionTestCase(TestCase):
                 FlowNodeDefinition(
                     name="start",
                     type="constant",
+                    mappings=(
+                        FlowInputMapping(
+                            target="payload",
+                            kind=FlowMappingKind.OBJECT,
+                            fields={"name": "input.strict_payload.name"},
+                        ),
+                    ),
                     output="result",
                     config=node_config,
                 ),
@@ -115,6 +124,10 @@ class FlowDefinitionTestCase(TestCase):
                 "answer"
             ],
             "ok",
+        )
+        self.assertEqual(
+            definition.nodes[0].mappings[0].fields["name"],
+            "input.strict_payload.name",
         )
         with self.assertRaises(FrozenInstanceError):
             definition.name = "changed"  # type: ignore[misc]
@@ -174,10 +187,30 @@ class FlowDefinitionTestCase(TestCase):
                 nodes=(),
                 tags=["ops"],  # type: ignore[arg-type]
             )
+        with self.assertRaises(AssertionError):
+            FlowInputMapping(target="", source="input.payload")
+        with self.assertRaises(AssertionError):
+            FlowInputMapping(
+                target="value",
+                kind="select",  # type: ignore[arg-type]
+                source="input.payload",
+            )
+        with self.assertRaises(AssertionError):
+            FlowInputMapping(
+                target="value",
+                sources=("input.payload", ""),
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeDefinition(
+                name="node",
+                type="echo",
+                mappings=(object(),),  # type: ignore[arg-type]
+            )
 
     def test_behavior_type_enums_are_stable(self) -> None:
         self.assertEqual(FlowEntryBehaviorType.NODE.value, "node")
         self.assertEqual(FlowOutputBehaviorType.MAP.value, "map")
+        self.assertEqual(FlowMappingKind.FILE_ARRAY.value, "file[]")
         self.assertEqual(FlowNodeKind.HUMAN_REVIEW.value, "human_review")
         self.assertEqual(FlowNodeKind.SUBFLOW.value, "subflow")
         self.assertEqual(

@@ -59,7 +59,21 @@ class FlowNodeCapability(StrEnum):
     DURABLE_PAUSE = "durable_pause"
 
 
+class FlowMappingKind(StrEnum):
+    SELECT = "select"
+    RENAME = "rename"
+    OBJECT = "object"
+    ARRAY = "array"
+    MERGE = "merge"
+    FILE = "file"
+    FILE_ARRAY = "file[]"
+
+
 def _empty_mapping() -> FlowMetadata:
+    return MappingProxyType({})
+
+
+def _empty_string_mapping() -> Mapping[str, str]:
     return MappingProxyType({})
 
 
@@ -118,6 +132,15 @@ def _freeze_string_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
         _assert_non_empty_string(item, f"mapping.{key}")
         frozen[key] = item
     return MappingProxyType(frozen)
+
+
+def _assert_mapping_tuple(
+    values: tuple["FlowInputMapping", ...],
+    field_name: str,
+) -> None:
+    assert isinstance(values, tuple), f"{field_name} must be a tuple"
+    for value in values:
+        assert isinstance(value, FlowInputMapping)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -199,6 +222,25 @@ class FlowNodeContract:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FlowInputMapping:
+    target: str
+    kind: FlowMappingKind = FlowMappingKind.SELECT
+    source: str | None = None
+    sources: tuple[str, ...] = ()
+    fields: Mapping[str, str] = field(default_factory=_empty_string_mapping)
+    items: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.target, "target")
+        assert isinstance(self.kind, FlowMappingKind)
+        if self.source is not None:
+            _assert_non_empty_string(self.source, "source")
+        _assert_string_tuple(self.sources, "sources")
+        object.__setattr__(self, "fields", _freeze_string_mapping(self.fields))
+        _assert_string_tuple(self.items, "items")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FlowNodeMetadata:
     kind: FlowNodeKind | None = None
     supports_ref: bool = False
@@ -256,6 +298,7 @@ class FlowNodeDefinition:
     ref: str | None = None
     input: str | None = None
     output: str | None = None
+    mappings: tuple[FlowInputMapping, ...] = ()
     config: FlowMetadata = field(default_factory=_empty_mapping)
 
     def __post_init__(self) -> None:
@@ -267,6 +310,7 @@ class FlowNodeDefinition:
             _assert_non_empty_string(self.input, "input")
         if self.output is not None:
             _assert_non_empty_string(self.output, "output")
+        _assert_mapping_tuple(self.mappings, "mappings")
         object.__setattr__(self, "config", _freeze_mapping(self.config))
 
 
