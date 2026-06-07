@@ -4,6 +4,7 @@ from .diagnostics import (
     FlowDiagnosticSeverity,
     FlowSourceSpan,
 )
+from .view import FlowViewImportMode
 
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -22,11 +23,13 @@ class MermaidTokenType(StrEnum):
     EDGE_LABEL = "edge_label"
     SUBGRAPH = "subgraph"
     END = "end"
+    CLASS_DEF_DIRECTIVE = "class_def_directive"
     CLASS_DIRECTIVE = "class_directive"
     STYLE_DIRECTIVE = "style_directive"
     LINK_STYLE_DIRECTIVE = "link_style_directive"
     UNSAFE_DIRECTIVE = "unsafe_directive"
     UNSUPPORTED_DIRECTIVE = "unsupported_directive"
+    SHORTHAND_SEPARATOR = "shorthand_separator"
     COMMA = "comma"
     SEMICOLON = "semicolon"
     COMMENT = "comment"
@@ -39,6 +42,7 @@ class MermaidDiagramKind(StrEnum):
 
 
 class MermaidAstDirectiveKind(StrEnum):
+    CLASS_DEF = "classDef"
     CLASS = "class"
     STYLE = "style"
     LINK_STYLE = "linkStyle"
@@ -292,6 +296,36 @@ class MermaidParseResult:
     def __post_init__(self) -> None:
         assert isinstance(self.cst, MermaidCst)
         assert isinstance(self.ast, MermaidAst)
+        assert isinstance(
+            self.diagnostics,
+            tuple,
+        ), "diagnostics must be a tuple"
+        for diagnostic in self.diagnostics:
+            assert isinstance(diagnostic, FlowDiagnostic)
+
+    @property
+    def ok(self) -> bool:
+        return not any(
+            diagnostic.severity == FlowDiagnosticSeverity.ERROR
+            for diagnostic in self.diagnostics
+        )
+
+    @property
+    def public_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidImportValidationResult:
+    import_mode: FlowViewImportMode
+    parse_result: MermaidParseResult
+    diagnostics: tuple[FlowDiagnostic, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.import_mode, FlowViewImportMode)
+        assert isinstance(self.parse_result, MermaidParseResult)
         assert isinstance(
             self.diagnostics,
             tuple,
@@ -593,6 +627,7 @@ class _MermaidTokenizer:
             "]": MermaidTokenType.SHAPE_DELIMITER,
             "{": MermaidTokenType.SHAPE_DELIMITER,
             "}": MermaidTokenType.SHAPE_DELIMITER,
+            "&": MermaidTokenType.SHORTHAND_SEPARATOR,
             ",": MermaidTokenType.COMMA,
             ";": MermaidTokenType.SEMICOLON,
         }.get(self._peek())
@@ -863,6 +898,12 @@ class _MermaidAstParser:
                     source_span=statement.source_span,
                 ),
             )
+        if first.type == MermaidTokenType.CLASS_DEF_DIRECTIVE:
+            return (
+                self._directive(
+                    MermaidAstDirectiveKind.CLASS_DEF, statement, tokens
+                ),
+            )
         if first.type == MermaidTokenType.CLASS_DIRECTIVE:
             return (
                 self._directive(
@@ -1028,6 +1069,22 @@ def parse_mermaid(
     return MermaidParseResult(cst=cst, ast=ast, diagnostics=diagnostics)
 
 
+def parse_mermaid_import(
+    text: str,
+    *,
+    import_mode: FlowViewImportMode,
+    source: str | None = None,
+) -> MermaidImportValidationResult:
+    assert isinstance(text, str), "text must be a string"
+    assert isinstance(import_mode, FlowViewImportMode)
+    if source is not None:
+        assert source.strip(), "source must be non-empty"
+    return validate_mermaid_import(
+        parse_mermaid(text, source=source),
+        import_mode=import_mode,
+    )
+
+
 def parse_mermaid_tokens(
     tokens: tuple[MermaidToken, ...],
     diagnostics: tuple[FlowDiagnostic, ...] = (),
@@ -1045,6 +1102,24 @@ def parse_mermaid_tokens(
     )
 
 
+def validate_mermaid_import(
+    parse_result: MermaidParseResult,
+    *,
+    import_mode: FlowViewImportMode,
+) -> MermaidImportValidationResult:
+    assert isinstance(parse_result, MermaidParseResult)
+    assert isinstance(import_mode, FlowViewImportMode)
+    diagnostics = (
+        *_import_parser_diagnostics(parse_result, import_mode),
+        *_import_security_diagnostics(parse_result, import_mode),
+    )
+    return MermaidImportValidationResult(
+        import_mode=import_mode,
+        parse_result=parse_result,
+        diagnostics=diagnostics,
+    )
+
+
 def tokenize_mermaid(
     text: str,
     *,
@@ -1054,6 +1129,293 @@ def tokenize_mermaid(
     if source is not None:
         assert source.strip(), "source must be non-empty"
     return _MermaidTokenizer(text=text, source=source).tokenize()
+
+
+def _import_parser_diagnostics(
+    parse_result: MermaidParseResult,
+    import_mode: FlowViewImportMode,
+) -> tuple[FlowDiagnostic, ...]:
+    unsupported_diagram = _has_token_type(
+        parse_result,
+        MermaidTokenType.UNSUPPORTED_DIRECTIVE,
+    )
+    diagnostics: list[FlowDiagnostic] = []
+    for diagnostic in parse_result.diagnostics:
+        if diagnostic.code == "flow.mermaid.parser.unsupported_construct":
+            continue
+        if (
+            unsupported_diagram
+            and diagnostic.code == "flow.mermaid.parser.missing_header"
+        ):
+            continue
+        if (
+            import_mode == FlowViewImportMode.PRESENTATION
+            and diagnostic.code == "flow.mermaid.parser.unsupported_statement"
+            and _diagnostic_statement_has_shorthand(parse_result, diagnostic)
+        ):
+            continue
+        diagnostics.append(diagnostic)
+    return tuple(diagnostics)
+
+
+def _import_security_diagnostics(
+    parse_result: MermaidParseResult,
+    import_mode: FlowViewImportMode,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    for statement in parse_result.cst.statements:
+        diagnostics.extend(
+            _statement_security_diagnostics(statement, import_mode)
+        )
+    diagnostics.extend(
+        _label_security_diagnostics(
+            parse_result.ast.statements,
+            import_mode,
+        )
+    )
+    return tuple(diagnostics)
+
+
+def _statement_security_diagnostics(
+    statement: MermaidCstStatement,
+    import_mode: FlowViewImportMode,
+) -> tuple[FlowDiagnostic, ...]:
+    tokens = _significant_tokens(statement.tokens)
+    diagnostics: list[FlowDiagnostic] = []
+    for token in tokens:
+        if token.type == MermaidTokenType.SHORTHAND_SEPARATOR:
+            diagnostics.append(
+                _import_diagnostic(
+                    "ambiguous_shorthand",
+                    "Ambiguous Mermaid shorthand is not supported for import.",
+                    token.source_span,
+                    import_mode,
+                )
+            )
+        if token.type == MermaidTokenType.UNSUPPORTED_DIRECTIVE:
+            diagnostics.append(
+                _import_diagnostic(
+                    "unsupported_diagram_type",
+                    "Unsupported Mermaid diagram type is not supported.",
+                    token.source_span,
+                    import_mode,
+                )
+            )
+        if token.type == MermaidTokenType.UNSAFE_DIRECTIVE:
+            code, message = _unsafe_directive_diagnostic(token.value)
+            diagnostics.append(
+                _import_diagnostic(
+                    code,
+                    message,
+                    token.source_span,
+                    import_mode,
+                )
+            )
+        if _is_external_link_token(token.value):
+            diagnostics.append(
+                _import_diagnostic(
+                    "unsafe_external_link",
+                    "External Mermaid links are not activated during import.",
+                    token.source_span,
+                    import_mode,
+                )
+            )
+
+    if tokens and _directive_is_malformed(tokens):
+        diagnostics.append(
+            _import_diagnostic(
+                "malformed_directive",
+                "Mermaid presentation directive is malformed.",
+                tokens[0].source_span,
+                import_mode,
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _import_diagnostic(
+    code_suffix: str,
+    message: str,
+    source_span: FlowSourceSpan,
+    import_mode: FlowViewImportMode,
+) -> FlowDiagnostic:
+    severity = (
+        FlowDiagnosticSeverity.ERROR
+        if import_mode == FlowViewImportMode.EXECUTABLE
+        else FlowDiagnosticSeverity.WARNING
+    )
+    return FlowDiagnostic(
+        code=f"flow.mermaid.security.{code_suffix}",
+        category=FlowDiagnosticCategory.MERMAID_SECURITY,
+        source_span=source_span,
+        severity=severity,
+        message=message,
+        hint="Use a structured flow definition for executable behavior.",
+    )
+
+
+def _label_security_diagnostics(
+    statements: tuple[MermaidAstStatement, ...],
+    import_mode: FlowViewImportMode,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    for statement in statements:
+        for node in _statement_nodes(statement):
+            diagnostics.extend(
+                _label_diagnostics(node.label, node.source_span, import_mode)
+            )
+        if isinstance(statement, MermaidAstEdgeStatement):
+            for edge in statement.edges:
+                diagnostics.extend(
+                    _label_diagnostics(
+                        edge.label,
+                        edge.source_span,
+                        import_mode,
+                    )
+                )
+        if isinstance(statement, MermaidAstSubgraph):
+            diagnostics.extend(
+                _label_diagnostics(
+                    statement.label,
+                    statement.source_span,
+                    import_mode,
+                )
+            )
+            diagnostics.extend(
+                _label_security_diagnostics(
+                    statement.statements,
+                    import_mode,
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _statement_nodes(
+    statement: MermaidAstStatement,
+) -> tuple[MermaidAstNode, ...]:
+    if isinstance(statement, MermaidAstNodeStatement):
+        return (statement.node,)
+    if isinstance(statement, MermaidAstEdgeStatement):
+        return statement.nodes
+    return ()
+
+
+def _label_diagnostics(
+    label: str | None,
+    source_span: FlowSourceSpan | None,
+    import_mode: FlowViewImportMode,
+) -> tuple[FlowDiagnostic, ...]:
+    if label is None or source_span is None:
+        return ()
+    if _is_script_like_label(label):
+        return (
+            _import_diagnostic(
+                "script_like_label",
+                "Mermaid label contains embedded executable content.",
+                source_span,
+                import_mode,
+            ),
+        )
+    if _is_html_label(label):
+        return (
+            _import_diagnostic(
+                "html_label",
+                "Mermaid HTML labels are not supported for import.",
+                source_span,
+                import_mode,
+            ),
+        )
+    return ()
+
+
+def _unsafe_directive_diagnostic(value: str) -> tuple[str, str]:
+    stripped = value.strip()
+    if stripped == "---":
+        return "frontmatter", "Mermaid frontmatter is not supported."
+    if stripped.startswith("%%{init"):
+        return "init_directive", "Mermaid init directives are not supported."
+    if stripped.startswith("%%{"):
+        return "unknown_directive", "Mermaid directive is not supported."
+    if stripped == "callback":
+        return (
+            "unsafe_callback_directive",
+            "Mermaid callback directives are not activated during import.",
+        )
+    return (
+        "unsafe_link_directive",
+        "Mermaid link directives are not activated during import.",
+    )
+
+
+def _directive_is_malformed(tokens: tuple[MermaidToken, ...]) -> bool:
+    first = tokens[0]
+    if first.type in (
+        MermaidTokenType.CLASS_DEF_DIRECTIVE,
+        MermaidTokenType.CLASS_DIRECTIVE,
+        MermaidTokenType.STYLE_DIRECTIVE,
+        MermaidTokenType.LINK_STYLE_DIRECTIVE,
+    ):
+        return len(tokens) < 3
+    return False
+
+
+def _is_html_label(value: str) -> bool:
+    stripped = value.strip().lower()
+    return (
+        stripped.startswith("<")
+        and stripped.endswith(">")
+        and any(character.isalpha() for character in stripped[1:-1])
+    )
+
+
+def _is_script_like_label(value: str) -> bool:
+    lowered = value.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "<script",
+            "javascript:",
+            "onerror=",
+            "onload=",
+            "{{",
+            "{%",
+        )
+    )
+
+
+def _is_external_link_token(value: str) -> bool:
+    lowered = value.lower()
+    return lowered.startswith(("http://", "https://", "mailto:"))
+
+
+def _has_token_type(
+    parse_result: MermaidParseResult,
+    token_type: MermaidTokenType,
+) -> bool:
+    return any(token.type == token_type for token in parse_result.cst.tokens)
+
+
+def _diagnostic_statement_has_shorthand(
+    parse_result: MermaidParseResult,
+    diagnostic: FlowDiagnostic,
+) -> bool:
+    if diagnostic.source_span is None:
+        return False
+    for statement in parse_result.cst.statements:
+        if (
+            statement.source_span.start_line
+            <= diagnostic.source_span.start_line
+            <= (
+                statement.source_span.end_line
+                or statement.source_span.start_line
+            )
+            and any(
+                token.type == MermaidTokenType.SHORTHAND_SEPARATOR
+                for token in statement.tokens
+            )
+        ):
+            return True
+    return False
 
 
 def _is_identifier_start(value: str) -> bool:
@@ -1242,6 +1604,8 @@ def _token_type_for_identifier(
             return MermaidTokenType.SUBGRAPH
         case "end":
             return MermaidTokenType.END
+        case "classDef":
+            return MermaidTokenType.CLASS_DEF_DIRECTIVE
         case "class":
             return MermaidTokenType.CLASS_DIRECTIVE
         case "style":
