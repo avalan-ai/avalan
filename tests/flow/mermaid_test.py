@@ -6,9 +6,24 @@ from avalan.flow import (
     FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
     FlowSourceSpan,
+    MermaidAst,
+    MermaidAstComment,
+    MermaidAstDirective,
+    MermaidAstDirectiveKind,
+    MermaidAstEdge,
+    MermaidAstEdgeStatement,
+    MermaidAstNode,
+    MermaidAstNodeStatement,
+    MermaidAstSubgraph,
+    MermaidCst,
+    MermaidCstStatement,
+    MermaidDiagramKind,
+    MermaidParseResult,
     MermaidToken,
     MermaidTokenizationResult,
     MermaidTokenType,
+    parse_mermaid,
+    parse_mermaid_tokens,
     tokenize_mermaid,
 )
 
@@ -310,6 +325,372 @@ class MermaidTokenizerTestCase(TestCase):
                     MermaidTokenizationResult(**case)  # type: ignore[arg-type]
 
 
+class MermaidParserTestCase(TestCase):
+    def test_parse_mermaid_builds_cst_and_ast_for_supported_constructs(
+        self,
+    ) -> None:
+        result = parse_mermaid(
+            "\n".join(
+                (
+                    "flowchart LR",
+                    '  A(["Start"]) -->|yes| B{`Check`};',
+                    "  B -.-> C --> D",
+                    "  subgraph lane[Ops]",
+                    "    C --> D",
+                    "    class C active",
+                    "    style D fill:#fff,stroke:#333",
+                    "    linkStyle 0 stroke:#f00",
+                    "    %% inner note",
+                    "  end",
+                )
+            ),
+            source="/private/customer/diagram.mmd",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
+        self.assertEqual(result.ast.diagram_kind, MermaidDiagramKind.FLOWCHART)
+        self.assertEqual(result.ast.direction, "LR")
+        self.assertGreaterEqual(len(result.cst.statements), 9)
+        first_edge = result.ast.statements[0]
+        self.assertIsInstance(first_edge, MermaidAstEdgeStatement)
+        assert isinstance(first_edge, MermaidAstEdgeStatement)
+        self.assertEqual([node.id for node in first_edge.nodes], ["A", "B"])
+        self.assertEqual(first_edge.nodes[0].label, "Start")
+        self.assertEqual(
+            first_edge.nodes[0].shape_tokens, ("(", "[", "]", ")")
+        )
+        self.assertEqual(first_edge.edges[0].label, "yes")
+        chained = result.ast.statements[1]
+        self.assertIsInstance(chained, MermaidAstEdgeStatement)
+        assert isinstance(chained, MermaidAstEdgeStatement)
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in chained.edges],
+            [("B", "C"), ("C", "D")],
+        )
+        subgraph = result.ast.statements[2]
+        self.assertIsInstance(subgraph, MermaidAstSubgraph)
+        assert isinstance(subgraph, MermaidAstSubgraph)
+        self.assertEqual(subgraph.id, "lane")
+        self.assertEqual(subgraph.label, "Ops")
+        self.assertEqual(
+            [type(statement) for statement in subgraph.statements],
+            [
+                MermaidAstEdgeStatement,
+                MermaidAstDirective,
+                MermaidAstDirective,
+                MermaidAstDirective,
+                MermaidAstComment,
+            ],
+        )
+        self.assertEqual(result.public_diagnostics, ())
+
+    def test_parse_mermaid_supports_node_only_and_comments(self) -> None:
+        result = parse_mermaid("graph TD\n%% keep\nA[`Only node`]")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.ast.diagram_kind, MermaidDiagramKind.GRAPH)
+        self.assertIsInstance(result.ast.statements[0], MermaidAstComment)
+        self.assertIsInstance(
+            result.ast.statements[1], MermaidAstNodeStatement
+        )
+        node_statement = result.ast.statements[1]
+        assert isinstance(node_statement, MermaidAstNodeStatement)
+        self.assertEqual(node_statement.node.id, "A")
+        self.assertEqual(node_statement.node.label, "Only node")
+
+    def test_parse_mermaid_preserves_unsupported_construct_diagnostics(
+        self,
+    ) -> None:
+        result = parse_mermaid(
+            "\n".join(
+                (
+                    "sequenceDiagram",
+                    "click A call callback()",
+                )
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.mermaid.parser.unsupported_construct",
+                "flow.mermaid.parser.unsupported_construct",
+                "flow.mermaid.parser.missing_header",
+            ],
+        )
+        self.assertEqual(
+            [statement.kind for statement in result.ast.statements],
+            [
+                MermaidAstDirectiveKind.UNSUPPORTED,
+                MermaidAstDirectiveKind.UNSAFE,
+            ],
+        )
+
+    def test_parse_mermaid_reports_unbalanced_subgraphs(self) -> None:
+        cases = (
+            ("graph TD\nend", "flow.mermaid.parser.unbalanced_subgraph"),
+            (
+                "graph TD\nsubgraph lane\nA --> B",
+                "flow.mermaid.parser.unclosed_subgraph",
+            ),
+            (
+                "graph TD\nsubgraph\nA --> B\nend",
+                "flow.mermaid.parser.missing_subgraph_id",
+            ),
+            ('graph TD\nsubgraph "Ops"\nA --> B\nend', None),
+        )
+
+        for text, code in cases:
+            with self.subTest(code=code):
+                result = parse_mermaid(text)
+
+                if code is None:
+                    self.assertTrue(result.ok)
+                    subgraph = result.ast.statements[0]
+                    self.assertIsInstance(subgraph, MermaidAstSubgraph)
+                    assert isinstance(subgraph, MermaidAstSubgraph)
+                    self.assertEqual(subgraph.id, "Ops")
+                    continue
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_parse_mermaid_reports_unclosed_label_diagnostics(self) -> None:
+        result = parse_mermaid('graph TD\nA["unterminated')
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.diagnostics[0].code,
+            "flow.mermaid.parser.unclosed_quoted_label",
+        )
+        self.assertEqual(result.cst.diagnostics, result.diagnostics[:1])
+
+    def test_parse_mermaid_reports_unknown_statements(self) -> None:
+        cases = (
+            "graph TD\nA B",
+            "graph TD\nTD",
+            "graph TD\nA -->",
+            "graph TD\nA[One Two]",
+            "graph TD\ngraph LR",
+        )
+
+        for text in cases:
+            with self.subTest(text=text):
+                result = parse_mermaid(text)
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    result.diagnostics[0].code,
+                    (
+                        "flow.mermaid.parser.unsupported_statement",
+                        "flow.mermaid.parser.duplicate_header",
+                    ),
+                )
+
+    def test_parse_mermaid_accepts_empty_input(self) -> None:
+        result = parse_mermaid("")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.cst.tokens, ())
+        self.assertEqual(result.cst.statements, ())
+        self.assertEqual(result.ast.statements, ())
+        self.assertIsNone(result.ast.diagram_kind)
+
+    def test_parse_mermaid_tokens_builds_cst_without_tokenizing_text(
+        self,
+    ) -> None:
+        tokenization = tokenize_mermaid("graph TD\nA --> B")
+        cst = parse_mermaid_tokens(tokenization.tokens)
+
+        self.assertTrue(cst.ok)
+        self.assertEqual(len(cst.statements), 2)
+        self.assertEqual(
+            _significant_values(cst.statements[1]),
+            ["A", "-->", "B"],
+        )
+
+    def test_parse_mermaid_rejects_invalid_arguments(self) -> None:
+        span = FlowSourceSpan(start_line=1, start_column=1)
+        token = MermaidToken(
+            type=MermaidTokenType.IDENTIFIER,
+            value="A",
+            source_span=span,
+        )
+
+        with self.assertRaises(AssertionError):
+            parse_mermaid(1)  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            parse_mermaid("graph TD", source="")
+        with self.assertRaises(AssertionError):
+            parse_mermaid_tokens([token])  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            parse_mermaid_tokens((object(),))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            parse_mermaid_tokens((token,), diagnostics=[])  # type: ignore[arg-type]
+
+    def test_parser_entities_are_frozen_and_validated(self) -> None:
+        span = FlowSourceSpan(start_line=1, start_column=1)
+        diagnostic = FlowDiagnostic(
+            code="flow.mermaid.parser.invalid",
+            category=FlowDiagnosticCategory.MERMAID_PARSER,
+            source_span=span,
+            message="Invalid Mermaid.",
+        )
+        token = MermaidToken(
+            type=MermaidTokenType.IDENTIFIER,
+            value="A",
+            source_span=span,
+        )
+        cst_statement = MermaidCstStatement(tokens=(token,), source_span=span)
+        cst = MermaidCst(
+            tokens=(token,),
+            statements=(cst_statement,),
+            diagnostics=(diagnostic,),
+        )
+        node = MermaidAstNode(id="A", source_span=span)
+        node_statement = MermaidAstNodeStatement(node=node, source_span=span)
+        edge = MermaidAstEdge(
+            source="A",
+            target="B",
+            arrow="-->",
+            source_span=span,
+        )
+        edge_statement = MermaidAstEdgeStatement(
+            nodes=(node, MermaidAstNode(id="B", source_span=span)),
+            edges=(edge,),
+            source_span=span,
+        )
+        directive = MermaidAstDirective(
+            kind=MermaidAstDirectiveKind.CLASS,
+            arguments=("A", "active"),
+            source_span=span,
+        )
+        comment = MermaidAstComment(text="note", source_span=span)
+        subgraph = MermaidAstSubgraph(
+            id="lane",
+            statements=(edge_statement, directive, comment),
+            source_span=span,
+        )
+        ast = MermaidAst(
+            diagram_kind=MermaidDiagramKind.GRAPH,
+            direction="TD",
+            statements=(node_statement, subgraph),
+            diagnostics=(diagnostic,),
+            source_span=span,
+        )
+        result = MermaidParseResult(
+            cst=cst,
+            ast=ast,
+            diagnostics=(diagnostic,),
+        )
+
+        self.assertFalse(cst.ok)
+        self.assertFalse(ast.ok)
+        self.assertFalse(result.ok)
+        self.assertEqual(cst.public_diagnostics[0]["code"], diagnostic.code)
+        self.assertEqual(ast.public_diagnostics[0]["code"], diagnostic.code)
+        self.assertEqual(result.public_diagnostics[0]["code"], diagnostic.code)
+        with self.assertRaises(FrozenInstanceError):
+            node.id = "B"  # type: ignore[misc]
+
+    def test_parser_entities_reject_invalid_values(self) -> None:
+        span = FlowSourceSpan(start_line=1, start_column=1)
+        token = MermaidToken(
+            type=MermaidTokenType.IDENTIFIER,
+            value="A",
+            source_span=span,
+        )
+        whitespace = MermaidToken(
+            type=MermaidTokenType.WHITESPACE,
+            value=" ",
+            source_span=span,
+        )
+        node = MermaidAstNode(id="A", source_span=span)
+        edge = MermaidAstEdge(
+            source="A",
+            target="B",
+            arrow="-->",
+            source_span=span,
+        )
+        cst = MermaidCst()
+        ast = MermaidAst()
+        invalid_cases = (
+            (MermaidCstStatement, {"tokens": (), "source_span": span}),
+            (MermaidCstStatement, {"tokens": [token], "source_span": span}),
+            (
+                MermaidCstStatement,
+                {"tokens": (whitespace,), "source_span": span},
+            ),
+            (MermaidCst, {"tokens": [token]}),
+            (MermaidCst, {"statements": (object(),)}),
+            (MermaidAstNode, {"id": ""}),
+            (MermaidAstNode, {"id": "A", "label": ""}),
+            (MermaidAstNode, {"id": "A", "shape_tokens": ["["]}),
+            (MermaidAstNodeStatement, {"node": object(), "source_span": span}),
+            (MermaidAstEdge, {"source": "", "target": "B", "arrow": "-->"}),
+            (MermaidAstEdge, {"source": "A", "target": "", "arrow": "-->"}),
+            (MermaidAstEdge, {"source": "A", "target": "B", "arrow": ""}),
+            (
+                MermaidAstEdge,
+                {"source": "A", "target": "B", "arrow": "-->", "label": ""},
+            ),
+            (
+                MermaidAstEdgeStatement,
+                {"nodes": (node,), "edges": (edge,), "source_span": span},
+            ),
+            (
+                MermaidAstEdgeStatement,
+                {
+                    "nodes": (node, object()),
+                    "edges": (edge,),
+                    "source_span": span,
+                },
+            ),
+            (
+                MermaidAstEdgeStatement,
+                {"nodes": (node, node), "edges": (), "source_span": span},
+            ),
+            (MermaidAstDirective, {"kind": "class", "source_span": span}),
+            (
+                MermaidAstDirective,
+                {
+                    "kind": MermaidAstDirectiveKind.CLASS,
+                    "arguments": ["A"],
+                    "source_span": span,
+                },
+            ),
+            (MermaidAstComment, {"text": 1, "source_span": span}),
+            (MermaidAstSubgraph, {"id": "", "source_span": span}),
+            (
+                MermaidAstSubgraph,
+                {"id": "lane", "label": "", "source_span": span},
+            ),
+            (
+                MermaidAstSubgraph,
+                {"id": "lane", "statements": (object(),), "source_span": span},
+            ),
+            (MermaidAst, {"diagram_kind": "graph"}),
+            (MermaidAst, {"direction": ""}),
+            (MermaidAst, {"statements": (object(),)}),
+            (MermaidAst, {"diagnostics": [object()]}),
+            (MermaidParseResult, {"cst": object(), "ast": ast}),
+            (MermaidParseResult, {"cst": cst, "ast": object()}),
+            (
+                MermaidParseResult,
+                {"cst": cst, "ast": ast, "diagnostics": [object()]},
+            ),
+        )
+
+        for cls, kwargs in invalid_cases:
+            with self.subTest(cls=cls, kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    cls(**kwargs)  # type: ignore[operator]
+
+
 def _single_token(
     result: MermaidTokenizationResult,
     token_type: MermaidTokenType,
@@ -324,6 +705,15 @@ def _count_tokens(
     token_type: MermaidTokenType,
 ) -> int:
     return len([token for token in result.tokens if token.type == token_type])
+
+
+def _significant_values(statement: MermaidCstStatement) -> list[str]:
+    return [
+        token.value
+        for token in statement.tokens
+        if token.type
+        not in (MermaidTokenType.WHITESPACE, MermaidTokenType.SEMICOLON)
+    ]
 
 
 if __name__ == "__main__":
