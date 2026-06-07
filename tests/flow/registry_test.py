@@ -314,6 +314,165 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(KeyError):
             await select_node.execute_async({"input": {"answer": "ok"}})
 
+    async def test_native_strict_nodes_execute_data_primitives(self) -> None:
+        registry = default_flow_node_registry()
+        input_node = registry.build(
+            FlowNodeDefinition(name="raw", type="input")
+        )
+        passthrough = registry.build(
+            FlowNodeDefinition(name="pass", type="pass-through")
+        )
+        select_node = registry.build(
+            FlowNodeDefinition(name="project", type="select")
+        )
+        validation = registry.build(
+            FlowNodeDefinition(
+                name="check",
+                type="validation",
+                config={
+                    "value_type": "object",
+                    "required_fields": ("name",),
+                },
+            )
+        )
+        decision = registry.build(
+            FlowNodeDefinition(name="decide", type="decision")
+        )
+        notification = registry.build(
+            FlowNodeDefinition(
+                name="notice",
+                type="notification",
+                config={"channel": "audit"},
+            )
+        )
+        default_notification = registry.build(
+            FlowNodeDefinition(name="notice_default", type="notification")
+        )
+        join = registry.build(FlowNodeDefinition(name="join", type="join"))
+
+        value = {"name": "Ada", "approved": True}
+
+        self.assertEqual(
+            await input_node.execute_async({"value": value}), value
+        )
+        self.assertEqual(
+            await passthrough.execute_async({"value": value}), value
+        )
+        self.assertEqual(
+            await select_node.execute_async({"value": value}), value
+        )
+        self.assertEqual(
+            await validation.execute_async({"value": value}), value
+        )
+        self.assertEqual(await decision.execute_async({"value": value}), value)
+        self.assertEqual(
+            await notification.execute_async({"value": value}),
+            {
+                "status": "notified",
+                "payload": value,
+                "channel": "audit",
+            },
+        )
+        self.assertEqual(
+            await default_notification.execute_async({"value": value}),
+            {"status": "notified", "payload": value},
+        )
+        self.assertEqual(
+            await join.execute_async({"left": "L", "right": "R"}),
+            {"left": "L", "right": "R"},
+        )
+
+    async def test_native_validation_node_supports_value_types(self) -> None:
+        cases: tuple[tuple[str, object], ...] = (
+            ("array", ["one"]),
+            ("boolean", True),
+            ("integer", 1),
+            ("null", None),
+            ("number", 1.5),
+            ("string", "ready"),
+        )
+        registry = default_flow_node_registry()
+
+        for value_type, value in cases:
+            with self.subTest(value_type=value_type):
+                node = registry.build(
+                    FlowNodeDefinition(
+                        name="check",
+                        type="validation",
+                        config={"value_type": value_type},
+                    )
+                )
+
+                self.assertEqual(
+                    await node.execute_async({"value": value}),
+                    value,
+                )
+
+    async def test_native_strict_nodes_reject_invalid_config(self) -> None:
+        cases = (
+            FlowNodeDefinition(
+                name="project",
+                type="select",
+                config={"path": ""},
+            ),
+            FlowNodeDefinition(
+                name="check",
+                type="validation",
+                config={"required_fields": "name"},
+            ),
+            FlowNodeDefinition(
+                name="check",
+                type="validation",
+                config={"required_fields": ("",)},
+            ),
+            FlowNodeDefinition(
+                name="check",
+                type="validation",
+                config={"value_type": "unsupported"},
+            ),
+            FlowNodeDefinition(
+                name="notice",
+                type="notification",
+                config={"channel": ""},
+            ),
+        )
+        registry = default_flow_node_registry()
+
+        for definition in cases:
+            with self.subTest(node=definition.name, type=definition.type):
+                with self.assertRaises(FlowNodeConfigurationError):
+                    await registry.build(definition).execute_async(
+                        {"value": {"name": "Ada"}}
+                    )
+
+    async def test_native_validation_node_rejects_invalid_values(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FlowNodeDefinition(
+                    name="check",
+                    type="validation",
+                    config={"value_type": "object"},
+                ),
+                {"value": "not-object"},
+            ),
+            (
+                FlowNodeDefinition(
+                    name="check",
+                    type="validation",
+                    config={"required_fields": ("name",)},
+                ),
+                {"value": "not-object"},
+            ),
+        )
+        registry = default_flow_node_registry()
+
+        for definition, inputs in cases:
+            with self.subTest(config=definition.config):
+                with self.assertRaises(FlowNodeConfigurationError):
+                    await registry.build(definition).execute_async(inputs)
+
     def test_registry_exposes_node_metadata(self) -> None:
         registry = default_flow_node_registry()
 
@@ -325,11 +484,26 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
         echo_input = registry.input_contract("echo")
         echo_output = registry.output_contract("echo")
         echo_metadata = registry.metadata("echo")
+        decision_metadata = registry.metadata("decision")
+        join_metadata = registry.metadata("join")
+        notification_metadata = registry.metadata("notification")
+        validation_metadata = registry.metadata("validation")
 
         assert echo_input is not None
         assert echo_output is not None
         assert echo_metadata is not None
+        assert decision_metadata is not None
+        assert join_metadata is not None
+        assert notification_metadata is not None
+        assert validation_metadata is not None
         self.assertEqual(echo_metadata.kind, FlowNodeKind.PASS_THROUGH)
+        self.assertEqual(decision_metadata.kind, FlowNodeKind.DECISION)
+        self.assertEqual(join_metadata.kind, FlowNodeKind.JOIN)
+        self.assertEqual(
+            notification_metadata.kind,
+            FlowNodeKind.NOTIFICATION,
+        )
+        self.assertEqual(validation_metadata.kind, FlowNodeKind.VALIDATION)
         self.assertIn(
             FlowNodeCapability.DIRECT_ASYNC,
             echo_metadata.capabilities,
