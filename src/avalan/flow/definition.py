@@ -28,6 +28,14 @@ class FlowOutputType(StrEnum):
     FILE_ARRAY = "file[]"
 
 
+class FlowEntryBehaviorType(StrEnum):
+    NODE = "node"
+
+
+class FlowOutputBehaviorType(StrEnum):
+    MAP = "map"
+
+
 def _empty_mapping() -> FlowMetadata:
     return MappingProxyType({})
 
@@ -59,6 +67,16 @@ def _assert_string_tuple(values: tuple[str, ...], field_name: str) -> None:
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
         _assert_non_empty_string(value, field_name)
+
+
+def _freeze_string_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
+    assert isinstance(value, Mapping), "mapping must be a mapping"
+    frozen: dict[str, str] = {}
+    for key, item in value.items():
+        _assert_non_empty_string(key, "mapping key")
+        _assert_non_empty_string(item, f"mapping.{key}")
+        frozen[key] = item
+    return MappingProxyType(frozen)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -93,6 +111,28 @@ class FlowOutputDefinition:
             object.__setattr__(self, "schema", _freeze_mapping(self.schema))
         if self.schema_ref is not None:
             _assert_non_empty_string(self.schema_ref, "schema_ref")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowEntryBehavior:
+    node: str
+    type: FlowEntryBehaviorType = FlowEntryBehaviorType.NODE
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.type, FlowEntryBehaviorType)
+        _assert_non_empty_string(self.node, "node")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowOutputBehavior:
+    outputs: Mapping[str, str]
+    type: FlowOutputBehaviorType = FlowOutputBehaviorType.MAP
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.type, FlowOutputBehaviorType)
+        object.__setattr__(
+            self, "outputs", _freeze_string_mapping(self.outputs)
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -172,29 +212,66 @@ class FlowEdgeDefinition:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FlowDefinition:
     name: str
-    entrypoint: str
-    output_node: str
+    nodes: tuple[FlowNodeDefinition, ...]
+    entrypoint: str | None = None
+    output_node: str | None = None
     version: str | None = None
+    revision: str | None = None
     description: str | None = None
     input: FlowInputDefinition | None = None
+    inputs: tuple[FlowInputDefinition, ...] = ()
     output: FlowOutputDefinition | None = None
+    outputs: tuple[FlowOutputDefinition, ...] = ()
+    entry_behavior: FlowEntryBehavior | None = None
+    output_behavior: FlowOutputBehavior | None = None
+    runtime_limits: FlowMetadata = field(default_factory=_empty_mapping)
+    privacy_policy: FlowMetadata = field(default_factory=_empty_mapping)
+    observability_policy: FlowMetadata = field(default_factory=_empty_mapping)
+    tags: tuple[str, ...] = ()
+    ownership: FlowMetadata = field(default_factory=_empty_mapping)
     variables: FlowMetadata = field(default_factory=_empty_mapping)
-    nodes: tuple[FlowNodeDefinition, ...]
     edges: tuple[FlowEdgeDefinition, ...] = ()
     definition_base: Path | None = None
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.name, "name")
-        _assert_non_empty_string(self.entrypoint, "entrypoint")
-        _assert_non_empty_string(self.output_node, "output_node")
+        if self.entrypoint is not None:
+            _assert_non_empty_string(self.entrypoint, "entrypoint")
+        if self.output_node is not None:
+            _assert_non_empty_string(self.output_node, "output_node")
         if self.version is not None:
             _assert_non_empty_string(self.version, "version")
+        if self.revision is not None:
+            _assert_non_empty_string(self.revision, "revision")
         if self.description is not None:
             _assert_non_empty_string(self.description, "description")
         if self.input is not None:
             assert isinstance(self.input, FlowInputDefinition)
+        assert isinstance(self.inputs, tuple)
+        for input_definition in self.inputs:
+            assert isinstance(input_definition, FlowInputDefinition)
         if self.output is not None:
             assert isinstance(self.output, FlowOutputDefinition)
+        assert isinstance(self.outputs, tuple)
+        for output_definition in self.outputs:
+            assert isinstance(output_definition, FlowOutputDefinition)
+        if self.entry_behavior is not None:
+            assert isinstance(self.entry_behavior, FlowEntryBehavior)
+        if self.output_behavior is not None:
+            assert isinstance(self.output_behavior, FlowOutputBehavior)
+        object.__setattr__(
+            self, "runtime_limits", _freeze_mapping(self.runtime_limits)
+        )
+        object.__setattr__(
+            self, "privacy_policy", _freeze_mapping(self.privacy_policy)
+        )
+        object.__setattr__(
+            self,
+            "observability_policy",
+            _freeze_mapping(self.observability_policy),
+        )
+        _assert_string_tuple(self.tags, "tags")
+        object.__setattr__(self, "ownership", _freeze_mapping(self.ownership))
         object.__setattr__(self, "variables", _freeze_mapping(self.variables))
         assert isinstance(self.nodes, tuple)
         for node in self.nodes:
@@ -208,3 +285,18 @@ class FlowDefinition:
     @property
     def node_map(self) -> Mapping[str, FlowNodeDefinition]:
         return MappingProxyType({node.name: node for node in self.nodes})
+
+    @property
+    def is_strict(self) -> bool:
+        return bool(
+            self.revision is not None
+            or self.inputs
+            or self.outputs
+            or self.entry_behavior is not None
+            or self.output_behavior is not None
+            or self.runtime_limits
+            or self.privacy_policy
+            or self.observability_policy
+            or self.tags
+            or self.ownership
+        )

@@ -5,9 +5,15 @@ from avalan.flow import (
     FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowEdgeDefinition,
+    FlowEntryBehavior,
+    FlowInputDefinition,
+    FlowInputType,
     FlowNodeDefinition,
     FlowNodeMetadata,
     FlowNodeRegistry,
+    FlowOutputBehavior,
+    FlowOutputDefinition,
+    FlowOutputType,
     FlowValidationResult,
     validate_flow_definition,
 )
@@ -33,6 +39,235 @@ class FlowValidatorTestCase(TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.diagnostics, ())
         self.assertEqual(result.public_diagnostics, ())
+
+    def test_validate_flow_definition_accepts_strict_definition(self) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "finish.result"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="prepare", type="input"),
+                    FlowNodeDefinition(name="start", type="echo"),
+                    FlowNodeDefinition(name="finish", type="echo"),
+                ),
+                edges=(
+                    FlowEdgeDefinition(source="prepare", target="start"),
+                    FlowEdgeDefinition(source="start", target="finish"),
+                ),
+            )
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
+
+    def test_validate_flow_definition_accepts_revision_identity(self) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                revision="rev-1",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "start.result"},
+                ),
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_strict_contract_gaps(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                runtime_limits={"timeout_seconds": 30},
+                input=FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                ),
+                output=FlowOutputDefinition(
+                    name="result",
+                    type=FlowOutputType.OBJECT,
+                ),
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.STRING,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.JSON,
+                    ),
+                ),
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.missing_identity",
+                "flow.scalar_input_alias",
+                "flow.scalar_output_alias",
+                "flow.duplicate_input",
+                "flow.duplicate_output",
+                "flow.missing_entry_behavior",
+                "flow.missing_output_behavior",
+            ],
+        )
+
+    def test_validate_flow_definition_rejects_unknown_strict_references(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                    FlowOutputDefinition(
+                        name="audit",
+                        type=FlowOutputType.JSON,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="missing"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={
+                        "answer": "missing.result",
+                        "extra": "start.result",
+                    },
+                ),
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.unknown_entry_node",
+                "flow.unknown_output",
+                "flow.missing_output_selection",
+                "flow.unknown_output_selector_node",
+            ],
+        )
+
+    def test_validate_flow_definition_rejects_invalid_output_selector(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "start"},
+                ),
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.invalid_output_selector"],
+        )
+
+    def test_validate_flow_definition_rejects_topology_output_inference(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                output_node="finish",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                nodes=(
+                    FlowNodeDefinition(name="start", type="echo"),
+                    FlowNodeDefinition(name="finish", type="echo"),
+                ),
+                edges=(FlowEdgeDefinition(source="start", target="finish"),),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.missing_output_behavior"],
+        )
 
     def test_validation_result_requires_diagnostic_tuple(self) -> None:
         diagnostic = FlowDiagnostic(
@@ -106,6 +341,41 @@ class FlowValidatorTestCase(TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.diagnostics[0].code, "flow.duplicate_node")
         self.assertEqual(result.diagnostics[0].path, "nodes.start")
+
+    def test_validate_flow_definition_rejects_missing_legacy_run_fields(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="missing",
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.missing_entrypoint", "flow.missing_output_node"],
+        )
+
+    def test_validate_flow_definition_rejects_missing_strict_contracts(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(outputs={}),
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.missing_inputs", "flow.missing_outputs"],
+        )
 
     def test_validate_flow_definition_rejects_private_refs(self) -> None:
         registry = FlowNodeRegistry(

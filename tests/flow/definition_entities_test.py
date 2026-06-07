@@ -5,11 +5,15 @@ from unittest import TestCase, main
 from avalan.flow import (
     FlowDefinition,
     FlowEdgeDefinition,
+    FlowEntryBehavior,
+    FlowEntryBehaviorType,
     FlowInputDefinition,
     FlowInputType,
     FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeMetadata,
+    FlowOutputBehavior,
+    FlowOutputBehaviorType,
     FlowOutputDefinition,
     FlowOutputType,
 )
@@ -22,6 +26,7 @@ class FlowDefinitionTestCase(TestCase):
         definition = FlowDefinition(
             name="flow",
             version="1",
+            revision="r1",
             description="A test flow",
             entrypoint="start",
             output_node="start",
@@ -36,6 +41,27 @@ class FlowDefinitionTestCase(TestCase):
                 type=FlowOutputType.OBJECT,
                 schema={"type": "object"},
             ),
+            inputs=(
+                FlowInputDefinition(
+                    name="strict_payload",
+                    type=FlowInputType.OBJECT,
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="strict_result",
+                    type=FlowOutputType.OBJECT,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="start"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"strict_result": "start.result"},
+            ),
+            runtime_limits={"timeout_seconds": 30},
+            privacy_policy={"store_raw": False},
+            observability_policy={"events": ["node"]},
+            tags=("ops",),
+            ownership={"team": "platform"},
             variables=variables,
             nodes=(
                 FlowNodeDefinition(
@@ -65,6 +91,23 @@ class FlowDefinitionTestCase(TestCase):
             "en",
         )
         self.assertEqual(definition.variables["items"], ("draft",))
+        self.assertEqual(definition.revision, "r1")
+        self.assertEqual(definition.inputs[0].name, "strict_payload")
+        self.assertEqual(definition.outputs[0].name, "strict_result")
+        self.assertEqual(
+            definition.entry_behavior,
+            FlowEntryBehavior(node="start"),
+        )
+        self.assertEqual(
+            definition.output_behavior,
+            FlowOutputBehavior(outputs={"strict_result": "start.result"}),
+        )
+        self.assertEqual(definition.runtime_limits["timeout_seconds"], 30)
+        self.assertEqual(definition.privacy_policy["store_raw"], False)
+        self.assertEqual(definition.observability_policy["events"], ("node",))
+        self.assertEqual(definition.tags, ("ops",))
+        self.assertEqual(definition.ownership["team"], "platform")
+        self.assertTrue(definition.is_strict)
         self.assertEqual(
             cast(dict[str, object], definition.nodes[0].config["value"])[
                 "answer"
@@ -95,10 +138,44 @@ class FlowDefinitionTestCase(TestCase):
         with self.assertRaises(AssertionError):
             FlowDefinition(
                 name="flow",
-                entrypoint="start",
-                output_node="start",
                 nodes=(object(),),  # type: ignore[arg-type]
             )
+        with self.assertRaises(AssertionError):
+            FlowDefinition(
+                name="flow",
+                nodes=(),
+                inputs=(object(),),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowDefinition(
+                name="flow",
+                nodes=(),
+                outputs=(object(),),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowEntryBehavior(
+                type="node",  # type: ignore[arg-type]
+                node="start",
+            )
+        with self.assertRaises(AssertionError):
+            FlowEntryBehavior(node="")
+        with self.assertRaises(AssertionError):
+            FlowOutputBehavior(
+                type="map",  # type: ignore[arg-type]
+                outputs={"result": "start.value"},
+            )
+        with self.assertRaises(AssertionError):
+            FlowOutputBehavior(outputs={"": "start.value"})
+        with self.assertRaises(AssertionError):
+            FlowDefinition(
+                name="flow",
+                nodes=(),
+                tags=["ops"],  # type: ignore[arg-type]
+            )
+
+    def test_behavior_type_enums_are_stable(self) -> None:
+        self.assertEqual(FlowEntryBehaviorType.NODE.value, "node")
+        self.assertEqual(FlowOutputBehaviorType.MAP.value, "map")
 
     def test_node_metadata_is_frozen_and_copy_nested_mappings(self) -> None:
         schema = {"type": "object", "properties": {"name": {"type": "str"}}}
