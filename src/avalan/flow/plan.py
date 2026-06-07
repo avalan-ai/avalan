@@ -344,6 +344,15 @@ class FlowExecutionPlan:
             {source: tuple(edges) for source, edges in sorted(grouped.items())}
         )
 
+    @property
+    def edges_by_target(self) -> Mapping[str, tuple[FlowEdgePlan, ...]]:
+        grouped: dict[str, list[FlowEdgePlan]] = {}
+        for edge in self.edges:
+            grouped.setdefault(edge.target, []).append(edge)
+        return MappingProxyType(
+            {target: tuple(edges) for target, edges in sorted(grouped.items())}
+        )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FlowPlanCompileResult:
