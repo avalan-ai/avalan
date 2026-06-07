@@ -22,15 +22,19 @@ from avalan.flow import (
     FlowMappingKind,
     FlowMappingPlan,
     FlowNodeContract,
+    FlowNodeExecutionError,
     FlowNodeKind,
     FlowNodePlan,
     FlowNodeState,
     FlowOutputDefinition,
     FlowOutputType,
     FlowPlanExecutionResult,
+    FlowRetryBackoffStrategy,
+    FlowRetryPlan,
     FlowRouteMatchPolicy,
     FlowRuntimeContext,
     FlowRuntimeEvaluationError,
+    FlowTimeoutPlan,
     evaluate_flow_condition_plan,
     evaluate_flow_mappings,
     evaluate_flow_node_mappings,
@@ -39,6 +43,7 @@ from avalan.flow import (
     parse_flow_selector,
     resolve_flow_selector_value,
 )
+from avalan.flow.runtime import _retry_delay_seconds
 
 
 class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
@@ -495,6 +500,311 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             "flow.condition_missing_value",
         )
 
+    async def test_execute_flow_plan_retries_transient_failure(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "start" and calls.count("start") == 1:
+                raise FlowNodeExecutionError(
+                    code="flow.execution.transient_node_error",
+                    message="Flow node had a transient failure.",
+                    hint="Retry the node.",
+                    failure_category="transient",
+                )
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "finish.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(
+                        max_attempts=2,
+                        backoff=FlowRetryBackoffStrategy.CONSTANT,
+                        initial_delay_seconds=0.001,
+                        retryable_categories=("transient",),
+                    ),
+                ),
+                self._node("finish"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="finish",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": "finish"})
+        self.assertEqual(calls, ["start", "start", "finish"])
+        self.assertEqual(
+            self._node_attempts(result),
+            {"start": 2, "finish": 1},
+        )
+        self.assertEqual(result.public_diagnostics, ())
+
+    async def test_execute_flow_plan_retry_exhaustion_uses_fallback(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "start":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.provider_unavailable",
+                    message="Flow node provider is unavailable.",
+                    hint="Use the declared fallback route.",
+                    failure_category="transient",
+                )
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "fallback.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(
+                        max_attempts=2,
+                        retryable_categories=("transient",),
+                        exhausted_route="fallback",
+                    ),
+                ),
+                self._node("generic"),
+                self._node("fallback"),
+                self._node("cleanup"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="generic",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+                FlowEdgePlan(
+                    index=1,
+                    source="start",
+                    target="fallback",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+                FlowEdgePlan(
+                    index=2,
+                    source="start",
+                    target="cleanup",
+                    kind=FlowEdgeKind.FINALLY,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "fallback"})
+        self.assertEqual(calls, ["start", "start", "fallback", "cleanup"])
+        self.assertEqual(self._node_attempts(result)["start"], 2)
+        self.assertEqual(
+            self._edge_states(result),
+            {
+                0: FlowEdgeState.SUPPRESSED,
+                1: FlowEdgeState.TAKEN,
+                2: FlowEdgeState.TAKEN,
+            },
+        )
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.provider_unavailable"],
+        )
+        self.assertNotIn("private", str(result.public_diagnostics))
+
+    async def test_execute_flow_plan_does_not_retry_validation_by_default(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "start":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.validation_failed",
+                    message="Flow node validation failed.",
+                    hint="Route to the validation fallback.",
+                    failure_category="validation",
+                )
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "handled.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(max_attempts=3),
+                ),
+                self._node("handled"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="handled",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "handled"})
+        self.assertEqual(calls, ["start", "handled"])
+        self.assertEqual(self._node_attempts(result)["start"], 1)
+        self.assertEqual(
+            result.public_diagnostics[0]["code"],
+            "flow.execution.validation_failed",
+        )
+
+    async def test_execute_flow_plan_does_not_retry_cancellation(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "start":
+                raise CancelledError("private cancellation details")
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "cancelled.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(max_attempts=3),
+                ),
+                self._node("cancelled"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="cancelled",
+                    kind=FlowEdgeKind.CANCELLATION,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "cancelled"})
+        self.assertEqual(calls, ["start", "cancelled"])
+        self.assertEqual(self._node_attempts(result)["start"], 1)
+        self.assertEqual(
+            result.public_diagnostics[0]["code"],
+            "flow.execution.node_cancelled",
+        )
+        self.assertNotIn("private cancellation details", str(result))
+
+    async def test_execute_flow_plan_respects_non_retryable_category(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "start":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.transient_blocked",
+                    message="Flow node failure is not retryable.",
+                    hint="Route to the error handler.",
+                    failure_category="transient",
+                )
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "handled.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(
+                        max_attempts=3,
+                        non_retryable_categories=("transient",),
+                    ),
+                ),
+                self._node("handled"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="handled",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "handled"})
+        self.assertEqual(calls, ["start", "handled"])
+        self.assertEqual(self._node_attempts(result)["start"], 1)
+        self.assertEqual(
+            result.public_diagnostics[0]["code"],
+            "flow.execution.transient_blocked",
+        )
+
+    async def test_execute_flow_plan_retries_per_attempt_timeout(
+        self,
+    ) -> None:
+        attempts = 0
+
+        async def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            nonlocal attempts
+            if node.name == "start":
+                attempts += 1
+                if attempts == 1:
+                    await sleep(0.02)
+                return "ready"
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "start.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(
+                        max_attempts=2,
+                        retryable_categories=("timeout",),
+                    ),
+                    timeout=FlowTimeoutPlan(per_attempt_seconds=0.001),
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": "ready"})
+        self.assertEqual(self._node_attempts(result)["start"], 2)
+        self.assertEqual(result.public_diagnostics, ())
+
     async def test_execute_flow_plan_checks_cancellation_between_nodes(
         self,
     ) -> None:
@@ -924,6 +1234,51 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                 node_outputs={"": {}},
             )
 
+    def test_retry_delay_seconds_handles_backoff_strategies(self) -> None:
+        cases = (
+            (
+                FlowRetryPlan(max_attempts=2),
+                1,
+                0,
+            ),
+            (
+                FlowRetryPlan(
+                    max_attempts=2,
+                    backoff=FlowRetryBackoffStrategy.CONSTANT,
+                    initial_delay_seconds=0.5,
+                ),
+                2,
+                0.5,
+            ),
+            (
+                FlowRetryPlan(
+                    max_attempts=3,
+                    backoff=FlowRetryBackoffStrategy.LINEAR,
+                    initial_delay_seconds=0.5,
+                    max_delay_seconds=0.75,
+                ),
+                2,
+                0.75,
+            ),
+            (
+                FlowRetryPlan(
+                    max_attempts=4,
+                    backoff=FlowRetryBackoffStrategy.EXPONENTIAL,
+                    initial_delay_seconds=0.5,
+                ),
+                3,
+                2,
+            ),
+        )
+
+        self.assertEqual(_retry_delay_seconds(None, 1), 0)
+        for retry, failed_attempts, expected in cases:
+            with self.subTest(backoff=retry.backoff.value):
+                self.assertEqual(
+                    _retry_delay_seconds(retry, failed_attempts),
+                    expected,
+                )
+
     def _plan(
         self,
         *,
@@ -1026,6 +1381,8 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         output_contracts: tuple[FlowNodeContract, ...] | None = None,
         mappings: tuple[FlowMappingPlan, ...] = (),
         join: FlowJoinPlan | None = None,
+        retry: FlowRetryPlan | None = None,
+        timeout: FlowTimeoutPlan | None = None,
     ) -> FlowNodePlan:
         return FlowNodePlan(
             name=name,
@@ -1033,6 +1390,8 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             kind=FlowNodeKind.PASS_THROUGH,
             mappings=mappings,
             join=join,
+            retry=retry,
+            timeout=timeout,
             output_contracts=(
                 (FlowNodeContract(name="value", type=FlowOutputType.JSON),)
                 if output_contracts is None
@@ -1064,6 +1423,12 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         result: FlowPlanExecutionResult,
     ) -> dict[int, FlowEdgeState]:
         return {trace.index: trace.state for trace in result.trace.edges}
+
+    def _node_attempts(
+        self,
+        result: FlowPlanExecutionResult,
+    ) -> dict[str, int]:
+        return {trace.node: trace.attempts for trace in result.trace.nodes}
 
 
 class FlowRuntimeEvaluationTestCase(TestCase):
