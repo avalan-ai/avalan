@@ -28,6 +28,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from inspect import isawaitable
+from time import monotonic
 from types import MappingProxyType
 from typing import TypeAlias
 
@@ -233,7 +234,7 @@ async def execute_flow_plan(
             batch_outcomes.extend(
                 await gather(
                     *(
-                        _run_plan_node(node, mapped_inputs, runner)
+                        _run_plan_node(node, mapped_inputs, runner, context)
                         for node, mapped_inputs in batch
                     )
                 )
@@ -310,6 +311,17 @@ async def _run_plan_node(
     node: FlowNodePlan,
     inputs: Mapping[str, object],
     runner: FlowPlanNodeRunner,
+    context: FlowRuntimeContext,
+) -> _NodeRunOutcome:
+    if node.loop is not None:
+        return await _run_loop_plan_node(node, inputs, runner, context)
+    return await _run_plan_node_attempts(node, inputs, runner)
+
+
+async def _run_plan_node_attempts(
+    node: FlowNodePlan,
+    inputs: Mapping[str, object],
+    runner: FlowPlanNodeRunner,
 ) -> _NodeRunOutcome:
     attempts = 0
     first_failure: _NodeRunOutcome | None = None
@@ -345,6 +357,125 @@ async def _run_plan_node(
         delay_seconds = _retry_delay_seconds(node.retry, attempts)
         if delay_seconds > 0:
             await sleep(delay_seconds)
+
+
+async def _run_loop_plan_node(
+    node: FlowNodePlan,
+    inputs: Mapping[str, object],
+    runner: FlowPlanNodeRunner,
+    base_context: FlowRuntimeContext,
+) -> _NodeRunOutcome:
+    assert node.loop is not None
+    started_at = monotonic()
+    attempts = 0
+    while True:
+        outcome = await _run_plan_node_attempts(node, inputs, runner)
+        attempts += outcome.attempts
+        if outcome.route_kind != FlowEdgeKind.SUCCESS:
+            return _NodeRunOutcome(
+                node=node,
+                state=outcome.state,
+                route_kind=outcome.route_kind,
+                attempts=attempts,
+                diagnostics=outcome.diagnostics,
+                failure_category=outcome.failure_category,
+                exhausted_route=outcome.exhausted_route,
+            )
+        node_outputs = dict(base_context.node_outputs)
+        node_outputs[node.name] = _node_output_mapping(node, outcome.output)
+        context = FlowRuntimeContext(
+            inputs=base_context.inputs,
+            node_outputs=node_outputs,
+        )
+        selected_output, diagnostic = _loop_selected_output(node, context)
+        if diagnostic is not None:
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.FAILED,
+                route_kind=FlowEdgeKind.ERROR,
+                attempts=attempts,
+                diagnostics=(diagnostic,),
+                failure_category="validation",
+            )
+        if selected_output is not _MISSING:
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.SUCCEEDED,
+                route_kind=FlowEdgeKind.SUCCESS,
+                attempts=attempts,
+                diagnostics=(),
+                output=selected_output,
+            )
+        if _loop_limit_reached(node, attempts, started_at):
+            diagnostic = _execution_diagnostic(
+                code="flow.execution.loop_limit_reached",
+                path=f"nodes.{node.name}.loop_policy",
+                message="Flow loop limit was reached.",
+                hint="Inspect the configured loop limit route.",
+            )
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.FAILED,
+                route_kind=FlowEdgeKind.ERROR,
+                attempts=attempts,
+                diagnostics=(diagnostic,),
+                failure_category="loop_limit",
+                exhausted_route=node.loop.limit_route,
+            )
+
+
+def _loop_selected_output(
+    node: FlowNodePlan,
+    context: FlowRuntimeContext,
+) -> tuple[object, FlowDiagnostic | None]:
+    assert node.loop is not None
+    try:
+        if evaluate_flow_condition_plan(node.loop.exit_condition, context):
+            return (
+                evaluate_flow_selector(node.loop.output_selector, context),
+                None,
+            )
+        if evaluate_flow_condition_plan(
+            node.loop.continue_condition,
+            context,
+        ):
+            return _MISSING, None
+    except FlowRuntimeEvaluationError as error:
+        return (
+            _MISSING,
+            _execution_diagnostic(
+                code=error.code,
+                path=f"nodes.{node.name}.loop_policy",
+                message="Flow loop condition evaluation failed.",
+                hint="Check loop selectors and node output contracts.",
+            ),
+        )
+    return (
+        _MISSING,
+        _execution_diagnostic(
+            code="flow.execution.loop_condition_unmatched",
+            path=f"nodes.{node.name}.loop_policy",
+            message="Flow loop conditions did not match.",
+            hint="Make loop continue and exit conditions exhaustive.",
+        ),
+    )
+
+
+def _loop_limit_reached(
+    node: FlowNodePlan,
+    attempts: int,
+    started_at: float,
+) -> bool:
+    assert node.loop is not None
+    if (
+        node.loop.max_iterations is not None
+        and attempts >= node.loop.max_iterations
+    ):
+        return True
+    return (
+        node.loop.max_elapsed_seconds is not None
+        and monotonic() - started_at >= node.loop.max_elapsed_seconds
+    )
 
 
 async def _run_plan_node_once(
@@ -637,6 +768,8 @@ def _select_routes(
     FlowExecutionTrace,
     tuple[FlowDiagnostic, ...],
 ]:
+    if forced_target is not None:
+        return _select_forced_route(plan, source, forced_target, trace)
     edges = tuple(
         edge
         for edge in plan.edges_by_source.get(source, ())
@@ -644,21 +777,6 @@ def _select_routes(
     )
     if not edges:
         return (), trace, ()
-    if forced_target is not None:
-        forced_edges = tuple(
-            edge for edge in edges if edge.target == forced_target
-        )
-        selected = forced_edges[:1]
-        for edge in edges:
-            trace = trace.with_edge_state(
-                edge.index,
-                (
-                    FlowEdgeState.TAKEN
-                    if edge in selected
-                    else FlowEdgeState.SUPPRESSED
-                ),
-            )
-        return selected, trace, ()
     policy = edges[0].routing_policy
     default_edge = next((edge for edge in edges if edge.default), None)
     matches: list[FlowEdgePlan] = []
@@ -709,6 +827,37 @@ def _select_routes(
             FlowEdgeState.SUPPRESSED,
         )
     return selected, trace, tuple(diagnostics)
+
+
+def _select_forced_route(
+    plan: FlowExecutionPlan,
+    source: str,
+    forced_target: str,
+    trace: FlowExecutionTrace,
+) -> tuple[
+    tuple[FlowEdgePlan, ...],
+    FlowExecutionTrace,
+    tuple[FlowDiagnostic, ...],
+]:
+    source_edges = plan.edges_by_source.get(source, ())
+    selected = next(
+        (edge for edge in source_edges if edge.target == forced_target),
+        None,
+    )
+    if selected is None:
+        return (), trace, ()
+    for edge in source_edges:
+        if edge.kind != selected.kind:
+            continue
+        trace = trace.with_edge_state(
+            edge.index,
+            (
+                FlowEdgeState.TAKEN
+                if edge.index == selected.index
+                else FlowEdgeState.SUPPRESSED
+            ),
+        )
+    return (selected,), trace, ()
 
 
 def _edge_condition_matches(
