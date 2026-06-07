@@ -1,6 +1,18 @@
 from unittest import TestCase, main
 
+from avalan.entities import (
+    ToolCall,
+    ToolCallContext,
+    ToolCallDiagnostic,
+    ToolCallOutcome,
+    ToolCallResult,
+    ToolDescriptor,
+    ToolManagerSettings,
+    ToolNameResolution,
+    ToolNameResolutionStatus,
+)
 from avalan.flow import (
+    FLOW_TOOL_NODE_TYPE,
     FlowCondition,
     FlowConditionOperator,
     FlowConditionValueType,
@@ -32,11 +44,100 @@ from avalan.flow import (
     FlowTimeoutPolicy,
     FlowValidationResult,
     parse_flow_selector,
+    tool_flow_node_registry,
     validate_flow_definition,
 )
 from avalan.flow import loader as flow_loader
 from avalan.flow import validator as flow_validator
 from avalan.flow.node import Node
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
+
+
+async def validator_flow_adder(a: int, b: int) -> int:
+    return a + b
+
+
+validator_flow_adder.aliases = ["sum"]  # type: ignore[attr-defined]
+
+
+async def validator_flow_adder_alt(a: int, b: int) -> int:
+    return a + b
+
+
+validator_flow_adder_alt.aliases = ["sum"]  # type: ignore[attr-defined]
+
+
+async def validator_flow_status() -> str:
+    return "ready"
+
+
+async def validator_flow_disabled(value: int) -> int:
+    return value
+
+
+def _tool_manager(
+    *,
+    enable_tools: list[str] | None = None,
+) -> ToolManager:
+    return ToolManager.create_instance(
+        enable_tools=enable_tools
+        or ["validator_flow_adder", "validator_flow_status"],
+        available_toolsets=[
+            ToolSet(
+                tools=[
+                    validator_flow_adder,
+                    validator_flow_adder_alt,
+                    validator_flow_status,
+                ]
+            ),
+            ToolSet(namespace="disabled", tools=[validator_flow_disabled]),
+        ],
+        settings=ToolManagerSettings(),
+    )
+
+
+class StaticToolResolver:
+    def __init__(self, descriptors: list[ToolDescriptor]) -> None:
+        self.descriptors = descriptors
+
+    def list_tools(self) -> list[ToolDescriptor]:
+        return self.descriptors
+
+    def resolve_tool_name(
+        self, name: str, *, provider_originated: bool = False
+    ) -> ToolNameResolution:
+        _ = provider_originated
+        names = {descriptor.name for descriptor in self.descriptors}
+        if name in names:
+            return ToolNameResolution(
+                requested_name=name,
+                status=ToolNameResolutionStatus.EXACT,
+                canonical_name=name,
+                candidates=[name],
+            )
+        return ToolNameResolution(
+            requested_name=name,
+            status=ToolNameResolutionStatus.UNKNOWN,
+        )
+
+    def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
+        _ = call
+        return None
+
+    async def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> ToolCallOutcome:
+        _ = context
+        return ToolCallResult(
+            id="result-1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=call.arguments or {},
+        )
 
 
 class FlowValidatorTestCase(TestCase):
@@ -711,6 +812,208 @@ class FlowValidatorTestCase(TestCase):
         )
 
         self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_accepts_strict_tool_refs(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(_tool_manager())
+        cases = (
+            (
+                "validator_flow_adder",
+                {"arguments": {"a": "left", "b": "right"}},
+            ),
+            ("sum", {"arguments": {"a": "left", "b": "right"}}),
+            ("validator_flow_status", {}),
+        )
+
+        for ref, config in cases:
+            with self.subTest(ref=ref):
+                result = validate_flow_definition(
+                    self._strict_definition(
+                        nodes=(
+                            FlowNodeDefinition(
+                                name="start",
+                                type=FLOW_TOOL_NODE_TYPE,
+                                ref=ref,
+                                config=config,
+                            ),
+                        )
+                    ),
+                    registry,
+                )
+
+                self.assertTrue(result.ok, result.public_diagnostics)
+
+    def test_validate_flow_definition_rejects_strict_tool_refs(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(
+            _tool_manager(
+                enable_tools=[
+                    "validator_flow_adder",
+                    "validator_flow_adder_alt",
+                    "validator_flow_status",
+                ]
+            )
+        )
+        cases = (
+            (None, "flow.missing_ref"),
+            ("tools/adder.py", "flow.invalid_ref"),
+            ("mcp://server/tool", "flow.invalid_ref"),
+            ("avl_dmFsaWRhdG9yX2Zsb3dfYWRkZXI", "flow.invalid_ref"),
+            ("functions.validator_flow_adder", "flow.invalid_ref"),
+            ("missing", "flow.tool_unknown"),
+            ("disabled.validator_flow_disabled", "flow.tool_disabled"),
+            ("sum", "flow.tool_ambiguous"),
+        )
+
+        for ref, code in cases:
+            with self.subTest(ref=ref):
+                result = validate_flow_definition(
+                    self._strict_definition(
+                        nodes=(
+                            FlowNodeDefinition(
+                                name="start",
+                                type=FLOW_TOOL_NODE_TYPE,
+                                ref=ref,
+                                config={
+                                    "arguments": {
+                                        "a": "left",
+                                        "b": "right",
+                                    }
+                                },
+                            ),
+                        )
+                    ),
+                    registry,
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.diagnostics[0].code, code)
+                self.assertEqual(result.diagnostics[0].path, "nodes.start.ref")
+                if ref is not None:
+                    self.assertNotIn(ref, str(result.public_diagnostics))
+
+    def test_validate_flow_definition_rejects_strict_tool_bindings(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(_tool_manager())
+        cases = (
+            (
+                "validator_flow_adder",
+                {},
+                "flow.missing_argument_binding",
+                "nodes.start.config.arguments.a",
+            ),
+            (
+                "validator_flow_adder",
+                {"arguments": "bad"},
+                "flow.invalid_arguments",
+                "nodes.start.config.arguments",
+            ),
+            (
+                "validator_flow_adder",
+                {"arguments": {"a": "left", "b": "right", "c": "other"}},
+                "flow.unknown_argument_binding",
+                "nodes.start.config.arguments.c",
+            ),
+            (
+                "validator_flow_adder",
+                {"arguments": {"a": "left"}},
+                "flow.missing_argument_binding",
+                "nodes.start.config.arguments.b",
+            ),
+            (
+                "validator_flow_adder",
+                {"arguments": {"a": "left", "b": ""}},
+                "flow.invalid_argument_selector",
+                "nodes.start.config.arguments.b",
+            ),
+            (
+                "validator_flow_adder",
+                {
+                    "arguments": {"a": "left", "b": "right"},
+                    "output_mode": "wrapped",
+                },
+                "flow.invalid_output_mode",
+                "nodes.start.config.output_mode",
+            ),
+            (
+                "validator_flow_status",
+                {"arguments": {"value": "payload"}},
+                "flow.unknown_argument_binding",
+                "nodes.start.config.arguments.value",
+            ),
+        )
+
+        for ref, config, code, path in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    self._strict_definition(
+                        nodes=(
+                            FlowNodeDefinition(
+                                name="start",
+                                type=FLOW_TOOL_NODE_TYPE,
+                                ref=ref,
+                                config=config,
+                            ),
+                        )
+                    ),
+                    registry,
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.diagnostics[0].code, code)
+                self.assertEqual(result.diagnostics[0].path, path)
+
+    def test_validate_flow_definition_handles_tool_schema_edges(
+        self,
+    ) -> None:
+        cases = (
+            (
+                ToolDescriptor(name="raw", parameter_schema=None),
+                {"arguments": {}},
+            ),
+            (
+                ToolDescriptor(
+                    name="bad_required",
+                    parameter_schema={
+                        "type": "object",
+                        "properties": {},
+                        "required": "bad",
+                    },
+                ),
+                {},
+            ),
+            (
+                ToolDescriptor(
+                    name="bad_properties",
+                    parameter_schema={
+                        "type": "object",
+                        "properties": [],
+                    },
+                ),
+                {"arguments": {}},
+            ),
+        )
+
+        for descriptor, config in cases:
+            with self.subTest(name=descriptor.name):
+                result = validate_flow_definition(
+                    self._strict_definition(
+                        nodes=(
+                            FlowNodeDefinition(
+                                name="start",
+                                type=FLOW_TOOL_NODE_TYPE,
+                                ref=descriptor.name,
+                                config=config,
+                            ),
+                        )
+                    ),
+                    tool_flow_node_registry(StaticToolResolver([descriptor])),
+                )
+
+                self.assertTrue(result.ok, result.public_diagnostics)
 
     def test_validate_flow_definition_accepts_declarative_mappings(
         self,
