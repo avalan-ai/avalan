@@ -7,6 +7,7 @@ from .diagnostics import (
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TypeAlias
 
 
 class MermaidTokenType(StrEnum):
@@ -32,6 +33,20 @@ class MermaidTokenType(StrEnum):
     WHITESPACE = "whitespace"
 
 
+class MermaidDiagramKind(StrEnum):
+    GRAPH = "graph"
+    FLOWCHART = "flowchart"
+
+
+class MermaidAstDirectiveKind(StrEnum):
+    CLASS = "class"
+    STYLE = "style"
+    LINK_STYLE = "linkStyle"
+    UNSAFE = "unsafe"
+    UNSUPPORTED = "unsupported"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MermaidToken:
     type: MermaidTokenType
@@ -55,6 +70,231 @@ class MermaidTokenizationResult:
             assert isinstance(token, MermaidToken)
         assert isinstance(
             self.diagnostics, tuple
+        ), "diagnostics must be a tuple"
+        for diagnostic in self.diagnostics:
+            assert isinstance(diagnostic, FlowDiagnostic)
+
+    @property
+    def ok(self) -> bool:
+        return not any(
+            diagnostic.severity == FlowDiagnosticSeverity.ERROR
+            for diagnostic in self.diagnostics
+        )
+
+    @property
+    def public_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidCstStatement:
+    tokens: tuple[MermaidToken, ...]
+    source_span: FlowSourceSpan
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.tokens, tuple), "tokens must be a tuple"
+        assert self.tokens, "tokens must be non-empty"
+        for token in self.tokens:
+            assert isinstance(token, MermaidToken)
+        assert _significant_tokens(
+            self.tokens
+        ), "tokens must contain a significant token"
+        assert isinstance(self.source_span, FlowSourceSpan)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidCst:
+    tokens: tuple[MermaidToken, ...] = ()
+    statements: tuple[MermaidCstStatement, ...] = ()
+    diagnostics: tuple[FlowDiagnostic, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.tokens, tuple), "tokens must be a tuple"
+        for token in self.tokens:
+            assert isinstance(token, MermaidToken)
+        assert isinstance(self.statements, tuple), "statements must be a tuple"
+        for statement in self.statements:
+            assert isinstance(statement, MermaidCstStatement)
+        assert isinstance(
+            self.diagnostics,
+            tuple,
+        ), "diagnostics must be a tuple"
+        for diagnostic in self.diagnostics:
+            assert isinstance(diagnostic, FlowDiagnostic)
+
+    @property
+    def ok(self) -> bool:
+        return not any(
+            diagnostic.severity == FlowDiagnosticSeverity.ERROR
+            for diagnostic in self.diagnostics
+        )
+
+    @property
+    def public_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidAstNode:
+    id: str
+    label: str | None = None
+    shape_tokens: tuple[str, ...] = ()
+    source_span: FlowSourceSpan | None = None
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.id, "id")
+        if self.label is not None:
+            _assert_non_empty_string(self.label, "label")
+        _assert_string_tuple(self.shape_tokens, "shape_tokens")
+        if self.source_span is not None:
+            assert isinstance(self.source_span, FlowSourceSpan)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidAstNodeStatement:
+    node: MermaidAstNode
+    source_span: FlowSourceSpan
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.node, MermaidAstNode)
+        assert isinstance(self.source_span, FlowSourceSpan)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidAstEdge:
+    source: str
+    target: str
+    arrow: str
+    label: str | None = None
+    source_span: FlowSourceSpan | None = None
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.source, "source")
+        _assert_non_empty_string(self.target, "target")
+        _assert_non_empty_string(self.arrow, "arrow")
+        if self.label is not None:
+            _assert_non_empty_string(self.label, "label")
+        if self.source_span is not None:
+            assert isinstance(self.source_span, FlowSourceSpan)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidAstEdgeStatement:
+    nodes: tuple[MermaidAstNode, ...]
+    edges: tuple[MermaidAstEdge, ...]
+    source_span: FlowSourceSpan
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.nodes, tuple), "nodes must be a tuple"
+        assert len(self.nodes) >= 2, "edges require at least two nodes"
+        for node in self.nodes:
+            assert isinstance(node, MermaidAstNode)
+        assert isinstance(self.edges, tuple), "edges must be a tuple"
+        assert self.edges, "edges must be non-empty"
+        for edge in self.edges:
+            assert isinstance(edge, MermaidAstEdge)
+        assert isinstance(self.source_span, FlowSourceSpan)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidAstDirective:
+    kind: MermaidAstDirectiveKind
+    arguments: tuple[str, ...] = ()
+    source_span: FlowSourceSpan
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.kind, MermaidAstDirectiveKind)
+        _assert_string_tuple(self.arguments, "arguments")
+        assert isinstance(self.source_span, FlowSourceSpan)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidAstComment:
+    text: str
+    source_span: FlowSourceSpan
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.text, str), "text must be a string"
+        assert isinstance(self.source_span, FlowSourceSpan)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidAstSubgraph:
+    id: str
+    label: str | None = None
+    statements: tuple["MermaidAstStatement", ...] = ()
+    source_span: FlowSourceSpan
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.id, "id")
+        if self.label is not None:
+            _assert_non_empty_string(self.label, "label")
+        _assert_ast_statements(self.statements, "statements")
+        assert isinstance(self.source_span, FlowSourceSpan)
+
+
+MermaidAstStatement: TypeAlias = (
+    MermaidAstNodeStatement
+    | MermaidAstEdgeStatement
+    | MermaidAstDirective
+    | MermaidAstComment
+    | MermaidAstSubgraph
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidAst:
+    diagram_kind: MermaidDiagramKind | None = None
+    direction: str | None = None
+    statements: tuple[MermaidAstStatement, ...] = ()
+    diagnostics: tuple[FlowDiagnostic, ...] = ()
+    source_span: FlowSourceSpan | None = None
+
+    def __post_init__(self) -> None:
+        if self.diagram_kind is not None:
+            assert isinstance(self.diagram_kind, MermaidDiagramKind)
+        if self.direction is not None:
+            _assert_non_empty_string(self.direction, "direction")
+        _assert_ast_statements(self.statements, "statements")
+        assert isinstance(
+            self.diagnostics,
+            tuple,
+        ), "diagnostics must be a tuple"
+        for diagnostic in self.diagnostics:
+            assert isinstance(diagnostic, FlowDiagnostic)
+        if self.source_span is not None:
+            assert isinstance(self.source_span, FlowSourceSpan)
+
+    @property
+    def ok(self) -> bool:
+        return not any(
+            diagnostic.severity == FlowDiagnosticSeverity.ERROR
+            for diagnostic in self.diagnostics
+        )
+
+    @property
+    def public_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidParseResult:
+    cst: MermaidCst
+    ast: MermaidAst
+    diagnostics: tuple[FlowDiagnostic, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.cst, MermaidCst)
+        assert isinstance(self.ast, MermaidAst)
+        assert isinstance(
+            self.diagnostics,
+            tuple,
         ), "diagnostics must be a tuple"
         for diagnostic in self.diagnostics:
             assert isinstance(diagnostic, FlowDiagnostic)
@@ -480,6 +720,331 @@ class _MermaidTokenizer:
         return True
 
 
+@dataclass(slots=True)
+class _MermaidAstParser:
+    cst: MermaidCst
+    diagnostics: list[FlowDiagnostic] = field(default_factory=list)
+    index: int = 0
+    diagram_kind: MermaidDiagramKind | None = None
+    direction: str | None = None
+    source_span: FlowSourceSpan | None = None
+
+    def parse(self) -> MermaidAst:
+        self.diagnostics.extend(self.cst.diagnostics)
+        statements = self._parse_statements(stop_at_end=False)
+        if self.diagram_kind is None and self.cst.statements:
+            first = self.cst.statements[0]
+            self._diagnose(
+                "flow.mermaid.parser.missing_header",
+                "Mermaid flowchart header is required.",
+                first.source_span,
+            )
+
+        return MermaidAst(
+            diagram_kind=self.diagram_kind,
+            direction=self.direction,
+            statements=statements,
+            diagnostics=tuple(self.diagnostics),
+            source_span=self.source_span,
+        )
+
+    def _parse_statements(
+        self,
+        *,
+        stop_at_end: bool,
+    ) -> tuple[MermaidAstStatement, ...]:
+        parsed: list[MermaidAstStatement] = []
+        while self.index < len(self.cst.statements):
+            statement = self.cst.statements[self.index]
+            significant = _significant_tokens(statement.tokens)
+            first = significant[0]
+            if first.type == MermaidTokenType.END:
+                if stop_at_end:
+                    self.index += 1
+                    return tuple(parsed)
+                self._diagnose(
+                    "flow.mermaid.parser.unbalanced_subgraph",
+                    "Subgraph end has no matching subgraph.",
+                    first.source_span,
+                )
+                self.index += 1
+                continue
+
+            if first.type in (
+                MermaidTokenType.GRAPH,
+                MermaidTokenType.FLOWCHART,
+            ):
+                self._parse_header(statement, significant)
+                self.index += 1
+                continue
+
+            if first.type == MermaidTokenType.SUBGRAPH:
+                parsed.append(self._parse_subgraph(statement, significant))
+                continue
+
+            parsed_statement = self._parse_supported_statement(
+                statement,
+                significant,
+            )
+            if parsed_statement is not None:
+                parsed.extend(parsed_statement)
+            self.index += 1
+
+        if stop_at_end:
+            self._diagnose(
+                "flow.mermaid.parser.unclosed_subgraph",
+                "Subgraph is not closed.",
+                self.cst.statements[self.index - 1].source_span,
+            )
+        return tuple(parsed)
+
+    def _parse_header(
+        self,
+        statement: MermaidCstStatement,
+        tokens: tuple[MermaidToken, ...],
+    ) -> None:
+        if self.diagram_kind is not None:
+            self._diagnose(
+                "flow.mermaid.parser.duplicate_header",
+                "Mermaid flowchart header is already declared.",
+                tokens[0].source_span,
+            )
+            return
+        self.diagram_kind = (
+            MermaidDiagramKind.GRAPH
+            if tokens[0].type == MermaidTokenType.GRAPH
+            else MermaidDiagramKind.FLOWCHART
+        )
+        self.source_span = statement.source_span
+        if len(tokens) > 1 and tokens[1].type == MermaidTokenType.DIRECTION:
+            self.direction = tokens[1].value
+
+    def _parse_subgraph(
+        self,
+        statement: MermaidCstStatement,
+        tokens: tuple[MermaidToken, ...],
+    ) -> MermaidAstSubgraph:
+        self.index += 1
+        subgraph_id = ""
+        label: str | None = None
+        if len(tokens) > 1 and tokens[1].type == MermaidTokenType.IDENTIFIER:
+            subgraph_id = tokens[1].value
+            label = _label_from_tokens(tokens[2:])
+        else:
+            label = _label_from_tokens(tokens[1:])
+            if label is not None:
+                subgraph_id = label
+        if not subgraph_id:
+            subgraph_id = "__invalid_subgraph__"
+            self._diagnose(
+                "flow.mermaid.parser.missing_subgraph_id",
+                "Subgraph declaration requires an identifier.",
+                tokens[0].source_span,
+            )
+
+        children = self._parse_statements(stop_at_end=True)
+        return MermaidAstSubgraph(
+            id=subgraph_id,
+            label=label,
+            statements=children,
+            source_span=statement.source_span,
+        )
+
+    def _parse_supported_statement(
+        self,
+        statement: MermaidCstStatement,
+        tokens: tuple[MermaidToken, ...],
+    ) -> tuple[MermaidAstStatement, ...] | None:
+        first = tokens[0]
+        if first.type == MermaidTokenType.COMMENT:
+            return (
+                MermaidAstComment(
+                    text=first.value.removeprefix("%%").strip(),
+                    source_span=statement.source_span,
+                ),
+            )
+        if first.type == MermaidTokenType.CLASS_DIRECTIVE:
+            return (
+                self._directive(
+                    MermaidAstDirectiveKind.CLASS, statement, tokens
+                ),
+            )
+        if first.type == MermaidTokenType.STYLE_DIRECTIVE:
+            return (
+                self._directive(
+                    MermaidAstDirectiveKind.STYLE, statement, tokens
+                ),
+            )
+        if first.type == MermaidTokenType.LINK_STYLE_DIRECTIVE:
+            return (
+                self._directive(
+                    MermaidAstDirectiveKind.LINK_STYLE,
+                    statement,
+                    tokens,
+                ),
+            )
+        if first.type == MermaidTokenType.UNSAFE_DIRECTIVE:
+            self._diagnose_unsupported(first.source_span)
+            return (
+                self._directive(
+                    MermaidAstDirectiveKind.UNSAFE, statement, tokens
+                ),
+            )
+        if first.type == MermaidTokenType.UNSUPPORTED_DIRECTIVE:
+            self._diagnose_unsupported(first.source_span)
+            return (
+                self._directive(
+                    MermaidAstDirectiveKind.UNSUPPORTED,
+                    statement,
+                    tokens,
+                ),
+            )
+        if first.type != MermaidTokenType.IDENTIFIER:
+            self._diagnose_unknown_statement(first.source_span)
+            return None
+
+        nodes, edges, position = self._parse_edge_statement(tokens)
+        if edges and position == len(tokens):
+            return (
+                MermaidAstEdgeStatement(
+                    nodes=tuple(nodes),
+                    edges=tuple(edges),
+                    source_span=statement.source_span,
+                ),
+            )
+        if len(nodes) == 1 and position == len(tokens):
+            return (
+                MermaidAstNodeStatement(
+                    node=nodes[0],
+                    source_span=statement.source_span,
+                ),
+            )
+
+        self._diagnose_unknown_statement(first.source_span)
+        return None
+
+    def _parse_edge_statement(
+        self,
+        tokens: tuple[MermaidToken, ...],
+    ) -> tuple[list[MermaidAstNode], list[MermaidAstEdge], int]:
+        nodes: list[MermaidAstNode] = []
+        edges: list[MermaidAstEdge] = []
+        node, position = _parse_node(tokens, 0)
+        assert node is not None
+        nodes.append(node)
+        while position < len(tokens):
+            arrow_position = position
+            arrow = tokens[position]
+            if arrow.type != MermaidTokenType.ARROW:
+                break
+            position += 1
+            label: str | None = None
+            if (
+                position < len(tokens)
+                and tokens[position].type == MermaidTokenType.EDGE_LABEL
+            ):
+                label = _strip_label(tokens[position].value)
+                position += 1
+            target, next_position = _parse_node(tokens, position)
+            if target is None:
+                return nodes, edges, arrow_position
+            assert target.source_span is not None
+            nodes.append(target)
+            edges.append(
+                MermaidAstEdge(
+                    source=nodes[-2].id,
+                    target=target.id,
+                    arrow=arrow.value,
+                    label=label,
+                    source_span=_combine_spans(
+                        arrow.source_span, target.source_span
+                    ),
+                )
+            )
+            position = next_position
+        return nodes, edges, position
+
+    def _directive(
+        self,
+        kind: MermaidAstDirectiveKind,
+        statement: MermaidCstStatement,
+        tokens: tuple[MermaidToken, ...],
+    ) -> MermaidAstDirective:
+        return MermaidAstDirective(
+            kind=kind,
+            arguments=tuple(token.value for token in tokens[1:]),
+            source_span=statement.source_span,
+        )
+
+    def _diagnose_unknown_statement(self, source_span: FlowSourceSpan) -> None:
+        self._diagnose(
+            "flow.mermaid.parser.unsupported_statement",
+            "Mermaid statement is not supported.",
+            source_span,
+        )
+
+    def _diagnose_unsupported(self, source_span: FlowSourceSpan) -> None:
+        self._diagnose(
+            "flow.mermaid.parser.unsupported_construct",
+            "Unsupported Mermaid construct is not parsed.",
+            source_span,
+        )
+
+    def _diagnose(
+        self,
+        code: str,
+        message: str,
+        source_span: FlowSourceSpan,
+    ) -> None:
+        self.diagnostics.append(
+            FlowDiagnostic(
+                code=code,
+                category=FlowDiagnosticCategory.MERMAID_PARSER,
+                source_span=source_span,
+                severity=FlowDiagnosticSeverity.ERROR,
+                message=message,
+                hint="Check Mermaid flowchart syntax near this span.",
+            )
+        )
+
+
+def parse_mermaid(
+    text: str,
+    *,
+    source: str | None = None,
+) -> MermaidParseResult:
+    assert isinstance(text, str), "text must be a string"
+    if source is not None:
+        assert source.strip(), "source must be non-empty"
+    tokenization = tokenize_mermaid(text, source=source)
+    cst = parse_mermaid_tokens(tokenization.tokens, tokenization.diagnostics)
+    ast = _MermaidAstParser(cst=cst).parse()
+    diagnostics = tuple(
+        (
+            *cst.diagnostics,
+            *ast.diagnostics[len(cst.diagnostics) :],
+        )
+    )
+    return MermaidParseResult(cst=cst, ast=ast, diagnostics=diagnostics)
+
+
+def parse_mermaid_tokens(
+    tokens: tuple[MermaidToken, ...],
+    diagnostics: tuple[FlowDiagnostic, ...] = (),
+) -> MermaidCst:
+    assert isinstance(tokens, tuple), "tokens must be a tuple"
+    for token in tokens:
+        assert isinstance(token, MermaidToken)
+    assert isinstance(diagnostics, tuple), "diagnostics must be a tuple"
+    for diagnostic in diagnostics:
+        assert isinstance(diagnostic, FlowDiagnostic)
+    return MermaidCst(
+        tokens=tokens,
+        statements=_split_cst_statements(tokens),
+        diagnostics=diagnostics,
+    )
+
+
 def tokenize_mermaid(
     text: str,
     *,
@@ -493,6 +1058,169 @@ def tokenize_mermaid(
 
 def _is_identifier_start(value: str) -> bool:
     return value.isalnum() or value in "_#"
+
+
+def _assert_non_empty_string(value: str, field_name: str) -> None:
+    assert (
+        isinstance(value, str) and value.strip()
+    ), f"{field_name} must be a non-empty string"
+
+
+def _assert_string_tuple(values: tuple[str, ...], field_name: str) -> None:
+    assert isinstance(values, tuple), f"{field_name} must be a tuple"
+    for value in values:
+        _assert_non_empty_string(value, field_name)
+
+
+def _assert_ast_statements(
+    values: tuple[MermaidAstStatement, ...],
+    field_name: str,
+) -> None:
+    assert isinstance(values, tuple), f"{field_name} must be a tuple"
+    for value in values:
+        assert isinstance(
+            value,
+            (
+                MermaidAstNodeStatement,
+                MermaidAstEdgeStatement,
+                MermaidAstDirective,
+                MermaidAstComment,
+                MermaidAstSubgraph,
+            ),
+        )
+
+
+def _split_cst_statements(
+    tokens: tuple[MermaidToken, ...],
+) -> tuple[MermaidCstStatement, ...]:
+    statements: list[MermaidCstStatement] = []
+    current: list[MermaidToken] = []
+    for token in tokens:
+        current.append(token)
+        if token.type == MermaidTokenType.SEMICOLON or (
+            token.type == MermaidTokenType.WHITESPACE and "\n" in token.value
+        ):
+            _append_cst_statement(statements, current)
+            current = []
+    _append_cst_statement(statements, current)
+    return tuple(statements)
+
+
+def _append_cst_statement(
+    statements: list[MermaidCstStatement],
+    tokens: list[MermaidToken],
+) -> None:
+    if not any(
+        token.type
+        not in (
+            MermaidTokenType.WHITESPACE,
+            MermaidTokenType.SEMICOLON,
+        )
+        for token in tokens
+    ):
+        return
+    source_span = _combine_spans(tokens[0].source_span, tokens[-1].source_span)
+    assert source_span is not None
+    statements.append(
+        MermaidCstStatement(tokens=tuple(tokens), source_span=source_span)
+    )
+
+
+def _significant_tokens(
+    tokens: tuple[MermaidToken, ...],
+) -> tuple[MermaidToken, ...]:
+    return tuple(
+        token
+        for token in tokens
+        if token.type
+        not in (MermaidTokenType.WHITESPACE, MermaidTokenType.SEMICOLON)
+    )
+
+
+def _parse_node(
+    tokens: tuple[MermaidToken, ...],
+    position: int,
+) -> tuple[MermaidAstNode | None, int]:
+    if (
+        position >= len(tokens)
+        or tokens[position].type != MermaidTokenType.IDENTIFIER
+    ):
+        return None, position
+
+    identifier = tokens[position]
+    position += 1
+    label: str | None = None
+    shape_tokens: list[str] = []
+    node_tokens = [identifier]
+    while position < len(tokens) and tokens[position].type in (
+        MermaidTokenType.SHAPE_DELIMITER,
+        MermaidTokenType.QUOTED_LABEL,
+        MermaidTokenType.MARKDOWN_LABEL,
+        MermaidTokenType.IDENTIFIER,
+    ):
+        token = tokens[position]
+        if token.type == MermaidTokenType.SHAPE_DELIMITER:
+            shape_tokens.append(token.value)
+        elif token.type in (
+            MermaidTokenType.QUOTED_LABEL,
+            MermaidTokenType.MARKDOWN_LABEL,
+        ):
+            label = _strip_label(token.value)
+        elif not shape_tokens:
+            break
+        elif label is None:
+            label = token.value
+        else:
+            break
+        node_tokens.append(token)
+        position += 1
+
+    source_span = _combine_spans(
+        node_tokens[0].source_span,
+        node_tokens[-1].source_span,
+    )
+    return (
+        MermaidAstNode(
+            id=identifier.value,
+            label=label,
+            shape_tokens=tuple(shape_tokens),
+            source_span=source_span,
+        ),
+        position,
+    )
+
+
+def _label_from_tokens(tokens: tuple[MermaidToken, ...]) -> str | None:
+    for token in tokens:
+        if token.type in (
+            MermaidTokenType.QUOTED_LABEL,
+            MermaidTokenType.MARKDOWN_LABEL,
+            MermaidTokenType.EDGE_LABEL,
+        ):
+            return _strip_label(token.value)
+    shape_tokens = _significant_tokens(tokens)
+    if len(shape_tokens) >= 3 and shape_tokens[0].value in ("[", "("):
+        return "".join(token.value for token in shape_tokens[1:-1])
+    return None
+
+
+def _strip_label(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in '"`|':
+        return value[1:-1]
+    return value
+
+
+def _combine_spans(
+    start: FlowSourceSpan,
+    end: FlowSourceSpan,
+) -> FlowSourceSpan:
+    return FlowSourceSpan(
+        source=start.source,
+        start_line=start.start_line,
+        start_column=start.start_column,
+        end_line=end.end_line,
+        end_column=end.end_column,
+    )
 
 
 def _is_identifier_part(value: str) -> bool:
