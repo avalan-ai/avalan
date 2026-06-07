@@ -1,6 +1,7 @@
 from asyncio import CancelledError, sleep, wait_for
 from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -15,16 +16,31 @@ from avalan.entities import (
 )
 from avalan.event import Event, EventType
 from avalan.flow import (
+    FlowConditionOperator,
+    FlowConditionPlan,
     FlowDefinition,
+    FlowDiagnostic,
+    FlowDiagnosticCategory,
+    FlowDiagnosticSeverity,
     FlowEntryBehavior,
+    FlowExecutionPlan,
+    FlowExecutionTrace,
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
+    FlowLoopPlan,
     FlowMappingKind,
     FlowNodeDefinition,
+    FlowNodePlan,
+    FlowNodeState,
+    FlowNodeTrace,
     FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowSourceSpan,
+    InMemoryFlowStateStore,
+    compile_flow_definition,
+    parse_flow_selector,
     validate_flow_definition,
 )
 from avalan.flow.flow import Flow
@@ -68,6 +84,7 @@ from avalan.task import (
     TaskProviderReferenceKind,
     TaskRunPolicy,
     TaskRunState,
+    TaskStoreNotFoundError,
     TaskTargetContext,
     TaskValidationCategory,
     TaskValidationContext,
@@ -1372,6 +1389,335 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         result = await runner.run(self._context(input_value="ready"))
 
         self.assertEqual(result, "ready!")
+
+    async def test_run_executes_strict_definition_and_records_state(
+        self,
+    ) -> None:
+        flow_store = InMemoryFlowStateStore()
+        events: list[Event] = []
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_echo_definition(),
+            flow_state_store=flow_store,
+        )
+
+        result = await runner.run(
+            self._context(input_value="ready", event_listener=events.append)
+        )
+        second = await runner.run(
+            self._context(input_value="ready", event_listener=events.append)
+        )
+        record = await flow_store.get_flow_execution("run-1")
+
+        self.assertEqual(result, "ready")
+        self.assertEqual(second, "ready")
+        self.assertEqual(record.revision, 2)
+        self.assertEqual(dict(record.selected_outputs), {"answer": "ready"})
+        self.assertEqual(record.trace.nodes[0].state, FlowNodeState.SUCCEEDED)
+        self.assertEqual(
+            record.node_attempts[0].state, FlowNodeState.SUCCEEDED
+        )
+        self.assertEqual(record.node_attempts[0].attempt, 1)
+        self.assertEqual(record.artifact_refs, ())
+        self.assertEqual(
+            [
+                cast(Mapping[str, object], event.payload)["status"]
+                for event in events
+            ],
+            ["started", "succeeded", "started", "succeeded"],
+        )
+
+    async def test_run_executes_compiled_strict_plan_for_direct_and_queue(
+        self,
+    ) -> None:
+        compile_result = compile_flow_definition(_strict_echo_definition())
+        assert compile_result.plan is not None
+
+        async def resolve(_: TaskTargetContext) -> FlowExecutionPlan:
+            await sleep(0)
+            return compile_result.plan
+
+        runner = FlowTaskTargetRunner(strict_resolver=resolve)
+
+        direct = await runner.run(self._context(input_value="ready"))
+        queued = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    run=TaskRunPolicy.queued("default"),
+                ),
+                input_value={
+                    "format": STORED_ENVELOPE_MARKER,
+                    "privacy": STORED_MARKER,
+                    "value": "ready",
+                },
+            )
+        )
+
+        self.assertEqual(direct, queued)
+        self.assertEqual(queued, "ready")
+
+    async def test_run_rejects_invalid_strict_input_before_events(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_echo_definition()
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    definition=self._context_definition(
+                        input_contract=TaskInputContract.integer(),
+                    ),
+                    input_value="private prompt",
+                    event_listener=events.append,
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "input.invalid_type")
+        self.assertEqual(events, [])
+        self.assertNotIn("private prompt", str(error.exception))
+
+    async def test_run_maps_strict_runtime_diagnostics_safely(self) -> None:
+        compile_result = compile_flow_definition(_strict_echo_definition())
+        assert compile_result.plan is not None
+        plan = replace(
+            compile_result.plan,
+            output_selectors={
+                "answer": parse_flow_selector("echo.missing"),
+            },
+        )
+        events: list[Event] = []
+        runner = FlowTaskTargetRunner(strict_resolver=lambda _: plan)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    input_value="private prompt",
+                    event_listener=events.append,
+                )
+            )
+
+        self.assertEqual(
+            error.exception.issues[0].code,
+            "flow.execution.missing_output",
+        )
+        self.assertEqual(
+            [
+                cast(Mapping[str, object], event.payload)["status"]
+                for event in events
+            ],
+            ["started", "failed"],
+        )
+        self.assertNotIn("private prompt", str(error.exception))
+        self.assertNotIn("private prompt", str(events))
+
+    async def test_run_rejects_invalid_strict_output_safely(self) -> None:
+        events: list[Event] = []
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_echo_definition()
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    definition=self._context_definition(
+                        output_contract=TaskOutputContract.object(
+                            {"type": "object"}
+                        ),
+                    ),
+                    input_value="private prompt",
+                    event_listener=events.append,
+                )
+            )
+
+        self.assertEqual(error.exception.issues[0].code, "output.invalid_type")
+        self.assertEqual(
+            [
+                cast(Mapping[str, object], event.payload)["status"]
+                for event in events
+            ],
+            ["started", "failed"],
+        )
+        self.assertNotIn("private prompt", str(error.exception))
+        self.assertNotIn("private prompt", str(events))
+
+    async def test_run_rejects_non_strict_definition_safely(self) -> None:
+        flow_store = InMemoryFlowStateStore()
+        events: list[Event] = []
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: FlowDefinition(
+                name="loose",
+                entrypoint="echo",
+                output_node="echo",
+                nodes=(FlowNodeDefinition(name="echo", type="pass-through"),),
+            ),
+            flow_state_store=flow_store,
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    input_value="private prompt",
+                    event_listener=events.append,
+                )
+            )
+
+        self.assertEqual(
+            error.exception.issues[0].code,
+            "flow.execution.plan_requires_strict_definition",
+        )
+        self.assertEqual(events, [])
+        with self.assertRaises(TaskStoreNotFoundError):
+            await flow_store.get_flow_execution("run-1")
+        self.assertNotIn("private prompt", str(error.exception))
+
+    async def test_run_rejects_invalid_strict_resolver_result_safely(
+        self,
+    ) -> None:
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: cast(Any, "private flow")
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(self._context(input_value="private prompt"))
+
+        self.assertEqual(
+            [issue.path for issue in error.exception.issues],
+            ["execution.ref"],
+        )
+        self.assertNotIn("private prompt", str(error.exception))
+        self.assertNotIn("private flow", str(error.exception))
+
+    def test_strict_helpers_cover_safe_runtime_snapshots(self) -> None:
+        compile_result = compile_flow_definition(
+            _strict_file_binding_definition()
+        )
+        assert compile_result.plan is not None
+        file = TaskInputFile(
+            logical_path="artifact:source-1",
+            artifact_ref=TaskArtifactRef(
+                artifact_id="source-1",
+                store="memory",
+                storage_key="source-1",
+                media_type="application/pdf",
+                size_bytes=10,
+                sha256="0" * 64,
+            ),
+            media_type="application/pdf",
+            size_bytes=10,
+        )
+        fallback = {
+            "document": "fallback",
+            "documents": ["fallback"],
+            "extra": "ready",
+        }
+
+        with_files = flow_target_module._strict_flow_input_binding(  # type: ignore[attr-defined]
+            compile_result.plan,
+            fallback,
+            files=(file,),
+        )
+        without_files = flow_target_module._strict_flow_input_binding(  # type: ignore[attr-defined]
+            compile_result.plan,
+            {"document": "fallback", "documents": ["fallback"]},
+            files=(),
+        )
+
+        self.assertIs(with_files["document"], file)
+        self.assertEqual(with_files["documents"], [file])
+        self.assertEqual(with_files["extra"], "ready")
+        self.assertEqual(without_files["document"], "fallback")
+        self.assertEqual(without_files["documents"], ["fallback"])
+        self.assertIsNone(without_files["extra"])
+        self.assertEqual(
+            flow_target_module._strict_task_output(  # type: ignore[attr-defined]
+                compile_result.plan,
+                {"other": "value"},
+            ),
+            {"other": "value"},
+        )
+
+        issues = flow_target_module._flow_diagnostics_to_issues(())  # type: ignore[attr-defined]
+        self.assertEqual(issues[0].code, "execution.unsupported_flow")
+        category_cases = (
+            (
+                FlowDiagnosticCategory.PRIVACY,
+                TaskValidationCategory.PRIVACY,
+            ),
+            (
+                FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+                TaskValidationCategory.STRUCTURE,
+            ),
+            (
+                FlowDiagnosticCategory.TASK_DURABILITY,
+                TaskValidationCategory.DEPENDENCY,
+            ),
+        )
+        for category, expected in category_cases:
+            with self.subTest(category=category):
+                issue = flow_target_module._flow_diagnostics_to_issues(  # type: ignore[attr-defined]
+                    (
+                        FlowDiagnostic(
+                            code="flow.safe",
+                            category=category,
+                            severity=FlowDiagnosticSeverity.ERROR,
+                            message="Flow failed.",
+                            source_span=FlowSourceSpan(
+                                start_line=1,
+                                start_column=1,
+                            ),
+                        ),
+                    )
+                )[
+                    0
+                ]
+                self.assertEqual(issue.category, expected)
+                self.assertEqual(issue.path, "execution")
+                self.assertEqual(issue.hint, "Inspect the flow diagnostics.")
+
+        trace = FlowExecutionTrace(
+            nodes=(
+                FlowNodeTrace(
+                    node="retry",
+                    state=FlowNodeState.SUCCEEDED,
+                    attempts=2,
+                    duration_ms=4,
+                ),
+            )
+        )
+        attempts = flow_target_module._node_attempt_records(trace)  # type: ignore[attr-defined]
+        self.assertEqual(
+            [attempt.state for attempt in attempts],
+            [FlowNodeState.FAILED, FlowNodeState.SUCCEEDED],
+        )
+
+        loop_plan = _loop_counter_plan()
+        counters = flow_target_module._loop_counters(loop_plan, trace)  # type: ignore[attr-defined]
+        self.assertEqual(dict(counters), {"retry": 2})
+
+        artifact = TaskArtifactRef(
+            artifact_id="output-1",
+            store="memory",
+            storage_key="output-1",
+            media_type="text/plain",
+            size_bytes=4,
+            sha256="1" * 64,
+            metadata={"private": "metadata"},
+        )
+        snapshot = flow_target_module._flow_snapshot_value(  # type: ignore[attr-defined]
+            {"file": file, "artifact": artifact, "items": [object()]}
+        )
+        refs = flow_target_module._artifact_refs(  # type: ignore[attr-defined]
+            {"file": file, "artifacts": [artifact, artifact]}
+        )
+
+        self.assertIn("artifact", snapshot)
+        self.assertEqual(
+            [ref["artifact_id"] for ref in refs],
+            ["source-1", "output-1"],
+        )
+        self.assertNotIn("private", str(refs))
 
     async def test_run_rejects_flow_agent_node_validation_issues(
         self,
@@ -4078,6 +4424,93 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
                 "minItems": 1,
             }
         )
+
+
+def _strict_echo_definition() -> FlowDefinition:
+    return FlowDefinition(
+        name="task-echo",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_behavior=FlowEntryBehavior(node="echo"),
+        output_behavior=FlowOutputBehavior(outputs={"answer": "echo.value"}),
+        nodes=(
+            FlowNodeDefinition(
+                name="echo",
+                type="pass-through",
+                mappings=(
+                    FlowInputMapping(target="value", source="input.prompt"),
+                ),
+            ),
+        ),
+    )
+
+
+def _strict_file_binding_definition() -> FlowDefinition:
+    return FlowDefinition(
+        name="task-files",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="document", type=FlowInputType.FILE),
+            FlowInputDefinition(
+                name="documents",
+                type=FlowInputType.FILE_ARRAY,
+            ),
+            FlowInputDefinition(name="extra", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_behavior=FlowEntryBehavior(node="echo"),
+        output_behavior=FlowOutputBehavior(outputs={"answer": "echo.value"}),
+        nodes=(
+            FlowNodeDefinition(
+                name="echo",
+                type="pass-through",
+                mappings=(
+                    FlowInputMapping(target="value", source="input.extra"),
+                ),
+            ),
+        ),
+    )
+
+
+def _loop_counter_plan() -> FlowExecutionPlan:
+    compile_result = compile_flow_definition(_strict_echo_definition())
+    assert compile_result.plan is not None
+    node = compile_result.plan.nodes[0]
+    loop = FlowLoopPlan(
+        max_iterations=2,
+        continue_condition=FlowConditionPlan(
+            operator=FlowConditionOperator.EXISTS,
+            selector=parse_flow_selector("input.prompt"),
+        ),
+        exit_condition=FlowConditionPlan(
+            operator=FlowConditionOperator.EXISTS,
+            selector=parse_flow_selector("retry.value"),
+        ),
+        output_selector=parse_flow_selector("retry.value"),
+        limit_route="retry",
+    )
+    return replace(
+        compile_result.plan,
+        nodes=(
+            FlowNodePlan(
+                name="retry",
+                type=node.type,
+                kind=node.kind,
+                input_contracts=node.input_contracts,
+                output_contracts=node.output_contracts,
+                capabilities=node.capabilities,
+                mappings=node.mappings,
+                loop=loop,
+            ),
+        ),
+    )
 
 
 if __name__ == "__main__":

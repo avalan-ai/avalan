@@ -11,18 +11,33 @@ from ...flow.definition import (
     FlowNodeMetadata,
     FlowOutputType,
 )
+from ...flow.diagnostics import FlowDiagnostic, FlowDiagnosticCategory
 from ...flow.flow import Flow
 from ...flow.node import Node
+from ...flow.plan import (
+    FlowExecutionPlan,
+    compile_flow_definition,
+)
 from ...flow.registry import (
     FlowNodeConfigurationError,
     FlowNodeFactory,
     FlowNodeRegistry,
     default_flow_node_registry,
 )
+from ...flow.runtime import (
+    execute_flow_plan,
+    flow_node_registry_runner,
+)
 from ...flow.selector import (
     FlowSelectorError,
     FlowSelectorRoot,
     parse_flow_selector,
+)
+from ...flow.state import FlowExecutionTrace, FlowNodeState, FlowNodeTrace
+from ...flow.store import (
+    FlowExecutionUpdate,
+    FlowNodeAttemptRecord,
+    FlowStateStore,
 )
 from ..artifact import TaskArtifactRef, TaskArtifactRetention
 from ..context import TaskInputFile, TaskTargetContext
@@ -52,6 +67,7 @@ from ..privacy import (
     STORED_ENVELOPE_MARKER,
     STORED_MARKER,
 )
+from ..store import TaskStoreNotFoundError
 from ..target import TaskTargetRunner, TaskValidationContext
 from ..validation import (
     TaskValidationCategory,
@@ -70,6 +86,12 @@ from types import MappingProxyType
 from typing import cast
 
 FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
+StrictFlowResolver = Callable[
+    [TaskTargetContext],
+    FlowDefinition
+    | FlowExecutionPlan
+    | Awaitable[FlowDefinition | FlowExecutionPlan],
+]
 FLOW_TASK_INPUT_KEY = "__task_input__"
 FLOW_TASK_FILES_KEY = "__task_files__"
 _FLOW_RESERVED_BINDINGS = frozenset(
@@ -119,9 +141,22 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         *,
         ref_base: str | Path | None = None,
         flow_resolver: FlowResolver | None = None,
+        strict_resolver: StrictFlowResolver | None = None,
+        flow_state_store: FlowStateStore | None = None,
+        agent_runner: TaskTargetRunner | None = None,
+        execution_roots: Iterable[str | Path] = (),
+        concurrency_limit: int = 1,
     ) -> None:
         self._ref_base = Path(ref_base) if ref_base is not None else None
         self._flow_resolver = flow_resolver
+        self._strict_resolver = strict_resolver
+        self._flow_state_store = flow_state_store
+        self._agent_runner = agent_runner
+        self._execution_roots = tuple(Path(root) for root in execution_roots)
+        assert isinstance(concurrency_limit, int)
+        assert not isinstance(concurrency_limit, bool)
+        assert concurrency_limit > 0
+        self._concurrency_limit = concurrency_limit
 
     async def validate_definition(
         self,
@@ -140,6 +175,8 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         assert isinstance(context, TaskTargetContext)
         if context.definition.execution.type != TaskTargetType.FLOW:
             raise TaskValidationError((_unknown_target_issue(),))
+        if self._strict_resolver is not None:
+            return await self._run_strict(context)
         if self._flow_resolver is None:
             raise TaskValidationError(
                 (
@@ -220,6 +257,149 @@ class FlowTaskTargetRunner(TaskTargetRunner):
             finished=finished,
         )
         return result
+
+    async def _run_strict(self, context: TaskTargetContext) -> object:
+        await context.check_cancelled()
+        plan = await self._strict_plan(context)
+        await context.check_cancelled()
+        task_input = _task_input_value(context)
+        input_issues = validate_task_input(context.definition, task_input)
+        if input_issues:
+            raise TaskValidationError(input_issues)
+        started = perf_counter()
+        await _emit_flow_event(
+            context,
+            EventType.FLOW_MANAGER_CALL_BEFORE,
+            status="started",
+            started=started,
+        )
+        try:
+            result = await execute_flow_plan(
+                plan,
+                flow_node_registry_runner(
+                    task_flow_node_registry(
+                        context,
+                        agent_runner=self._agent_runner,
+                        execution_roots=self._execution_roots,
+                    )
+                ),
+                inputs=_strict_flow_input_binding(
+                    plan,
+                    task_input,
+                    files=context.files,
+                ),
+                cancellation_checker=context.check_cancelled,
+                concurrency_limit=self._concurrency_limit,
+            )
+            if not result.ok:
+                raise TaskValidationError(
+                    _flow_diagnostics_to_issues(result.diagnostics)
+                )
+            await self._record_strict_flow_state(
+                context,
+                plan=plan,
+                trace=result.trace,
+                outputs=result.outputs,
+            )
+            output = _strict_task_output(plan, result.outputs)
+            output_issues = validate_task_output(context.definition, output)
+            if output_issues:
+                raise TaskValidationError(output_issues)
+        except BaseException:
+            finished = perf_counter()
+            await _emit_flow_event(
+                context,
+                EventType.FLOW_MANAGER_CALL_AFTER,
+                status="failed",
+                started=started,
+                finished=finished,
+            )
+            raise
+        finished = perf_counter()
+        await _emit_flow_event(
+            context,
+            EventType.FLOW_MANAGER_CALL_AFTER,
+            status="succeeded",
+            started=started,
+            finished=finished,
+        )
+        return output
+
+    async def _strict_plan(
+        self,
+        context: TaskTargetContext,
+    ) -> FlowExecutionPlan:
+        assert self._strict_resolver is not None
+        resolved = self._strict_resolver(context)
+        if isawaitable(resolved):
+            resolved = await resolved
+        if isinstance(resolved, FlowExecutionPlan):
+            return resolved
+        if not isinstance(resolved, FlowDefinition):
+            raise TaskValidationError(
+                (
+                    _unsupported_flow_issue(
+                        path="execution.ref",
+                        message=(
+                            "Flow resolver did not return a flow "
+                            "definition or execution plan."
+                        ),
+                        hint=(
+                            "Return a validated flow definition or compiled "
+                            "execution plan."
+                        ),
+                    ),
+                )
+            )
+        registry = task_flow_node_registry(
+            context,
+            agent_runner=self._agent_runner,
+            execution_roots=self._execution_roots,
+        )
+        result = compile_flow_definition(resolved, registry)
+        if not result.ok:
+            raise TaskValidationError(
+                _flow_diagnostics_to_issues(result.diagnostics)
+            )
+        assert result.plan is not None
+        return result.plan
+
+    async def _record_strict_flow_state(
+        self,
+        context: TaskTargetContext,
+        *,
+        plan: FlowExecutionPlan,
+        trace: FlowExecutionTrace,
+        outputs: Mapping[str, object],
+    ) -> None:
+        if self._flow_state_store is None:
+            return
+        update = FlowExecutionUpdate(
+            trace=trace,
+            node_attempts=_node_attempt_records(trace),
+            selected_outputs=_flow_snapshot_mapping(outputs),
+            loop_counters=_loop_counters(plan, trace),
+            artifact_refs=_artifact_refs(outputs),
+        )
+        try:
+            current = await self._flow_state_store.get_flow_execution(
+                context.execution.run_id
+            )
+        except TaskStoreNotFoundError:
+            await self._flow_state_store.create_flow_execution(
+                context.execution.run_id,
+                trace=trace,
+                node_attempts=update.node_attempts or (),
+                selected_outputs=update.selected_outputs,
+                loop_counters=update.loop_counters,
+                artifact_refs=update.artifact_refs or (),
+            )
+            return
+        await self._flow_state_store.update_flow_execution(
+            context.execution.run_id,
+            update,
+            expected_revision=current.revision,
+        )
 
 
 def validate_flow_task_compatibility(
@@ -1447,6 +1627,228 @@ def _can_be_declared_object_input(
     return not issues or all(
         issue.code == "dependency.jsonschema_missing" for issue in issues
     )
+
+
+def _strict_flow_input_binding(
+    plan: FlowExecutionPlan,
+    task_input: object,
+    *,
+    files: tuple[TaskInputFile, ...],
+) -> Mapping[str, object]:
+    assert isinstance(plan, FlowExecutionPlan)
+    assert isinstance(files, tuple)
+    binding: dict[str, object] = {}
+    for input_definition in plan.inputs:
+        if input_definition.type == FlowInputType.FILE:
+            if len(files) == 1:
+                binding[input_definition.name] = files[0]
+            else:
+                binding[input_definition.name] = _mapped_task_input(
+                    task_input,
+                    input_definition.name,
+                    single_input=len(plan.inputs) == 1,
+                )
+            continue
+        if input_definition.type == FlowInputType.FILE_ARRAY:
+            if files:
+                binding[input_definition.name] = list(files)
+            else:
+                binding[input_definition.name] = _mapped_task_input(
+                    task_input,
+                    input_definition.name,
+                    single_input=len(plan.inputs) == 1,
+                )
+            continue
+        binding[input_definition.name] = _mapped_task_input(
+            task_input,
+            input_definition.name,
+            single_input=len(plan.inputs) == 1,
+        )
+    return binding
+
+
+def _mapped_task_input(
+    value: object,
+    name: str,
+    *,
+    single_input: bool,
+) -> object:
+    if isinstance(value, Mapping) and name in value:
+        return _copy_task_input_value(value[name])
+    if single_input:
+        return _copy_task_input_value(value)
+    return None
+
+
+def _strict_task_output(
+    plan: FlowExecutionPlan,
+    outputs: Mapping[str, object],
+) -> object:
+    assert isinstance(plan, FlowExecutionPlan)
+    assert isinstance(outputs, Mapping)
+    if len(plan.outputs) == 1:
+        name = plan.outputs[0].name
+        if name in outputs:
+            return outputs[name]
+    return _copy_task_input_value(outputs)
+
+
+def _flow_diagnostics_to_issues(
+    diagnostics: tuple[FlowDiagnostic, ...],
+) -> tuple[TaskValidationIssue, ...]:
+    if not diagnostics:
+        return (
+            _unsupported_flow_issue(
+                path="execution.ref",
+                message="Flow execution failed.",
+                hint="Inspect the flow diagnostics.",
+            ),
+        )
+    issues: list[TaskValidationIssue] = []
+    for diagnostic in diagnostics:
+        assert isinstance(diagnostic, FlowDiagnostic)
+        path = getattr(diagnostic, "path", None)
+        hint = getattr(diagnostic, "hint", None)
+        issues.append(
+            TaskValidationIssue(
+                code=diagnostic.code,
+                path=path if isinstance(path, str) and path else "execution",
+                message=diagnostic.message,
+                hint=(
+                    hint
+                    if isinstance(hint, str) and hint
+                    else ("Inspect the flow diagnostics.")
+                ),
+                category=_task_validation_category(diagnostic.category),
+            )
+        )
+    return tuple(issues)
+
+
+def _task_validation_category(
+    category: FlowDiagnosticCategory,
+) -> TaskValidationCategory:
+    assert isinstance(category, FlowDiagnosticCategory)
+    match category:
+        case FlowDiagnosticCategory.PRIVACY:
+            return TaskValidationCategory.PRIVACY
+        case FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION:
+            return TaskValidationCategory.STRUCTURE
+        case FlowDiagnosticCategory.TASK_DURABILITY:
+            return TaskValidationCategory.DEPENDENCY
+        case _:
+            return TaskValidationCategory.UNSUPPORTED
+
+
+def _node_attempt_records(
+    trace: FlowExecutionTrace,
+) -> tuple[FlowNodeAttemptRecord, ...]:
+    assert isinstance(trace, FlowExecutionTrace)
+    records: list[FlowNodeAttemptRecord] = []
+    for node in trace.nodes:
+        records.extend(_node_attempt_records_for_trace(node))
+    return tuple(records)
+
+
+def _node_attempt_records_for_trace(
+    node: FlowNodeTrace,
+) -> tuple[FlowNodeAttemptRecord, ...]:
+    assert isinstance(node, FlowNodeTrace)
+    records: list[FlowNodeAttemptRecord] = []
+    for attempt in range(1, node.attempts + 1):
+        final_attempt = attempt == node.attempts
+        records.append(
+            FlowNodeAttemptRecord(
+                node=node.node,
+                attempt=attempt,
+                state=node.state if final_attempt else FlowNodeState.FAILED,
+                duration_ms=node.duration_ms if final_attempt else None,
+                diagnostics=node.diagnostics if final_attempt else (),
+            )
+        )
+    return tuple(records)
+
+
+def _loop_counters(
+    plan: FlowExecutionPlan,
+    trace: FlowExecutionTrace,
+) -> Mapping[str, int]:
+    trace_by_node = {node.node: node for node in trace.nodes}
+    return {
+        node.name: trace_by_node[node.name].attempts
+        for node in plan.nodes
+        if node.loop is not None
+        and node.name in trace_by_node
+        and trace_by_node[node.name].attempts > 0
+    }
+
+
+def _flow_snapshot_mapping(
+    value: Mapping[str, object],
+) -> Mapping[str, object]:
+    return {
+        key: _flow_snapshot_value(item)
+        for key, item in value.items()
+        if isinstance(key, str) and key.strip()
+    }
+
+
+def _flow_snapshot_value(value: object) -> object:
+    if value is None or isinstance(value, bool | str | int | float):
+        return value
+    if isinstance(value, TaskInputFile):
+        return value.summary()
+    if isinstance(value, TaskArtifactRef):
+        return value.summary(include_metadata=False, include_sha256=True)
+    if isinstance(value, Mapping):
+        return _flow_snapshot_mapping(value)
+    if isinstance(value, list | tuple):
+        return tuple(_flow_snapshot_value(item) for item in value)
+    return {"type": type(value).__name__}
+
+
+def _artifact_refs(
+    value: object,
+) -> tuple[Mapping[str, object], ...]:
+    refs: list[Mapping[str, object]] = []
+    seen: set[str] = set()
+    _append_artifact_refs(value, refs, seen)
+    return tuple(refs)
+
+
+def _append_artifact_refs(
+    value: object,
+    refs: list[Mapping[str, object]],
+    seen: set[str],
+) -> None:
+    if isinstance(value, TaskInputFile):
+        if value.artifact_ref is not None:
+            _append_artifact_ref(value.artifact_ref, refs, seen)
+        return
+    if isinstance(value, TaskArtifactRef):
+        _append_artifact_ref(value, refs, seen)
+        return
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _append_artifact_refs(item, refs, seen)
+        return
+    if isinstance(value, list | tuple):
+        for item in value:
+            _append_artifact_refs(item, refs, seen)
+
+
+def _append_artifact_ref(
+    value: TaskArtifactRef,
+    refs: list[Mapping[str, object]],
+    seen: set[str],
+) -> None:
+    key = f"{value.store}:{value.artifact_id}"
+    if key in seen:
+        return
+    seen.add(key)
+    summary = value.summary(include_metadata=False, include_sha256=True)
+    assert isinstance(summary, Mapping)
+    refs.append(summary)
 
 
 async def _emit_flow_event(
