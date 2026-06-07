@@ -73,13 +73,18 @@ from .mermaid import MermaidAstSubgraph as MermaidAstSubgraph
 from .mermaid import MermaidCst as MermaidCst
 from .mermaid import MermaidCstStatement as MermaidCstStatement
 from .mermaid import MermaidDiagramKind as MermaidDiagramKind
+from .mermaid import (
+    MermaidImportValidationResult as MermaidImportValidationResult,
+)
 from .mermaid import MermaidParseResult as MermaidParseResult
 from .mermaid import MermaidToken as MermaidToken
 from .mermaid import MermaidTokenizationResult as MermaidTokenizationResult
 from .mermaid import MermaidTokenType as MermaidTokenType
 from .mermaid import parse_mermaid as parse_mermaid
+from .mermaid import parse_mermaid_import as parse_mermaid_import
 from .mermaid import parse_mermaid_tokens as parse_mermaid_tokens
 from .mermaid import tokenize_mermaid as tokenize_mermaid
+from .mermaid import validate_mermaid_import as validate_mermaid_import
 from .node import CancellationChecker as CancellationChecker
 from .node import Node as Node
 from .registry import FLOW_INPUT_KEY as FLOW_INPUT_KEY
