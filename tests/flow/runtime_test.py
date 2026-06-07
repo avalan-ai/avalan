@@ -36,15 +36,30 @@ from avalan.flow import (
     FlowRuntimeContext,
     FlowRuntimeEvaluationError,
     FlowTimeoutPlan,
+    compile_flow_definition,
     evaluate_flow_condition_plan,
     evaluate_flow_mappings,
     evaluate_flow_node_mappings,
     evaluate_flow_selector,
     execute_flow_plan,
+    loads_flow_definition_result,
     parse_flow_selector,
     resolve_flow_selector_value,
 )
-from avalan.flow.runtime import _retry_delay_seconds
+from avalan.flow.runtime import (
+    _join_ready,
+    _retry_delay_seconds,
+    _route_from_node,
+)
+
+
+def _assert_recorded_duration(
+    test_case: TestCase,
+    duration_ms: int | float | None,
+) -> None:
+    test_case.assertIsNotNone(duration_ms)
+    assert duration_ms is not None
+    test_case.assertGreaterEqual(duration_ms, 0)
 
 
 class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
@@ -95,6 +110,12 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                 "terminal": FlowNodeState.SKIPPED,
             },
         )
+        durations = {
+            trace.node: trace.duration_ms for trace in result.trace.nodes
+        }
+        _assert_recorded_duration(self, durations["declared"])
+        self.assertIsNone(durations["inferred"])
+        self.assertIsNone(durations["terminal"])
         self.assertNotIn("customer-secret", str(result.public_diagnostics))
 
     async def test_execute_flow_plan_uses_exclusive_priority_and_default(
@@ -463,6 +484,8 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             self._node_states(result)["start"], FlowNodeState.FAILED
         )
         self.assertEqual(self._edge_states(result)[0], FlowEdgeState.TAKEN)
+        _assert_recorded_duration(self, result.trace.nodes[0].duration_ms)
+        _assert_recorded_duration(self, result.trace.edges[0].duration_ms)
 
     async def test_execute_flow_plan_reports_condition_failure(
         self,
@@ -500,6 +523,8 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             result.public_diagnostics[0]["code"],
             "flow.condition_missing_value",
         )
+        _assert_recorded_duration(self, result.trace.nodes[0].duration_ms)
+        _assert_recorded_duration(self, result.trace.edges[0].duration_ms)
 
     async def test_execute_flow_plan_retries_transient_failure(
         self,
@@ -627,6 +652,186 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private", str(result.public_diagnostics))
 
+    async def test_execute_flow_plan_retry_exhaustion_prefers_error_edge(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "start":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.provider_unavailable",
+                    message="Flow node provider is unavailable.",
+                    hint="Use the declared fallback route.",
+                    failure_category="transient",
+                )
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "fallback.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(
+                        max_attempts=2,
+                        retryable_categories=("transient",),
+                        exhausted_route="fallback",
+                    ),
+                ),
+                self._node("fallback"),
+                self._node("generic"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="fallback",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+                FlowEdgePlan(
+                    index=1,
+                    source="start",
+                    target="fallback",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+                FlowEdgePlan(
+                    index=2,
+                    source="start",
+                    target="generic",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "fallback"})
+        self.assertEqual(calls, ["start", "start", "fallback"])
+        self.assertEqual(
+            self._edge_states(result),
+            {
+                0: FlowEdgeState.PENDING,
+                1: FlowEdgeState.TAKEN,
+                2: FlowEdgeState.SUPPRESSED,
+            },
+        )
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.provider_unavailable"],
+        )
+
+    async def test_execute_flow_plan_retry_exhaustion_requires_error_edge(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "start":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.provider_unavailable",
+                    message="Flow node provider is unavailable.",
+                    hint="Use the declared fallback route.",
+                    failure_category="transient",
+                )
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "fallback.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(
+                        max_attempts=2,
+                        retryable_categories=("transient",),
+                        exhausted_route="fallback",
+                    ),
+                ),
+                self._node("fallback"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="fallback",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(calls, ["start", "start"])
+        self.assertEqual(
+            self._node_states(result),
+            {
+                "start": FlowNodeState.FAILED,
+                "fallback": FlowNodeState.SKIPPED,
+            },
+        )
+        self.assertEqual(self._edge_states(result), {0: FlowEdgeState.PENDING})
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            [
+                "flow.execution.provider_unavailable",
+                "flow.execution.missing_failure_route",
+                "flow.execution.missing_output",
+            ],
+        )
+
+    async def test_execute_flow_plan_reports_missing_retry_fallback(
+        self,
+    ) -> None:
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            if node.name == "start":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.provider_unavailable",
+                    message="Flow node provider is unavailable.",
+                    hint="Use the declared fallback route.",
+                    failure_category="transient",
+                )
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "start.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(
+                        max_attempts=2,
+                        retryable_categories=("transient",),
+                        exhausted_route="fallback",
+                    ),
+                ),
+                self._node("fallback"),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            [
+                "flow.execution.provider_unavailable",
+                "flow.execution.missing_failure_route",
+                "flow.execution.missing_output",
+            ],
+        )
+        self.assertEqual(
+            self._node_states(result),
+            {
+                "start": FlowNodeState.FAILED,
+                "fallback": FlowNodeState.SKIPPED,
+            },
+        )
+
     async def test_execute_flow_plan_does_not_retry_validation_by_default(
         self,
     ) -> None:
@@ -716,6 +921,79 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             "flow.execution.node_cancelled",
         )
         self.assertNotIn("private cancellation details", str(result))
+
+    async def test_execute_flow_plan_routes_structured_cancellation_error(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            if node.name == "start":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.worker_cancelled",
+                    message="Flow worker cancelled the node.",
+                    hint="Route to the cancellation handler.",
+                    failure_category="cancellation",
+                    route_kind=FlowEdgeKind.CANCELLATION,
+                )
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "cancelled.value"},
+            nodes=(
+                self._node(
+                    "start",
+                    retry=FlowRetryPlan(
+                        max_attempts=3,
+                        retryable_categories=("cancellation",),
+                    ),
+                ),
+                self._node("cancelled"),
+                self._node("failed"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="cancelled",
+                    kind=FlowEdgeKind.CANCELLATION,
+                ),
+                FlowEdgePlan(
+                    index=1,
+                    source="start",
+                    target="failed",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "cancelled"})
+        self.assertEqual(calls, ["start", "cancelled"])
+        self.assertEqual(
+            self._node_states(result),
+            {
+                "start": FlowNodeState.CANCELLED,
+                "cancelled": FlowNodeState.SUCCEEDED,
+                "failed": FlowNodeState.SKIPPED,
+            },
+        )
+        self.assertEqual(self._node_attempts(result)["start"], 1)
+        self.assertEqual(
+            self._edge_states(result),
+            {
+                0: FlowEdgeState.TAKEN,
+                1: FlowEdgeState.PENDING,
+            },
+        )
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.worker_cancelled"],
+        )
 
     async def test_execute_flow_plan_respects_non_retryable_category(
         self,
@@ -879,6 +1157,82 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             self._edge_states(result),
             {0: FlowEdgeState.SUPPRESSED, 1: FlowEdgeState.TAKEN},
+        )
+
+    async def test_execute_flow_plan_loop_limit_prefers_error_edge(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "repair":
+                return {"done": False, "more": True, "safe": "pending"}
+            return node.name
+
+        plan = self._plan(
+            entry_node="repair",
+            outputs={"answer": "manual.value"},
+            nodes=(
+                self._node(
+                    "repair",
+                    output_contracts=(
+                        FlowNodeContract(
+                            name="result",
+                            type=FlowOutputType.OBJECT,
+                        ),
+                    ),
+                    loop=FlowLoopPlan(
+                        max_iterations=1,
+                        exit_condition=self._condition(
+                            FlowConditionOperator.EQ,
+                            selector="repair.result.done",
+                            value=True,
+                        ),
+                        continue_condition=self._condition(
+                            FlowConditionOperator.EQ,
+                            selector="repair.result.more",
+                            value=True,
+                        ),
+                        output_selector=parse_flow_selector(
+                            "repair.result.safe"
+                        ),
+                        limit_route="manual",
+                    ),
+                ),
+                self._node("manual"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="repair",
+                    target="manual",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+                FlowEdgePlan(
+                    index=1,
+                    source="repair",
+                    target="manual",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+            ),
+        )
+
+        result = await execute_flow_plan(plan, runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "manual"})
+        self.assertEqual(calls, ["repair", "manual"])
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.execution.loop_limit_reached"],
+        )
+        self.assertEqual(
+            self._edge_states(result),
+            {0: FlowEdgeState.PENDING, 1: FlowEdgeState.TAKEN},
         )
 
     async def test_execute_flow_plan_routes_loop_elapsed_limit(
@@ -1062,6 +1416,46 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(result.ok, result.public_diagnostics)
         self.assertEqual(result.outputs, {"answer": "finish"})
         self.assertGreaterEqual(checks, 2)
+
+    async def test_execute_flow_plan_stops_when_cancelled_between_nodes(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        checks = 0
+
+        async def check_cancelled() -> None:
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                raise CancelledError("private stop detail")
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "finish.value"},
+            nodes=(self._node("start"), self._node("finish")),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="finish",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            ),
+        )
+
+        with self.assertRaises(CancelledError) as raised:
+            await execute_flow_plan(
+                plan,
+                runner,
+                cancellation_checker=check_cancelled,
+            )
+
+        self.assertEqual(calls, ["start"])
+        self.assertEqual(str(raised.exception), "private stop detail")
 
     async def test_execute_flow_plan_runs_join_policies(self) -> None:
         cases = (
@@ -1368,6 +1762,116 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         )
         self.assertTrue(concurrent.ok, concurrent.public_diagnostics)
         self.assertEqual(max_active, 2)
+        self.assertEqual(sequential.outputs, concurrent.outputs)
+        self.assertEqual(
+            self._node_states(sequential),
+            self._node_states(concurrent),
+        )
+        self.assertEqual(
+            self._edge_states(sequential),
+            self._edge_states(concurrent),
+        )
+
+    async def test_execute_flow_plan_routes_ignore_sibling_batch_outputs(
+        self,
+    ) -> None:
+        async def run(
+            concurrency_limit: int,
+        ) -> tuple[FlowPlanExecutionResult, list[str]]:
+            calls: list[str] = []
+
+            async def runner(
+                node: FlowNodePlan,
+                _: Mapping[str, object],
+            ) -> object:
+                calls.append(node.name)
+                if node.name in {"left", "right"}:
+                    await sleep(0)
+                return node.name
+
+            result = await execute_flow_plan(
+                self._plan(
+                    entry_node="source",
+                    outputs={"answer": "right.value"},
+                    nodes=(
+                        self._node("source"),
+                        self._node("left"),
+                        self._node("right"),
+                        self._node("chosen"),
+                    ),
+                    edges=(
+                        FlowEdgePlan(
+                            index=0,
+                            source="source",
+                            target="left",
+                            kind=FlowEdgeKind.SUCCESS,
+                            routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                        ),
+                        FlowEdgePlan(
+                            index=1,
+                            source="source",
+                            target="right",
+                            kind=FlowEdgeKind.SUCCESS,
+                            routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                        ),
+                        FlowEdgePlan(
+                            index=2,
+                            source="left",
+                            target="chosen",
+                            kind=FlowEdgeKind.SUCCESS,
+                            condition=self._condition(
+                                FlowConditionOperator.EQ,
+                                selector="right.value",
+                                value="right",
+                            ),
+                        ),
+                    ),
+                ),
+                runner,
+                concurrency_limit=concurrency_limit,
+            )
+            return result, calls
+
+        sequential, sequential_calls = await run(1)
+        concurrent, concurrent_calls = await run(2)
+
+        self.assertFalse(sequential.ok)
+        self.assertFalse(concurrent.ok)
+        self.assertEqual(sequential.outputs, {"answer": "right"})
+        self.assertEqual(sequential.outputs, concurrent.outputs)
+        self.assertEqual(sequential_calls, ["source", "left", "right"])
+        self.assertEqual(concurrent_calls, ["source", "left", "right"])
+        sequential_codes = [
+            diagnostic["code"] for diagnostic in sequential.public_diagnostics
+        ]
+        self.assertEqual(
+            sequential_codes,
+            ["flow.condition_missing_value"],
+        )
+        self.assertEqual(
+            sequential.public_diagnostics,
+            concurrent.public_diagnostics,
+        )
+        self.assertEqual(
+            self._node_states(sequential),
+            self._node_states(concurrent),
+        )
+        self.assertEqual(
+            self._node_states(sequential)["chosen"],
+            FlowNodeState.SKIPPED,
+        )
+        self.assertEqual(
+            self._edge_states(sequential),
+            {
+                0: FlowEdgeState.TAKEN,
+                1: FlowEdgeState.TAKEN,
+                2: FlowEdgeState.FAILED,
+            },
+        )
+        self.assertEqual(
+            self._edge_states(sequential),
+            self._edge_states(concurrent),
+        )
 
     async def test_execute_flow_plan_validates_arguments(self) -> None:
         plan = self._plan(
@@ -1491,6 +1995,16 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                 3,
                 2,
             ),
+            (
+                FlowRetryPlan(
+                    max_attempts=4,
+                    backoff=FlowRetryBackoffStrategy.EXPONENTIAL,
+                    initial_delay_seconds=0.5,
+                    max_delay_seconds=1,
+                ),
+                3,
+                1,
+            ),
         )
 
         self.assertEqual(_retry_delay_seconds(None, 1), 0)
@@ -1500,6 +2014,74 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                     _retry_delay_seconds(retry, failed_attempts),
                     expected,
                 )
+        retry = FlowRetryPlan(
+            max_attempts=2,
+            backoff=FlowRetryBackoffStrategy.CONSTANT,
+        )
+        object.__setattr__(retry, "backoff", "unknown")
+        with self.assertRaises(FlowRuntimeEvaluationError) as raised:
+            _retry_delay_seconds(retry, 1)
+        self.assertEqual(
+            raised.exception.code,
+            "flow.execution.unsupported_retry_backoff",
+        )
+
+    def test_route_from_node_does_not_reselect_finally_edges(self) -> None:
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "cleanup.value"},
+            nodes=(self._node("start"), self._node("cleanup")),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="cleanup",
+                    kind=FlowEdgeKind.FINALLY,
+                ),
+            ),
+        )
+        routed, trace, diagnostics = _route_from_node(
+            plan,
+            "start",
+            FlowEdgeKind.FINALLY,
+            FlowRuntimeContext(),
+            FlowExecutionTrace.from_plan(plan),
+        )
+
+        self.assertEqual(routed, ("cleanup",))
+        self.assertEqual(diagnostics, ())
+        self.assertEqual(
+            {edge.index: edge.state for edge in trace.edges},
+            {0: FlowEdgeState.TAKEN},
+        )
+
+    def test_join_ready_handles_defensive_states(self) -> None:
+        plan = self._join_plan(FlowJoinPlan(type=FlowJoinPolicyType.ALL_DONE))
+        trace = FlowExecutionTrace.from_plan(plan)
+        trace = trace.with_node_state("left", FlowNodeState.READY)
+        trace = trace.with_edge_state(2, FlowEdgeState.TAKEN)
+
+        ready, diagnostic = _join_ready(plan, "joined", trace)
+
+        self.assertFalse(ready)
+        self.assertIsNone(diagnostic)
+
+    def test_join_ready_reports_unknown_policy(self) -> None:
+        plan = self._join_plan(FlowJoinPlan(type=FlowJoinPolicyType.ALL_DONE))
+        join = plan.node_map["joined"].join
+        assert join is not None
+        object.__setattr__(join, "type", "unknown")
+        trace = FlowExecutionTrace.from_plan(plan)
+
+        ready, diagnostic = _join_ready(plan, "joined", trace)
+
+        self.assertFalse(ready)
+        self.assertIsNotNone(diagnostic)
+        assert diagnostic is not None
+        self.assertEqual(
+            diagnostic.code,
+            "flow.execution.unsupported_join_policy",
+        )
 
     def _plan(
         self,
@@ -1716,6 +2298,1884 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         result: FlowPlanExecutionResult,
     ) -> dict[str, int]:
         return {trace.node: trace.attempts for trace in result.trace.nodes}
+
+
+class FlowRuntimeEndToEndTestCase(IsolatedAsyncioTestCase):
+    async def test_loaded_strict_definition_compiles_and_executes(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-e2e"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "joined.value"
+
+            [nodes.start]
+            type = "echo"
+
+            [nodes.start.mapping]
+            value = "input.payload"
+
+            [nodes.left]
+            type = "select"
+
+            [nodes.left.mapping.value]
+            type = "object"
+
+            [nodes.left.mapping.value.fields]
+            customer = "start.value.customer.name"
+            route = "start.value.route"
+
+            [nodes.right]
+            type = "select"
+
+            [nodes.right.mapping.value]
+            type = "object"
+
+            [nodes.right.mapping.value.fields]
+            score = "start.value.score"
+
+            [nodes.joined]
+            type = "select"
+
+            [nodes.joined.join_policy]
+            type = "all_success"
+
+            [nodes.joined.mapping.value]
+            type = "object"
+
+            [nodes.joined.mapping.value.fields]
+            customer = "left.value.customer"
+            route = "left.value.route"
+            score = "right.value.score"
+
+            [[edges]]
+            source = "start"
+            target = "left"
+            routing_policy = "all_matching"
+
+            [[edges]]
+            source = "start"
+            target = "right"
+            routing_policy = "all_matching"
+
+            [[edges]]
+            source = "left"
+            target = "joined"
+
+            [[edges]]
+            source = "right"
+            target = "joined"
+            """)
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append((node.name, dict(inputs)))
+            return inputs["value"]
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={
+                "payload": {
+                    "customer": {"name": "Ada"},
+                    "route": "standard",
+                    "score": 98,
+                    "private": "customer-secret",
+                },
+            },
+            concurrency_limit=2,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(
+            result.outputs,
+            {
+                "answer": {
+                    "customer": "Ada",
+                    "route": "standard",
+                    "score": 98,
+                },
+            },
+        )
+        self.assertEqual(
+            {name for name, _ in calls},
+            {"start", "left", "right", "joined"},
+        )
+        self.assertEqual(
+            result.node_outputs["joined"]["value"],
+            {
+                "customer": "Ada",
+                "route": "standard",
+                "score": 98,
+            },
+        )
+        called_nodes = {name for name, _ in calls}
+        for node_trace in result.trace.nodes:
+            if node_trace.node in called_nodes:
+                _assert_recorded_duration(self, node_trace.duration_ms)
+            else:
+                self.assertIsNone(node_trace.duration_ms)
+        for edge_trace in result.trace.edges:
+            _assert_recorded_duration(self, edge_trace.duration_ms)
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_uses_declared_entry_and_outputs(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-declared-entry"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "declared"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "declared.value.status"
+
+            [nodes.inferred]
+            type = "echo"
+
+            [nodes.declared]
+            type = "select"
+
+            [nodes.declared.mapping]
+            value = "input.payload"
+
+            [nodes.terminal]
+            type = "echo"
+
+            [[edges]]
+            source = "inferred"
+            target = "terminal"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "declared":
+                return inputs["value"]
+            return {
+                "status": "unused",
+                "private": "customer-secret",
+            }
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={
+                "payload": {
+                    "status": "ready",
+                    "private": "input-secret",
+                },
+            },
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": "ready"})
+        self.assertEqual(calls, ["declared"])
+        self.assertEqual(
+            {node.node: node.state for node in result.trace.nodes},
+            {
+                "inferred": FlowNodeState.SKIPPED,
+                "declared": FlowNodeState.SUCCEEDED,
+                "terminal": FlowNodeState.SKIPPED,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+        self.assertNotIn("input-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_takes_default_route(self) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-default-route"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "review"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "fallback.value"
+
+            [nodes.review]
+            type = "select"
+
+            [nodes.review.mapping]
+            value = "input.payload"
+
+            [nodes.approved]
+            type = "echo"
+
+            [nodes.fallback]
+            type = "echo"
+
+            [nodes.cleanup]
+            type = "echo"
+
+            [[edges]]
+            source = "review"
+            target = "approved"
+            priority = 1
+
+            [edges.condition]
+            op = "eq"
+            selector = "review.value.route"
+            value = "approved"
+
+            [[edges]]
+            source = "review"
+            target = "fallback"
+            priority = 2
+            default = true
+
+            [[edges]]
+            source = "review"
+            target = "cleanup"
+            kind = "finally"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "review":
+                return inputs["value"]
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={
+                "payload": {
+                    "route": "manual",
+                    "private": "customer-secret",
+                },
+            },
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": "fallback"})
+        self.assertEqual(calls, ["review", "fallback", "cleanup"])
+        self.assertEqual(
+            {node.node: node.state for node in result.trace.nodes},
+            {
+                "review": FlowNodeState.SUCCEEDED,
+                "approved": FlowNodeState.SKIPPED,
+                "fallback": FlowNodeState.SUCCEEDED,
+                "cleanup": FlowNodeState.SUCCEEDED,
+            },
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.SUPPRESSED,
+                1: FlowEdgeState.TAKEN,
+                2: FlowEdgeState.TAKEN,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_invalid_loaded_definition_does_not_execute(
+        self,
+    ) -> None:
+        load_result = loads_flow_definition_result("""
+            [flow]
+            name = "invalid-runtime"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "env.SECRET_TOKEN"
+
+            [nodes.start]
+            type = "echo"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            raise AssertionError("runner must not be called")
+
+        self.assertFalse(load_result.ok)
+        self.assertIsNone(load_result.definition)
+        self.assertIsNone(load_result.flow)
+        self.assertEqual(calls, [])
+        self.assertIn(
+            "flow.reserved_selector",
+            {issue.code for issue in load_result.issues},
+        )
+        self.assertNotIn("SECRET_TOKEN", str(load_result.public_diagnostics))
+        self.assertTrue(callable(runner))
+
+    async def test_invalid_loaded_loop_definition_does_not_execute(
+        self,
+    ) -> None:
+        load_result = loads_flow_definition_result("""
+            [flow]
+            name = "invalid-loop-runtime"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "review"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "review.value"
+
+            [nodes.review]
+            type = "select"
+
+            [nodes.review.mapping]
+            value = "input.payload"
+
+            [nodes.review.loop_policy]
+            output_selector = "review.value.safe"
+            limit_route = "manual"
+
+            [nodes.review.loop_policy.continue_condition]
+            op = "eq"
+            selector = "review.value.more"
+            value = true
+
+            [nodes.review.loop_policy.exit_condition]
+            op = "eq"
+            selector = "review.value.done"
+            value = true
+
+            [nodes.manual]
+            type = "echo"
+
+            [[edges]]
+            source = "review"
+            target = "manual"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            raise AssertionError("runner must not be called")
+
+        self.assertFalse(load_result.ok)
+        self.assertIsNone(load_result.definition)
+        self.assertIsNone(load_result.flow)
+        self.assertEqual(calls, [])
+        self.assertIn(
+            "flow.unbounded_loop",
+            {issue.code for issue in load_result.issues},
+        )
+        self.assertNotIn("payload", str(load_result.public_diagnostics))
+        self.assertTrue(callable(runner))
+
+    async def test_loaded_definition_retries_transient_failure(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-retry-success"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finished.value"
+
+            [nodes.worker]
+            type = "select"
+
+            [nodes.worker.mapping]
+            value = "input.payload"
+
+            [nodes.worker.retry_policy]
+            max_attempts = 2
+            retryable_categories = ["transient"]
+
+            [nodes.finished]
+            type = "echo"
+
+            [nodes.fallback]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "finished"
+
+            [[edges]]
+            source = "worker"
+            target = "fallback"
+            kind = "error"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "worker" and calls.count("worker") == 1:
+                raise FlowNodeExecutionError(
+                    code="flow.execution.provider_unavailable",
+                    message="Flow node provider is unavailable.",
+                    hint="Retry the node.",
+                    failure_category="transient",
+                )
+            if node.name == "worker":
+                return inputs["value"]
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={
+                "payload": {
+                    "status": "ready",
+                    "private": "customer-secret",
+                },
+            },
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": "finished"})
+        self.assertEqual(calls, ["worker", "worker", "finished"])
+        self.assertEqual(
+            {node.node: node.attempts for node in result.trace.nodes},
+            {
+                "worker": 2,
+                "finished": 1,
+                "fallback": 0,
+            },
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.TAKEN,
+                1: FlowEdgeState.PENDING,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_stops_before_retry_attempt(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-retry-cancel"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finished.value"
+
+            [nodes.worker]
+            type = "select"
+
+            [nodes.worker.mapping]
+            value = "input.payload"
+
+            [nodes.worker.retry_policy]
+            max_attempts = 3
+            retryable_categories = ["transient"]
+
+            [nodes.finished]
+            type = "echo"
+
+            [nodes.fallback]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "finished"
+
+            [[edges]]
+            source = "worker"
+            target = "fallback"
+            kind = "error"
+            """)
+        calls: list[str] = []
+        checks = 0
+
+        async def check_cancelled() -> None:
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                raise CancelledError("private retry stop")
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "worker":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.provider_unavailable",
+                    message="Flow node provider is unavailable.",
+                    hint="Retry the node.",
+                    failure_category="transient",
+                )
+            return node.name
+
+        with self.assertRaises(CancelledError) as raised:
+            await execute_flow_plan(
+                plan,
+                runner,
+                inputs={"payload": {"private": "customer-secret"}},
+                cancellation_checker=check_cancelled,
+            )
+
+        self.assertEqual(str(raised.exception), "private retry stop")
+        self.assertEqual(calls, ["worker"])
+
+    async def test_loaded_definition_routes_retry_exhaustion(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-retry"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "fallback.value"
+
+            [nodes.worker]
+            type = "select"
+
+            [nodes.worker.mapping]
+            value = "input.payload"
+
+            [nodes.worker.retry_policy]
+            max_attempts = 2
+            retryable_categories = ["transient"]
+            exhausted_route = "fallback"
+
+            [nodes.generic]
+            type = "echo"
+
+            [nodes.fallback]
+            type = "echo"
+
+            [nodes.cleanup]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "generic"
+            kind = "error"
+            priority = 1
+
+            [[edges]]
+            source = "worker"
+            target = "fallback"
+            kind = "error"
+            priority = 2
+
+            [[edges]]
+            source = "worker"
+            target = "cleanup"
+            kind = "finally"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "worker":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.provider_unavailable",
+                    message="Flow node provider is unavailable.",
+                    hint="Use the declared fallback route.",
+                    failure_category="transient",
+                )
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={"payload": {"private": "customer-secret"}},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "fallback"})
+        self.assertEqual(calls, ["worker", "worker", "fallback", "cleanup"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.provider_unavailable"],
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.SUPPRESSED,
+                1: FlowEdgeState.TAKEN,
+                2: FlowEdgeState.TAKEN,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_does_not_retry_validation_failure(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-validation-retry"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "fallback.value"
+
+            [nodes.worker]
+            type = "select"
+
+            [nodes.worker.mapping]
+            value = "input.payload"
+
+            [nodes.worker.retry_policy]
+            max_attempts = 3
+
+            [nodes.fallback]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "fallback"
+            kind = "error"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "worker":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.validation_failed",
+                    message="Flow node validation failed.",
+                    hint="Route to the validation fallback.",
+                    failure_category="validation",
+                )
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={"payload": {"private": "customer-secret"}},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "fallback"})
+        self.assertEqual(calls, ["worker", "fallback"])
+        self.assertEqual(
+            {node.node: node.attempts for node in result.trace.nodes},
+            {
+                "worker": 1,
+                "fallback": 1,
+            },
+        )
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.validation_failed"],
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_routes_cancellation(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-cancellation"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "cancelled.value"
+
+            [nodes.worker]
+            type = "select"
+
+            [nodes.worker.mapping]
+            value = "input.payload"
+
+            [nodes.cancelled]
+            type = "echo"
+
+            [nodes.cleanup]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "cancelled"
+            kind = "cancellation"
+
+            [[edges]]
+            source = "worker"
+            target = "cleanup"
+            kind = "finally"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "worker":
+                raise CancelledError("private cancellation detail")
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={"payload": {"private": "customer-secret"}},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "cancelled"})
+        self.assertEqual(calls, ["worker", "cancelled", "cleanup"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.node_cancelled"],
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.TAKEN,
+                1: FlowEdgeState.TAKEN,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+        self.assertNotIn(
+            "private cancellation detail",
+            str(result.public_diagnostics),
+        )
+
+    async def test_loaded_definition_routes_timeout(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-timeout"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "timed.value"
+
+            [nodes.worker]
+            type = "select"
+
+            [nodes.worker.mapping]
+            value = "input.payload"
+
+            [nodes.worker.timeout_policy]
+            per_attempt_seconds = 0.001
+
+            [nodes.timed]
+            type = "echo"
+
+            [nodes.cleanup]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "timed"
+            kind = "timeout"
+
+            [[edges]]
+            source = "worker"
+            target = "cleanup"
+            kind = "finally"
+            """)
+        calls: list[str] = []
+
+        async def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "worker":
+                await sleep(0.02)
+                return "private timeout body"
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={"payload": {"private": "customer-secret"}},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "timed"})
+        self.assertEqual(calls, ["worker", "timed", "cleanup"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.node_timeout"],
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.TAKEN,
+                1: FlowEdgeState.TAKEN,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+        self.assertNotIn(
+            "private timeout body", str(result.public_diagnostics)
+        )
+
+    async def test_loaded_definition_routes_mapping_failure_before_runner(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-mapping-failure"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "fallback.value"
+
+            [nodes.worker]
+            type = "select"
+
+            [nodes.worker.mapping]
+            value = "input.payload.required"
+
+            [nodes.fallback]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "fallback"
+            kind = "error"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={
+                "payload": {
+                    "private": "customer-secret",
+                },
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "fallback"})
+        self.assertEqual(calls, ["fallback"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.missing_selector_value"],
+        )
+        self.assertEqual(
+            {node.node: node.state for node in result.trace.nodes},
+            {
+                "worker": FlowNodeState.FAILED,
+                "fallback": FlowNodeState.SUCCEEDED,
+            },
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {0: FlowEdgeState.TAKEN},
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_reports_route_condition_failure(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-condition"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "worker.value.status"
+
+            [nodes.worker]
+            type = "select"
+
+            [nodes.worker.mapping]
+            value = "input.payload"
+
+            [nodes.downstream]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "downstream"
+
+            [edges.condition]
+            op = "eq"
+            selector = "worker.value.missing"
+            value = "ready"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            return inputs["value"]
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={
+                "payload": {
+                    "status": "ready",
+                    "private": "customer-secret",
+                },
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "ready"})
+        self.assertEqual(calls, ["worker"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.condition_missing_value"],
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {0: FlowEdgeState.FAILED},
+        )
+        _assert_recorded_duration(self, result.trace.nodes[0].duration_ms)
+        _assert_recorded_duration(self, result.trace.edges[0].duration_ms)
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_fail_fast_join_blocks_execution(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-fail-fast"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "source"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "joined.value"
+
+            [nodes.source]
+            type = "select"
+
+            [nodes.source.mapping]
+            value = "input.payload"
+
+            [nodes.left]
+            type = "echo"
+
+            [nodes.right]
+            type = "echo"
+
+            [nodes.joined]
+            type = "echo"
+
+            [nodes.joined.join_policy]
+            type = "fail_fast"
+
+            [[edges]]
+            source = "source"
+            target = "left"
+            routing_policy = "all_matching"
+
+            [[edges]]
+            source = "source"
+            target = "right"
+            routing_policy = "all_matching"
+
+            [[edges]]
+            source = "left"
+            target = "joined"
+            kind = "error"
+
+            [[edges]]
+            source = "right"
+            target = "joined"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "source":
+                return inputs["value"]
+            if node.name == "left":
+                raise RuntimeError("private branch payload")
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={
+                "payload": {
+                    "status": "ready",
+                    "private": "customer-secret",
+                },
+            },
+            concurrency_limit=2,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {})
+        self.assertEqual(calls, ["source", "left", "right"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            [
+                "flow.execution.node_failed",
+                "flow.execution.join_failed",
+                "flow.execution.missing_output",
+            ],
+        )
+        self.assertEqual(
+            {node.node: node.state for node in result.trace.nodes},
+            {
+                "source": FlowNodeState.SUCCEEDED,
+                "left": FlowNodeState.FAILED,
+                "right": FlowNodeState.SUCCEEDED,
+                "joined": FlowNodeState.FAILED,
+            },
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.TAKEN,
+                1: FlowEdgeState.TAKEN,
+                2: FlowEdgeState.TAKEN,
+                3: FlowEdgeState.TAKEN,
+            },
+        )
+        self.assertNotIn("private branch payload", str(result))
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_routes_loop_limit(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-loop"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "review"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "manual.value"
+
+            [nodes.review]
+            type = "select"
+
+            [nodes.review.mapping]
+            value = "input.payload"
+
+            [nodes.review.loop_policy]
+            max_iterations = 2
+            output_selector = "review.value.safe"
+            limit_route = "manual"
+
+            [nodes.review.loop_policy.continue_condition]
+            op = "eq"
+            selector = "review.value.more"
+            value = true
+
+            [nodes.review.loop_policy.exit_condition]
+            op = "eq"
+            selector = "review.value.done"
+            value = true
+
+            [nodes.finished]
+            type = "echo"
+
+            [nodes.manual]
+            type = "echo"
+
+            [[edges]]
+            source = "review"
+            target = "finished"
+            priority = 1
+
+            [[edges]]
+            source = "review"
+            target = "manual"
+            priority = 2
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "review":
+                return {
+                    "done": False,
+                    "more": True,
+                    "safe": "redacted",
+                    "private": "customer-secret",
+                }
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={"payload": {"private": "input-secret"}},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "manual"})
+        self.assertEqual(calls, ["review", "review", "manual"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.loop_limit_reached"],
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.SUPPRESSED,
+                1: FlowEdgeState.TAKEN,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+        self.assertNotIn("input-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_loop_limit_takes_error_edge(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-loop-limit-route"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "review"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "manual.value"
+
+            [nodes.review]
+            type = "select"
+
+            [nodes.review.mapping]
+            value = "input.payload"
+
+            [nodes.review.loop_policy]
+            max_iterations = 1
+            output_selector = "review.value.safe"
+            limit_route = "manual"
+
+            [nodes.review.loop_policy.continue_condition]
+            op = "eq"
+            selector = "review.value.more"
+            value = true
+
+            [nodes.review.loop_policy.exit_condition]
+            op = "eq"
+            selector = "review.value.done"
+            value = true
+
+            [nodes.manual]
+            type = "echo"
+
+            [nodes.finished]
+            type = "echo"
+
+            [[edges]]
+            source = "review"
+            target = "finished"
+            kind = "success"
+
+            [[edges]]
+            source = "review"
+            target = "manual"
+            kind = "error"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "review":
+                value = dict(cast(Mapping[str, object], inputs["value"]))
+                value["safe"] = "pending"
+                return value
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={
+                "payload": {
+                    "done": False,
+                    "more": True,
+                    "private": "customer-secret",
+                },
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {"answer": "manual"})
+        self.assertEqual(calls, ["review", "manual"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.loop_limit_reached"],
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.PENDING,
+                1: FlowEdgeState.TAKEN,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_stops_between_loop_iterations(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-loop-cancel"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "review"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "review.value"
+
+            [nodes.review]
+            type = "select"
+
+            [nodes.review.mapping]
+            value = "input.payload"
+
+            [nodes.review.loop_policy]
+            max_iterations = 4
+            output_selector = "review.value.safe"
+            limit_route = "manual"
+
+            [nodes.review.loop_policy.continue_condition]
+            op = "eq"
+            selector = "review.value.more"
+            value = true
+
+            [nodes.review.loop_policy.exit_condition]
+            op = "eq"
+            selector = "review.value.done"
+            value = true
+
+            [nodes.finished]
+            type = "echo"
+
+            [nodes.manual]
+            type = "echo"
+
+            [[edges]]
+            source = "review"
+            target = "finished"
+            priority = 1
+
+            [[edges]]
+            source = "review"
+            target = "manual"
+            priority = 2
+            """)
+        calls: list[str] = []
+        checks = 0
+
+        async def check_cancelled() -> None:
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                raise CancelledError("private loop stop")
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "review":
+                return {
+                    "done": False,
+                    "more": True,
+                    "safe": "pending",
+                    "private": "customer-secret",
+                }
+            return node.name
+
+        with self.assertRaises(CancelledError) as raised:
+            await execute_flow_plan(
+                plan,
+                runner,
+                inputs={"payload": {"private": "input-secret"}},
+                cancellation_checker=check_cancelled,
+            )
+
+        self.assertEqual(str(raised.exception), "private loop stop")
+        self.assertEqual(calls, ["review"])
+
+    async def test_loaded_definition_exits_loop_with_declared_output(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-loop-exit"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "review"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "review.value"
+
+            [nodes.review]
+            type = "select"
+
+            [nodes.review.mapping]
+            value = "input.payload"
+
+            [nodes.review.loop_policy]
+            max_iterations = 4
+            output_selector = "review.value.safe"
+            limit_route = "manual"
+
+            [nodes.review.loop_policy.continue_condition]
+            op = "eq"
+            selector = "review.value.more"
+            value = true
+
+            [nodes.review.loop_policy.exit_condition]
+            op = "eq"
+            selector = "review.value.done"
+            value = true
+
+            [nodes.finished]
+            type = "echo"
+
+            [nodes.manual]
+            type = "echo"
+
+            [[edges]]
+            source = "review"
+            target = "finished"
+            priority = 1
+
+            [[edges]]
+            source = "review"
+            target = "manual"
+            priority = 2
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "review":
+                return {
+                    "done": calls.count("review") == 2,
+                    "more": calls.count("review") == 1,
+                    "safe": "approved",
+                    "private": "customer-secret",
+                }
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={"payload": {"private": "input-secret"}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": "approved"})
+        self.assertEqual(calls, ["review", "review", "finished"])
+        self.assertEqual(result.node_outputs["review"]["value"], "approved")
+        self.assertEqual(
+            [node.attempts for node in result.trace.nodes],
+            [2, 1, 0],
+        )
+        self.assertEqual(
+            {edge.index: edge.state for edge in result.trace.edges},
+            {
+                0: FlowEdgeState.TAKEN,
+                1: FlowEdgeState.SUPPRESSED,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+        self.assertNotIn("input-secret", str(result.public_diagnostics))
+
+    async def test_loaded_definition_reports_missing_declared_output(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-output-missing"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "terminal.missing"
+
+            [nodes.start]
+            type = "echo"
+
+            [nodes.terminal]
+            type = "echo"
+
+            [[edges]]
+            source = "start"
+            target = "terminal"
+            """)
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            return {
+                "node": node.name,
+                "private": "customer-secret",
+            }
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            inputs={"payload": {"private": "input-secret"}},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {})
+        self.assertEqual(calls, ["start", "terminal"])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.execution.missing_output"],
+        )
+        self.assertEqual(
+            {node.node: node.state for node in result.trace.nodes},
+            {
+                "start": FlowNodeState.SUCCEEDED,
+                "terminal": FlowNodeState.SUCCEEDED,
+            },
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+        self.assertNotIn("input-secret", str(result.public_diagnostics))
+
+    async def test_invalid_loaded_definition_rejects_sibling_route_condition(
+        self,
+    ) -> None:
+        load_result = loads_flow_definition_result("""
+            [flow]
+            name = "runtime-sibling-routing"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "source"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "right.value"
+
+            [nodes.source]
+            type = "echo"
+
+            [nodes.left]
+            type = "echo"
+
+            [nodes.right]
+            type = "echo"
+
+            [nodes.chosen]
+            type = "echo"
+
+            [[edges]]
+            source = "source"
+            target = "left"
+            routing_policy = "all_matching"
+
+            [[edges]]
+            source = "source"
+            target = "right"
+            routing_policy = "all_matching"
+
+            [[edges]]
+            source = "left"
+            target = "chosen"
+
+            [edges.condition]
+            op = "eq"
+            selector = "right.value"
+            value = "right"
+            """)
+
+        self.assertFalse(load_result.ok)
+        self.assertIsNone(load_result.definition)
+        self.assertIsNone(load_result.flow)
+        diagnostic_codes = [
+            diagnostic["code"] for diagnostic in load_result.public_diagnostics
+        ]
+        self.assertEqual(
+            diagnostic_codes,
+            ["flow.bad_reference"],
+        )
+        self.assertNotIn("right.value", str(load_result.public_diagnostics))
+
+    async def test_invalid_loaded_definition_rejects_retry_success_route(
+        self,
+    ) -> None:
+        load_result = loads_flow_definition_result("""
+            [flow]
+            name = "runtime-retry-route-kind"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "text"
+
+            [entry]
+            type = "node"
+            node = "worker"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "fallback.value"
+
+            [nodes.worker]
+            type = "echo"
+
+            [nodes.worker.retry_policy]
+            max_attempts = 2
+            retryable_categories = ["transient"]
+            exhausted_route = "fallback"
+
+            [nodes.fallback]
+            type = "echo"
+
+            [[edges]]
+            source = "worker"
+            target = "fallback"
+            kind = "success"
+            """)
+
+        self.assertFalse(load_result.ok)
+        self.assertIsNone(load_result.definition)
+        self.assertIsNone(load_result.flow)
+        self.assertEqual(
+            [
+                diagnostic["code"]
+                for diagnostic in load_result.public_diagnostics
+            ],
+            ["flow.missing_retry_exhaustion_route"],
+        )
+        self.assertNotIn("fallback.value", str(load_result.public_diagnostics))
+
+    def _compile_loaded_definition(self, source: str) -> FlowExecutionPlan:
+        load_result = loads_flow_definition_result(source)
+        self.assertTrue(load_result.ok, load_result.public_diagnostics)
+        assert load_result.definition is not None
+        compile_result = compile_flow_definition(load_result.definition)
+        self.assertTrue(compile_result.ok, compile_result.public_diagnostics)
+        assert compile_result.plan is not None
+        return compile_result.plan
 
 
 class FlowRuntimeEvaluationTestCase(TestCase):
