@@ -36,6 +36,7 @@ class FakePgsqlTaskDatabase:
     def __init__(self) -> None:
         self.definitions: dict[str, dict[str, object]] = {}
         self.runs: dict[str, dict[str, object]] = {}
+        self.flow_executions: dict[str, dict[str, object]] = {}
         self.attempts: dict[str, dict[str, object]] = {}
         self.run_transitions: dict[str, dict[str, object]] = {}
         self.attempt_transitions: dict[str, dict[str, object]] = {}
@@ -66,6 +67,7 @@ class FakePgsqlTaskDatabase:
         return {
             "definitions": deepcopy(self.definitions),
             "runs": deepcopy(self.runs),
+            "flow_executions": deepcopy(self.flow_executions),
             "attempts": deepcopy(self.attempts),
             "run_transitions": deepcopy(self.run_transitions),
             "attempt_transitions": deepcopy(self.attempt_transitions),
@@ -80,6 +82,10 @@ class FakePgsqlTaskDatabase:
             dict[str, dict[str, object]], snapshot["definitions"]
         )
         self.runs = cast(dict[str, dict[str, object]], snapshot["runs"])
+        self.flow_executions = cast(
+            dict[str, dict[str, object]],
+            snapshot["flow_executions"],
+        )
         self.attempts = cast(
             dict[str, dict[str, object]], snapshot["attempts"]
         )
@@ -183,7 +189,10 @@ class FakeCursor:
     ) -> None:
         params = parameters or ()
         self.database.executed_queries.append(query)
-        if 'SELECT * FROM "task_definitions"' in query:
+        if 'SELECT "run_id" FROM "task_runs"' in query:
+            run = self.database.runs.get(cast(str, params[0]))
+            self.row = {"run_id": run["run_id"]} if run is not None else None
+        elif 'SELECT * FROM "task_definitions"' in query:
             self.row = self.database.definitions.get(cast(str, params[0]))
         elif 'INSERT INTO "task_definitions"' in query:
             self.row = self._insert_definition(params)
@@ -201,6 +210,12 @@ class FakeCursor:
             self.row = self._insert_run_transition(params)
         elif 'FROM "task_run_transitions"' in query:
             self.rows = self._run_transitions(cast(str, params[0]))
+        elif 'SELECT * FROM "task_flow_executions"' in query:
+            self.row = self.database.flow_executions.get(cast(str, params[0]))
+        elif 'INSERT INTO "task_flow_executions"' in query:
+            self.row = self._insert_flow_execution(params)
+        elif 'UPDATE "task_flow_executions"' in query:
+            self.row = self._update_flow_execution(params)
         elif 'SELECT * FROM "task_attempts" WHERE "attempt_id"' in query:
             self.row = self.database.attempts.get(cast(str, params[0]))
         elif 'FROM "task_attempts"' in query:
@@ -385,6 +400,54 @@ class FakeCursor:
             "created_at": params[6],
         }
         self.database.run_transitions[cast(str, params[0])] = row
+        return row
+
+    def _insert_flow_execution(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        task_run_id = cast(str, params[0])
+        if task_run_id in self.database.flow_executions:
+            return None
+        row = {
+            "task_run_id": task_run_id,
+            "revision": params[1],
+            "trace": loads(cast(str, params[2])),
+            "node_attempts": loads(cast(str, params[3])),
+            "selected_outputs": loads(cast(str, params[4])),
+            "loop_counters": loads(cast(str, params[5])),
+            "pause_tokens": loads(cast(str, params[6])),
+            "diagnostics": loads(cast(str, params[7])),
+            "artifact_refs": loads(cast(str, params[8])),
+            "metadata": loads(cast(str, params[9])),
+            "created_at": params[10],
+            "updated_at": params[11],
+        }
+        self.database.flow_executions[task_run_id] = row
+        return row
+
+    def _update_flow_execution(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        task_run_id = cast(str, params[9])
+        row = self.database.flow_executions.get(task_run_id)
+        if row is None or row["revision"] != params[10]:
+            return None
+        for index, key in (
+            (0, "trace"),
+            (1, "node_attempts"),
+            (2, "selected_outputs"),
+            (3, "loop_counters"),
+            (4, "pause_tokens"),
+            (5, "diagnostics"),
+            (6, "artifact_refs"),
+            (7, "metadata"),
+        ):
+            if params[index] is not None:
+                row[key] = loads(cast(str, params[index]))
+        row["revision"] = cast(int, row["revision"]) + 1
+        row["updated_at"] = params[8]
         return row
 
     def _insert_attempt(

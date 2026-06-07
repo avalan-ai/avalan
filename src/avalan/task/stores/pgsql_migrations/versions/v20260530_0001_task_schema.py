@@ -105,6 +105,47 @@ CREATE TABLE IF NOT EXISTS "task_run_transitions" (
 );
 """,
     """
+CREATE TABLE IF NOT EXISTS "task_flow_executions" (
+    "task_run_id" TEXT NOT NULL,
+    "revision" INTEGER NOT NULL,
+    "trace" JSONB NOT NULL,
+    "node_attempts" JSONB NOT NULL DEFAULT '[]'::JSONB,
+    "selected_outputs" JSONB NOT NULL DEFAULT '{}'::JSONB,
+    "loop_counters" JSONB NOT NULL DEFAULT '{}'::JSONB,
+    "pause_tokens" JSONB NOT NULL DEFAULT '{}'::JSONB,
+    "diagnostics" JSONB NOT NULL DEFAULT '[]'::JSONB,
+    "artifact_refs" JSONB NOT NULL DEFAULT '[]'::JSONB,
+    "metadata" JSONB NOT NULL DEFAULT '{}'::JSONB,
+    "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY ("task_run_id"),
+    CONSTRAINT "fk_task_flow_executions__task_runs"
+        FOREIGN KEY ("task_run_id")
+        REFERENCES "task_runs" ("run_id"),
+    CONSTRAINT "ck_task_flow_executions_revision_positive"
+        CHECK ("revision" > 0),
+    CONSTRAINT "ck_task_flow_executions_trace_shape"
+        CHECK (JSONB_TYPEOF("trace") = 'object'),
+    CONSTRAINT "ck_task_flow_executions_node_attempts_shape"
+        CHECK (JSONB_TYPEOF("node_attempts") = 'array'),
+    CONSTRAINT "ck_task_flow_executions_selected_outputs_shape"
+        CHECK (JSONB_TYPEOF("selected_outputs") = 'object'),
+    CONSTRAINT "ck_task_flow_executions_loop_counters_shape"
+        CHECK (JSONB_TYPEOF("loop_counters") = 'object'),
+    CONSTRAINT "ck_task_flow_executions_pause_tokens_shape"
+        CHECK (JSONB_TYPEOF("pause_tokens") = 'object'),
+    CONSTRAINT "ck_task_flow_executions_diagnostics_shape"
+        CHECK (JSONB_TYPEOF("diagnostics") = 'array'),
+    CONSTRAINT "ck_task_flow_executions_artifact_refs_shape"
+        CHECK (JSONB_TYPEOF("artifact_refs") = 'array'),
+    CONSTRAINT "ck_task_flow_executions_metadata_shape"
+        CHECK (JSONB_TYPEOF("metadata") = 'object'),
+    CONSTRAINT "ck_task_flow_executions_updated_at_not_before_created_at"
+        CHECK ("updated_at" >= "created_at")
+);
+""",
+    """
 CREATE TABLE IF NOT EXISTS "task_attempts" (
     "attempt_id" TEXT NOT NULL,
     "run_id" TEXT NOT NULL,

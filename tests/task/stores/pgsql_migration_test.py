@@ -46,6 +46,7 @@ class PgsqlMigrationSchemaTest(TestCase):
             "task_definitions",
             "task_runs",
             "task_run_transitions",
+            "task_flow_executions",
             "task_attempts",
             "task_attempt_transitions",
             "task_artifacts",
@@ -133,6 +134,11 @@ class PgsqlMigrationSchemaTest(TestCase):
             "ck_task_runs_result_shape",
             "ck_task_attempts_context_shape",
             "ck_task_attempts_result_shape",
+            "ck_task_flow_executions_trace_shape",
+            "ck_task_flow_executions_node_attempts_shape",
+            "ck_task_flow_executions_selected_outputs_shape",
+            "ck_task_flow_executions_diagnostics_shape",
+            "ck_task_flow_executions_artifact_refs_shape",
             "ck_task_artifacts_ref_shape",
             "ck_task_artifacts_retention_shape",
             "ck_task_idempotency_keys_owner_scope_shape",
@@ -149,6 +155,7 @@ class PgsqlMigrationSchemaTest(TestCase):
 
         for constraint_name in (
             "fk_task_attempt_transitions__task_attempt_run",
+            "fk_task_flow_executions__task_runs",
             "fk_task_artifacts__task_attempt_run",
             "fk_task_events__task_attempt_run",
             "fk_task_usage_records__task_attempt_run",
