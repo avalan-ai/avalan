@@ -1,3 +1,5 @@
+from .condition import FlowCondition
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -319,12 +321,15 @@ class FlowEdgeDefinition:
     source: str
     target: str
     label: str | None = None
+    condition: FlowCondition | None = None
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.source, "source")
         _assert_non_empty_string(self.target, "target")
         if self.label is not None:
             _assert_non_empty_string(self.label, "label")
+        if self.condition is not None:
+            assert isinstance(self.condition, FlowCondition)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

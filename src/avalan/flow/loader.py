@@ -1,3 +1,10 @@
+from .condition import (
+    FlowCondition,
+    FlowConditionEvaluationContext,
+    FlowConditionOperator,
+    FlowConditionValueType,
+    evaluate_flow_condition,
+)
 from .definition import (
     FlowDefinition,
     FlowEdgeDefinition,
@@ -29,12 +36,12 @@ from .validator import (
     validate_flow_definition,
 )
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from tomllib import TOMLDecodeError, loads
-from typing import TypeVar
+from typing import Any, TypeVar
 
 EnumValue = TypeVar("EnumValue", bound=StrEnum)
 RawSection = Mapping[str, object]
@@ -102,6 +109,26 @@ _ALLOWED_MAPPING_FIELDS = frozenset(
         "source",
         "sources",
         "type",
+    }
+)
+_ALLOWED_EDGE_FIELDS = frozenset(
+    {
+        "condition",
+        "label",
+        "source",
+        "target",
+    }
+)
+_ALLOWED_CONDITION_FIELDS = frozenset(
+    {
+        "condition",
+        "conditions",
+        "op",
+        "selector",
+        "value",
+        "value_selector",
+        "value_type",
+        "values",
     }
 )
 
@@ -276,8 +303,57 @@ def build_flow(
     for node_definition in definition.nodes:
         flow.add_node(node_registry.build(node_definition))
     for edge in definition.edges:
-        flow.add_connection(edge.source, edge.target, label=edge.label)
+        conditions: list[Callable[[Any], bool | Awaitable[bool]]] | None
+        conditions = (
+            [_edge_condition_callable(definition, node_registry, edge)]
+            if edge.condition is not None
+            else None
+        )
+        flow.add_connection(
+            edge.source,
+            edge.target,
+            label=edge.label,
+            conditions=conditions,
+        )
     return flow
+
+
+def _edge_condition_callable(
+    definition: FlowDefinition,
+    registry: FlowNodeRegistry,
+    edge: FlowEdgeDefinition,
+) -> Callable[[object], bool]:
+    assert edge.condition is not None
+    source = definition.node_map[edge.source]
+    output_names = _condition_output_names(registry, source.type)
+
+    def evaluate(data: object) -> bool:
+        context = FlowConditionEvaluationContext(
+            node_outputs={
+                edge.source: {name: data for name in output_names},
+            },
+        )
+        assert edge.condition is not None
+        return evaluate_flow_condition(edge.condition, context)
+
+    return evaluate
+
+
+def _condition_output_names(
+    registry: FlowNodeRegistry,
+    node_type: str,
+) -> tuple[str, ...]:
+    metadata = registry.metadata(node_type)
+    names: list[str] = []
+    if metadata is not None:
+        names.extend(
+            contract.name
+            for contract in metadata.output_contracts
+            if contract.name is not None
+        )
+    if not names:
+        names.extend(("value", "result"))
+    return tuple(dict.fromkeys(names))
 
 
 def _build_result(
@@ -850,15 +926,146 @@ def _edge_definitions(
         if not isinstance(item, Mapping):
             issues.append(_invalid_type(path, "Use TOML edge tables."))
             continue
+        _validate_unknown_fields(
+            item,
+            allowed=_ALLOWED_EDGE_FIELDS,
+            path=path,
+            issues=issues,
+        )
         source = _required_str(item, f"{path}.source", "source", issues)
         target = _required_str(item, f"{path}.target", "target", issues)
         label = _optional_str(item, f"{path}.label", "label", issues)
+        condition = _condition_definition(
+            item.get("condition"),
+            issues,
+            path=f"{path}.condition",
+        )
         if source is None or target is None:
             continue
         edges.append(
-            FlowEdgeDefinition(source=source, target=target, label=label)
+            FlowEdgeDefinition(
+                source=source,
+                target=target,
+                label=label,
+                condition=condition,
+            )
         )
     return tuple(edges)
+
+
+def _condition_definition(
+    value: object,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> FlowCondition | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_type(path, "Use a TOML table."))
+        return None
+    _validate_unknown_fields(
+        value,
+        allowed=_ALLOWED_CONDITION_FIELDS,
+        path=path,
+        issues=issues,
+    )
+    operator = _enum_value(
+        value,
+        f"{path}.op",
+        "op",
+        FlowConditionOperator,
+        issues,
+    )
+    selector = _optional_str(value, f"{path}.selector", "selector", issues)
+    condition_value = (
+        _metadata_value(value["value"]) if "value" in value else None
+    )
+    value_selector = _optional_str(
+        value,
+        f"{path}.value_selector",
+        "value_selector",
+        issues,
+    )
+    values = _condition_values(value, issues, path=path)
+    value_type = _optional_condition_value_type(value, issues, path=path)
+    conditions = _condition_children(
+        value.get("conditions"),
+        issues,
+        path=f"{path}.conditions",
+    )
+    condition = _condition_definition(
+        value.get("condition"),
+        issues,
+        path=f"{path}.condition",
+    )
+    if operator is None:
+        return None
+    return FlowCondition(
+        operator=operator,
+        selector=selector,
+        value=condition_value,
+        value_selector=value_selector,
+        values=values,
+        value_type=value_type,
+        conditions=conditions,
+        condition=condition,
+    )
+
+
+def _condition_values(
+    raw: RawSection,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> tuple[object, ...]:
+    value = raw.get("values")
+    if value is None:
+        return ()
+    if not isinstance(value, list | tuple):
+        issues.append(_invalid_type(f"{path}.values", "Use an array."))
+        return ()
+    return tuple(_metadata_value(item) for item in value)
+
+
+def _optional_condition_value_type(
+    raw: RawSection,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> FlowConditionValueType | None:
+    if "value_type" not in raw:
+        return None
+    return _enum_value(
+        raw,
+        f"{path}.value_type",
+        "value_type",
+        FlowConditionValueType,
+        issues,
+    )
+
+
+def _condition_children(
+    value: object,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> tuple[FlowCondition, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list | tuple):
+        issues.append(_invalid_type(path, "Use an array of tables."))
+        return ()
+    conditions: list[FlowCondition] = []
+    for index, item in enumerate(value):
+        condition = _condition_definition(
+            item,
+            issues,
+            path=f"{path}[{index}]",
+        )
+        if condition is not None:
+            conditions.append(condition)
+    return tuple(conditions)
 
 
 def _node_config(
