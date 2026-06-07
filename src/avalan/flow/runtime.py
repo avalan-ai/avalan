@@ -47,8 +47,10 @@ class _NodeRunOutcome:
     route_kind: FlowEdgeKind
     attempts: int
     diagnostics: tuple[FlowDiagnostic, ...]
+    duration_ms: float | None = None
     failure_category: str | None = None
     exhausted_route: str | None = None
+    exhausted_route_kind: FlowEdgeKind | None = None
     output: object = None
 
 
@@ -203,7 +205,7 @@ async def execute_flow_plan(
         await _check_cancelled(cancellation_checker)
         batch: list[tuple[FlowNodePlan, Mapping[str, object]]] = []
         batch_outcomes: list[_NodeRunOutcome] = []
-        context = FlowRuntimeContext(
+        batch_context = FlowRuntimeContext(
             inputs=input_values,
             node_outputs=node_outputs,
         )
@@ -211,7 +213,11 @@ async def execute_flow_plan(
             node_name = ready.popleft()
             queued.discard(node_name)
             node = node_map[node_name]
-            mapped_inputs, mapping_diagnostic = _node_inputs(node, context)
+            started_at = monotonic()
+            mapped_inputs, mapping_diagnostic = _node_inputs(
+                node,
+                batch_context,
+            )
             trace = trace.with_node_state(node.name, FlowNodeState.READY)
             if mapping_diagnostic is not None:
                 batch_outcomes.append(
@@ -221,6 +227,7 @@ async def execute_flow_plan(
                         route_kind=FlowEdgeKind.ERROR,
                         attempts=1,
                         diagnostics=(mapping_diagnostic,),
+                        duration_ms=_elapsed_ms(started_at),
                     )
                 )
                 continue
@@ -234,7 +241,13 @@ async def execute_flow_plan(
             batch_outcomes.extend(
                 await gather(
                     *(
-                        _run_plan_node(node, mapped_inputs, runner, context)
+                        _run_plan_node(
+                            node,
+                            mapped_inputs,
+                            runner,
+                            batch_context,
+                            cancellation_checker,
+                        )
                         for node, mapped_inputs in batch
                     )
                 )
@@ -244,6 +257,7 @@ async def execute_flow_plan(
                 outcome.node.name,
                 outcome.state,
                 attempts=outcome.attempts,
+                duration_ms=outcome.duration_ms,
                 diagnostics=outcome.diagnostics,
             )
             diagnostics.extend(outcome.diagnostics)
@@ -254,17 +268,19 @@ async def execute_flow_plan(
                 )
             processed.add(outcome.node.name)
         for outcome in batch_outcomes:
-            context = FlowRuntimeContext(
-                inputs=input_values,
-                node_outputs=node_outputs,
+            route_context = _route_context(
+                input_values,
+                batch_context.node_outputs,
+                outcome,
             )
             routed, trace, route_diagnostics = _route_from_node(
                 plan,
                 outcome.node.name,
                 outcome.route_kind,
-                context,
+                route_context,
                 trace,
                 forced_target=outcome.exhausted_route,
+                forced_kind=outcome.exhausted_route_kind,
             )
             diagnostics.extend(route_diagnostics)
             for target in routed:
@@ -292,6 +308,24 @@ async def execute_flow_plan(
     )
 
 
+def _route_context(
+    inputs: Mapping[str, object],
+    previous_node_outputs: Mapping[str, Mapping[str, object]],
+    outcome: _NodeRunOutcome,
+) -> FlowRuntimeContext:
+    if outcome.route_kind != FlowEdgeKind.SUCCESS:
+        return FlowRuntimeContext(
+            inputs=inputs,
+            node_outputs=previous_node_outputs,
+        )
+    node_outputs = dict(previous_node_outputs)
+    node_outputs[outcome.node.name] = _node_output_mapping(
+        outcome.node,
+        outcome.output,
+    )
+    return FlowRuntimeContext(inputs=inputs, node_outputs=node_outputs)
+
+
 def _node_inputs(
     node: FlowNodePlan,
     context: FlowRuntimeContext,
@@ -312,17 +346,31 @@ async def _run_plan_node(
     inputs: Mapping[str, object],
     runner: FlowPlanNodeRunner,
     context: FlowRuntimeContext,
+    cancellation_checker: CancellationChecker | None,
 ) -> _NodeRunOutcome:
     if node.loop is not None:
-        return await _run_loop_plan_node(node, inputs, runner, context)
-    return await _run_plan_node_attempts(node, inputs, runner)
+        return await _run_loop_plan_node(
+            node,
+            inputs,
+            runner,
+            context,
+            cancellation_checker,
+        )
+    return await _run_plan_node_attempts(
+        node,
+        inputs,
+        runner,
+        cancellation_checker,
+    )
 
 
 async def _run_plan_node_attempts(
     node: FlowNodePlan,
     inputs: Mapping[str, object],
     runner: FlowPlanNodeRunner,
+    cancellation_checker: CancellationChecker | None,
 ) -> _NodeRunOutcome:
+    started_at = monotonic()
     attempts = 0
     first_failure: _NodeRunOutcome | None = None
     while True:
@@ -335,6 +383,7 @@ async def _run_plan_node_attempts(
                 route_kind=outcome.route_kind,
                 attempts=attempts,
                 diagnostics=(),
+                duration_ms=_elapsed_ms(started_at),
                 output=outcome.output,
             )
         if first_failure is None:
@@ -346,6 +395,7 @@ async def _run_plan_node_attempts(
                 route_kind=outcome.route_kind,
                 attempts=attempts,
                 diagnostics=first_failure.diagnostics,
+                duration_ms=_elapsed_ms(started_at),
                 failure_category=outcome.failure_category,
                 exhausted_route=(
                     node.retry.exhausted_route
@@ -353,10 +403,18 @@ async def _run_plan_node_attempts(
                     and attempts >= node.retry.max_attempts
                     else None
                 ),
+                exhausted_route_kind=(
+                    outcome.route_kind
+                    if node.retry is not None
+                    and attempts >= node.retry.max_attempts
+                    else None
+                ),
             )
+        await _check_cancelled(cancellation_checker)
         delay_seconds = _retry_delay_seconds(node.retry, attempts)
         if delay_seconds > 0:
             await sleep(delay_seconds)
+            await _check_cancelled(cancellation_checker)
 
 
 async def _run_loop_plan_node(
@@ -364,12 +422,18 @@ async def _run_loop_plan_node(
     inputs: Mapping[str, object],
     runner: FlowPlanNodeRunner,
     base_context: FlowRuntimeContext,
+    cancellation_checker: CancellationChecker | None,
 ) -> _NodeRunOutcome:
     assert node.loop is not None
     started_at = monotonic()
     attempts = 0
     while True:
-        outcome = await _run_plan_node_attempts(node, inputs, runner)
+        outcome = await _run_plan_node_attempts(
+            node,
+            inputs,
+            runner,
+            cancellation_checker,
+        )
         attempts += outcome.attempts
         if outcome.route_kind != FlowEdgeKind.SUCCESS:
             return _NodeRunOutcome(
@@ -378,8 +442,10 @@ async def _run_loop_plan_node(
                 route_kind=outcome.route_kind,
                 attempts=attempts,
                 diagnostics=outcome.diagnostics,
+                duration_ms=_elapsed_ms(started_at),
                 failure_category=outcome.failure_category,
                 exhausted_route=outcome.exhausted_route,
+                exhausted_route_kind=outcome.exhausted_route_kind,
             )
         node_outputs = dict(base_context.node_outputs)
         node_outputs[node.name] = _node_output_mapping(node, outcome.output)
@@ -395,6 +461,7 @@ async def _run_loop_plan_node(
                 route_kind=FlowEdgeKind.ERROR,
                 attempts=attempts,
                 diagnostics=(diagnostic,),
+                duration_ms=_elapsed_ms(started_at),
                 failure_category="validation",
             )
         if selected_output is not _MISSING:
@@ -404,6 +471,7 @@ async def _run_loop_plan_node(
                 route_kind=FlowEdgeKind.SUCCESS,
                 attempts=attempts,
                 diagnostics=(),
+                duration_ms=_elapsed_ms(started_at),
                 output=selected_output,
             )
         if _loop_limit_reached(node, attempts, started_at):
@@ -419,9 +487,11 @@ async def _run_loop_plan_node(
                 route_kind=FlowEdgeKind.ERROR,
                 attempts=attempts,
                 diagnostics=(diagnostic,),
+                duration_ms=_elapsed_ms(started_at),
                 failure_category="loop_limit",
                 exhausted_route=node.loop.limit_route,
             )
+        await _check_cancelled(cancellation_checker)
 
 
 def _loop_selected_output(
@@ -476,6 +546,10 @@ def _loop_limit_reached(
         node.loop.max_elapsed_seconds is not None
         and monotonic() - started_at >= node.loop.max_elapsed_seconds
     )
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return (monotonic() - started_at) * 1000
 
 
 async def _run_plan_node_once(
@@ -598,6 +672,10 @@ def _retry_delay_seconds(
             delay = initial * failed_attempts
         case FlowRetryBackoffStrategy.EXPONENTIAL:
             delay = initial * (2 ** (failed_attempts - 1))
+        case _:
+            raise FlowRuntimeEvaluationError(
+                "flow.execution.unsupported_retry_backoff"
+            )
     if retry.max_delay_seconds is not None:
         delay = min(delay, float(retry.max_delay_seconds))
     return delay
@@ -633,6 +711,7 @@ def _route_from_node(
     trace: FlowExecutionTrace,
     *,
     forced_target: str | None = None,
+    forced_kind: FlowEdgeKind | None = None,
 ) -> tuple[tuple[str, ...], FlowExecutionTrace, tuple[FlowDiagnostic, ...]]:
     diagnostics: list[FlowDiagnostic] = []
     routed: list[str] = []
@@ -643,6 +722,7 @@ def _route_from_node(
         context,
         trace,
         forced_target=forced_target,
+        forced_kind=forced_kind,
     )
     routed.extend(edge.target for edge in selected)
     diagnostics.extend(route_diagnostics)
@@ -753,6 +833,12 @@ def _join_ready(
                     hint="Inspect inbound routes and join policy.",
                 )
             return success_count == inbound_count, None
+    return False, _execution_diagnostic(
+        code="flow.execution.unsupported_join_policy",
+        path=f"nodes.{target}.join_policy",
+        message="Flow join policy is unsupported.",
+        hint="Use a supported join policy for this node.",
+    )
 
 
 def _select_routes(
@@ -763,13 +849,21 @@ def _select_routes(
     trace: FlowExecutionTrace,
     *,
     forced_target: str | None = None,
+    forced_kind: FlowEdgeKind | None = None,
 ) -> tuple[
     tuple[FlowEdgePlan, ...],
     FlowExecutionTrace,
     tuple[FlowDiagnostic, ...],
 ]:
     if forced_target is not None:
-        return _select_forced_route(plan, source, forced_target, trace)
+        return _select_forced_route(
+            plan,
+            source,
+            forced_target,
+            kind,
+            trace,
+            forced_kind=forced_kind,
+        )
     edges = tuple(
         edge
         for edge in plan.edges_by_source.get(source, ())
@@ -780,13 +874,16 @@ def _select_routes(
     policy = edges[0].routing_policy
     default_edge = next((edge for edge in edges if edge.default), None)
     matches: list[FlowEdgePlan] = []
+    edge_durations: dict[int, float] = {}
     diagnostics: list[FlowDiagnostic] = []
     for edge in sorted(edges, key=lambda item: (item.priority, item.index)):
         if edge.default:
             continue
+        started_at = monotonic()
         try:
             matched = _edge_condition_matches(edge, context)
         except FlowRuntimeEvaluationError as error:
+            edge_durations[edge.index] = _elapsed_ms(started_at)
             diagnostic = _execution_diagnostic(
                 code=error.code,
                 path=f"edges[{edge.index}].condition",
@@ -797,15 +894,18 @@ def _select_routes(
             trace = trace.with_edge_state(
                 edge.index,
                 FlowEdgeState.FAILED,
+                duration_ms=edge_durations[edge.index],
                 diagnostics=(diagnostic,),
             )
             continue
+        edge_durations[edge.index] = _elapsed_ms(started_at)
         if matched:
             matches.append(edge)
         else:
             trace = trace.with_edge_state(
                 edge.index,
                 FlowEdgeState.SUPPRESSED,
+                duration_ms=edge_durations[edge.index],
             )
     if policy == FlowRouteMatchPolicy.ALL_MATCHING:
         selected = tuple(matches)
@@ -814,7 +914,11 @@ def _select_routes(
     if not selected and default_edge is not None:
         selected = (default_edge,)
     for edge in selected:
-        trace = trace.with_edge_state(edge.index, FlowEdgeState.TAKEN)
+        trace = trace.with_edge_state(
+            edge.index,
+            FlowEdgeState.TAKEN,
+            duration_ms=edge_durations.get(edge.index, 0.0),
+        )
     selected_indexes = {edge.index for edge in selected}
     suppressed = [
         edge for edge in matches if edge.index not in selected_indexes
@@ -825,6 +929,7 @@ def _select_routes(
         trace = trace.with_edge_state(
             edge.index,
             FlowEdgeState.SUPPRESSED,
+            duration_ms=edge_durations.get(edge.index, 0.0),
         )
     return selected, trace, tuple(diagnostics)
 
@@ -833,19 +938,34 @@ def _select_forced_route(
     plan: FlowExecutionPlan,
     source: str,
     forced_target: str,
+    kind: FlowEdgeKind,
     trace: FlowExecutionTrace,
+    *,
+    forced_kind: FlowEdgeKind | None = None,
 ) -> tuple[
     tuple[FlowEdgePlan, ...],
     FlowExecutionTrace,
     tuple[FlowDiagnostic, ...],
 ]:
     source_edges = plan.edges_by_source.get(source, ())
+    selected_kind = forced_kind or kind
     selected = next(
-        (edge for edge in source_edges if edge.target == forced_target),
+        (
+            edge
+            for edge in source_edges
+            if edge.target == forced_target and edge.kind == selected_kind
+        ),
         None,
     )
+    if selected is None and forced_kind is None:
+        selected = next(
+            (edge for edge in source_edges if edge.target == forced_target),
+            None,
+        )
     if selected is None:
         return (), trace, ()
+    started_at = monotonic()
+    duration_ms = _elapsed_ms(started_at)
     for edge in source_edges:
         if edge.kind != selected.kind:
             continue
@@ -856,6 +976,7 @@ def _select_forced_route(
                 if edge.index == selected.index
                 else FlowEdgeState.SUPPRESSED
             ),
+            duration_ms=duration_ms,
         )
     return (selected,), trace, ()
 
