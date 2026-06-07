@@ -15,6 +15,7 @@ from avalan.flow import (
     FlowInputType,
     FlowJoinPolicy,
     FlowJoinPolicyType,
+    FlowLoopPolicy,
     FlowMappingKind,
     FlowNodeCapability,
     FlowNodeContract,
@@ -25,7 +26,10 @@ from avalan.flow import (
     FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRetryBackoffStrategy,
+    FlowRetryPolicy,
     FlowRouteMatchPolicy,
+    FlowTimeoutPolicy,
     FlowValidationResult,
     parse_flow_selector,
     validate_flow_definition,
@@ -2013,6 +2017,396 @@ class FlowValidatorTestCase(TestCase):
             [diagnostic.code for diagnostic in missing_required.diagnostics],
         )
 
+    def test_validate_flow_definition_accepts_node_policies(self) -> None:
+        result = validate_flow_definition(
+            self._policy_definition(
+                FlowNodeDefinition(
+                    name="worker",
+                    type="worker",
+                    retry_policy=FlowRetryPolicy(
+                        max_attempts=3,
+                        backoff=FlowRetryBackoffStrategy.EXPONENTIAL,
+                        initial_delay_seconds=1,
+                        max_delay_seconds=8,
+                        retryable_categories=("transient",),
+                        non_retryable_categories=("validation",),
+                        exhausted_route="failed",
+                    ),
+                    timeout_policy=FlowTimeoutPolicy(
+                        per_attempt_seconds=30,
+                    ),
+                    loop_policy=FlowLoopPolicy(
+                        max_iterations=4,
+                        max_elapsed_seconds=60,
+                        continue_condition=self._loop_condition("more"),
+                        exit_condition=self._loop_condition("done"),
+                        output_selector="worker.result.safe",
+                        limit_route="limited",
+                    ),
+                ),
+            ),
+            self._policy_registry(),
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_retry_policy_details(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FlowRetryPolicy(),
+                "flow.missing_retry_attempts",
+                None,
+            ),
+            (
+                FlowRetryPolicy(max_attempts=0),
+                "flow.invalid_retry_attempts",
+                None,
+            ),
+            (
+                FlowRetryPolicy(
+                    max_attempts=2,
+                    backoff=FlowRetryBackoffStrategy.EXPONENTIAL,
+                ),
+                "flow.missing_retry_backoff_delay",
+                None,
+            ),
+            (
+                FlowRetryPolicy(
+                    max_attempts=2,
+                    backoff=FlowRetryBackoffStrategy.CONSTANT,
+                    initial_delay_seconds=0,
+                ),
+                "flow.invalid_retry_backoff_delay",
+                None,
+            ),
+            (
+                FlowRetryPolicy(
+                    max_attempts=2,
+                    backoff=FlowRetryBackoffStrategy.LINEAR,
+                    initial_delay_seconds=5,
+                    max_delay_seconds=1,
+                ),
+                "flow.invalid_retry_max_delay",
+                None,
+            ),
+            (
+                FlowRetryPolicy(max_attempts=2, initial_delay_seconds=1),
+                "flow.unsupported_retry_backoff_field",
+                None,
+            ),
+            (
+                FlowRetryPolicy(max_attempts=2, max_delay_seconds=1),
+                "flow.unsupported_retry_backoff_field",
+                None,
+            ),
+            (
+                FlowRetryPolicy(
+                    max_attempts=2,
+                    backoff=FlowRetryBackoffStrategy.LINEAR,
+                    initial_delay_seconds=1,
+                    max_delay_seconds=0,
+                ),
+                "flow.invalid_retry_max_delay",
+                None,
+            ),
+            (
+                FlowRetryPolicy(
+                    max_attempts=2,
+                    retryable_categories=("transient", "transient"),
+                ),
+                "flow.duplicate_retry_category",
+                None,
+            ),
+            (
+                FlowRetryPolicy(
+                    max_attempts=2,
+                    non_retryable_categories=("validation", "validation"),
+                ),
+                "flow.duplicate_retry_category",
+                None,
+            ),
+            (
+                FlowRetryPolicy(
+                    max_attempts=2,
+                    retryable_categories=("transient",),
+                    non_retryable_categories=("transient",),
+                ),
+                "flow.conflicting_retry_category",
+                None,
+            ),
+            (
+                FlowRetryPolicy(max_attempts=2, exhausted_route="missing"),
+                "flow.unknown_retry_exhaustion_route",
+                None,
+            ),
+            (
+                FlowRetryPolicy(max_attempts=2, exhausted_route="failed"),
+                "flow.missing_retry_exhaustion_route",
+                (FlowEdgeDefinition(source="worker", target="finish"),),
+            ),
+        )
+
+        for retry_policy, code, edges in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    self._policy_definition(
+                        FlowNodeDefinition(
+                            name="worker",
+                            type="worker",
+                            retry_policy=retry_policy,
+                        ),
+                        edges=edges,
+                    ),
+                    self._policy_registry(),
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_validate_flow_definition_rejects_timeout_policy_details(
+        self,
+    ) -> None:
+        cases = (
+            (FlowTimeoutPolicy(), "flow.missing_timeout"),
+            (
+                FlowTimeoutPolicy(per_attempt_seconds=0),
+                "flow.invalid_timeout",
+            ),
+        )
+
+        for timeout_policy, code in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    self._policy_definition(
+                        FlowNodeDefinition(
+                            name="worker",
+                            type="worker",
+                            timeout_policy=timeout_policy,
+                        ),
+                    ),
+                    self._policy_registry(),
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_validate_flow_definition_rejects_loop_policy_details(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FlowLoopPolicy(
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.safe",
+                    limit_route="limited",
+                ),
+                "flow.unbounded_loop",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=0,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.safe",
+                    limit_route="limited",
+                ),
+                "flow.invalid_loop_iterations",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_elapsed_seconds=0,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.safe",
+                    limit_route="limited",
+                ),
+                "flow.invalid_loop_elapsed_time",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.safe",
+                    limit_route="limited",
+                ),
+                "flow.missing_loop_continue_condition",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    output_selector="worker.result.safe",
+                    limit_route="limited",
+                ),
+                "flow.missing_loop_exit_condition",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    limit_route="limited",
+                ),
+                "flow.missing_loop_output",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="env.SECRET",
+                    limit_route="limited",
+                ),
+                "flow.reserved_selector",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="other.result.safe",
+                    limit_route="limited",
+                ),
+                "flow.bad_reference",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.missing",
+                    limit_route="limited",
+                ),
+                "flow.unknown_node_output",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.missing",
+                    limit_route="limited",
+                ),
+                "flow.unknown_selector_path",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.safe",
+                ),
+                "flow.missing_loop_limit_route",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.safe",
+                    limit_route="missing",
+                ),
+                "flow.unknown_loop_limit_route",
+                None,
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=self._loop_condition("more"),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.safe",
+                    limit_route="limited",
+                ),
+                "flow.missing_loop_limit_route",
+                (FlowEdgeDefinition(source="worker", target="finish"),),
+            ),
+            (
+                FlowLoopPolicy(
+                    max_iterations=2,
+                    continue_condition=FlowCondition(
+                        operator=FlowConditionOperator.EXISTS,
+                        selector="other.result.more",
+                    ),
+                    exit_condition=self._loop_condition("done"),
+                    output_selector="worker.result.safe",
+                    limit_route="limited",
+                ),
+                "flow.bad_reference",
+                None,
+            ),
+        )
+
+        for loop_policy, code, edges in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    self._policy_definition(
+                        FlowNodeDefinition(
+                            name="worker",
+                            type="worker",
+                            loop_policy=loop_policy,
+                        ),
+                        edges=edges,
+                    ),
+                    self._policy_registry(),
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_validate_flow_definition_rejects_graph_cycle_with_policy(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            self._policy_definition(
+                FlowNodeDefinition(
+                    name="worker",
+                    type="worker",
+                    loop_policy=FlowLoopPolicy(
+                        max_iterations=2,
+                        continue_condition=self._loop_condition("more"),
+                        exit_condition=self._loop_condition("done"),
+                        output_selector="worker.result.safe",
+                        limit_route="limited",
+                    ),
+                ),
+                edges=(
+                    FlowEdgeDefinition(source="worker", target="finish"),
+                    FlowEdgeDefinition(source="finish", target="worker"),
+                    FlowEdgeDefinition(source="worker", target="limited"),
+                ),
+            ),
+            self._policy_registry(),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            "flow.cycle",
+            [diagnostic.code for diagnostic in result.diagnostics],
+        )
+
     def test_mapping_private_helpers_cover_type_edges(self) -> None:
         registry = FlowNodeRegistry({"open": lambda definition: Node("open")})
 
@@ -2377,6 +2771,83 @@ class FlowValidatorTestCase(TestCase):
                 FlowEdgeDefinition(source="left", target="finish"),
                 FlowEdgeDefinition(source="right", target="finish"),
             ),
+        )
+
+    def _loop_condition(self, field: str) -> FlowCondition:
+        return FlowCondition(
+            operator=FlowConditionOperator.EXISTS,
+            selector=f"worker.result.{field}",
+        )
+
+    def _policy_registry(self) -> FlowNodeRegistry:
+        return FlowNodeRegistry(
+            {"worker": lambda definition: Node(definition.name)},
+            {
+                "worker": FlowNodeMetadata(
+                    kind=FlowNodeKind.TOOL,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.OBJECT,
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "done": {"type": "boolean"},
+                                "more": {"type": "boolean"},
+                                "safe": {"type": "object"},
+                            },
+                        },
+                    ),
+                ),
+            },
+        )
+
+    def _policy_definition(
+        self,
+        worker: FlowNodeDefinition,
+        *,
+        edges: tuple[FlowEdgeDefinition, ...] | None = None,
+    ) -> FlowDefinition:
+        if edges is None:
+            edges = (
+                FlowEdgeDefinition(source="worker", target="finish"),
+                FlowEdgeDefinition(
+                    source="worker",
+                    target="failed",
+                    kind=FlowEdgeKind.ERROR,
+                ),
+                FlowEdgeDefinition(
+                    source="worker",
+                    target="limited",
+                    kind=FlowEdgeKind.TIMEOUT,
+                ),
+            )
+        return FlowDefinition(
+            name="policies",
+            version="2026-06-07",
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="answer",
+                    type=FlowOutputType.OBJECT,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="worker"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "finish.result"},
+            ),
+            nodes=(
+                worker,
+                FlowNodeDefinition(name="finish", type="worker"),
+                FlowNodeDefinition(name="failed", type="worker"),
+                FlowNodeDefinition(name="limited", type="worker"),
+                FlowNodeDefinition(name="other", type="worker"),
+            ),
+            edges=edges,
         )
 
 

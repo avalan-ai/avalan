@@ -10,11 +10,14 @@ from .definition import (
     FlowInputType,
     FlowJoinPolicy,
     FlowJoinPolicyType,
+    FlowLoopPolicy,
     FlowMappingKind,
     FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeKind,
     FlowOutputType,
+    FlowRetryBackoffStrategy,
+    FlowRetryPolicy,
     FlowRouteMatchPolicy,
 )
 from .diagnostics import (
@@ -542,6 +545,9 @@ def _validate_strict_contract(
     diagnostics.extend(
         _validate_node_mappings(definition, node_names, registry)
     )
+    diagnostics.extend(
+        _validate_node_policies(definition, node_names, registry)
+    )
     diagnostics.extend(_validate_edge_routing(definition))
     return tuple(diagnostics)
 
@@ -807,6 +813,428 @@ def _validate_join_policy_optional_inputs(
                 )
             )
     return tuple(diagnostics)
+
+
+def _validate_node_policies(
+    definition: FlowDefinition,
+    node_names: set[str],
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    input_names = {
+        input_definition.name for input_definition in definition.inputs
+    }
+    for node in definition.nodes:
+        if node.retry_policy is not None:
+            diagnostics.extend(
+                _validate_retry_policy(definition, node, node_names)
+            )
+        if node.timeout_policy is not None:
+            diagnostics.extend(_validate_timeout_policy(node))
+        if node.loop_policy is not None:
+            diagnostics.extend(
+                _validate_loop_policy(
+                    definition,
+                    node,
+                    node.loop_policy,
+                    input_names=input_names,
+                    node_names=node_names,
+                    registry=registry,
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _validate_retry_policy(
+    definition: FlowDefinition,
+    node: FlowNodeDefinition,
+    node_names: set[str],
+) -> tuple[FlowDiagnostic, ...]:
+    assert node.retry_policy is not None
+    policy = node.retry_policy
+    path = f"nodes.{node.name}.retry_policy"
+    diagnostics: list[FlowDiagnostic] = []
+    if policy.max_attempts is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_retry_attempts",
+                path=f"{path}.max_attempts",
+                message="Flow retry policy is missing max attempts.",
+                hint="Set a positive max_attempts value.",
+            )
+        )
+    elif policy.max_attempts <= 0:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.invalid_retry_attempts",
+                path=f"{path}.max_attempts",
+                message="Flow retry policy has invalid max attempts.",
+                hint="Use a positive bounded max_attempts value.",
+            )
+        )
+    diagnostics.extend(_validate_retry_backoff(policy, path=path))
+    diagnostics.extend(_validate_retry_categories(policy, path=path))
+    if policy.exhausted_route is not None:
+        diagnostics.extend(
+            _validate_policy_route(
+                definition,
+                node,
+                route=policy.exhausted_route,
+                path=f"{path}.exhausted_route",
+                node_names=node_names,
+                unknown_code="flow.unknown_retry_exhaustion_route",
+                missing_code="flow.missing_retry_exhaustion_route",
+                required_kind=FlowEdgeKind.ERROR,
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_retry_backoff(
+    policy: FlowRetryPolicy,
+    *,
+    path: str,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    if policy.backoff == FlowRetryBackoffStrategy.NONE:
+        if policy.initial_delay_seconds is not None:
+            diagnostics.append(_unsupported_retry_backoff_field(path))
+        if policy.max_delay_seconds is not None:
+            diagnostics.append(_unsupported_retry_backoff_field(path))
+        return tuple(diagnostics)
+    if policy.initial_delay_seconds is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_retry_backoff_delay",
+                path=f"{path}.initial_delay_seconds",
+                message="Flow retry backoff is missing an initial delay.",
+                hint="Set a positive initial_delay_seconds value.",
+            )
+        )
+    elif policy.initial_delay_seconds <= 0:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.invalid_retry_backoff_delay",
+                path=f"{path}.initial_delay_seconds",
+                message="Flow retry backoff delay is invalid.",
+                hint="Use a positive initial delay.",
+            )
+        )
+    if policy.max_delay_seconds is not None and policy.max_delay_seconds <= 0:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.invalid_retry_max_delay",
+                path=f"{path}.max_delay_seconds",
+                message="Flow retry maximum delay is invalid.",
+                hint="Use a positive maximum delay.",
+            )
+        )
+    if (
+        policy.initial_delay_seconds is not None
+        and policy.max_delay_seconds is not None
+        and policy.max_delay_seconds < policy.initial_delay_seconds
+    ):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.invalid_retry_max_delay",
+                path=f"{path}.max_delay_seconds",
+                message="Flow retry maximum delay is invalid.",
+                hint="Use a maximum delay greater than the initial delay.",
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _unsupported_retry_backoff_field(path: str) -> FlowDiagnostic:
+    return _diagnostic(
+        code="flow.unsupported_retry_backoff_field",
+        path=f"{path}.backoff",
+        message="Flow retry backoff field is not supported.",
+        hint="Use delay fields only with a backoff strategy.",
+    )
+
+
+def _validate_retry_categories(
+    policy: FlowRetryPolicy,
+    *,
+    path: str,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    retryable = set(policy.retryable_categories)
+    non_retryable = set(policy.non_retryable_categories)
+    if len(retryable) != len(policy.retryable_categories):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.duplicate_retry_category",
+                path=f"{path}.retryable_categories",
+                message="Flow retry category is duplicated.",
+                hint="List each retryable category once.",
+            )
+        )
+    if len(non_retryable) != len(policy.non_retryable_categories):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.duplicate_retry_category",
+                path=f"{path}.non_retryable_categories",
+                message="Flow retry category is duplicated.",
+                hint="List each non-retryable category once.",
+            )
+        )
+    if retryable.intersection(non_retryable):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.conflicting_retry_category",
+                path=f"{path}.retryable_categories",
+                message="Flow retry category has conflicting behavior.",
+                hint=(
+                    "Do not list the same category as retryable and "
+                    "non-retryable."
+                ),
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_timeout_policy(
+    node: FlowNodeDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    assert node.timeout_policy is not None
+    policy = node.timeout_policy
+    path = f"nodes.{node.name}.timeout_policy.per_attempt_seconds"
+    if policy.per_attempt_seconds is None:
+        return (
+            _diagnostic(
+                code="flow.missing_timeout",
+                path=path,
+                message="Flow timeout policy is missing per-attempt timeout.",
+                hint="Set a positive per_attempt_seconds value.",
+            ),
+        )
+    if policy.per_attempt_seconds <= 0:
+        return (
+            _diagnostic(
+                code="flow.invalid_timeout",
+                path=path,
+                message="Flow timeout policy has invalid per-attempt timeout.",
+                hint="Use a positive per_attempt_seconds value.",
+            ),
+        )
+    return ()
+
+
+def _validate_loop_policy(
+    definition: FlowDefinition,
+    node: FlowNodeDefinition,
+    policy: FlowLoopPolicy,
+    *,
+    input_names: set[str],
+    node_names: set[str],
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    path = f"nodes.{node.name}.loop_policy"
+    diagnostics: list[FlowDiagnostic] = []
+    diagnostics.extend(_validate_loop_bounds(policy, path=path))
+    if policy.continue_condition is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_loop_continue_condition",
+                path=f"{path}.continue_condition",
+                message="Flow loop policy is missing continue condition.",
+                hint="Set a declarative continue condition.",
+            )
+        )
+    else:
+        diagnostics.extend(
+            _validate_condition(
+                definition,
+                policy.continue_condition,
+                path=f"{path}.continue_condition",
+                edge_source=node.name,
+                input_names=input_names,
+                node_names=node_names,
+                registry=registry,
+            )
+        )
+    if policy.exit_condition is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_loop_exit_condition",
+                path=f"{path}.exit_condition",
+                message="Flow loop policy is missing exit condition.",
+                hint="Set a declarative exit condition.",
+            )
+        )
+    else:
+        diagnostics.extend(
+            _validate_condition(
+                definition,
+                policy.exit_condition,
+                path=f"{path}.exit_condition",
+                edge_source=node.name,
+                input_names=input_names,
+                node_names=node_names,
+                registry=registry,
+            )
+        )
+    if policy.output_selector is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_loop_output",
+                path=f"{path}.output_selector",
+                message="Flow loop policy is missing normal output.",
+                hint="Set a safe node output selector.",
+            )
+        )
+    else:
+        diagnostics.extend(
+            _validate_loop_output_selector(
+                registry,
+                node,
+                policy.output_selector,
+                path=f"{path}.output_selector",
+            )
+        )
+    if policy.limit_route is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_loop_limit_route",
+                path=f"{path}.limit_route",
+                message="Flow loop policy is missing limit route.",
+                hint="Set a route for loop limit exhaustion.",
+            )
+        )
+    else:
+        diagnostics.extend(
+            _validate_policy_route(
+                definition,
+                node,
+                route=policy.limit_route,
+                path=f"{path}.limit_route",
+                node_names=node_names,
+                unknown_code="flow.unknown_loop_limit_route",
+                missing_code="flow.missing_loop_limit_route",
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_loop_bounds(
+    policy: FlowLoopPolicy,
+    *,
+    path: str,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    if policy.max_iterations is None and policy.max_elapsed_seconds is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.unbounded_loop",
+                path=path,
+                message="Flow loop policy is unbounded.",
+                hint="Set max_iterations or max_elapsed_seconds.",
+            )
+        )
+    if policy.max_iterations is not None and policy.max_iterations <= 0:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.invalid_loop_iterations",
+                path=f"{path}.max_iterations",
+                message="Flow loop max iterations is invalid.",
+                hint="Use a positive max_iterations value.",
+            )
+        )
+    if (
+        policy.max_elapsed_seconds is not None
+        and policy.max_elapsed_seconds <= 0
+    ):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.invalid_loop_elapsed_time",
+                path=f"{path}.max_elapsed_seconds",
+                message="Flow loop max elapsed time is invalid.",
+                hint="Use a positive max_elapsed_seconds value.",
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_loop_output_selector(
+    registry: FlowNodeRegistry,
+    node: FlowNodeDefinition,
+    selector: str,
+    *,
+    path: str,
+) -> tuple[FlowDiagnostic, ...]:
+    try:
+        parsed = parse_flow_selector(
+            selector,
+            allowed_roots=frozenset({FlowSelectorRoot.NODE_OUTPUT}),
+        )
+    except FlowSelectorError as error:
+        return (_selector_diagnostic(error, path=path),)
+    if parsed.source != node.name:
+        return (
+            _diagnostic(
+                code="flow.bad_reference",
+                path=path,
+                message="Flow loop output selector is disconnected.",
+                hint="Reference an output from the loop node.",
+            ),
+        )
+    assert parsed.output is not None
+    if not _supports_output_name(registry, node.type, parsed.output):
+        return (
+            _diagnostic(
+                code="flow.unknown_node_output",
+                path=path,
+                message="Flow loop output selector references unknown output.",
+                hint="Reference a declared output for the loop node.",
+            ),
+        )
+    if not _supports_output_path(registry, node.type, parsed):
+        return (
+            _diagnostic(
+                code="flow.unknown_selector_path",
+                path=path,
+                message="Flow loop output selector path is unknown.",
+                hint="Reference fields declared by the selected output.",
+            ),
+        )
+    return ()
+
+
+def _validate_policy_route(
+    definition: FlowDefinition,
+    node: FlowNodeDefinition,
+    *,
+    route: str,
+    path: str,
+    node_names: set[str],
+    unknown_code: str,
+    missing_code: str,
+    required_kind: FlowEdgeKind | None = None,
+) -> tuple[FlowDiagnostic, ...]:
+    if route not in node_names:
+        return (
+            _diagnostic(
+                code=unknown_code,
+                path=path,
+                message="Flow policy route references an unknown node.",
+                hint="Reference a declared node.",
+            ),
+        )
+    for edge in definition.edges:
+        if edge.source != node.name or edge.target != route:
+            continue
+        if required_kind is None or edge.kind == required_kind:
+            return ()
+    return (
+        _diagnostic(
+            code=missing_code,
+            path=path,
+            message="Flow policy route is missing a matching edge.",
+            hint="Add an edge from the policy node to the route target.",
+        ),
+    )
 
 
 def _validate_output_behavior(

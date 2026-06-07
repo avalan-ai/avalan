@@ -16,13 +16,17 @@ from .definition import (
     FlowInputType,
     FlowJoinPolicy,
     FlowJoinPolicyType,
+    FlowLoopPolicy,
     FlowMappingKind,
     FlowNodeDefinition,
     FlowOutputBehavior,
     FlowOutputBehaviorType,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRetryBackoffStrategy,
+    FlowRetryPolicy,
     FlowRouteMatchPolicy,
+    FlowTimeoutPolicy,
 )
 from .diagnostics import (
     FlowDiagnostic,
@@ -99,10 +103,13 @@ _ALLOWED_NODE_FIELDS = frozenset(
         "field",
         "input",
         "join_policy",
+        "loop_policy",
         "mapping",
         "output",
         "path",
         "ref",
+        "retry_policy",
+        "timeout_policy",
         "type",
         "value",
     }
@@ -121,6 +128,28 @@ _ALLOWED_JOIN_POLICY_FIELDS = frozenset(
         "optional_inputs",
         "quorum",
         "type",
+    }
+)
+_ALLOWED_RETRY_POLICY_FIELDS = frozenset(
+    {
+        "backoff",
+        "exhausted_route",
+        "initial_delay_seconds",
+        "max_attempts",
+        "max_delay_seconds",
+        "non_retryable_categories",
+        "retryable_categories",
+    }
+)
+_ALLOWED_TIMEOUT_POLICY_FIELDS = frozenset({"per_attempt_seconds"})
+_ALLOWED_LOOP_POLICY_FIELDS = frozenset(
+    {
+        "continue_condition",
+        "exit_condition",
+        "limit_route",
+        "max_elapsed_seconds",
+        "max_iterations",
+        "output_selector",
     }
 )
 _ALLOWED_EDGE_FIELDS = frozenset(
@@ -576,7 +605,14 @@ def _nodes_use_strict_definition(value: object) -> bool:
     if not isinstance(value, Mapping):
         return False
     return any(
-        isinstance(raw, Mapping) and "join_policy" in raw
+        isinstance(raw, Mapping)
+        and {
+            "join_policy",
+            "loop_policy",
+            "mapping",
+            "retry_policy",
+            "timeout_policy",
+        }.intersection(raw)
         for raw in value.values()
     )
 
@@ -855,6 +891,21 @@ def _node_definitions(
             issues,
             path=f"nodes.{name}.join_policy",
         )
+        retry_policy = _retry_policy(
+            value.get("retry_policy"),
+            issues,
+            path=f"nodes.{name}.retry_policy",
+        )
+        timeout_policy = _timeout_policy(
+            value.get("timeout_policy"),
+            issues,
+            path=f"nodes.{name}.timeout_policy",
+        )
+        loop_policy = _loop_policy(
+            value.get("loop_policy"),
+            issues,
+            path=f"nodes.{name}.loop_policy",
+        )
         if node_type is None:
             continue
         config = _node_config(value, issues, path=f"nodes.{name}")
@@ -866,6 +917,9 @@ def _node_definitions(
                 input=input_name,
                 output=output_name,
                 join_policy=join_policy,
+                retry_policy=retry_policy,
+                timeout_policy=timeout_policy,
+                loop_policy=loop_policy,
                 mappings=mappings,
                 config=config,
             )
@@ -985,6 +1039,161 @@ def _join_policy(
         type=policy_type,
         quorum=quorum,
         optional_inputs=optional_inputs,
+    )
+
+
+def _retry_policy(
+    value: object,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> FlowRetryPolicy | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_type(path, "Use a TOML table."))
+        return None
+    _validate_unknown_fields(
+        value,
+        allowed=_ALLOWED_RETRY_POLICY_FIELDS,
+        path=path,
+        issues=issues,
+    )
+    backoff = _optional_enum_value(
+        value,
+        f"{path}.backoff",
+        "backoff",
+        FlowRetryBackoffStrategy,
+        issues,
+    )
+    max_attempts = _optional_int(
+        value,
+        f"{path}.max_attempts",
+        "max_attempts",
+        issues,
+    )
+    initial_delay_seconds = _optional_number(
+        value,
+        f"{path}.initial_delay_seconds",
+        "initial_delay_seconds",
+        issues,
+    )
+    max_delay_seconds = _optional_number(
+        value,
+        f"{path}.max_delay_seconds",
+        "max_delay_seconds",
+        issues,
+    )
+    retryable_categories = _string_tuple(
+        value,
+        f"{path}.retryable_categories",
+        "retryable_categories",
+        issues,
+    )
+    non_retryable_categories = _string_tuple(
+        value,
+        f"{path}.non_retryable_categories",
+        "non_retryable_categories",
+        issues,
+    )
+    exhausted_route = _optional_str(
+        value,
+        f"{path}.exhausted_route",
+        "exhausted_route",
+        issues,
+    )
+    return FlowRetryPolicy(
+        max_attempts=max_attempts,
+        backoff=backoff or FlowRetryBackoffStrategy.NONE,
+        initial_delay_seconds=initial_delay_seconds,
+        max_delay_seconds=max_delay_seconds,
+        retryable_categories=retryable_categories,
+        non_retryable_categories=non_retryable_categories,
+        exhausted_route=exhausted_route,
+    )
+
+
+def _timeout_policy(
+    value: object,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> FlowTimeoutPolicy | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_type(path, "Use a TOML table."))
+        return None
+    _validate_unknown_fields(
+        value,
+        allowed=_ALLOWED_TIMEOUT_POLICY_FIELDS,
+        path=path,
+        issues=issues,
+    )
+    return FlowTimeoutPolicy(
+        per_attempt_seconds=_optional_number(
+            value,
+            f"{path}.per_attempt_seconds",
+            "per_attempt_seconds",
+            issues,
+        ),
+    )
+
+
+def _loop_policy(
+    value: object,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> FlowLoopPolicy | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_type(path, "Use a TOML table."))
+        return None
+    _validate_unknown_fields(
+        value,
+        allowed=_ALLOWED_LOOP_POLICY_FIELDS,
+        path=path,
+        issues=issues,
+    )
+    continue_condition = _condition_definition(
+        value.get("continue_condition"),
+        issues,
+        path=f"{path}.continue_condition",
+    )
+    exit_condition = _condition_definition(
+        value.get("exit_condition"),
+        issues,
+        path=f"{path}.exit_condition",
+    )
+    return FlowLoopPolicy(
+        max_iterations=_optional_int(
+            value,
+            f"{path}.max_iterations",
+            "max_iterations",
+            issues,
+        ),
+        max_elapsed_seconds=_optional_number(
+            value,
+            f"{path}.max_elapsed_seconds",
+            "max_elapsed_seconds",
+            issues,
+        ),
+        continue_condition=continue_condition,
+        exit_condition=exit_condition,
+        output_selector=_optional_str(
+            value,
+            f"{path}.output_selector",
+            "output_selector",
+            issues,
+        ),
+        limit_route=_optional_str(
+            value,
+            f"{path}.limit_route",
+            "limit_route",
+            issues,
+        ),
     )
 
 
@@ -1299,6 +1508,21 @@ def _optional_int(
         return None
     if not isinstance(value, int) or isinstance(value, bool):
         issues.append(_invalid_type(path, "Use an integer."))
+        return None
+    return value
+
+
+def _optional_number(
+    raw: RawSection,
+    path: str,
+    field: str,
+    issues: list[FlowLoadIssue],
+) -> int | float | None:
+    value = raw.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        issues.append(_invalid_type(path, "Use a number."))
         return None
     return value
 
