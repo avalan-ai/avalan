@@ -19,6 +19,7 @@ from avalan.flow import (
     FlowInputType,
     FlowJoinPlan,
     FlowJoinPolicyType,
+    FlowLoopPlan,
     FlowMappingKind,
     FlowMappingPlan,
     FlowNodeContract,
@@ -805,6 +806,227 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(self._node_attempts(result)["start"], 2)
         self.assertEqual(result.public_diagnostics, ())
 
+    async def test_execute_flow_plan_exits_loop_with_safe_output(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "repair":
+                count = len(calls)
+                return {
+                    "done": count == 3,
+                    "more": count < 3,
+                    "safe": {"attempts": count},
+                    "private": "customer-secret",
+                }
+            return {"value": node.name}
+
+        result = await execute_flow_plan(self._loop_plan(), runner)
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(calls, ["repair", "repair", "repair", "finished"])
+        self.assertEqual(result.outputs, {"answer": {"attempts": 3}})
+        self.assertEqual(
+            result.node_outputs["repair"]["result"],
+            {"attempts": 3},
+        )
+        self.assertEqual(self._node_attempts(result)["repair"], 3)
+        self.assertEqual(
+            self._edge_states(result),
+            {0: FlowEdgeState.TAKEN, 1: FlowEdgeState.SUPPRESSED},
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_execute_flow_plan_routes_loop_iteration_limit(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "repair":
+                return {"done": False, "more": True, "safe": {"ok": False}}
+            return {"value": node.name}
+
+        result = await execute_flow_plan(
+            self._loop_plan(
+                max_iterations=2,
+                output_selector="manual.value",
+            ),
+            runner,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(calls, ["repair", "repair", "manual"])
+        self.assertEqual(result.outputs, {"answer": "manual"})
+        self.assertEqual(
+            self._node_states(result)["repair"],
+            FlowNodeState.FAILED,
+        )
+        self.assertEqual(self._node_attempts(result)["repair"], 2)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.execution.loop_limit_reached"],
+        )
+        self.assertEqual(
+            self._edge_states(result),
+            {0: FlowEdgeState.SUPPRESSED, 1: FlowEdgeState.TAKEN},
+        )
+
+    async def test_execute_flow_plan_routes_loop_elapsed_limit(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        async def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name == "repair":
+                await sleep(0.01)
+                return {"done": False, "more": True, "safe": {"ok": False}}
+            return {"value": node.name}
+
+        result = await execute_flow_plan(
+            self._loop_plan(
+                max_iterations=None,
+                max_elapsed_seconds=0.001,
+                output_selector="manual.value",
+            ),
+            runner,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(calls, ["repair", "manual"])
+        self.assertEqual(result.outputs, {"answer": "manual"})
+        self.assertEqual(self._node_attempts(result)["repair"], 1)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.execution.loop_limit_reached"],
+        )
+
+    async def test_execute_flow_plan_fails_closed_when_loop_conditions_miss(
+        self,
+    ) -> None:
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            if node.name == "repair":
+                return {
+                    "done": False,
+                    "more": False,
+                    "safe": {"private": "customer-secret"},
+                }
+            return {"value": node.name}
+
+        result = await execute_flow_plan(self._loop_plan(), runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.outputs, {})
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.execution.loop_condition_unmatched",
+                "flow.execution.missing_failure_route",
+                "flow.execution.missing_output",
+            ],
+        )
+        self.assertNotIn("customer-secret", str(result.public_diagnostics))
+
+    async def test_execute_flow_plan_routes_loop_node_failure(
+        self,
+    ) -> None:
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            if node.name == "repair":
+                raise FlowNodeExecutionError(
+                    code="flow.execution.validation_failed",
+                    message="Loop node failed.",
+                    hint="Inspect the repair node.",
+                    failure_category="validation",
+                )
+            return {"value": node.name}
+
+        result = await execute_flow_plan(self._loop_plan(), runner)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.execution.validation_failed",
+                "flow.execution.missing_failure_route",
+                "flow.execution.missing_output",
+            ],
+        )
+        self.assertEqual(self._node_attempts(result)["repair"], 1)
+
+    async def test_execute_flow_plan_reports_loop_output_selector_failure(
+        self,
+    ) -> None:
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            if node.name == "repair":
+                return {"done": True, "more": False, "safe": "ok"}
+            return {"value": node.name}
+
+        result = await execute_flow_plan(
+            self._loop_plan(loop_output_selector="repair.result.missing"),
+            runner,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.execution.missing_selector_value",
+                "flow.execution.missing_failure_route",
+                "flow.execution.missing_output",
+            ],
+        )
+
+    async def test_execute_flow_plan_reports_missing_loop_limit_route(
+        self,
+    ) -> None:
+        def runner(
+            node: FlowNodePlan,
+            _: Mapping[str, object],
+        ) -> object:
+            if node.name == "repair":
+                return {"done": False, "more": True, "safe": "ok"}
+            return {"value": node.name}
+
+        result = await execute_flow_plan(
+            self._loop_plan(
+                include_limit_edge=False,
+                max_iterations=1,
+            ),
+            runner,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.execution.loop_limit_reached",
+                "flow.execution.missing_failure_route",
+                "flow.execution.missing_output",
+            ],
+        )
+
     async def test_execute_flow_plan_checks_cancellation_between_nodes(
         self,
     ) -> None:
@@ -1383,6 +1605,7 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         join: FlowJoinPlan | None = None,
         retry: FlowRetryPlan | None = None,
         timeout: FlowTimeoutPlan | None = None,
+        loop: FlowLoopPlan | None = None,
     ) -> FlowNodePlan:
         return FlowNodePlan(
             name=name,
@@ -1392,6 +1615,7 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             join=join,
             retry=retry,
             timeout=timeout,
+            loop=loop,
             output_contracts=(
                 (FlowNodeContract(name="value", type=FlowOutputType.JSON),)
                 if output_contracts is None
@@ -1410,6 +1634,69 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             operator=operator,
             selector=parse_flow_selector(selector),
             value=value,
+        )
+
+    def _loop_plan(
+        self,
+        *,
+        max_iterations: int | None = 4,
+        max_elapsed_seconds: int | float | None = None,
+        output_selector: str = "repair.result",
+        loop_output_selector: str = "repair.result.safe",
+        include_limit_edge: bool = True,
+    ) -> FlowExecutionPlan:
+        edges = (
+            FlowEdgePlan(
+                index=0,
+                source="repair",
+                target="finished",
+                kind=FlowEdgeKind.SUCCESS,
+            ),
+        )
+        if include_limit_edge:
+            edges = edges + (
+                FlowEdgePlan(
+                    index=1,
+                    source="repair",
+                    target="manual",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            )
+        return self._plan(
+            entry_node="repair",
+            outputs={"answer": output_selector},
+            nodes=(
+                self._node(
+                    "repair",
+                    output_contracts=(
+                        FlowNodeContract(
+                            name="result",
+                            type=FlowOutputType.OBJECT,
+                        ),
+                    ),
+                    loop=FlowLoopPlan(
+                        max_iterations=max_iterations,
+                        max_elapsed_seconds=max_elapsed_seconds,
+                        exit_condition=self._condition(
+                            FlowConditionOperator.EQ,
+                            selector="repair.result.done",
+                            value=True,
+                        ),
+                        continue_condition=self._condition(
+                            FlowConditionOperator.EQ,
+                            selector="repair.result.more",
+                            value=True,
+                        ),
+                        output_selector=parse_flow_selector(
+                            loop_output_selector
+                        ),
+                        limit_route="manual",
+                    ),
+                ),
+                self._node("finished"),
+                self._node("manual"),
+            ),
+            edges=edges,
         )
 
     def _node_states(
