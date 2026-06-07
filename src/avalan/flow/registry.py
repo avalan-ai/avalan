@@ -141,13 +141,41 @@ class FlowNodeRegistry:
 
 
 def default_flow_node_registry() -> FlowNodeRegistry:
+    passthrough_metadata = FlowNodeMetadata(
+        kind=FlowNodeKind.PASS_THROUGH,
+        input_contract=FlowNodeContract(
+            name="value",
+            metadata={"dynamic": True},
+        ),
+        output_contract=FlowNodeContract(
+            name="value",
+            metadata={"dynamic": True},
+        ),
+    )
+    selector_metadata = FlowNodeMetadata(
+        kind=FlowNodeKind.SELECT,
+        input_contract=FlowNodeContract(
+            name="value",
+            type=FlowInputType.OBJECT,
+            metadata={"dynamic": True},
+        ),
+        output_contract=FlowNodeContract(
+            name="value",
+            metadata={"dynamic": True},
+        ),
+    )
     return FlowNodeRegistry(
         {
             "constant": _constant_node,
+            "decision": _echo_node,
             "echo": _echo_node,
             "input": _input_node,
+            "join": _join_node,
+            "notification": _notification_node,
+            "pass-through": _echo_node,
             "passthrough": _echo_node,
             "select": _select_node,
+            "validation": _validation_node,
         },
         {
             "constant": FlowNodeMetadata(
@@ -157,8 +185,8 @@ def default_flow_node_registry() -> FlowNodeRegistry:
                     metadata={"dynamic": True},
                 ),
             ),
-            "echo": FlowNodeMetadata(
-                kind=FlowNodeKind.PASS_THROUGH,
+            "decision": FlowNodeMetadata(
+                kind=FlowNodeKind.DECISION,
                 input_contract=FlowNodeContract(
                     name="value",
                     metadata={"dynamic": True},
@@ -168,16 +196,23 @@ def default_flow_node_registry() -> FlowNodeRegistry:
                     metadata={"dynamic": True},
                 ),
             ),
+            "echo": passthrough_metadata,
             "input": FlowNodeMetadata(
                 kind=FlowNodeKind.INPUT,
                 output_contract=FlowNodeContract(
                     name="value",
-                    type=FlowOutputType.OBJECT,
                     metadata={"dynamic": True},
                 ),
             ),
-            "passthrough": FlowNodeMetadata(
-                kind=FlowNodeKind.PASS_THROUGH,
+            "join": FlowNodeMetadata(
+                kind=FlowNodeKind.JOIN,
+                output_contract=FlowNodeContract(
+                    name="value",
+                    metadata={"dynamic": True},
+                ),
+            ),
+            "notification": FlowNodeMetadata(
+                kind=FlowNodeKind.NOTIFICATION,
                 input_contract=FlowNodeContract(
                     name="value",
                     metadata={"dynamic": True},
@@ -187,11 +222,13 @@ def default_flow_node_registry() -> FlowNodeRegistry:
                     metadata={"dynamic": True},
                 ),
             ),
-            "select": FlowNodeMetadata(
-                kind=FlowNodeKind.SELECT,
+            "pass-through": passthrough_metadata,
+            "passthrough": passthrough_metadata,
+            "select": selector_metadata,
+            "validation": FlowNodeMetadata(
+                kind=FlowNodeKind.VALIDATION,
                 input_contract=FlowNodeContract(
                     name="value",
-                    type=FlowInputType.OBJECT,
                     metadata={"dynamic": True},
                 ),
                 output_contract=FlowNodeContract(
@@ -279,9 +316,85 @@ def _input_node(definition: FlowNodeDefinition) -> Node:
 def _select_node(definition: FlowNodeDefinition) -> Node:
     def run(inputs: dict[str, object]) -> object:
         source = _node_input_value(definition, inputs)
-        path = definition.config.get("path") or definition.config.get("field")
-        assert isinstance(path, str) and path.strip()
+        path = (
+            definition.config["path"]
+            if "path" in definition.config
+            else definition.config.get("field")
+        )
+        if path is None:
+            return source
+        if not isinstance(path, str) or not path.strip():
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_node_config",
+                path=f"nodes.{definition.name}.config.path",
+                message="Flow select node path is invalid.",
+                hint="Use a non-empty dotted path.",
+            )
         return _select_path(source, path)
+
+    return Node(definition.name, func=run)
+
+
+def _validation_node(definition: FlowNodeDefinition) -> Node:
+    def run(inputs: dict[str, object]) -> object:
+        value = _node_input_value(definition, inputs)
+        required_fields = _string_sequence_config(
+            definition,
+            "required_fields",
+        )
+        value_type = _string_config(definition, "value_type")
+        if value_type is not None and not _value_matches_type(
+            definition,
+            value,
+            value_type,
+        ):
+            raise FlowNodeConfigurationError(
+                code="flow.execution.validation_failed",
+                path=f"nodes.{definition.name}",
+                message="Flow node validation failed.",
+                hint="Route to the validation fallback.",
+            )
+        if required_fields:
+            if not isinstance(value, Mapping):
+                raise FlowNodeConfigurationError(
+                    code="flow.execution.validation_failed",
+                    path=f"nodes.{definition.name}",
+                    message="Flow node validation failed.",
+                    hint="Route to the validation fallback.",
+                )
+            missing = [
+                field for field in required_fields if field not in value
+            ]
+            if missing:
+                raise FlowNodeConfigurationError(
+                    code="flow.execution.validation_failed",
+                    path=f"nodes.{definition.name}",
+                    message="Flow node validation failed.",
+                    hint="Route to the validation fallback.",
+                )
+        return value
+
+    return Node(definition.name, func=run)
+
+
+def _join_node(definition: FlowNodeDefinition) -> Node:
+    def run(inputs: dict[str, object]) -> object:
+        return _copy_flow_value(inputs)
+
+    return Node(definition.name, func=run)
+
+
+def _notification_node(definition: FlowNodeDefinition) -> Node:
+    def run(inputs: dict[str, object]) -> object:
+        payload = _node_input_value(definition, inputs)
+        output: dict[str, object] = {
+            "status": "notified",
+            "payload": payload,
+        }
+        channel = _string_config(definition, "channel")
+        if channel is not None:
+            output["channel"] = channel
+        return output
 
     return Node(definition.name, func=run)
 
@@ -396,6 +509,82 @@ def _copy_flow_value(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_copy_flow_value(item) for item in value]
     return value
+
+
+def _string_sequence_config(
+    definition: FlowNodeDefinition,
+    key: str,
+) -> tuple[str, ...]:
+    value = definition.config.get(key, ())
+    if value in (None, ()):
+        return ()
+    if not isinstance(value, list | tuple):
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_node_config",
+            path=f"nodes.{definition.name}.config.{key}",
+            message="Flow node configuration is invalid.",
+            hint="Use a list of non-empty strings.",
+        )
+    values: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_node_config",
+                path=f"nodes.{definition.name}.config.{key}",
+                message="Flow node configuration is invalid.",
+                hint="Use a list of non-empty strings.",
+            )
+        values.append(item)
+    return tuple(values)
+
+
+def _string_config(
+    definition: FlowNodeDefinition,
+    key: str,
+) -> str | None:
+    value = definition.config.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_node_config",
+            path=f"nodes.{definition.name}.config.{key}",
+            message="Flow node configuration is invalid.",
+            hint="Use a non-empty string value.",
+        )
+    return value
+
+
+def _value_matches_type(
+    definition: FlowNodeDefinition,
+    value: object,
+    value_type: str,
+) -> bool:
+    match value_type:
+        case "array":
+            return isinstance(value, list | tuple)
+        case "boolean":
+            return isinstance(value, bool)
+        case "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        case "null":
+            return value is None
+        case "number":
+            return isinstance(value, int | float) and not isinstance(
+                value,
+                bool,
+            )
+        case "object":
+            return isinstance(value, Mapping)
+        case "string":
+            return isinstance(value, str)
+        case _:
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_node_config",
+                path=f"nodes.{definition.name}.config.value_type",
+                message="Flow node configuration is invalid.",
+                hint="Use a supported validation value type.",
+            )
 
 
 def _is_flow_tool_resolver(value: object) -> bool:

@@ -3,6 +3,7 @@ from .definition import (
     FlowEdgeKind,
     FlowJoinPolicyType,
     FlowMappingKind,
+    FlowNodeDefinition,
     FlowRetryBackoffStrategy,
     FlowRouteMatchPolicy,
 )
@@ -11,7 +12,7 @@ from .diagnostics import (
     FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
 )
-from .node import CancellationChecker
+from .node import CancellationChecker, Node
 from .plan import (
     FlowConditionPlan,
     FlowEdgePlan,
@@ -19,6 +20,11 @@ from .plan import (
     FlowMappingPlan,
     FlowNodePlan,
     FlowRetryPlan,
+)
+from .registry import (
+    FlowNodeConfigurationError,
+    FlowNodeRegistry,
+    default_flow_node_registry,
 )
 from .selector import FlowSelector, resolve_flow_selector_value
 from .state import FlowEdgeState, FlowExecutionTrace, FlowNodeState
@@ -77,6 +83,60 @@ class FlowNodeExecutionError(Exception):
         self.failure_category = failure_category
         self.route_kind = route_kind
         super().__init__(code)
+
+
+class FlowNodeRegistryRunner:
+    """Run execution plan nodes through a flow node registry."""
+
+    def __init__(self, registry: FlowNodeRegistry | None = None) -> None:
+        if registry is not None:
+            assert isinstance(registry, FlowNodeRegistry)
+        self._registry = registry or default_flow_node_registry()
+        self._nodes: dict[str, Node] = {}
+
+    async def __call__(
+        self,
+        node: FlowNodePlan,
+        inputs: Mapping[str, object],
+    ) -> object:
+        assert isinstance(node, FlowNodePlan)
+        assert isinstance(inputs, Mapping)
+        try:
+            runtime_node = self._node(node)
+            return await runtime_node.execute_async(dict(inputs))
+        except FlowNodeConfigurationError as error:
+            raise FlowNodeExecutionError(
+                code=error.code,
+                message=error.message,
+                hint=error.hint,
+                failure_category="validation",
+            ) from None
+
+    def _node(self, node: FlowNodePlan) -> "Node":
+        cached = self._nodes.get(node.name)
+        if cached is not None:
+            return cached
+        runtime_node = self._registry.build(_plan_node_definition(node))
+        self._nodes[node.name] = runtime_node
+        return runtime_node
+
+
+def flow_node_registry_runner(
+    registry: FlowNodeRegistry | None = None,
+) -> FlowPlanNodeRunner:
+    if registry is not None:
+        assert isinstance(registry, FlowNodeRegistry)
+    return FlowNodeRegistryRunner(registry)
+
+
+def _plan_node_definition(node: FlowNodePlan) -> FlowNodeDefinition:
+    assert isinstance(node, FlowNodePlan)
+    return FlowNodeDefinition(
+        name=node.name,
+        type=node.type,
+        ref=node.ref,
+        config=node.config,
+    )
 
 
 def _empty_mapping() -> Mapping[str, object]:

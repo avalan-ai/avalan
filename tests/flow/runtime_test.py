@@ -26,6 +26,7 @@ from avalan.flow import (
     FlowNodeExecutionError,
     FlowNodeKind,
     FlowNodePlan,
+    FlowNodeRegistryRunner,
     FlowNodeState,
     FlowOutputDefinition,
     FlowOutputType,
@@ -42,6 +43,7 @@ from avalan.flow import (
     evaluate_flow_node_mappings,
     evaluate_flow_selector,
     execute_flow_plan,
+    flow_node_registry_runner,
     loads_flow_definition_result,
     parse_flow_selector,
     resolve_flow_selector_value,
@@ -63,6 +65,24 @@ def _assert_recorded_duration(
 
 
 class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
+    async def test_flow_node_registry_runner_caches_native_nodes(self) -> None:
+        runner = FlowNodeRegistryRunner()
+        node = FlowNodePlan(
+            name="echo",
+            type="echo",
+            kind=FlowNodeKind.PASS_THROUGH,
+        )
+
+        self.assertEqual(await runner(node, {"value": "first"}), "first")
+        self.assertEqual(await runner(node, {"value": "second"}), "second")
+        self.assertEqual(len(runner._nodes), 1)
+
+    async def test_flow_node_registry_runner_validates_arguments(self) -> None:
+        with self.assertRaises(AssertionError):
+            FlowNodeRegistryRunner(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            flow_node_registry_runner(object())  # type: ignore[arg-type]
+
     async def test_execute_flow_plan_uses_declared_entry_and_outputs(
         self,
     ) -> None:
@@ -2301,6 +2321,220 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
 
 
 class FlowRuntimeEndToEndTestCase(IsolatedAsyncioTestCase):
+    async def test_loaded_native_definition_runs_with_registry_runner(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-native-registry"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "raw"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "joined.value"
+
+            [nodes.raw]
+            type = "input"
+
+            [nodes.raw.mapping]
+            value = "input.payload"
+
+            [nodes.checked]
+            type = "validation"
+
+            [nodes.checked.config]
+            value_type = "object"
+            required_fields = ["customer", "approved"]
+
+            [nodes.checked.mapping]
+            value = "raw.value"
+
+            [nodes.projected]
+            type = "select"
+
+            [nodes.projected.mapping.value]
+            type = "object"
+
+            [nodes.projected.mapping.value.fields]
+            name = "checked.value.customer.name"
+            approved = "checked.value.approved"
+
+            [nodes.decide]
+            type = "decision"
+
+            [nodes.decide.mapping]
+            value = "projected.value"
+
+            [nodes.defaults]
+            type = "constant"
+
+            [nodes.defaults.config.value]
+            route = "standard"
+
+            [nodes.notice]
+            type = "notification"
+
+            [nodes.notice.config]
+            channel = "audit"
+
+            [nodes.notice.mapping]
+            value = "decide.value"
+
+            [nodes.joined]
+            type = "join"
+
+            [nodes.joined.join_policy]
+            type = "all_success"
+
+            [nodes.joined.mapping.value]
+            type = "object"
+
+            [nodes.joined.mapping.value.fields]
+            customer = "notice.value.payload.name"
+            approved = "notice.value.payload.approved"
+            route = "defaults.value.route"
+            status = "notice.value.status"
+            channel = "notice.value.channel"
+
+            [[edges]]
+            source = "raw"
+            target = "checked"
+
+            [[edges]]
+            source = "checked"
+            target = "projected"
+            routing_policy = "all_matching"
+
+            [[edges]]
+            source = "checked"
+            target = "defaults"
+            routing_policy = "all_matching"
+
+            [[edges]]
+            source = "projected"
+            target = "decide"
+
+            [[edges]]
+            source = "decide"
+            target = "notice"
+
+            [edges.condition]
+            op = "eq"
+            selector = "decide.value.approved"
+            value = true
+
+            [[edges]]
+            source = "notice"
+            target = "joined"
+
+            [[edges]]
+            source = "defaults"
+            target = "joined"
+            """)
+
+        result = await execute_flow_plan(
+            plan,
+            flow_node_registry_runner(),
+            inputs={
+                "payload": {
+                    "customer": {"name": "Ada"},
+                    "approved": True,
+                    "private": "input-secret",
+                },
+            },
+            concurrency_limit=2,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(
+            result.outputs,
+            {
+                "answer": {
+                    "customer": "Ada",
+                    "approved": True,
+                    "route": "standard",
+                    "status": "notified",
+                    "channel": "audit",
+                },
+            },
+        )
+        self.assertEqual(result.node_outputs["raw"]["value"]["approved"], True)
+        self.assertNotIn("input-secret", str(result.public_diagnostics))
+
+    async def test_loaded_native_validation_failure_is_safe(
+        self,
+    ) -> None:
+        plan = self._compile_loaded_definition("""
+            [flow]
+            name = "runtime-native-validation"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "raw"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "checked.value"
+
+            [nodes.raw]
+            type = "input"
+
+            [nodes.raw.mapping]
+            value = "input.payload"
+
+            [nodes.checked]
+            type = "validation"
+
+            [nodes.checked.config]
+            value_type = "object"
+            required_fields = ["customer"]
+
+            [nodes.checked.mapping]
+            value = "raw.value"
+
+            [[edges]]
+            source = "raw"
+            target = "checked"
+            """)
+
+        result = await execute_flow_plan(
+            plan,
+            flow_node_registry_runner(),
+            inputs={"payload": {"private": "input-secret"}},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            "flow.execution.validation_failed",
+            [diagnostic.code for diagnostic in result.diagnostics],
+        )
+        self.assertNotIn("input-secret", str(result.public_diagnostics))
+
     async def test_loaded_strict_definition_compiles_and_executes(
         self,
     ) -> None:
