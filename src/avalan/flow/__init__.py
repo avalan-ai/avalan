@@ -1,3 +1,4 @@
+from . import mermaid as _mermaid
 from .condition import FlowCondition as FlowCondition
 from .condition import (
     FlowConditionEvaluationContext as FlowConditionEvaluationContext,
@@ -74,12 +75,18 @@ from .mermaid import MermaidCst as MermaidCst
 from .mermaid import MermaidCstStatement as MermaidCstStatement
 from .mermaid import MermaidDiagramKind as MermaidDiagramKind
 from .mermaid import (
+    MermaidFlowViewNormalizationResult as MermaidFlowViewNormalizationResult,
+)
+from .mermaid import (
     MermaidImportValidationResult as MermaidImportValidationResult,
 )
 from .mermaid import MermaidParseResult as MermaidParseResult
 from .mermaid import MermaidToken as MermaidToken
 from .mermaid import MermaidTokenizationResult as MermaidTokenizationResult
 from .mermaid import MermaidTokenType as MermaidTokenType
+from .mermaid import (
+    normalize_mermaid_flow_view as normalize_mermaid_flow_view,
+)
 from .mermaid import parse_mermaid as parse_mermaid
 from .mermaid import parse_mermaid_import as parse_mermaid_import
 from .mermaid import parse_mermaid_tokens as parse_mermaid_tokens
@@ -115,3 +122,7 @@ from .view import FlowViewLinkStyle as FlowViewLinkStyle
 from .view import FlowViewNode as FlowViewNode
 from .view import FlowViewNodeShape as FlowViewNodeShape
 from .view import FlowViewStyle as FlowViewStyle
+
+normalize_mermaid_import_to_flow_view = (
+    _mermaid.normalize_mermaid_import_to_flow_view
+)
