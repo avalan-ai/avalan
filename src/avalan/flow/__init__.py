@@ -4,7 +4,9 @@ from .definition import FlowEdgeDefinition as FlowEdgeDefinition
 from .definition import FlowEntryBehavior as FlowEntryBehavior
 from .definition import FlowEntryBehaviorType as FlowEntryBehaviorType
 from .definition import FlowInputDefinition as FlowInputDefinition
+from .definition import FlowInputMapping as FlowInputMapping
 from .definition import FlowInputType as FlowInputType
+from .definition import FlowMappingKind as FlowMappingKind
 from .definition import FlowNodeCapability as FlowNodeCapability
 from .definition import FlowNodeContract as FlowNodeContract
 from .definition import FlowNodeDefinition as FlowNodeDefinition

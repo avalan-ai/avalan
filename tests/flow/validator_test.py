@@ -7,7 +7,9 @@ from avalan.flow import (
     FlowEdgeDefinition,
     FlowEntryBehavior,
     FlowInputDefinition,
+    FlowInputMapping,
     FlowInputType,
+    FlowMappingKind,
     FlowNodeCapability,
     FlowNodeContract,
     FlowNodeDefinition,
@@ -698,6 +700,520 @@ class FlowValidatorTestCase(TestCase):
         )
 
         self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_accepts_declarative_mappings(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {
+                "document": lambda definition: Node(definition.name),
+                "prepare": lambda definition: Node(definition.name),
+                "target": lambda definition: Node(definition.name),
+            },
+            {
+                "document": FlowNodeMetadata(
+                    kind=FlowNodeKind.FILE_CONVERSION,
+                    output_contracts=(
+                        FlowNodeContract(
+                            name="file",
+                            type=FlowOutputType.FILE,
+                        ),
+                        FlowNodeContract(
+                            name="files",
+                            type=FlowOutputType.FILE_ARRAY,
+                        ),
+                    ),
+                ),
+                "prepare": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="payload",
+                        type=FlowOutputType.OBJECT,
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "city": {"type": "string"},
+                                "units": {"type": "string"},
+                                "items": {"type": "array"},
+                            },
+                        },
+                    ),
+                ),
+                "target": FlowNodeMetadata(
+                    kind=FlowNodeKind.TOOL,
+                    input_contracts=(
+                        FlowNodeContract(
+                            name="arguments",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="aliases",
+                            type=FlowInputType.ARRAY,
+                        ),
+                        FlowNodeContract(
+                            name="document",
+                            type=FlowInputType.FILE,
+                        ),
+                        FlowNodeContract(
+                            name="attachments",
+                            type=FlowInputType.FILE_ARRAY,
+                        ),
+                        FlowNodeContract(
+                            name="renamed",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="merged",
+                            type=FlowInputType.OBJECT,
+                        ),
+                    ),
+                ),
+            },
+        )
+
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="mapped",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="prepare"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "target.result"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="prepare", type="prepare"),
+                    FlowNodeDefinition(name="document", type="document"),
+                    FlowNodeDefinition(
+                        name="target",
+                        type="target",
+                        mappings=(
+                            FlowInputMapping(
+                                target="arguments",
+                                kind=FlowMappingKind.OBJECT,
+                                fields={
+                                    "city": "prepare.payload.city",
+                                    "units": "prepare.payload.units",
+                                },
+                            ),
+                            FlowInputMapping(
+                                target="aliases",
+                                kind=FlowMappingKind.ARRAY,
+                                items=(
+                                    "prepare.payload.items[0]",
+                                    "input.payload.items[0]",
+                                ),
+                            ),
+                            FlowInputMapping(
+                                target="document",
+                                kind=FlowMappingKind.FILE,
+                                source="document.file",
+                            ),
+                            FlowInputMapping(
+                                target="attachments",
+                                kind=FlowMappingKind.FILE_ARRAY,
+                                source="document.files",
+                            ),
+                            FlowInputMapping(
+                                target="renamed",
+                                kind=FlowMappingKind.RENAME,
+                                source="input.payload",
+                            ),
+                            FlowInputMapping(
+                                target="merged",
+                                kind=FlowMappingKind.MERGE,
+                                sources=(
+                                    "input.payload",
+                                    "prepare.payload",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                edges=(
+                    FlowEdgeDefinition(source="prepare", target="target"),
+                    FlowEdgeDefinition(source="document", target="target"),
+                ),
+            ),
+            registry,
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_declarative_mappings(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {
+                "document": lambda definition: Node(definition.name),
+                "prepare": lambda definition: Node(definition.name),
+                "target": lambda definition: Node(definition.name),
+            },
+            {
+                "document": FlowNodeMetadata(
+                    kind=FlowNodeKind.FILE_CONVERSION,
+                    output_contract=FlowNodeContract(
+                        name="file",
+                        type=FlowOutputType.FILE,
+                    ),
+                ),
+                "prepare": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="payload",
+                        type=FlowOutputType.OBJECT,
+                        schema={
+                            "type": "object",
+                            "properties": {"known": {"type": "string"}},
+                        },
+                    ),
+                ),
+                "target": FlowNodeMetadata(
+                    kind=FlowNodeKind.TOOL,
+                    input_contracts=(
+                        FlowNodeContract(
+                            name="arguments",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="count",
+                            type=FlowInputType.INTEGER,
+                        ),
+                        FlowNodeContract(
+                            name="document",
+                            type=FlowInputType.FILE,
+                        ),
+                    ),
+                ),
+            },
+        )
+
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="mapped",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="prepare"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "target.result"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="prepare", type="prepare"),
+                    FlowNodeDefinition(name="document", type="document"),
+                    FlowNodeDefinition(
+                        name="target",
+                        type="target",
+                        mappings=(
+                            FlowInputMapping(
+                                target="arguments",
+                                kind=FlowMappingKind.OBJECT,
+                            ),
+                            FlowInputMapping(
+                                target="arguments",
+                                source="missing.payload",
+                            ),
+                            FlowInputMapping(
+                                target="unknown",
+                                source="input.payload",
+                            ),
+                            FlowInputMapping(
+                                target="count",
+                                source="input.payload",
+                            ),
+                            FlowInputMapping(
+                                target="document",
+                                kind=FlowMappingKind.FILE,
+                                source="input.payload",
+                            ),
+                        ),
+                    ),
+                ),
+                edges=(FlowEdgeDefinition(source="prepare", target="target"),),
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.empty_mapping",
+                "flow.duplicate_mapping_target",
+                "flow.unknown_mapping_source",
+                "flow.unknown_mapping_target",
+                "flow.incompatible_mapping",
+                "flow.incompatible_mapping",
+            ],
+        )
+
+    def test_validate_flow_definition_rejects_mapping_edge_cases(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {
+                "document": lambda definition: Node(definition.name),
+                "prepare": lambda definition: Node(definition.name),
+                "target": lambda definition: Node(definition.name),
+            },
+            {
+                "document": FlowNodeMetadata(
+                    kind=FlowNodeKind.FILE_CONVERSION,
+                    output_contracts=(
+                        FlowNodeContract(
+                            name="file",
+                            type=FlowOutputType.FILE,
+                        ),
+                        FlowNodeContract(
+                            name="files",
+                            type=FlowOutputType.FILE_ARRAY,
+                        ),
+                    ),
+                ),
+                "prepare": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="payload",
+                        type=FlowOutputType.OBJECT,
+                        schema={
+                            "type": "object",
+                            "properties": {"known": {"type": "string"}},
+                        },
+                    ),
+                ),
+                "target": FlowNodeMetadata(
+                    kind=FlowNodeKind.TOOL,
+                    input_contracts=(
+                        FlowNodeContract(
+                            name="required",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="arguments",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="items",
+                            type=FlowInputType.ARRAY,
+                        ),
+                        FlowNodeContract(
+                            name="text",
+                            type=FlowInputType.STRING,
+                        ),
+                        FlowNodeContract(
+                            name="files",
+                            type=FlowInputType.FILE_ARRAY,
+                        ),
+                        FlowNodeContract(
+                            name="object_bad",
+                            type=FlowInputType.STRING,
+                        ),
+                        FlowNodeContract(
+                            name="merge_bad",
+                            type=FlowInputType.STRING,
+                        ),
+                    ),
+                ),
+            },
+        )
+
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="mapped",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="prepare"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "target.result"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="prepare", type="prepare"),
+                    FlowNodeDefinition(name="document", type="document"),
+                    FlowNodeDefinition(
+                        name="target",
+                        type="target",
+                        mappings=(
+                            FlowInputMapping(
+                                target="arguments",
+                                kind=FlowMappingKind.MERGE,
+                            ),
+                            FlowInputMapping(
+                                target="items",
+                                kind=FlowMappingKind.ARRAY,
+                            ),
+                            FlowInputMapping(target="text"),
+                            FlowInputMapping(
+                                target="files",
+                                kind=FlowMappingKind.FILE_ARRAY,
+                                source="document.file",
+                            ),
+                            FlowInputMapping(
+                                target="object_bad",
+                                kind=FlowMappingKind.OBJECT,
+                                fields={"payload": "input.payload"},
+                            ),
+                            FlowInputMapping(
+                                target="merge_bad",
+                                kind=FlowMappingKind.MERGE,
+                                sources=("input.payload",),
+                            ),
+                            FlowInputMapping(
+                                target="arguments",
+                                kind=FlowMappingKind.OBJECT,
+                                fields={
+                                    "unknown_input": "input.missing",
+                                    "disconnected": "document.file",
+                                    "unknown_output": "prepare.missing",
+                                    "unknown_path": "prepare.payload.missing",
+                                },
+                            ),
+                        ),
+                    ),
+                ),
+                edges=(FlowEdgeDefinition(source="prepare", target="target"),),
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.empty_mapping",
+                "flow.empty_mapping",
+                "flow.missing_mapping_source",
+                "flow.bad_reference",
+                "flow.incompatible_mapping",
+                "flow.incompatible_mapping",
+                "flow.duplicate_mapping_target",
+                "flow.unknown_mapping_source",
+                "flow.bad_reference",
+                "flow.unknown_node_output",
+                "flow.unknown_selector_path",
+                "flow.missing_input_mapping",
+            ],
+        )
+
+    def test_mapping_private_helpers_cover_type_edges(self) -> None:
+        registry = FlowNodeRegistry({"open": lambda definition: Node("open")})
+
+        self.assertIsNone(
+            flow_validator._flow_input_type(  # type: ignore[attr-defined]
+                FlowDefinition(name="flow", nodes=()),
+                "missing",
+            )
+        )
+        self.assertIsNone(
+            flow_validator._node_output_type(  # type: ignore[attr-defined]
+                registry,
+                "missing",
+                "result",
+            )
+        )
+        self.assertIsNone(
+            flow_validator._node_output_type(  # type: ignore[attr-defined]
+                registry,
+                "open",
+                "result",
+            )
+        )
+        self.assertIsNone(
+            flow_validator._mapping_type_compatibility(  # type: ignore[attr-defined]
+                FlowInputMapping(
+                    target="value",
+                    source="input.payload",
+                ),
+                source_type=FlowInputType.OBJECT,
+                target_contract=FlowNodeContract(name="value"),
+            )
+        )
+        self.assertIsNone(
+            flow_validator._mapping_type_compatibility(  # type: ignore[attr-defined]
+                FlowInputMapping(
+                    target="value",
+                    source="input.payload",
+                ),
+                source_type=FlowInputType.OBJECT,
+                target_contract=FlowNodeContract(name="value", type="custom"),
+            )
+        )
+        self.assertIsNone(
+            flow_validator._mapping_type_compatibility(  # type: ignore[attr-defined]
+                FlowInputMapping(
+                    target="value",
+                    kind=FlowMappingKind.FILE_ARRAY,
+                    source="input.files",
+                ),
+                source_type=FlowInputType.FILE_ARRAY,
+                target_contract=FlowNodeContract(
+                    name="value",
+                    type=FlowInputType.FILE_ARRAY,
+                ),
+            )
+        )
+        self.assertEqual(
+            flow_validator._mapping_type_compatibility(  # type: ignore[attr-defined]
+                FlowInputMapping(
+                    target="value",
+                    kind=FlowMappingKind.FILE_ARRAY,
+                    source="input.payload",
+                ),
+                source_type=FlowInputType.OBJECT,
+                target_contract=FlowNodeContract(
+                    name="value",
+                    type=FlowInputType.FILE_ARRAY,
+                ),
+            ),
+            "flow.incompatible_mapping",
+        )
+        cases = (
+            (FlowInputType.FILE, "file"),
+            (FlowInputType.FILE_ARRAY, "file[]"),
+            (FlowInputType.ARRAY, "array"),
+            (FlowInputType.STRING, "string"),
+            (FlowInputType.INTEGER, "integer"),
+            (FlowInputType.NUMBER, "number"),
+            (FlowInputType.BOOLEAN, "boolean"),
+        )
+        for input_type, expected in cases:
+            with self.subTest(input_type=input_type):
+                self.assertEqual(
+                    flow_validator._semantic_type(  # type: ignore[attr-defined]
+                        input_type,
+                    ),
+                    expected,
+                )
 
     def test_validate_flow_definition_rejects_metadata_gaps(
         self,
