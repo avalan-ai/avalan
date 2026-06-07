@@ -4,6 +4,7 @@ from .definition import (
     FlowJoinPolicyType,
     FlowMappingKind,
     FlowNodeDefinition,
+    FlowNodeKind,
     FlowRetryBackoffStrategy,
     FlowRouteMatchPolicy,
 )
@@ -101,6 +102,8 @@ class FlowNodeRegistryRunner:
     ) -> object:
         assert isinstance(node, FlowNodePlan)
         assert isinstance(inputs, Mapping)
+        if node.kind == FlowNodeKind.SUBFLOW:
+            return await self._run_subflow(node, inputs)
         try:
             runtime_node = self._node(node)
             return await runtime_node.execute_async(dict(inputs))
@@ -120,6 +123,34 @@ class FlowNodeRegistryRunner:
         self._nodes[node.name] = runtime_node
         return runtime_node
 
+    async def _run_subflow(
+        self,
+        node: FlowNodePlan,
+        inputs: Mapping[str, object],
+    ) -> object:
+        metadata = node.metadata.get("subflow")
+        if not isinstance(metadata, Mapping):
+            raise _subflow_execution_error()
+        plan = metadata.get("plan")
+        output_mapping = metadata.get("output_mapping")
+        if not isinstance(plan, FlowExecutionPlan) or not isinstance(
+            output_mapping,
+            Mapping,
+        ):
+            raise _subflow_execution_error()
+        result = await execute_flow_plan(plan, self, inputs=inputs)
+        if not result.ok:
+            raise FlowNodeExecutionError(
+                code="flow.execution.subflow_failed",
+                message="Subflow node failed.",
+                hint="Inspect the referenced flow diagnostics.",
+                failure_category="error",
+            )
+        return {
+            str(target): result.outputs[str(source)]
+            for target, source in output_mapping.items()
+        }
+
 
 def flow_node_registry_runner(
     registry: FlowNodeRegistry | None = None,
@@ -136,6 +167,15 @@ def _plan_node_definition(node: FlowNodePlan) -> FlowNodeDefinition:
         type=node.type,
         ref=node.ref,
         config=node.config,
+    )
+
+
+def _subflow_execution_error() -> FlowNodeExecutionError:
+    return FlowNodeExecutionError(
+        code="flow.execution.subflow_unavailable",
+        message="Subflow node is missing a compiled plan.",
+        hint="Compile the flow definition before execution.",
+        failure_category="validation",
     )
 
 
