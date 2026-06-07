@@ -13,6 +13,8 @@ from avalan.flow import (
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
+    FlowJoinPolicy,
+    FlowJoinPolicyType,
     FlowMappingKind,
     FlowNodeCapability,
     FlowNodeContract,
@@ -75,6 +77,10 @@ class FlowDefinitionTestCase(TestCase):
                 FlowNodeDefinition(
                     name="start",
                     type="constant",
+                    join_policy=FlowJoinPolicy(
+                        type=FlowJoinPolicyType.COLLECT,
+                        optional_inputs=("audit",),
+                    ),
                     mappings=(
                         FlowInputMapping(
                             target="payload",
@@ -155,6 +161,13 @@ class FlowDefinitionTestCase(TestCase):
             definition.nodes[0].mappings[0].fields["name"],
             "input.strict_payload.name",
         )
+        self.assertEqual(
+            definition.nodes[0].join_policy,
+            FlowJoinPolicy(
+                type=FlowJoinPolicyType.COLLECT,
+                optional_inputs=("audit",),
+            ),
+        )
         with self.assertRaises(FrozenInstanceError):
             definition.name = "changed"  # type: ignore[misc]
         self.assertEqual(definition.node_map["start"].type, "constant")
@@ -216,6 +229,20 @@ class FlowDefinitionTestCase(TestCase):
         with self.assertRaises(AssertionError):
             FlowInputMapping(target="", source="input.payload")
         with self.assertRaises(AssertionError):
+            FlowJoinPolicy(
+                type="all_success",  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowJoinPolicy(
+                type=FlowJoinPolicyType.QUORUM,
+                quorum=True,  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowJoinPolicy(
+                type=FlowJoinPolicyType.ALL_SUCCESS,
+                optional_inputs=["payload"],  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
             FlowInputMapping(
                 target="value",
                 kind="select",  # type: ignore[arg-type]
@@ -225,6 +252,12 @@ class FlowDefinitionTestCase(TestCase):
             FlowInputMapping(
                 target="value",
                 sources=("input.payload", ""),
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeDefinition(
+                name="node",
+                type="echo",
+                join_policy=object(),  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
             FlowNodeDefinition(
@@ -275,6 +308,16 @@ class FlowDefinitionTestCase(TestCase):
         self.assertEqual(FlowEdgeKind.RESUME.value, "resume")
         self.assertEqual(FlowEdgeKind.SUCCESS.value, "success")
         self.assertEqual(FlowEdgeKind.TIMEOUT.value, "timeout")
+        self.assertEqual(FlowJoinPolicyType.ALL_DONE.value, "all_done")
+        self.assertEqual(FlowJoinPolicyType.ALL_SUCCESS.value, "all_success")
+        self.assertEqual(FlowJoinPolicyType.ANY_SUCCESS.value, "any_success")
+        self.assertEqual(FlowJoinPolicyType.COLLECT.value, "collect")
+        self.assertEqual(FlowJoinPolicyType.FAIL_FAST.value, "fail_fast")
+        self.assertEqual(
+            FlowJoinPolicyType.FIRST_SUCCESS.value,
+            "first_success",
+        )
+        self.assertEqual(FlowJoinPolicyType.QUORUM.value, "quorum")
         self.assertEqual(
             FlowRouteMatchPolicy.ALL_MATCHING.value,
             "all_matching",

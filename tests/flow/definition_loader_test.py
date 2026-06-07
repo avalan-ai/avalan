@@ -21,6 +21,7 @@ from avalan.flow import (
     FlowDiagnosticCategory,
     FlowEdgeKind,
     FlowInputType,
+    FlowJoinPolicyType,
     FlowLoadError,
     FlowLoadIssueCategory,
     FlowNodeDefinition,
@@ -1366,6 +1367,61 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         )
         self.assertTrue(edge.default)
 
+    def test_loads_strict_join_policy(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "left"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.value"
+
+            [nodes.left]
+            type = "echo"
+
+            [nodes.right]
+            type = "echo"
+
+            [nodes.finish]
+            type = "echo"
+
+            [nodes.finish.join_policy]
+            type = "quorum"
+            quorum = 2
+            optional_inputs = ["value"]
+
+            [[edges]]
+            source = "left"
+            target = "finish"
+
+            [[edges]]
+            source = "right"
+            target = "finish"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        join_policy = result.definition.nodes[2].join_policy
+        assert join_policy is not None
+        self.assertEqual(join_policy.type, FlowJoinPolicyType.QUORUM)
+        self.assertEqual(join_policy.quorum, 2)
+        self.assertEqual(join_policy.optional_inputs, ("value",))
+
     def test_loads_declarative_node_mappings(self) -> None:
         result = loads_flow_definition_result("""
             [flow]
@@ -2185,6 +2241,98 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 self.assertFalse(result.ok)
                 self.assertIn(code, [issue.code for issue in result.issues])
 
+    def test_loader_rejects_invalid_join_policy(self) -> None:
+        cases = (
+            (
+                """
+                join_policy = "all_success"
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [nodes.finish.join_policy]
+                type = "unknown"
+                """,
+                "flow.invalid_enum",
+            ),
+            (
+                """
+                [nodes.finish.join_policy]
+                type = "quorum"
+                quorum = true
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [nodes.finish.join_policy]
+                type = "all_success"
+                secret = "private-token"
+                """,
+                "flow.unsupported_field",
+            ),
+            (
+                """
+                [nodes.finish.join_policy]
+                type = "all_success"
+                optional_inputs = "value"
+                """,
+                "flow.invalid_type",
+            ),
+        )
+
+        for join_policy_toml, code in cases:
+            with self.subTest(code=code):
+                result = loads_flow_definition_result(f"""
+                    [flow]
+                    name = "strict"
+                    version = "2026-06-07"
+
+                    [[inputs]]
+                    name = "payload"
+                    type = "object"
+
+                    [[outputs]]
+                    name = "answer"
+                    type = "object"
+
+                    [entry]
+                    type = "node"
+                    node = "left"
+
+                    [output_behavior]
+                    type = "map"
+
+                    [output_behavior.outputs]
+                    answer = "finish.value"
+
+                    [nodes.left]
+                    type = "echo"
+
+                    [nodes.right]
+                    type = "echo"
+
+                    [nodes.finish]
+                    type = "echo"
+                    {join_policy_toml}
+
+                    [[edges]]
+                    source = "left"
+                    target = "finish"
+
+                    [[edges]]
+                    source = "right"
+                    target = "finish"
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertIn(code, [issue.code for issue in result.issues])
+                self.assertNotIn(
+                    "private-token",
+                    str(result.public_diagnostics),
+                )
+
     def test_loader_rejects_duplicate_default_routes(self) -> None:
         result = loads_flow_definition_result("""
             [flow]
@@ -2456,6 +2604,11 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 "custom",
             ),
             ("value", "result"),
+        )
+        self.assertFalse(
+            flow_loader._nodes_use_strict_definition(  # type: ignore[attr-defined]
+                None,
+            )
         )
         self.assertIn("flow.invalid_type", [issue.code for issue in issues])
 

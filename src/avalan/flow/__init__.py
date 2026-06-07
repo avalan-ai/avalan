@@ -17,6 +17,8 @@ from .definition import FlowEntryBehaviorType as FlowEntryBehaviorType
 from .definition import FlowInputDefinition as FlowInputDefinition
 from .definition import FlowInputMapping as FlowInputMapping
 from .definition import FlowInputType as FlowInputType
+from .definition import FlowJoinPolicy as FlowJoinPolicy
+from .definition import FlowJoinPolicyType as FlowJoinPolicyType
 from .definition import FlowMappingKind as FlowMappingKind
 from .definition import FlowNodeCapability as FlowNodeCapability
 from .definition import FlowNodeContract as FlowNodeContract

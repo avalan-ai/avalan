@@ -13,6 +13,8 @@ from avalan.flow import (
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
+    FlowJoinPolicy,
+    FlowJoinPolicyType,
     FlowMappingKind,
     FlowNodeCapability,
     FlowNodeContract,
@@ -802,6 +804,9 @@ class FlowValidatorTestCase(TestCase):
                     FlowNodeDefinition(
                         name="target",
                         type="target",
+                        join_policy=FlowJoinPolicy(
+                            type=FlowJoinPolicyType.ALL_SUCCESS,
+                        ),
                         mappings=(
                             FlowInputMapping(
                                 target="arguments",
@@ -1823,6 +1828,191 @@ class FlowValidatorTestCase(TestCase):
             ["flow.unsupported_edge_policy"],
         )
 
+    def test_validate_flow_definition_accepts_join_policies(self) -> None:
+        cases = (
+            FlowJoinPolicy(type=FlowJoinPolicyType.ALL_SUCCESS),
+            FlowJoinPolicy(type=FlowJoinPolicyType.ALL_DONE),
+            FlowJoinPolicy(type=FlowJoinPolicyType.ANY_SUCCESS),
+            FlowJoinPolicy(type=FlowJoinPolicyType.QUORUM, quorum=2),
+            FlowJoinPolicy(type=FlowJoinPolicyType.FIRST_SUCCESS),
+            FlowJoinPolicy(type=FlowJoinPolicyType.FAIL_FAST),
+            FlowJoinPolicy(type=FlowJoinPolicyType.COLLECT),
+        )
+
+        for join_policy in cases:
+            with self.subTest(join_policy=join_policy.type.value):
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="joined",
+                        version="2026-06-07",
+                        inputs=(
+                            FlowInputDefinition(
+                                name="payload",
+                                type=FlowInputType.OBJECT,
+                            ),
+                        ),
+                        outputs=(
+                            FlowOutputDefinition(
+                                name="answer",
+                                type=FlowOutputType.OBJECT,
+                            ),
+                        ),
+                        entry_behavior=FlowEntryBehavior(node="left"),
+                        output_behavior=FlowOutputBehavior(
+                            outputs={"answer": "finish.value"},
+                        ),
+                        nodes=(
+                            FlowNodeDefinition(name="left", type="echo"),
+                            FlowNodeDefinition(name="right", type="echo"),
+                            FlowNodeDefinition(
+                                name="finish",
+                                type="echo",
+                                join_policy=join_policy,
+                            ),
+                        ),
+                        edges=(
+                            FlowEdgeDefinition(
+                                source="left",
+                                target="finish",
+                            ),
+                            FlowEdgeDefinition(
+                                source="right",
+                                target="finish",
+                            ),
+                        ),
+                    )
+                )
+
+                self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_missing_join_policy(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="joined",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="left"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "finish.value"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="left", type="echo"),
+                    FlowNodeDefinition(name="right", type="echo"),
+                    FlowNodeDefinition(name="finish", type="echo"),
+                ),
+                edges=(
+                    FlowEdgeDefinition(source="left", target="finish"),
+                    FlowEdgeDefinition(source="right", target="finish"),
+                ),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.diagnostics[0].code, "flow.missing_join_policy"
+        )
+        self.assertEqual(
+            result.diagnostics[0].path,
+            "nodes.finish.join_policy",
+        )
+
+    def test_validate_flow_definition_rejects_join_policy_details(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FlowJoinPolicy(type=FlowJoinPolicyType.QUORUM),
+                "flow.missing_join_quorum",
+            ),
+            (
+                FlowJoinPolicy(type=FlowJoinPolicyType.QUORUM, quorum=0),
+                "flow.invalid_join_quorum",
+            ),
+            (
+                FlowJoinPolicy(type=FlowJoinPolicyType.QUORUM, quorum=3),
+                "flow.invalid_join_quorum",
+            ),
+            (
+                FlowJoinPolicy(
+                    type=FlowJoinPolicyType.ALL_SUCCESS,
+                    quorum=1,
+                ),
+                "flow.unsupported_join_field",
+            ),
+            (
+                FlowJoinPolicy(
+                    type=FlowJoinPolicyType.ALL_DONE,
+                    optional_inputs=("audit", "audit"),
+                ),
+                "flow.duplicate_join_optional_input",
+            ),
+            (
+                FlowJoinPolicy(
+                    type=FlowJoinPolicyType.ALL_DONE,
+                    optional_inputs=("missing",),
+                ),
+                "flow.unknown_join_optional_input",
+            ),
+        )
+
+        for join_policy, code in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    self._join_policy_contract_definition(join_policy),
+                    self._join_policy_registry(),
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_validate_flow_definition_uses_join_optional_inputs(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            self._join_policy_contract_definition(
+                FlowJoinPolicy(
+                    type=FlowJoinPolicyType.ALL_DONE,
+                    optional_inputs=("audit",),
+                ),
+                include_payload_mapping=True,
+            ),
+            self._join_policy_registry(),
+        )
+
+        self.assertTrue(result.ok)
+
+        missing_required = validate_flow_definition(
+            self._join_policy_contract_definition(
+                FlowJoinPolicy(
+                    type=FlowJoinPolicyType.ALL_DONE,
+                    optional_inputs=("audit",),
+                ),
+            ),
+            self._join_policy_registry(),
+        )
+
+        self.assertFalse(missing_required.ok)
+        self.assertIn(
+            "flow.missing_input_mapping",
+            [diagnostic.code for diagnostic in missing_required.diagnostics],
+        )
+
     def test_mapping_private_helpers_cover_type_edges(self) -> None:
         registry = FlowNodeRegistry({"open": lambda definition: Node("open")})
 
@@ -2104,6 +2294,89 @@ class FlowValidatorTestCase(TestCase):
         self.assertEqual(
             result.diagnostics[0].category,
             FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+        )
+
+    def _join_policy_registry(self) -> FlowNodeRegistry:
+        return FlowNodeRegistry(
+            {
+                "source": lambda definition: Node(definition.name),
+                "target": lambda definition: Node(definition.name),
+            },
+            {
+                "source": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="payload",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                "target": FlowNodeMetadata(
+                    kind=FlowNodeKind.JOIN,
+                    input_contracts=(
+                        FlowNodeContract(
+                            name="payload",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="audit",
+                            type=FlowInputType.OBJECT,
+                        ),
+                    ),
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+            },
+        )
+
+    def _join_policy_contract_definition(
+        self,
+        join_policy: FlowJoinPolicy,
+        *,
+        include_payload_mapping: bool = False,
+    ) -> FlowDefinition:
+        mappings: tuple[FlowInputMapping, ...] = ()
+        if include_payload_mapping:
+            mappings = (
+                FlowInputMapping(
+                    target="payload",
+                    source="left.payload",
+                ),
+            )
+        return FlowDefinition(
+            name="joined",
+            version="2026-06-07",
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="answer",
+                    type=FlowOutputType.OBJECT,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="left"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "finish.result"},
+            ),
+            nodes=(
+                FlowNodeDefinition(name="left", type="source"),
+                FlowNodeDefinition(name="right", type="source"),
+                FlowNodeDefinition(
+                    name="finish",
+                    type="target",
+                    join_policy=join_policy,
+                    mappings=mappings,
+                ),
+            ),
+            edges=(
+                FlowEdgeDefinition(source="left", target="finish"),
+                FlowEdgeDefinition(source="right", target="finish"),
+            ),
         )
 
 

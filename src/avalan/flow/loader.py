@@ -14,6 +14,8 @@ from .definition import (
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
+    FlowJoinPolicy,
+    FlowJoinPolicyType,
     FlowMappingKind,
     FlowNodeDefinition,
     FlowOutputBehavior,
@@ -96,6 +98,7 @@ _ALLOWED_NODE_FIELDS = frozenset(
         "config",
         "field",
         "input",
+        "join_policy",
         "mapping",
         "output",
         "path",
@@ -110,6 +113,13 @@ _ALLOWED_MAPPING_FIELDS = frozenset(
         "items",
         "source",
         "sources",
+        "type",
+    }
+)
+_ALLOWED_JOIN_POLICY_FIELDS = frozenset(
+    {
+        "optional_inputs",
+        "quorum",
         "type",
     }
 )
@@ -558,6 +568,16 @@ def _uses_strict_definition(
         strict_sections.intersection(raw)
         or "revision" in flow_raw
         or "tags" in flow_raw
+        or _nodes_use_strict_definition(raw.get("nodes"))
+    )
+
+
+def _nodes_use_strict_definition(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    return any(
+        isinstance(raw, Mapping) and "join_policy" in raw
+        for raw in value.values()
     )
 
 
@@ -830,6 +850,11 @@ def _node_definitions(
             issues,
             path=f"nodes.{name}.mapping",
         )
+        join_policy = _join_policy(
+            value.get("join_policy"),
+            issues,
+            path=f"nodes.{name}.join_policy",
+        )
         if node_type is None:
             continue
         config = _node_config(value, issues, path=f"nodes.{name}")
@@ -840,6 +865,7 @@ def _node_definitions(
                 ref=ref,
                 input=input_name,
                 output=output_name,
+                join_policy=join_policy,
                 mappings=mappings,
                 config=config,
             )
@@ -915,6 +941,51 @@ def _node_mappings(
             )
         )
     return tuple(mappings)
+
+
+def _join_policy(
+    value: object,
+    issues: list[FlowLoadIssue],
+    *,
+    path: str,
+) -> FlowJoinPolicy | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_type(path, "Use a TOML table."))
+        return None
+    _validate_unknown_fields(
+        value,
+        allowed=_ALLOWED_JOIN_POLICY_FIELDS,
+        path=path,
+        issues=issues,
+    )
+    policy_type = _enum_value(
+        value,
+        f"{path}.type",
+        "type",
+        FlowJoinPolicyType,
+        issues,
+    )
+    quorum = _optional_int(
+        value,
+        f"{path}.quorum",
+        "quorum",
+        issues,
+    )
+    optional_inputs = _string_tuple(
+        value,
+        f"{path}.optional_inputs",
+        "optional_inputs",
+        issues,
+    )
+    if policy_type is None:
+        return None
+    return FlowJoinPolicy(
+        type=policy_type,
+        quorum=quorum,
+        optional_inputs=optional_inputs,
+    )
 
 
 def _edge_definitions(
