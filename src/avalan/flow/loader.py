@@ -1,9 +1,13 @@
 from .definition import (
     FlowDefinition,
     FlowEdgeDefinition,
+    FlowEntryBehavior,
+    FlowEntryBehaviorType,
     FlowInputDefinition,
     FlowInputType,
     FlowNodeDefinition,
+    FlowOutputBehavior,
+    FlowOutputBehaviorType,
     FlowOutputDefinition,
     FlowOutputType,
 )
@@ -30,16 +34,24 @@ from pathlib import Path
 from tomllib import TOMLDecodeError, loads
 from typing import TypeVar
 
-EnumValue = TypeVar("EnumValue", FlowInputType, FlowOutputType)
+EnumValue = TypeVar("EnumValue", bound=StrEnum)
 RawSection = Mapping[str, object]
 
 _ALLOWED_TOP_LEVEL_SECTIONS = frozenset(
     {
+        "entry",
         "edges",
         "flow",
         "input",
+        "inputs",
         "nodes",
+        "observability",
         "output",
+        "output_behavior",
+        "outputs",
+        "ownership",
+        "privacy",
+        "runtime_limits",
         "variables",
     }
 )
@@ -51,6 +63,8 @@ _ALLOWED_FLOW_FIELDS = frozenset(
         "name",
         "output",
         "output_node",
+        "revision",
+        "tags",
         "version",
     }
 )
@@ -64,6 +78,8 @@ _ALLOWED_INPUT_FIELDS = frozenset(
     }
 )
 _ALLOWED_OUTPUT_FIELDS = frozenset({"name", "schema", "schema_ref", "type"})
+_ALLOWED_ENTRY_FIELDS = frozenset({"node", "type"})
+_ALLOWED_OUTPUT_BEHAVIOR_FIELDS = frozenset({"outputs", "type"})
 _ALLOWED_NODE_FIELDS = frozenset(
     {
         "config",
@@ -273,29 +289,65 @@ def _build_result(
     )
     input_raw = _child_section(raw, flow_raw, "input", issues)
     output_raw = _child_section(raw, flow_raw, "output", issues)
+    entry_raw = _section(raw, "entry", issues, required=False)
+    output_behavior_raw = _section(
+        raw,
+        "output_behavior",
+        issues,
+        required=False,
+    )
+    runtime_limits_raw = _section(
+        raw,
+        "runtime_limits",
+        issues,
+        required=False,
+    )
+    privacy_raw = _section(raw, "privacy", issues, required=False)
+    observability_raw = _section(
+        raw,
+        "observability",
+        issues,
+        required=False,
+    )
+    ownership_raw = _section(raw, "ownership", issues, required=False)
     variables_raw = _section(raw, "variables", issues, required=False)
     name = _required_str(flow_raw, "flow.name", "name", issues)
-    entrypoint = _required_str(
+    entrypoint = _optional_str(
         flow_raw,
         "flow.entrypoint",
         "entrypoint",
         issues,
     )
-    output_node = _required_str(
-        flow_raw,
-        "flow.output_node",
-        "output_node",
-        issues,
+    output_node = _optional_str(
+        flow_raw, "flow.output_node", "output_node", issues
     )
     version = _optional_str(flow_raw, "flow.version", "version", issues)
+    revision = _optional_str(flow_raw, "flow.revision", "revision", issues)
     description = _optional_str(
         flow_raw,
         "flow.description",
         "description",
         issues,
     )
+    tags = _string_tuple(flow_raw, "flow.tags", "tags", issues)
     input_definition = _input_definition(input_raw, issues)
+    input_definitions = _input_definitions(raw.get("inputs"), issues)
     output_definition = _output_definition(output_raw, issues)
+    output_definitions = _output_definitions(raw.get("outputs"), issues)
+    entry_behavior = _entry_behavior(entry_raw, issues)
+    output_behavior = _output_behavior(output_behavior_raw, issues)
+    runtime_limits = _optional_metadata(
+        runtime_limits_raw,
+        "runtime_limits",
+        issues,
+    )
+    privacy_policy = _optional_metadata(privacy_raw, "privacy", issues)
+    observability_policy = _optional_metadata(
+        observability_raw,
+        "observability",
+        issues,
+    )
+    ownership = _optional_metadata(ownership_raw, "ownership", issues)
     variables = (
         _metadata(variables_raw, "variables", issues)
         if variables_raw is not None
@@ -303,16 +355,34 @@ def _build_result(
     )
     nodes = _node_definitions(nodes_raw, issues)
     edges = _edge_definitions(raw.get("edges"), issues)
-    if name is None or entrypoint is None or output_node is None:
+    is_strict = _uses_strict_definition(raw, flow_raw)
+    if not is_strict:
+        if entrypoint is None:
+            issues.append(_missing_field("flow.entrypoint"))
+        if output_node is None:
+            issues.append(_missing_field("flow.output_node"))
+    if name is None or (
+        not is_strict and (entrypoint is None or output_node is None)
+    ):
         return FlowLoadResult(definition=None, issues=tuple(issues))
     definition = FlowDefinition(
         name=name,
         version=version,
+        revision=revision,
         description=description,
         entrypoint=entrypoint,
         output_node=output_node,
         input=input_definition,
+        inputs=input_definitions,
         output=output_definition,
+        outputs=output_definitions,
+        entry_behavior=entry_behavior,
+        output_behavior=output_behavior,
+        runtime_limits=runtime_limits or {},
+        privacy_policy=privacy_policy or {},
+        observability_policy=observability_policy or {},
+        tags=tags,
+        ownership=ownership or {},
         variables=variables or {},
         nodes=nodes,
         edges=edges,
@@ -371,6 +441,30 @@ def _validate_top_level_sections(
         if key == "edges":
             if not isinstance(value, list):
                 issues.append(_invalid_section_type("edges"))
+        if key in {"inputs", "outputs"}:
+            if not isinstance(value, list):
+                issues.append(_invalid_section_type(key))
+
+
+def _uses_strict_definition(
+    raw: Mapping[str, object],
+    flow_raw: RawSection,
+) -> bool:
+    strict_sections = {
+        "entry",
+        "inputs",
+        "observability",
+        "output_behavior",
+        "outputs",
+        "ownership",
+        "privacy",
+        "runtime_limits",
+    }
+    return bool(
+        strict_sections.intersection(raw)
+        or "revision" in flow_raw
+        or "tags" in flow_raw
+    )
 
 
 def _section(
@@ -465,6 +559,18 @@ def _input_definition(
     )
 
 
+def _input_definitions(
+    value: object,
+    issues: list[FlowLoadIssue],
+) -> tuple[FlowInputDefinition, ...]:
+    definitions: list[FlowInputDefinition] = []
+    for _, raw in _array_sections(value, "inputs", issues):
+        definition = _input_definition(raw, issues)
+        if definition is not None:
+            definitions.append(definition)
+    return tuple(definitions)
+
+
 def _output_definition(
     raw: RawSection | None,
     issues: list[FlowLoadIssue],
@@ -500,6 +606,92 @@ def _output_definition(
         schema=schema,
         schema_ref=schema_ref,
     )
+
+
+def _output_definitions(
+    value: object,
+    issues: list[FlowLoadIssue],
+) -> tuple[FlowOutputDefinition, ...]:
+    definitions: list[FlowOutputDefinition] = []
+    for _, raw in _array_sections(value, "outputs", issues):
+        definition = _output_definition(raw, issues)
+        if definition is not None:
+            definitions.append(definition)
+    return tuple(definitions)
+
+
+def _array_sections(
+    value: object,
+    path: str,
+    issues: list[FlowLoadIssue],
+) -> tuple[tuple[int, RawSection], ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        return ()
+    sections: list[tuple[int, RawSection]] = []
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, Mapping):
+            issues.append(_invalid_section_type(item_path))
+            continue
+        sections.append((index, item))
+    return tuple(sections)
+
+
+def _entry_behavior(
+    raw: RawSection | None,
+    issues: list[FlowLoadIssue],
+) -> FlowEntryBehavior | None:
+    if raw is None:
+        return None
+    _validate_unknown_fields(
+        raw,
+        allowed=_ALLOWED_ENTRY_FIELDS,
+        path="flow.entry",
+        issues=issues,
+    )
+    entry_type = _enum_value(
+        raw,
+        "flow.entry.type",
+        "type",
+        FlowEntryBehaviorType,
+        issues,
+    )
+    node = _required_str(raw, "flow.entry.node", "node", issues)
+    if entry_type is None or node is None:
+        return None
+    return FlowEntryBehavior(type=entry_type, node=node)
+
+
+def _output_behavior(
+    raw: RawSection | None,
+    issues: list[FlowLoadIssue],
+) -> FlowOutputBehavior | None:
+    if raw is None:
+        return None
+    _validate_unknown_fields(
+        raw,
+        allowed=_ALLOWED_OUTPUT_BEHAVIOR_FIELDS,
+        path="flow.output_behavior",
+        issues=issues,
+    )
+    behavior_type = _enum_value(
+        raw,
+        "flow.output_behavior.type",
+        "type",
+        FlowOutputBehaviorType,
+        issues,
+    )
+    outputs = _string_mapping(
+        raw,
+        "flow.output_behavior.outputs",
+        "outputs",
+        issues,
+    )
+    if behavior_type is None or outputs is None:
+        return None
+    return FlowOutputBehavior(type=behavior_type, outputs=outputs)
 
 
 def _node_definitions(
@@ -714,6 +906,41 @@ def _optional_mapping(
         issues.append(_invalid_type(path, "Use a TOML table."))
         return None
     return _metadata(value, path, issues)
+
+
+def _string_mapping(
+    raw: RawSection,
+    path: str,
+    field: str,
+    issues: list[FlowLoadIssue],
+) -> Mapping[str, str] | None:
+    value = raw.get(field)
+    if value is None:
+        issues.append(_missing_field(path))
+        return None
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_type(path, "Use a TOML table."))
+        return None
+    mapping: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            issues.append(_invalid_type(path, "Use string keys."))
+            return None
+        if not isinstance(item, str) or not item.strip():
+            issues.append(_invalid_type(f"{path}.{key}", "Use a string."))
+            return None
+        mapping[key] = item
+    return mapping
+
+
+def _optional_metadata(
+    raw: RawSection | None,
+    path: str,
+    issues: list[FlowLoadIssue],
+) -> Mapping[str, object] | None:
+    if raw is None:
+        return None
+    return _metadata(raw, path, issues)
 
 
 def _metadata(

@@ -166,7 +166,45 @@ def _validate_graph_contract(
 ) -> tuple[FlowDiagnostic, ...]:
     diagnostics: list[FlowDiagnostic] = []
     node_names = {node.name for node in definition.nodes}
-    if definition.entrypoint not in node_names:
+    for edge in definition.edges:
+        if edge.source not in node_names:
+            diagnostics.append(_bad_reference_diagnostic("edges.source"))
+        if edge.target not in node_names:
+            diagnostics.append(_bad_reference_diagnostic("edges.target"))
+    if diagnostics:
+        return tuple(diagnostics)
+    if definition.is_strict:
+        diagnostics.extend(_validate_strict_contract(definition, node_names))
+    else:
+        diagnostics.extend(_validate_legacy_graph_contract(definition))
+    diagnostics.extend(_validate_agent_file_selectors(definition))
+    if _cycle_nodes(definition):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.cycle",
+                path="edges",
+                message="Flow graph contains a cycle.",
+                hint="Remove the cyclic edge before running the flow.",
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_legacy_graph_contract(
+    definition: FlowDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    node_names = {node.name for node in definition.nodes}
+    if definition.entrypoint is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_entrypoint",
+                path="flow.entrypoint",
+                message="Flow entrypoint is required.",
+                hint="Set flow.entrypoint to a declared node name.",
+            )
+        )
+    elif definition.entrypoint not in node_names:
         diagnostics.append(
             _diagnostic(
                 code="flow.unknown_entrypoint",
@@ -175,7 +213,16 @@ def _validate_graph_contract(
                 hint="Set flow.entrypoint to a declared node name.",
             )
         )
-    if definition.output_node not in node_names:
+    if definition.output_node is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_output_node",
+                path="flow.output_node",
+                message="Flow output node is required.",
+                hint="Set flow.output_node to a declared node name.",
+            )
+        )
+    elif definition.output_node not in node_names:
         diagnostics.append(
             _diagnostic(
                 code="flow.unknown_output_node",
@@ -184,13 +231,10 @@ def _validate_graph_contract(
                 hint="Set flow.output_node to a declared node name.",
             )
         )
-    for edge in definition.edges:
-        if edge.source not in node_names:
-            diagnostics.append(_bad_reference_diagnostic("edges.source"))
-        if edge.target not in node_names:
-            diagnostics.append(_bad_reference_diagnostic("edges.target"))
     if diagnostics:
         return tuple(diagnostics)
+    assert definition.entrypoint is not None
+    assert definition.output_node is not None
     outgoing = {node.name: 0 for node in definition.nodes}
     incoming = {node.name: 0 for node in definition.nodes}
     for edge in definition.edges:
@@ -225,16 +269,184 @@ def _validate_graph_contract(
                 hint="Use a node without outbound edges as the output node.",
             )
         )
-    diagnostics.extend(_validate_agent_file_selectors(definition))
-    if _cycle_nodes(definition):
+    return tuple(diagnostics)
+
+
+def _validate_strict_contract(
+    definition: FlowDefinition,
+    node_names: set[str],
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    if definition.version is None and definition.revision is None:
         diagnostics.append(
             _diagnostic(
-                code="flow.cycle",
-                path="edges",
-                message="Flow graph contains a cycle.",
-                hint="Remove the cyclic edge before running the flow.",
+                code="flow.missing_identity",
+                path="flow.version",
+                message="Flow version or revision is required.",
+                hint="Set flow.version or flow.revision.",
             )
         )
+    if definition.input is not None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.scalar_input_alias",
+                path="flow.input",
+                message="Flow input alias is not supported.",
+                hint="Use declared flow inputs.",
+            )
+        )
+    if definition.output is not None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.scalar_output_alias",
+                path="flow.output",
+                message="Flow output alias is not supported.",
+                hint="Use declared flow outputs and output behavior.",
+            )
+        )
+    diagnostics.extend(
+        _validate_named_contracts(
+            names=[
+                input_definition.name for input_definition in definition.inputs
+            ],
+            path="flow.inputs",
+            missing_code="flow.missing_inputs",
+            duplicate_code="flow.duplicate_input",
+            missing_message="Flow requires at least one declared input.",
+            duplicate_message="Flow input name is declared more than once.",
+            missing_hint="Declare at least one flow input.",
+            duplicate_hint="Use unique flow input names.",
+        )
+    )
+    diagnostics.extend(
+        _validate_named_contracts(
+            names=[
+                output_definition.name
+                for output_definition in definition.outputs
+            ],
+            path="flow.outputs",
+            missing_code="flow.missing_outputs",
+            duplicate_code="flow.duplicate_output",
+            missing_message="Flow requires at least one declared output.",
+            duplicate_message="Flow output name is declared more than once.",
+            missing_hint="Declare at least one flow output.",
+            duplicate_hint="Use unique flow output names.",
+        )
+    )
+    if definition.entry_behavior is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_entry_behavior",
+                path="flow.entry",
+                message="Flow entry behavior is required.",
+                hint="Declare the node where execution starts.",
+            )
+        )
+    elif definition.entry_behavior.node not in node_names:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.unknown_entry_node",
+                path="flow.entry.node",
+                message="Flow entry behavior references an unknown node.",
+                hint="Reference a declared node.",
+            )
+        )
+    diagnostics.extend(_validate_output_behavior(definition, node_names))
+    return tuple(diagnostics)
+
+
+def _validate_named_contracts(
+    *,
+    names: list[str],
+    path: str,
+    missing_code: str,
+    duplicate_code: str,
+    missing_message: str,
+    duplicate_message: str,
+    missing_hint: str,
+    duplicate_hint: str,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    if not names:
+        diagnostics.append(
+            _diagnostic(
+                code=missing_code,
+                path=path,
+                message=missing_message,
+                hint=missing_hint,
+            )
+        )
+        return tuple(diagnostics)
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            diagnostics.append(
+                _diagnostic(
+                    code=duplicate_code,
+                    path=f"{path}.{name}",
+                    message=duplicate_message,
+                    hint=duplicate_hint,
+                )
+            )
+        seen.add(name)
+    return tuple(diagnostics)
+
+
+def _validate_output_behavior(
+    definition: FlowDefinition,
+    node_names: set[str],
+) -> tuple[FlowDiagnostic, ...]:
+    if definition.output_behavior is None:
+        return (
+            _diagnostic(
+                code="flow.missing_output_behavior",
+                path="flow.output_behavior",
+                message="Flow output behavior is required.",
+                hint="Map each declared flow output from node outputs.",
+            ),
+        )
+    diagnostics: list[FlowDiagnostic] = []
+    declared = {output.name for output in definition.outputs}
+    selected = set(definition.output_behavior.outputs)
+    for name in sorted(selected - declared):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.unknown_output",
+                path=f"flow.output_behavior.outputs.{name}",
+                message="Flow output behavior maps an unknown output.",
+                hint="Map only declared flow outputs.",
+            )
+        )
+    for name in sorted(declared - selected):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_output_selection",
+                path=f"flow.output_behavior.outputs.{name}",
+                message="Flow output behavior is missing a declared output.",
+                hint="Map every declared flow output.",
+            )
+        )
+    for name, selector in definition.output_behavior.outputs.items():
+        parts = selector.split(".", 1)
+        if len(parts) != 2 or any(not part.strip() for part in parts):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.invalid_output_selector",
+                    path=f"flow.output_behavior.outputs.{name}",
+                    message="Flow output behavior selector is invalid.",
+                    hint="Use a node output selector.",
+                )
+            )
+            continue
+        if parts[0] not in node_names:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.unknown_output_selector_node",
+                    path=f"flow.output_behavior.outputs.{name}",
+                    message="Flow output behavior references an unknown node.",
+                    hint="Reference a declared node output.",
+                )
+            )
     return tuple(diagnostics)
 
 

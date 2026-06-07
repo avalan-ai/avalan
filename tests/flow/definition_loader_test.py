@@ -893,6 +893,16 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 """,
                 "flow.invalid_type",
             ),
+            (
+                """
+                [flow]
+                name = "missing"
+
+                [nodes.start]
+                type = "echo"
+                """,
+                "flow.missing_field",
+            ),
         )
 
         for source, code in cases:
@@ -1040,6 +1050,355 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 self.assertFalse(result.ok)
                 for code in expected_codes:
                     self.assertIn(code, codes)
+
+    def test_loads_strict_definition_contract(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+            tags = ["ops"]
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.result"
+
+            [runtime_limits]
+            timeout_seconds = 30
+
+            [privacy]
+            store_raw = false
+
+            [observability]
+            events = ["node"]
+
+            [ownership]
+            team = "platform"
+
+            [nodes.start]
+            type = "echo"
+
+            [nodes.finish]
+            type = "echo"
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        self.assertIsNotNone(result.flow)
+        self.assertIsNone(result.definition.entrypoint)
+        self.assertIsNone(result.definition.output_node)
+        self.assertEqual(result.definition.inputs[0].name, "payload")
+        self.assertEqual(result.definition.outputs[0].name, "answer")
+        self.assertEqual(result.definition.tags, ("ops",))
+        self.assertEqual(
+            result.definition.runtime_limits["timeout_seconds"],
+            30,
+        )
+        self.assertEqual(result.definition.privacy_policy["store_raw"], False)
+        self.assertEqual(
+            result.definition.observability_policy["events"],
+            ("node",),
+        )
+        self.assertEqual(result.definition.ownership["team"], "platform")
+
+    def test_loads_strict_definition_with_revision_identity(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            revision = "rev-1"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "start.result"
+
+            [nodes.start]
+            type = "echo"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        self.assertEqual(result.definition.revision, "rev-1")
+
+    def test_strict_loader_rejects_scalar_input_and_output_aliases(
+        self,
+    ) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [flow.input]
+            name = "payload"
+            type = "object"
+
+            [flow.output]
+            name = "answer"
+            type = "object"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "start.result"
+
+            [nodes.start]
+            type = "echo"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [issue.code for issue in result.issues],
+            ["flow.scalar_input_alias", "flow.scalar_output_alias"],
+        )
+
+    def test_strict_loader_rejects_invalid_behavior_shapes(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "terminal"
+            node = "start"
+            strategy = "implicit"
+
+            [output_behavior]
+            type = "terminal"
+            result = "start.result"
+
+            [output_behavior.outputs]
+            answer = 3
+
+            [nodes.start]
+            type = "echo"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [issue.code for issue in result.issues],
+            [
+                "flow.unsupported_field",
+                "flow.invalid_enum",
+                "flow.unsupported_field",
+                "flow.invalid_enum",
+                "flow.invalid_type",
+                "flow.missing_entry_behavior",
+                "flow.missing_output_behavior",
+            ],
+        )
+        self.assertNotIn("implicit", str(result.public_diagnostics))
+
+    def test_strict_loader_rejects_invalid_input_output_arrays(self) -> None:
+        cases = (
+            (
+                """
+                inputs = "invalid"
+
+                [flow]
+                name = "strict"
+                version = "2026-06-07"
+
+                [[outputs]]
+                name = "answer"
+                type = "object"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                answer = "start.result"
+
+                [nodes.start]
+                type = "echo"
+                """,
+                ["flow.invalid_section", "flow.missing_inputs"],
+            ),
+            (
+                """
+                inputs = ["invalid"]
+
+                [flow]
+                name = "strict"
+                version = "2026-06-07"
+
+                [[outputs]]
+                name = "answer"
+                type = "object"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                answer = "start.result"
+
+                [nodes.start]
+                type = "echo"
+                """,
+                ["flow.invalid_section", "flow.missing_inputs"],
+            ),
+        )
+        for source, expected_codes in cases:
+            with self.subTest(expected_codes=expected_codes):
+                result = loads_flow_definition_result(source)
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    [issue.code for issue in result.issues],
+                    expected_codes,
+                )
+
+    def test_strict_loader_rejects_invalid_output_maps(self) -> None:
+        cases = (
+            (
+                """
+                [flow]
+                name = "strict"
+                version = "2026-06-07"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "answer"
+                type = "object"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [nodes.start]
+                type = "echo"
+                """,
+                ["flow.missing_field", "flow.missing_output_behavior"],
+            ),
+            (
+                """
+                [flow]
+                name = "strict"
+                version = "2026-06-07"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "answer"
+                type = "object"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+                outputs = "invalid"
+
+                [nodes.start]
+                type = "echo"
+                """,
+                ["flow.invalid_type", "flow.missing_output_behavior"],
+            ),
+        )
+        for source, expected_codes in cases:
+            with self.subTest(expected_codes=expected_codes):
+                result = loads_flow_definition_result(source)
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    [issue.code for issue in result.issues],
+                    expected_codes,
+                )
+
+    def test_strict_loader_rejects_missing_output_selection(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [nodes.start]
+            type = "echo"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [issue.code for issue in result.issues],
+            ["flow.missing_output_behavior"],
+        )
 
     def test_rejects_unknown_and_untrusted_node_types(self) -> None:
         cases = (
@@ -1508,11 +1867,18 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             "metadata",
             issues,
         )
+        string_mapping = flow_loader._string_mapping(  # type: ignore[attr-defined]
+            {"outputs": {1: "bad"}},  # type: ignore[dict-item]
+            "flow.output_behavior.outputs",
+            "outputs",
+            issues,
+        )
 
         self.assertFalse(result.ok)
         self.assertEqual(tuple_value, ())
         self.assertEqual(list_value, ("text/plain",))
         self.assertIsNone(metadata)
+        self.assertIsNone(string_mapping)
         self.assertIn("flow.invalid_type", [issue.code for issue in issues])
 
     def _load_agent_selector_case(
