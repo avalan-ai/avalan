@@ -1,6 +1,7 @@
 from ...event import Event, EventType
 from ...flow.definition import (
     FlowDefinition,
+    FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
     FlowMappingKind,
@@ -9,13 +10,22 @@ from ...flow.definition import (
     FlowNodeDefinition,
     FlowNodeKind,
     FlowNodeMetadata,
+    FlowOutputDefinition,
     FlowOutputType,
 )
 from ...flow.diagnostics import FlowDiagnostic, FlowDiagnosticCategory
 from ...flow.flow import Flow
 from ...flow.node import Node
 from ...flow.plan import (
+    FlowConditionPlan,
+    FlowEdgePlan,
     FlowExecutionPlan,
+    FlowJoinPlan,
+    FlowLoopPlan,
+    FlowMappingPlan,
+    FlowNodePlan,
+    FlowRetryPlan,
+    FlowTimeoutPlan,
     compile_flow_definition,
 )
 from ...flow.registry import (
@@ -29,12 +39,19 @@ from ...flow.runtime import (
     flow_node_registry_runner,
 )
 from ...flow.selector import (
+    FlowSelector,
     FlowSelectorError,
     FlowSelectorRoot,
     parse_flow_selector,
 )
-from ...flow.state import FlowExecutionTrace, FlowNodeState, FlowNodeTrace
+from ...flow.state import (
+    FlowEdgeState,
+    FlowExecutionTrace,
+    FlowNodeState,
+    FlowNodeTrace,
+)
 from ...flow.store import (
+    FlowExecutionRecord,
     FlowExecutionUpdate,
     FlowNodeAttemptRecord,
     FlowStateStore,
@@ -79,6 +96,7 @@ from ..validation import (
 
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from enum import Enum
 from inspect import isawaitable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from time import perf_counter
@@ -124,6 +142,7 @@ _UNAVAILABLE_PRIVACY_MARKERS = frozenset(
         REDACTED_MARKER,
     }
 )
+_NO_STRICT_RESUME = object()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -274,34 +293,56 @@ class FlowTaskTargetRunner(TaskTargetRunner):
             started=started,
         )
         try:
-            result = await execute_flow_plan(
-                plan,
-                flow_node_registry_runner(
-                    task_flow_node_registry(
-                        context,
-                        agent_runner=self._agent_runner,
-                        execution_roots=self._execution_roots,
-                    )
-                ),
-                inputs=_strict_flow_input_binding(
+            record = await self._strict_flow_record(context, plan)
+            resumed_output = _strict_resumed_output(plan, record)
+            if resumed_output is _NO_STRICT_RESUME:
+                resume_node_outputs = _strict_resume_node_outputs(
                     plan,
-                    task_input,
-                    files=context.files,
-                ),
-                cancellation_checker=context.check_cancelled,
-                concurrency_limit=self._concurrency_limit,
-            )
-            if not result.ok:
-                raise TaskValidationError(
-                    _flow_diagnostics_to_issues(result.diagnostics)
+                    record,
                 )
-            await self._record_strict_flow_state(
-                context,
-                plan=plan,
-                trace=result.trace,
-                outputs=result.outputs,
-            )
-            output = _strict_task_output(plan, result.outputs)
+                await self._ensure_strict_flow_state_started(
+                    context,
+                    plan=plan,
+                    record=record,
+                )
+                result = await execute_flow_plan(
+                    plan,
+                    flow_node_registry_runner(
+                        task_flow_node_registry(
+                            context,
+                            agent_runner=self._agent_runner,
+                            execution_roots=self._execution_roots,
+                        )
+                    ),
+                    inputs=_strict_flow_input_binding(
+                        plan,
+                        task_input,
+                        files=context.files,
+                    ),
+                    cancellation_checker=context.check_cancelled,
+                    concurrency_limit=self._concurrency_limit,
+                    resume_trace=(
+                        record.trace
+                        if resume_node_outputs is not None and record
+                        else None
+                    ),
+                    resume_node_outputs=resume_node_outputs,
+                )
+                await self._record_strict_flow_state(
+                    context,
+                    plan=plan,
+                    trace=result.trace,
+                    outputs=result.outputs,
+                    node_outputs=result.node_outputs,
+                    diagnostics=result.diagnostics,
+                )
+                if not result.ok:
+                    raise TaskValidationError(
+                        _flow_diagnostics_to_issues(result.diagnostics)
+                    )
+                output = _strict_task_output(plan, result.outputs)
+            else:
+                output = resumed_output
             output_issues = validate_task_output(context.definition, output)
             if output_issues:
                 raise TaskValidationError(output_issues)
@@ -364,6 +405,38 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         assert result.plan is not None
         return result.plan
 
+    async def _strict_flow_record(
+        self,
+        context: TaskTargetContext,
+        plan: FlowExecutionPlan,
+    ) -> FlowExecutionRecord | None:
+        if self._flow_state_store is None:
+            return None
+        try:
+            record = await self._flow_state_store.get_flow_execution(
+                context.execution.run_id
+            )
+        except TaskStoreNotFoundError:
+            return None
+        if _strict_flow_record_mismatches_plan(plan, record):
+            raise TaskValidationError((_flow_state_mismatch_issue(),))
+        return record
+
+    async def _ensure_strict_flow_state_started(
+        self,
+        context: TaskTargetContext,
+        *,
+        plan: FlowExecutionPlan,
+        record: FlowExecutionRecord | None,
+    ) -> None:
+        if self._flow_state_store is None or record is not None:
+            return
+        await self._flow_state_store.create_flow_execution(
+            context.execution.run_id,
+            trace=FlowExecutionTrace.from_plan(plan),
+            metadata=_strict_flow_record_metadata(plan),
+        )
+
     async def _record_strict_flow_state(
         self,
         context: TaskTargetContext,
@@ -371,15 +444,20 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         plan: FlowExecutionPlan,
         trace: FlowExecutionTrace,
         outputs: Mapping[str, object],
+        node_outputs: Mapping[str, Mapping[str, object]],
+        diagnostics: tuple[FlowDiagnostic, ...] = (),
     ) -> None:
         if self._flow_state_store is None:
             return
         update = FlowExecutionUpdate(
             trace=trace,
             node_attempts=_node_attempt_records(trace),
+            node_outputs=_flow_node_outputs_snapshot(trace, node_outputs),
             selected_outputs=_flow_snapshot_mapping(outputs),
             loop_counters=_loop_counters(plan, trace),
+            diagnostics=diagnostics,
             artifact_refs=_artifact_refs(outputs),
+            metadata=_strict_flow_record_metadata(plan),
         )
         try:
             current = await self._flow_state_store.get_flow_execution(
@@ -390,9 +468,12 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                 context.execution.run_id,
                 trace=trace,
                 node_attempts=update.node_attempts or (),
+                node_outputs=update.node_outputs,
                 selected_outputs=update.selected_outputs,
                 loop_counters=update.loop_counters,
+                diagnostics=diagnostics,
                 artifact_refs=update.artifact_refs or (),
+                metadata=update.metadata,
             )
             return
         await self._flow_state_store.update_flow_execution(
@@ -1740,6 +1821,354 @@ def _task_validation_category(
             return TaskValidationCategory.UNSUPPORTED
 
 
+def _flow_state_mismatch_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="flow.execution_state_mismatch",
+        path="execution.run_id",
+        message="Flow execution state does not match the resolved flow.",
+        hint="Use a fresh task run id or the matching flow definition.",
+        category=TaskValidationCategory.DEPENDENCY,
+    )
+
+
+def _strict_resumed_output(
+    plan: FlowExecutionPlan,
+    record: FlowExecutionRecord | None,
+) -> object:
+    assert isinstance(plan, FlowExecutionPlan)
+    if record is None:
+        return _NO_STRICT_RESUME
+    assert isinstance(record, FlowExecutionRecord)
+    if not _strict_flow_record_is_complete(plan, record):
+        return _NO_STRICT_RESUME
+    return _strict_task_output(plan, record.selected_outputs)
+
+
+def _strict_resume_node_outputs(
+    plan: FlowExecutionPlan,
+    record: FlowExecutionRecord | None,
+) -> Mapping[str, Mapping[str, object]] | None:
+    assert isinstance(plan, FlowExecutionPlan)
+    if record is None:
+        return None
+    assert isinstance(record, FlowExecutionRecord)
+    if record.metadata.get("strict_flow") != _strict_flow_record_signature(
+        plan
+    ):
+        return None
+    if record.diagnostics:
+        return None
+    node_outputs = _strict_record_node_outputs(record)
+    if not node_outputs:
+        return None
+    succeeded = {
+        node.node
+        for node in record.trace.nodes
+        if node.state == FlowNodeState.SUCCEEDED
+    }
+    if not succeeded.issubset(node_outputs.keys()):
+        return None
+    return node_outputs
+
+
+def _strict_flow_record_is_complete(
+    plan: FlowExecutionPlan,
+    record: FlowExecutionRecord,
+) -> bool:
+    assert isinstance(plan, FlowExecutionPlan)
+    assert isinstance(record, FlowExecutionRecord)
+    if record.metadata.get("strict_flow") != _strict_flow_record_signature(
+        plan
+    ):
+        return False
+    if record.diagnostics:
+        return False
+    node_states = {node.node: node.state for node in record.trace.nodes}
+    plan_nodes = {node.name for node in plan.nodes}
+    if set(node_states) != plan_nodes:
+        return False
+    complete_states = {FlowNodeState.SKIPPED, FlowNodeState.SUCCEEDED}
+    if any(state not in complete_states for state in node_states.values()):
+        return False
+    edge_states = {edge.index: edge.state for edge in record.trace.edges}
+    plan_edges = {edge.index for edge in plan.edges}
+    if set(edge_states) != plan_edges:
+        return False
+    if any(state == FlowEdgeState.FAILED for state in edge_states.values()):
+        return False
+    output_names = {output.name for output in plan.outputs}
+    return output_names.issubset(record.selected_outputs.keys())
+
+
+def _strict_flow_record_mismatches_plan(
+    plan: FlowExecutionPlan,
+    record: FlowExecutionRecord,
+) -> bool:
+    assert isinstance(plan, FlowExecutionPlan)
+    assert isinstance(record, FlowExecutionRecord)
+    signature = record.metadata.get("strict_flow")
+    if signature is None:
+        return False
+    return signature != _strict_flow_record_signature(plan)
+
+
+def _strict_flow_record_metadata(
+    plan: FlowExecutionPlan,
+) -> Mapping[str, object]:
+    assert isinstance(plan, FlowExecutionPlan)
+    return {"strict_flow": _strict_flow_record_signature(plan)}
+
+
+def _strict_flow_record_signature(
+    plan: FlowExecutionPlan,
+) -> Mapping[str, object]:
+    assert isinstance(plan, FlowExecutionPlan)
+    return {
+        "name": plan.name,
+        "version": plan.version,
+        "revision": plan.revision,
+        "entry_node": plan.entry_node,
+        "inputs": tuple(
+            _flow_input_signature(input_) for input_ in plan.inputs
+        ),
+        "outputs": tuple(output.name for output in plan.outputs),
+        "output_contracts": tuple(
+            _flow_output_signature(output) for output in plan.outputs
+        ),
+        "output_selectors": {
+            name: _flow_selector_signature(selector)
+            for name, selector in plan.output_selectors.items()
+        },
+        "nodes": tuple(_flow_node_signature(node) for node in plan.nodes),
+        "edges": tuple(_flow_edge_signature(edge) for edge in plan.edges),
+    }
+
+
+def _flow_input_signature(
+    input_: FlowInputDefinition,
+) -> Mapping[str, object]:
+    assert isinstance(input_, FlowInputDefinition)
+    return {
+        "name": input_.name,
+        "type": input_.type.value,
+        "mime_types": input_.mime_types,
+        "schema": _flow_signature_value(input_.schema),
+        "schema_ref": input_.schema_ref,
+    }
+
+
+def _flow_output_signature(
+    output: FlowOutputDefinition,
+) -> Mapping[str, object]:
+    assert isinstance(output, FlowOutputDefinition)
+    return {
+        "name": output.name,
+        "type": output.type.value,
+        "schema": _flow_signature_value(output.schema),
+        "schema_ref": output.schema_ref,
+    }
+
+
+def _flow_node_signature(node: FlowNodePlan) -> Mapping[str, object]:
+    assert isinstance(node, FlowNodePlan)
+    return {
+        "name": node.name,
+        "type": node.type,
+        "kind": node.kind.value,
+        "ref": node.ref,
+        "input_contracts": tuple(
+            _flow_contract_signature(contract)
+            for contract in node.input_contracts
+        ),
+        "output_contracts": tuple(
+            _flow_contract_signature(contract)
+            for contract in node.output_contracts
+        ),
+        "capabilities": tuple(
+            capability.value for capability in node.capabilities
+        ),
+        "mappings": tuple(
+            _flow_mapping_signature(mapping) for mapping in node.mappings
+        ),
+        "join": _flow_join_signature(node.join),
+        "retry": _flow_retry_signature(node.retry),
+        "timeout": _flow_timeout_signature(node.timeout),
+        "loop": _flow_loop_signature(node.loop),
+        "config": _flow_signature_value(node.config),
+    }
+
+
+def _flow_edge_signature(edge: FlowEdgePlan) -> Mapping[str, object]:
+    assert isinstance(edge, FlowEdgePlan)
+    return {
+        "index": edge.index,
+        "source": edge.source,
+        "target": edge.target,
+        "kind": edge.kind.value,
+        "label": edge.label,
+        "condition": _flow_condition_signature(edge.condition),
+        "priority": edge.priority,
+        "default": edge.default,
+        "routing_policy": edge.routing_policy.value,
+    }
+
+
+def _flow_contract_signature(
+    contract: FlowNodeContract,
+) -> Mapping[str, object]:
+    assert isinstance(contract, FlowNodeContract)
+    type_ = contract.type
+    return {
+        "name": contract.name,
+        "type": type_.value if isinstance(type_, Enum) else type_,
+        "schema": _flow_signature_value(contract.schema),
+        "schema_ref": contract.schema_ref,
+        "metadata": _flow_signature_value(contract.metadata),
+    }
+
+
+def _flow_mapping_signature(
+    mapping: FlowMappingPlan,
+) -> Mapping[str, object]:
+    assert isinstance(mapping, FlowMappingPlan)
+    return {
+        "target": mapping.target,
+        "kind": mapping.kind.value,
+        "source": (
+            _flow_selector_signature(mapping.source)
+            if mapping.source is not None
+            else None
+        ),
+        "sources": tuple(
+            _flow_selector_signature(source) for source in mapping.sources
+        ),
+        "fields": {
+            name: _flow_selector_signature(selector)
+            for name, selector in mapping.fields.items()
+        },
+        "items": tuple(
+            _flow_selector_signature(selector) for selector in mapping.items
+        ),
+    }
+
+
+def _flow_join_signature(
+    join: FlowJoinPlan | None,
+) -> Mapping[str, object] | None:
+    if join is None:
+        return None
+    assert isinstance(join, FlowJoinPlan)
+    return {
+        "type": join.type.value,
+        "quorum": join.quorum,
+        "optional_inputs": join.optional_inputs,
+    }
+
+
+def _flow_retry_signature(
+    retry: FlowRetryPlan | None,
+) -> Mapping[str, object] | None:
+    if retry is None:
+        return None
+    assert isinstance(retry, FlowRetryPlan)
+    return {
+        "max_attempts": retry.max_attempts,
+        "backoff": retry.backoff.value,
+        "initial_delay_seconds": retry.initial_delay_seconds,
+        "max_delay_seconds": retry.max_delay_seconds,
+        "retryable_categories": retry.retryable_categories,
+        "non_retryable_categories": retry.non_retryable_categories,
+        "exhausted_route": retry.exhausted_route,
+    }
+
+
+def _flow_timeout_signature(
+    timeout: FlowTimeoutPlan | None,
+) -> Mapping[str, object] | None:
+    if timeout is None:
+        return None
+    assert isinstance(timeout, FlowTimeoutPlan)
+    return {"per_attempt_seconds": timeout.per_attempt_seconds}
+
+
+def _flow_loop_signature(
+    loop: FlowLoopPlan | None,
+) -> Mapping[str, object] | None:
+    if loop is None:
+        return None
+    assert isinstance(loop, FlowLoopPlan)
+    return {
+        "max_iterations": loop.max_iterations,
+        "max_elapsed_seconds": loop.max_elapsed_seconds,
+        "continue_condition": _flow_condition_signature(
+            loop.continue_condition
+        ),
+        "exit_condition": _flow_condition_signature(loop.exit_condition),
+        "output_selector": _flow_selector_signature(loop.output_selector),
+        "limit_route": loop.limit_route,
+    }
+
+
+def _flow_condition_signature(
+    condition: FlowConditionPlan | None,
+) -> Mapping[str, object] | None:
+    if condition is None:
+        return None
+    assert isinstance(condition, FlowConditionPlan)
+    return {
+        "operator": condition.operator.value,
+        "selector": (
+            _flow_selector_signature(condition.selector)
+            if condition.selector is not None
+            else None
+        ),
+        "value": _flow_signature_value(condition.value),
+        "value_selector": (
+            _flow_selector_signature(condition.value_selector)
+            if condition.value_selector is not None
+            else None
+        ),
+        "values": tuple(
+            _flow_signature_value(value) for value in condition.values
+        ),
+        "value_type": (
+            condition.value_type.value
+            if condition.value_type is not None
+            else None
+        ),
+        "conditions": tuple(
+            _flow_condition_signature(child) for child in condition.conditions
+        ),
+        "condition": _flow_condition_signature(condition.condition),
+    }
+
+
+def _flow_selector_signature(selector: FlowSelector) -> Mapping[str, object]:
+    assert isinstance(selector, FlowSelector)
+    return {
+        "root": selector.root.value,
+        "source": selector.source,
+        "output": selector.output,
+        "path": tuple(
+            {"kind": step.kind.value, "value": step.value}
+            for step in selector.path
+        ),
+    }
+
+
+def _flow_signature_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _flow_signature_value(item)
+            for key, item in sorted(value.items())
+        }
+    if isinstance(value, list | tuple):
+        return tuple(_flow_signature_value(item) for item in value)
+    if isinstance(value, Enum):
+        return value.value
+    return value
+
+
 def _node_attempt_records(
     trace: FlowExecutionTrace,
 ) -> tuple[FlowNodeAttemptRecord, ...]:
@@ -1748,6 +2177,33 @@ def _node_attempt_records(
     for node in trace.nodes:
         records.extend(_node_attempt_records_for_trace(node))
     return tuple(records)
+
+
+def _flow_node_outputs_snapshot(
+    trace: FlowExecutionTrace,
+    node_outputs: Mapping[str, Mapping[str, object]],
+) -> Mapping[str, object]:
+    assert isinstance(trace, FlowExecutionTrace)
+    assert isinstance(node_outputs, Mapping)
+    states = {node.node: node.state for node in trace.nodes}
+    return {
+        node: _flow_snapshot_mapping(outputs)
+        for node, outputs in node_outputs.items()
+        if states.get(node) == FlowNodeState.SUCCEEDED
+    }
+
+
+def _strict_record_node_outputs(
+    record: FlowExecutionRecord,
+) -> Mapping[str, Mapping[str, object]]:
+    assert isinstance(record, FlowExecutionRecord)
+    outputs: dict[str, Mapping[str, object]] = {}
+    for node, node_output in record.node_outputs.items():
+        if not isinstance(node, str) or not node.strip():
+            continue
+        if isinstance(node_output, Mapping):
+            outputs[node] = _flow_snapshot_mapping(node_output)
+    return MappingProxyType(outputs)
 
 
 def _node_attempt_records_for_trace(

@@ -282,24 +282,39 @@ async def execute_flow_plan(
     inputs: Mapping[str, object] | None = None,
     cancellation_checker: CancellationChecker | None = None,
     concurrency_limit: int = 1,
+    resume_trace: FlowExecutionTrace | None = None,
+    resume_node_outputs: Mapping[str, Mapping[str, object]] | None = None,
 ) -> FlowPlanExecutionResult:
     assert isinstance(plan, FlowExecutionPlan)
     assert callable(runner)
     if inputs is not None:
         assert isinstance(inputs, Mapping)
+    if resume_trace is not None:
+        assert isinstance(resume_trace, FlowExecutionTrace)
+    if resume_node_outputs is not None:
+        assert isinstance(resume_node_outputs, Mapping)
     assert isinstance(concurrency_limit, int) and not isinstance(
         concurrency_limit,
         bool,
     )
     assert concurrency_limit > 0
     input_values = _freeze_mapping(inputs or {})
-    node_outputs: dict[str, Mapping[str, object]] = {}
+    node_outputs: dict[str, Mapping[str, object]] = {
+        node: _freeze_mapping(outputs)
+        for node, outputs in (resume_node_outputs or {}).items()
+    }
     diagnostics: list[FlowDiagnostic] = []
-    trace = FlowExecutionTrace.from_plan(plan)
+    trace = resume_trace or FlowExecutionTrace.from_plan(plan)
     node_map = plan.node_map
-    ready: deque[str] = deque((plan.entry_node,))
-    queued: set[str] = {plan.entry_node}
-    processed: set[str] = set()
+    ready, queued, processed, trace, resume_diagnostics = (
+        _initial_runtime_queue(
+            plan,
+            input_values,
+            node_outputs,
+            trace,
+        )
+    )
+    diagnostics.extend(resume_diagnostics)
 
     while ready:
         await _check_cancelled(cancellation_checker)
@@ -406,6 +421,60 @@ async def execute_flow_plan(
         diagnostics=tuple(diagnostics),
         node_outputs=node_outputs,
     )
+
+
+def _initial_runtime_queue(
+    plan: FlowExecutionPlan,
+    inputs: Mapping[str, object],
+    node_outputs: Mapping[str, Mapping[str, object]],
+    trace: FlowExecutionTrace,
+) -> tuple[
+    deque[str],
+    set[str],
+    set[str],
+    FlowExecutionTrace,
+    tuple[FlowDiagnostic, ...],
+]:
+    node_states = {node.node: node.state for node in trace.nodes}
+    processed = {
+        node.name
+        for node in plan.nodes
+        if node_states.get(node.name) == FlowNodeState.SUCCEEDED
+        and node.name in node_outputs
+    }
+    if not processed:
+        ready: deque[str] = deque((plan.entry_node,))
+        return ready, {plan.entry_node}, set(), trace, ()
+
+    ready = deque[str]()
+    queued: set[str] = set()
+    diagnostics: list[FlowDiagnostic] = []
+    context = FlowRuntimeContext(inputs=inputs, node_outputs=node_outputs)
+    for source in sorted(processed, key=_plan_node_order(plan)):
+        routed, trace, route_diagnostics = _route_from_node(
+            plan,
+            source,
+            FlowEdgeKind.SUCCESS,
+            context,
+            trace,
+        )
+        diagnostics.extend(route_diagnostics)
+        for target in routed:
+            trace, join_diagnostics = _queue_target_if_ready(
+                plan,
+                target,
+                ready=ready,
+                queued=queued,
+                processed=processed,
+                trace=trace,
+            )
+            diagnostics.extend(join_diagnostics)
+    return ready, queued, processed, trace, tuple(diagnostics)
+
+
+def _plan_node_order(plan: FlowExecutionPlan) -> Callable[[str], int]:
+    order = {node.name: index for index, node in enumerate(plan.nodes)}
+    return lambda node: order[node]
 
 
 def _route_context(

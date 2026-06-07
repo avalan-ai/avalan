@@ -133,6 +133,7 @@ class FlowStoreSnapshotTest(TestCase):
                     metadata={"safe": "node"},
                 ),
             ),
+            node_outputs={"start": {"answer": {"value": 42}}},
             selected_outputs={"answer": {"value": 42}},
             loop_counters={"repair": 2},
             pause_tokens={"review": "pause-token"},
@@ -150,6 +151,7 @@ class FlowStoreSnapshotTest(TestCase):
 
         self.assertEqual(restored.task_run_id, "run-1")
         self.assertEqual(restored.revision, 1)
+        self.assertEqual(dict(restored.node_outputs), record.node_outputs)
         self.assertEqual(
             dict(restored.selected_outputs), record.selected_outputs
         )
@@ -221,6 +223,8 @@ class FlowStoreSnapshotTest(TestCase):
                 updated_at=datetime(2026, 1, 1, tzinfo=UTC),
             )
         with self.assertRaises(AssertionError):
+            FlowExecutionUpdate(node_outputs={"bad": object()})
+        with self.assertRaises(AssertionError):
             FlowExecutionUpdate(selected_outputs={"bad": object()})
         with self.assertRaises(AssertionError):
             FlowExecutionUpdate(loop_counters={"repair": -1})
@@ -278,6 +282,7 @@ class InMemoryFlowStateStoreTest(IsolatedAsyncioTestCase):
             FlowExecutionUpdate(
                 trace=updated_trace,
                 node_attempts=(attempt,),
+                node_outputs={"start": {"result": "stored"}},
                 selected_outputs={"answer": ["stored", "list"]},
                 loop_counters={"loop": 1},
                 pause_tokens={"review": "pause-1"},
@@ -295,6 +300,10 @@ class InMemoryFlowStateStoreTest(IsolatedAsyncioTestCase):
         self.assertGreater(updated.updated_at, created.updated_at)
         self.assertEqual(updated.trace.nodes[0].state, FlowNodeState.SUCCEEDED)
         self.assertEqual(updated.node_attempts, (attempt,))
+        self.assertEqual(
+            dict(updated.node_outputs),
+            {"start": {"result": "stored"}},
+        )
         self.assertEqual(
             dict(updated.selected_outputs), {"answer": ("stored", "list")}
         )
@@ -362,6 +371,7 @@ class PgsqlFlowStateStoreTest(IsolatedAsyncioTestCase):
             run.run_id,
             FlowExecutionUpdate(
                 selected_outputs={"answer": {"ok": True}},
+                node_outputs={"start": {"answer": {"ok": True}}},
                 loop_counters={"repair": 3},
                 pause_tokens={"review": "pause-1"},
                 artifact_refs=(
@@ -374,6 +384,10 @@ class PgsqlFlowStateStoreTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(fetched.task_run_id, run.run_id)
         self.assertEqual(updated.revision, 2)
+        self.assertEqual(
+            dict(updated.node_outputs),
+            {"start": {"answer": {"ok": True}}},
+        )
         self.assertEqual(
             dict(updated.selected_outputs), {"answer": {"ok": True}}
         )

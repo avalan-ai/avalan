@@ -16,7 +16,24 @@ from avalan.entities import (
     MessageContentText,
 )
 from avalan.event import Event, EventType
-from avalan.flow import FlowNodeDefinition
+from avalan.flow import (
+    FlowDefinition,
+    FlowEntryBehavior,
+    FlowExecutionPlan,
+    FlowInputDefinition,
+    FlowInputType,
+    FlowMappingKind,
+    FlowMappingPlan,
+    FlowNodeContract,
+    FlowNodeDefinition,
+    FlowNodeKind,
+    FlowNodePlan,
+    FlowOutputBehavior,
+    FlowOutputDefinition,
+    FlowOutputType,
+    compile_flow_definition,
+    parse_flow_selector,
+)
 from avalan.flow.flow import Flow
 from avalan.task import (
     ENCRYPTED_MARKER,
@@ -1568,6 +1585,102 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertNotIn("matrix-private-no-store-window", rendered)
         self.assertNotIn("matrix-private-no-store-owner", rendered)
 
+    async def test_strict_subflow_matrix_matches_direct_and_queue(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            flow_target = FlowTaskTargetRunner(
+                strict_resolver=lambda _: _strict_matrix_subflow_plan()
+            )
+            direct_client = workspace.direct_client(flow_target)
+            queued_client = workspace.queued_client(flow_target)
+            worker = workspace.worker(flow_target)
+
+            direct_result = await direct_client.run(
+                _direct_flow_definition(name="direct_subflow_matrix"),
+                input_value="matrix private subflow prompt",
+            )
+            submission = await queued_client.enqueue(
+                _queued_definition(
+                    name="queued_subflow_matrix",
+                    execution=TaskExecutionTarget.flow("flows/subflow.toml"),
+                ),
+                input_value="matrix private subflow prompt",
+                idempotency_key="matrix-private-subflow-idempotency",
+                owner_scope="matrix-private-subflow-owner",
+            )
+            processed = await worker.process_once()
+            queued_output = await queued_client.output(submission.run.run_id)
+            direct_inspection = await direct_client.inspect(
+                direct_result.run.run_id
+            )
+            queued_inspection = await queued_client.inspect(
+                submission.run.run_id
+            )
+
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(direct_result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(queued_output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(direct_result.output, "subflow:public result")
+        self.assertEqual(processed.output, direct_result.output)
+        self.assertEqual(
+            queued_output.output_summary,
+            {"privacy": REDACTED_MARKER},
+        )
+        _assert_no_sentinels(
+            (
+                direct_inspection.as_dict(),
+                queued_inspection.as_dict(),
+                _cli_snapshot(queued_inspection.as_dict()),
+            ),
+            (
+                "matrix private subflow prompt",
+                "matrix-private-subflow-idempotency",
+                "matrix-private-subflow-owner",
+            ),
+        )
+
+    async def test_queued_strict_subflow_failure_is_sanitized(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            flow_target = FlowTaskTargetRunner(
+                strict_resolver=lambda _: _strict_matrix_subflow_plan(
+                    failing=True
+                )
+            )
+            queued_client = workspace.queued_client(flow_target)
+            worker = workspace.worker(flow_target)
+
+            submission = await queued_client.enqueue(
+                _queued_definition(
+                    name="queued_subflow_failure_matrix",
+                    execution=TaskExecutionTarget.flow("flows/subflow.toml"),
+                ),
+                input_value="matrix private failing subflow prompt",
+                idempotency_key="matrix-private-subflow-failure",
+                owner_scope="matrix-private-subflow-failure-owner",
+            )
+            processed = await worker.process_once()
+            result = await queued_client.output(submission.run.run_id)
+            inspection = await queued_client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNone(processed.completion)
+        self.assertIsNone(processed.retry)
+        self.assertEqual(result.state, TaskRunState.FAILED)
+        error = cast(Mapping[str, object], result.error)
+        self.assertEqual(error["code"], "runnable.failed")
+        _assert_no_sentinels(
+            (result.as_dict(), inspection.as_dict()),
+            (
+                "matrix private failing subflow prompt",
+                "matrix-private-subflow-failure",
+                "matrix-private-subflow-failure-owner",
+                "matrix private child failure",
+            ),
+        )
+
     async def test_negative_matrix_failures_keep_private_values_out(
         self,
     ) -> None:
@@ -1736,6 +1849,24 @@ def _direct_agent_definition(
     )
 
 
+def _direct_flow_definition(*, name: str) -> TaskDefinition:
+    return TaskDefinition(
+        task=TaskMetadata(name=name, version="1"),
+        input=TaskInputContract.string(),
+        output=TaskOutputContract.text(),
+        execution=TaskExecutionTarget.flow("flows/subflow.toml"),
+        run=TaskRunPolicy.direct(timeout_seconds=60),
+        privacy=TaskPrivacyPolicy(raw_retention_days=1),
+        artifact=TaskArtifactPolicy.references_only(retention_days=3),
+        observability=TaskObservabilityPolicy(
+            metrics=True,
+            trace=False,
+            capture_events=True,
+        ),
+        retry=TaskRetryPolicy(max_attempts=1),
+    )
+
+
 def _queued_definition(
     *,
     name: str,
@@ -1758,6 +1889,127 @@ def _queued_definition(
             capture_events=True,
         ),
         retry=TaskRetryPolicy(max_attempts=1),
+    )
+
+
+def _strict_matrix_subflow_plan(
+    *,
+    failing: bool = False,
+) -> FlowExecutionPlan:
+    child_plan = (
+        _failing_matrix_child_plan()
+        if failing
+        else _strict_matrix_child_plan()
+    )
+    return FlowExecutionPlan(
+        name="matrix-subflow",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_node="child",
+        output_selectors={"answer": parse_flow_selector("child.result")},
+        nodes=(
+            FlowNodePlan(
+                name="child",
+                type="subflow",
+                kind=FlowNodeKind.SUBFLOW,
+                input_contracts=(
+                    FlowNodeContract(
+                        name="prompt",
+                        type=FlowInputType.STRING,
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.TEXT,
+                    ),
+                ),
+                mappings=(
+                    FlowMappingPlan(
+                        target="prompt",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("input.prompt"),
+                    ),
+                ),
+                metadata={
+                    "subflow": {
+                        "plan": child_plan,
+                        "output_mapping": {"result": "answer"},
+                    }
+                },
+            ),
+        ),
+        edges=(),
+    )
+
+
+def _strict_matrix_child_plan() -> FlowExecutionPlan:
+    result = compile_flow_definition(
+        FlowDefinition(
+            name="matrix-child",
+            version="1",
+            inputs=(
+                FlowInputDefinition(
+                    name="prompt",
+                    type=FlowInputType.STRING,
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="answer",
+                    type=FlowOutputType.TEXT,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="answer"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "answer.value"}
+            ),
+            nodes=(
+                FlowNodeDefinition(
+                    name="answer",
+                    type="constant",
+                    config={"value": "subflow:public result"},
+                ),
+            ),
+        )
+    )
+    assert result.plan is not None
+    return result.plan
+
+
+def _failing_matrix_child_plan() -> FlowExecutionPlan:
+    return FlowExecutionPlan(
+        name="matrix-child-failure",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_node="answer",
+        output_selectors={"answer": parse_flow_selector("answer.value")},
+        nodes=(
+            FlowNodePlan(
+                name="answer",
+                type="subflow",
+                kind=FlowNodeKind.SUBFLOW,
+                output_contracts=(
+                    FlowNodeContract(
+                        name="value",
+                        type=FlowOutputType.TEXT,
+                    ),
+                ),
+            ),
+        ),
+        edges=(),
     )
 
 

@@ -1490,6 +1490,50 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["start"])
         self.assertEqual(str(raised.exception), "private stop detail")
 
+    async def test_execute_flow_plan_resumes_from_completed_node_outputs(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            return node.name
+
+        plan = self._plan(
+            entry_node="start",
+            outputs={"answer": "finish.value"},
+            nodes=(self._node("start"), self._node("finish")),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="start",
+                    target="finish",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            ),
+        )
+        trace = FlowExecutionTrace.from_plan(plan).with_node_state(
+            "start",
+            FlowNodeState.SUCCEEDED,
+            attempts=1,
+        )
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            resume_trace=trace,
+            resume_node_outputs={"start": {"value": "ready"}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(calls, ["finish"])
+        self.assertEqual(result.outputs, {"answer": "finish"})
+        self.assertEqual(self._node_attempts(result)["start"], 1)
+        self.assertEqual(
+            self._edge_states(result),
+            {0: FlowEdgeState.TAKEN},
+        )
+
     async def test_execute_flow_plan_runs_join_policies(self) -> None:
         cases = (
             FlowJoinPlan(type=FlowJoinPolicyType.ALL_SUCCESS),
@@ -1936,6 +1980,18 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                 plan,
                 runner,
                 concurrency_limit=True,  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            await execute_flow_plan(
+                plan,
+                runner,
+                resume_trace=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            await execute_flow_plan(
+                plan,
+                runner,
+                resume_node_outputs=object(),  # type: ignore[arg-type]
             )
 
     def test_flow_plan_execution_result_is_immutable(self) -> None:
