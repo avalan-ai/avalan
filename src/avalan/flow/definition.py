@@ -96,6 +96,13 @@ class FlowJoinPolicyType(StrEnum):
     COLLECT = "collect"
 
 
+class FlowRetryBackoffStrategy(StrEnum):
+    NONE = "none"
+    CONSTANT = "constant"
+    LINEAR = "linear"
+    EXPONENTIAL = "exponential"
+
+
 def _empty_mapping() -> FlowMetadata:
     return MappingProxyType({})
 
@@ -168,6 +175,14 @@ def _assert_mapping_tuple(
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
         assert isinstance(value, FlowInputMapping)
+
+
+def _assert_optional_number(value: object, field_name: str) -> None:
+    if value is not None:
+        assert isinstance(value, int | float) and not isinstance(
+            value,
+            bool,
+        ), f"{field_name} must be a number"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -284,6 +299,79 @@ class FlowJoinPolicy:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FlowRetryPolicy:
+    max_attempts: int | None = None
+    backoff: FlowRetryBackoffStrategy = FlowRetryBackoffStrategy.NONE
+    initial_delay_seconds: int | float | None = None
+    max_delay_seconds: int | float | None = None
+    retryable_categories: tuple[str, ...] = ()
+    non_retryable_categories: tuple[str, ...] = ()
+    exhausted_route: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_attempts is not None:
+            assert isinstance(self.max_attempts, int) and not isinstance(
+                self.max_attempts,
+                bool,
+            )
+        assert isinstance(self.backoff, FlowRetryBackoffStrategy)
+        _assert_optional_number(
+            self.initial_delay_seconds,
+            "initial_delay_seconds",
+        )
+        _assert_optional_number(self.max_delay_seconds, "max_delay_seconds")
+        _assert_string_tuple(
+            self.retryable_categories,
+            "retryable_categories",
+        )
+        _assert_string_tuple(
+            self.non_retryable_categories,
+            "non_retryable_categories",
+        )
+        if self.exhausted_route is not None:
+            _assert_non_empty_string(self.exhausted_route, "exhausted_route")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowTimeoutPolicy:
+    per_attempt_seconds: int | float | None = None
+
+    def __post_init__(self) -> None:
+        _assert_optional_number(
+            self.per_attempt_seconds,
+            "per_attempt_seconds",
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowLoopPolicy:
+    max_iterations: int | None = None
+    max_elapsed_seconds: int | float | None = None
+    continue_condition: FlowCondition | None = None
+    exit_condition: FlowCondition | None = None
+    output_selector: str | None = None
+    limit_route: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_iterations is not None:
+            assert isinstance(self.max_iterations, int) and not isinstance(
+                self.max_iterations,
+                bool,
+            )
+        _assert_optional_number(
+            self.max_elapsed_seconds, "max_elapsed_seconds"
+        )
+        if self.continue_condition is not None:
+            assert isinstance(self.continue_condition, FlowCondition)
+        if self.exit_condition is not None:
+            assert isinstance(self.exit_condition, FlowCondition)
+        if self.output_selector is not None:
+            _assert_non_empty_string(self.output_selector, "output_selector")
+        if self.limit_route is not None:
+            _assert_non_empty_string(self.limit_route, "limit_route")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FlowNodeMetadata:
     kind: FlowNodeKind | None = None
     supports_ref: bool = False
@@ -342,6 +430,9 @@ class FlowNodeDefinition:
     input: str | None = None
     output: str | None = None
     join_policy: FlowJoinPolicy | None = None
+    retry_policy: FlowRetryPolicy | None = None
+    timeout_policy: FlowTimeoutPolicy | None = None
+    loop_policy: FlowLoopPolicy | None = None
     mappings: tuple[FlowInputMapping, ...] = ()
     config: FlowMetadata = field(default_factory=_empty_mapping)
 
@@ -356,6 +447,12 @@ class FlowNodeDefinition:
             _assert_non_empty_string(self.output, "output")
         if self.join_policy is not None:
             assert isinstance(self.join_policy, FlowJoinPolicy)
+        if self.retry_policy is not None:
+            assert isinstance(self.retry_policy, FlowRetryPolicy)
+        if self.timeout_policy is not None:
+            assert isinstance(self.timeout_policy, FlowTimeoutPolicy)
+        if self.loop_policy is not None:
+            assert isinstance(self.loop_policy, FlowLoopPolicy)
         _assert_mapping_tuple(self.mappings, "mappings")
         object.__setattr__(self, "config", _freeze_mapping(self.config))
 

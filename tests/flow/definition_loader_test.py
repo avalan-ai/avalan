@@ -24,10 +24,13 @@ from avalan.flow import (
     FlowJoinPolicyType,
     FlowLoadError,
     FlowLoadIssueCategory,
+    FlowLoopPolicy,
     FlowNodeDefinition,
     FlowNodeMetadata,
     FlowNodeRegistry,
+    FlowRetryBackoffStrategy,
     FlowRouteMatchPolicy,
+    FlowTimeoutPolicy,
     build_flow,
     flow_input_binding,
     load_flow_definition,
@@ -1367,6 +1370,106 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         )
         self.assertTrue(edge.default)
 
+    def test_loads_strict_node_policies(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.result"
+
+            [nodes.start]
+            type = "echo"
+
+            [nodes.start.retry_policy]
+            max_attempts = 3
+            backoff = "exponential"
+            initial_delay_seconds = 1
+            max_delay_seconds = 8
+            retryable_categories = ["transient"]
+            non_retryable_categories = ["validation"]
+            exhausted_route = "failed"
+
+            [nodes.start.timeout_policy]
+            per_attempt_seconds = 30
+
+            [nodes.start.loop_policy]
+            max_iterations = 4
+            max_elapsed_seconds = 60
+            output_selector = "start.result"
+            limit_route = "limited"
+
+            [nodes.start.loop_policy.continue_condition]
+            op = "exists"
+            selector = "start.result.more"
+
+            [nodes.start.loop_policy.exit_condition]
+            op = "exists"
+            selector = "start.result.done"
+
+            [nodes.finish]
+            type = "echo"
+
+            [nodes.failed]
+            type = "echo"
+
+            [nodes.limited]
+            type = "echo"
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+
+            [[edges]]
+            source = "start"
+            target = "failed"
+            kind = "error"
+
+            [[edges]]
+            source = "start"
+            target = "limited"
+            kind = "timeout"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        node = result.definition.nodes[0]
+        assert node.retry_policy is not None
+        self.assertEqual(node.retry_policy.max_attempts, 3)
+        self.assertEqual(
+            node.retry_policy.backoff,
+            FlowRetryBackoffStrategy.EXPONENTIAL,
+        )
+        self.assertEqual(node.retry_policy.exhausted_route, "failed")
+        self.assertEqual(
+            node.timeout_policy,
+            FlowTimeoutPolicy(per_attempt_seconds=30),
+        )
+        self.assertIsInstance(node.loop_policy, FlowLoopPolicy)
+        assert node.loop_policy is not None
+        self.assertEqual(node.loop_policy.limit_route, "limited")
+        assert node.loop_policy.continue_condition is not None
+        self.assertEqual(
+            node.loop_policy.continue_condition.operator,
+            FlowConditionOperator.EXISTS,
+        )
+
     def test_loads_strict_join_policy(self) -> None:
         result = loads_flow_definition_result("""
             [flow]
@@ -2323,6 +2426,155 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
 
                     [[edges]]
                     source = "right"
+                    target = "finish"
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertIn(code, [issue.code for issue in result.issues])
+                self.assertNotIn(
+                    "private-token",
+                    str(result.public_diagnostics),
+                )
+
+    def test_loader_rejects_invalid_node_policies(self) -> None:
+        cases = (
+            (
+                """
+                retry_policy = "retry"
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [nodes.start.retry_policy]
+                max_attempts = 2
+                backoff = "unknown"
+                """,
+                "flow.invalid_enum",
+            ),
+            (
+                """
+                [nodes.start.retry_policy]
+                max_attempts = true
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [nodes.start.retry_policy]
+                secret = "private-token"
+                """,
+                "flow.unsupported_field",
+            ),
+            (
+                """
+                [nodes.start.retry_policy]
+                max_attempts = 0
+                """,
+                "flow.invalid_retry_attempts",
+            ),
+            (
+                """
+                [nodes.start.timeout_policy]
+                per_attempt_seconds = "slow"
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                timeout_policy = "timeout"
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [nodes.start.timeout_policy]
+                per_attempt_seconds = 0
+                """,
+                "flow.invalid_timeout",
+            ),
+            (
+                """
+                [nodes.start.loop_policy]
+                max_iterations = true
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                loop_policy = "loop"
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [nodes.start.loop_policy]
+                max_iterations = 2
+                output_selector = "start.result"
+                limit_route = "limited"
+
+                [nodes.start.loop_policy.continue_condition]
+                op = "exists"
+                selector = "start.result.more"
+                """,
+                "flow.missing_loop_exit_condition",
+            ),
+            (
+                """
+                [nodes.start.loop_policy]
+                max_iterations = 2
+                output_selector = "start.result"
+                limit_route = "limited"
+
+                [nodes.start.loop_policy.continue_condition]
+                op = "exists"
+                selector = "start.result.more"
+
+                [nodes.start.loop_policy.exit_condition]
+                op = "exists"
+                selector = "start.result.done"
+                """,
+                "flow.missing_loop_limit_route",
+            ),
+        )
+
+        for policy_toml, code in cases:
+            with self.subTest(code=code):
+                result = loads_flow_definition_result(f"""
+                    [flow]
+                    name = "strict"
+                    version = "2026-06-07"
+
+                    [[inputs]]
+                    name = "payload"
+                    type = "object"
+
+                    [[outputs]]
+                    name = "answer"
+                    type = "object"
+
+                    [entry]
+                    type = "node"
+                    node = "start"
+
+                    [output_behavior]
+                    type = "map"
+
+                    [output_behavior.outputs]
+                    answer = "finish.result"
+
+                    [nodes.start]
+                    type = "echo"
+                    {policy_toml}
+
+                    [nodes.finish]
+                    type = "echo"
+
+                    [nodes.limited]
+                    type = "echo"
+
+                    [[edges]]
+                    source = "start"
                     target = "finish"
                     """)
 

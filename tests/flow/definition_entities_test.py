@@ -15,6 +15,7 @@ from avalan.flow import (
     FlowInputType,
     FlowJoinPolicy,
     FlowJoinPolicyType,
+    FlowLoopPolicy,
     FlowMappingKind,
     FlowNodeCapability,
     FlowNodeContract,
@@ -25,7 +26,10 @@ from avalan.flow import (
     FlowOutputBehaviorType,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRetryBackoffStrategy,
+    FlowRetryPolicy,
     FlowRouteMatchPolicy,
+    FlowTimeoutPolicy,
 )
 
 
@@ -80,6 +84,32 @@ class FlowDefinitionTestCase(TestCase):
                     join_policy=FlowJoinPolicy(
                         type=FlowJoinPolicyType.COLLECT,
                         optional_inputs=("audit",),
+                    ),
+                    retry_policy=FlowRetryPolicy(
+                        max_attempts=3,
+                        backoff=FlowRetryBackoffStrategy.EXPONENTIAL,
+                        initial_delay_seconds=1,
+                        max_delay_seconds=8,
+                        retryable_categories=("transient",),
+                        non_retryable_categories=("validation",),
+                        exhausted_route="failed",
+                    ),
+                    timeout_policy=FlowTimeoutPolicy(
+                        per_attempt_seconds=30,
+                    ),
+                    loop_policy=FlowLoopPolicy(
+                        max_iterations=4,
+                        max_elapsed_seconds=60,
+                        continue_condition=FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.result.more",
+                        ),
+                        exit_condition=FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.result.done",
+                        ),
+                        output_selector="start.result",
+                        limit_route="limited",
                     ),
                     mappings=(
                         FlowInputMapping(
@@ -168,6 +198,25 @@ class FlowDefinitionTestCase(TestCase):
                 optional_inputs=("audit",),
             ),
         )
+        assert definition.nodes[0].retry_policy is not None
+        self.assertEqual(definition.nodes[0].retry_policy.max_attempts, 3)
+        self.assertEqual(
+            definition.nodes[0].retry_policy.backoff,
+            FlowRetryBackoffStrategy.EXPONENTIAL,
+        )
+        self.assertEqual(
+            definition.nodes[0].retry_policy.retryable_categories,
+            ("transient",),
+        )
+        self.assertEqual(
+            definition.nodes[0].timeout_policy,
+            FlowTimeoutPolicy(per_attempt_seconds=30),
+        )
+        assert definition.nodes[0].loop_policy is not None
+        self.assertEqual(
+            definition.nodes[0].loop_policy.output_selector,
+            "start.result",
+        )
         with self.assertRaises(FrozenInstanceError):
             definition.name = "changed"  # type: ignore[misc]
         self.assertEqual(definition.node_map["start"].type, "constant")
@@ -243,6 +292,44 @@ class FlowDefinitionTestCase(TestCase):
                 optional_inputs=["payload"],  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
+            FlowRetryPolicy(
+                max_attempts=True,  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowRetryPolicy(
+                backoff="constant",  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowRetryPolicy(
+                initial_delay_seconds=True,  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowRetryPolicy(
+                retryable_categories=["transient"],  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowRetryPolicy(exhausted_route="")
+        with self.assertRaises(AssertionError):
+            FlowTimeoutPolicy(
+                per_attempt_seconds=True,  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowLoopPolicy(
+                max_iterations=True,  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowLoopPolicy(
+                max_elapsed_seconds=True,  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowLoopPolicy(
+                continue_condition=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowLoopPolicy(output_selector="")
+        with self.assertRaises(AssertionError):
+            FlowLoopPolicy(limit_route="")
+        with self.assertRaises(AssertionError):
             FlowInputMapping(
                 target="value",
                 kind="select",  # type: ignore[arg-type]
@@ -258,6 +345,24 @@ class FlowDefinitionTestCase(TestCase):
                 name="node",
                 type="echo",
                 join_policy=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeDefinition(
+                name="node",
+                type="echo",
+                retry_policy=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeDefinition(
+                name="node",
+                type="echo",
+                timeout_policy=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeDefinition(
+                name="node",
+                type="echo",
+                loop_policy=object(),  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
             FlowNodeDefinition(
@@ -318,6 +423,13 @@ class FlowDefinitionTestCase(TestCase):
             "first_success",
         )
         self.assertEqual(FlowJoinPolicyType.QUORUM.value, "quorum")
+        self.assertEqual(FlowRetryBackoffStrategy.CONSTANT.value, "constant")
+        self.assertEqual(
+            FlowRetryBackoffStrategy.EXPONENTIAL.value,
+            "exponential",
+        )
+        self.assertEqual(FlowRetryBackoffStrategy.LINEAR.value, "linear")
+        self.assertEqual(FlowRetryBackoffStrategy.NONE.value, "none")
         self.assertEqual(
             FlowRouteMatchPolicy.ALL_MATCHING.value,
             "all_matching",
