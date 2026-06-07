@@ -84,6 +84,8 @@ class FlowNodeRegistry:
     ) -> None:
         self._factories: dict[str, FlowNodeFactory] = {}
         self._metadata: dict[str, FlowNodeMetadata] = {}
+        self._tool_resolvers: dict[str, FlowToolResolver] = {}
+        self._tool_descriptors: dict[str, Mapping[str, ToolDescriptor]] = {}
         node_metadata = metadata or {}
         for node_type, factory in (factories or {}).items():
             self.register(
@@ -138,6 +140,52 @@ class FlowNodeRegistry:
     def build(self, definition: FlowNodeDefinition) -> Node:
         assert isinstance(definition, FlowNodeDefinition)
         return self._factories[definition.type](definition)
+
+    def register_tool_resolver(
+        self,
+        node_type: str,
+        resolver: FlowToolResolver,
+        descriptors: Mapping[str, ToolDescriptor],
+    ) -> "FlowNodeRegistry":
+        assert isinstance(node_type, str) and node_type.strip()
+        assert _is_flow_tool_resolver(resolver)
+        assert isinstance(descriptors, Mapping)
+        for name, descriptor in descriptors.items():
+            assert isinstance(name, str) and name.strip()
+            assert isinstance(descriptor, ToolDescriptor)
+        self._tool_resolvers[node_type] = resolver
+        self._tool_descriptors[node_type] = dict(descriptors)
+        return self
+
+    def supports_tool_resolution(self, node_type: str) -> bool:
+        assert isinstance(node_type, str) and node_type.strip()
+        return node_type in self._tool_resolvers
+
+    def tool_descriptor(
+        self,
+        definition: FlowNodeDefinition,
+    ) -> ToolDescriptor:
+        assert isinstance(definition, FlowNodeDefinition)
+        return _tool_node_descriptor(
+            definition,
+            self._tool_resolvers[definition.type],
+            self._tool_descriptors[definition.type],
+        )
+
+    def validate_tool_definition(
+        self,
+        definition: FlowNodeDefinition,
+        *,
+        require_explicit_arguments: bool = False,
+    ) -> ToolDescriptor:
+        assert isinstance(definition, FlowNodeDefinition)
+        assert isinstance(require_explicit_arguments, bool)
+        return _validated_tool_node_descriptor(
+            definition,
+            self._tool_resolvers[definition.type],
+            self._tool_descriptors[definition.type],
+            require_explicit_arguments=require_explicit_arguments,
+        )
 
 
 def default_flow_node_registry() -> FlowNodeRegistry:
@@ -274,6 +322,7 @@ def tool_flow_node_registry(
             metadata={"tools": _tool_contracts(descriptors.values())},
         ),
     )
+    registry.register_tool_resolver(FLOW_TOOL_NODE_TYPE, resolver, descriptors)
     return registry
 
 
@@ -404,39 +453,11 @@ def _tool_node_factory(
     descriptors: Mapping[str, ToolDescriptor],
 ) -> FlowNodeFactory:
     def factory(definition: FlowNodeDefinition) -> Node:
-        path = f"nodes.{definition.name}.ref"
-        requested_name = definition.ref
-        if requested_name is None:
-            raise FlowNodeConfigurationError(
-                code="flow.missing_ref",
-                path=path,
-                message="Tool flow nodes must declare a tool ref.",
-                hint="Set ref to an enabled avalan tool name.",
-            )
-        if _is_ref_import_like(requested_name):
-            raise FlowNodeConfigurationError(
-                code="flow.invalid_ref",
-                path=path,
-                message="Tool flow node ref must be a tool name.",
-                hint="Use an enabled avalan tool name, not a path or URI.",
-            )
-        resolution = resolver.resolve_tool_name(requested_name)
-        if resolution.status not in {
-            ToolNameResolutionStatus.EXACT,
-            ToolNameResolutionStatus.ALIAS,
-        }:
-            raise FlowNodeConfigurationError(
-                code=f"flow.tool_{resolution.status.value}",
-                path=path,
-                message=(
-                    "Tool flow node ref does not resolve to one enabled tool."
-                ),
-                hint="Use an enabled avalan tool name or unambiguous alias.",
-            )
-        assert resolution.canonical_name is not None
-        descriptor = descriptors[resolution.canonical_name]
-        _validate_tool_node_bindings(definition, descriptor)
-        _validate_tool_node_output_mode(definition)
+        descriptor = _validated_tool_node_descriptor(
+            definition,
+            resolver,
+            descriptors,
+        )
 
         async def run(
             inputs: dict[str, object],
@@ -473,6 +494,60 @@ def _tool_node_factory(
         )
 
     return factory
+
+
+def _validated_tool_node_descriptor(
+    definition: FlowNodeDefinition,
+    resolver: FlowToolResolver,
+    descriptors: Mapping[str, ToolDescriptor],
+    *,
+    require_explicit_arguments: bool = False,
+) -> ToolDescriptor:
+    assert isinstance(require_explicit_arguments, bool)
+    descriptor = _tool_node_descriptor(definition, resolver, descriptors)
+    _validate_tool_node_bindings(
+        definition,
+        descriptor,
+        require_explicit_arguments=require_explicit_arguments,
+    )
+    _validate_tool_node_output_mode(definition)
+    return descriptor
+
+
+def _tool_node_descriptor(
+    definition: FlowNodeDefinition,
+    resolver: FlowToolResolver,
+    descriptors: Mapping[str, ToolDescriptor],
+) -> ToolDescriptor:
+    path = f"nodes.{definition.name}.ref"
+    requested_name = definition.ref
+    if requested_name is None:
+        raise FlowNodeConfigurationError(
+            code="flow.missing_ref",
+            path=path,
+            message="Tool flow nodes must declare a tool ref.",
+            hint="Set ref to an enabled avalan tool name.",
+        )
+    if _is_ref_import_like(requested_name):
+        raise FlowNodeConfigurationError(
+            code="flow.invalid_ref",
+            path=path,
+            message="Tool flow node ref must be a tool name.",
+            hint="Use an enabled avalan tool name, not a path or URI.",
+        )
+    resolution = resolver.resolve_tool_name(requested_name)
+    if resolution.status not in {
+        ToolNameResolutionStatus.EXACT,
+        ToolNameResolutionStatus.ALIAS,
+    }:
+        raise FlowNodeConfigurationError(
+            code=f"flow.tool_{resolution.status.value}",
+            path=path,
+            message="Tool flow node ref does not resolve to one enabled tool.",
+            hint="Use an enabled avalan tool name or unambiguous alias.",
+        )
+    assert resolution.canonical_name is not None
+    return descriptors[resolution.canonical_name]
 
 
 def _node_input_value(
@@ -626,15 +701,33 @@ def _tool_contracts(
 
 
 def _is_ref_import_like(ref: str) -> bool:
-    return "://" in ref or "/" in ref or "\\" in ref or ":" in ref
+    return (
+        "://" in ref
+        or "/" in ref
+        or "\\" in ref
+        or ":" in ref
+        or ref.startswith("avl_")
+        or ref.startswith("functions.")
+    )
 
 
 def _validate_tool_node_bindings(
     definition: FlowNodeDefinition,
     descriptor: ToolDescriptor,
+    *,
+    require_explicit_arguments: bool = False,
 ) -> None:
+    assert isinstance(require_explicit_arguments, bool)
     bindings = definition.config.get("arguments")
     if bindings is None:
+        missing = sorted(_tool_required_parameters(descriptor))
+        if require_explicit_arguments and missing:
+            raise FlowNodeConfigurationError(
+                code="flow.missing_argument_binding",
+                path=f"nodes.{definition.name}.config.arguments.{missing[0]}",
+                message="Tool node argument binding is missing.",
+                hint="Bind every required tool parameter.",
+            )
         return
     path = f"nodes.{definition.name}.config.arguments"
     if not isinstance(bindings, Mapping):

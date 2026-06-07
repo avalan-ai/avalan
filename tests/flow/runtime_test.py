@@ -4,18 +4,22 @@ from dataclasses import FrozenInstanceError
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
+from avalan.entities import ToolManagerSettings
 from avalan.flow import (
     FlowConditionOperator,
     FlowConditionPlan,
     FlowConditionValueType,
+    FlowDefinition,
     FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowEdgeKind,
     FlowEdgePlan,
     FlowEdgeState,
+    FlowEntryBehavior,
     FlowExecutionPlan,
     FlowExecutionTrace,
     FlowInputDefinition,
+    FlowInputMapping,
     FlowInputType,
     FlowJoinPlan,
     FlowJoinPolicyType,
@@ -23,11 +27,13 @@ from avalan.flow import (
     FlowMappingKind,
     FlowMappingPlan,
     FlowNodeContract,
+    FlowNodeDefinition,
     FlowNodeExecutionError,
     FlowNodeKind,
     FlowNodePlan,
     FlowNodeRegistryRunner,
     FlowNodeState,
+    FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
     FlowPlanExecutionResult,
@@ -47,12 +53,19 @@ from avalan.flow import (
     loads_flow_definition_result,
     parse_flow_selector,
     resolve_flow_selector_value,
+    tool_flow_node_registry,
 )
 from avalan.flow.runtime import (
     _join_ready,
     _retry_delay_seconds,
     _route_from_node,
 )
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
+
+
+async def runtime_flow_adder(a: int, b: int) -> int:
+    return a + b
 
 
 def _assert_recorded_duration(
@@ -2321,6 +2334,70 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
 
 
 class FlowRuntimeEndToEndTestCase(IsolatedAsyncioTestCase):
+    async def test_strict_tool_definition_runs_with_registry_runner(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(
+            ToolManager.create_instance(
+                enable_tools=["runtime_flow_adder"],
+                available_toolsets=[ToolSet(tools=[runtime_flow_adder])],
+                settings=ToolManagerSettings(),
+            )
+        )
+        compile_result = compile_flow_definition(
+            FlowDefinition(
+                name="runtime-tool-registry",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.JSON,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="calculate"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "calculate.result"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(
+                        name="calculate",
+                        type="tool",
+                        ref="runtime_flow_adder",
+                        mappings=(
+                            FlowInputMapping(
+                                target="arguments",
+                                kind=FlowMappingKind.OBJECT,
+                                fields={
+                                    "left": "input.payload.left",
+                                    "right": "input.payload.right",
+                                },
+                            ),
+                        ),
+                        config={"arguments": {"a": "left", "b": "right"}},
+                    ),
+                ),
+            ),
+            registry,
+        )
+        self.assertTrue(compile_result.ok, compile_result.public_diagnostics)
+        assert compile_result.plan is not None
+
+        result = await execute_flow_plan(
+            compile_result.plan,
+            flow_node_registry_runner(registry),
+            inputs={"payload": {"left": 2, "right": 5}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs["answer"], 7)
+        self.assertEqual(result.node_outputs["calculate"]["result"], 7)
+
     async def test_loaded_native_definition_runs_with_registry_runner(
         self,
     ) -> None:

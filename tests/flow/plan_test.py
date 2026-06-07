@@ -1,7 +1,9 @@
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from typing import cast
 from unittest import TestCase, main
 
+from avalan.entities import ToolManagerSettings
 from avalan.flow import (
     FlowCondition,
     FlowConditionOperator,
@@ -38,9 +40,27 @@ from avalan.flow import (
     compile_flow_definition,
     default_flow_node_registry,
     parse_flow_selector,
+    tool_flow_node_registry,
 )
 from avalan.flow.definition import FlowLoopPolicy
 from avalan.flow.node import Node
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
+
+
+async def plan_flow_adder(a: int, b: int) -> int:
+    return a + b
+
+
+plan_flow_adder.aliases = ["sum"]  # type: ignore[attr-defined]
+
+
+def _tool_manager() -> ToolManager:
+    return ToolManager.create_instance(
+        enable_tools=["plan_flow_adder"],
+        available_toolsets=[ToolSet(tools=[plan_flow_adder])],
+        settings=ToolManagerSettings(),
+    )
 
 
 class FlowExecutionPlanTestCase(TestCase):
@@ -234,6 +254,98 @@ class FlowExecutionPlanTestCase(TestCase):
         result = compile_flow_definition(self._definition(), registry)
 
         self.assertTrue(result.ok, result.public_diagnostics)
+
+    def test_compile_flow_definition_adds_tool_descriptor_metadata(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(_tool_manager())
+
+        result = compile_flow_definition(
+            FlowDefinition(
+                name="tool-plan",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.JSON,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="calculate"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "calculate.result"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(
+                        name="calculate",
+                        type="tool",
+                        ref="sum",
+                        config={"arguments": {"a": "left", "b": "right"}},
+                    ),
+                ),
+            ),
+            registry,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        assert result.plan is not None
+        tool_node = result.plan.node_map["calculate"]
+        tool_metadata = tool_node.metadata["tool"]
+        assert isinstance(tool_metadata, Mapping)
+        self.assertEqual(
+            tool_metadata["canonical_name"],
+            "plan_flow_adder",
+        )
+        self.assertEqual(tool_metadata["aliases"], ("sum",))
+        self.assertIn("parameter_schema", tool_metadata)
+
+    def test_compile_flow_definition_refuses_invalid_tool_node(
+        self,
+    ) -> None:
+        registry = tool_flow_node_registry(_tool_manager())
+
+        result = compile_flow_definition(
+            FlowDefinition(
+                name="tool-plan",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.JSON,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="calculate"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "calculate.result"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(
+                        name="calculate",
+                        type="tool",
+                        ref="plan_flow_adder",
+                    ),
+                ),
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.plan)
+        self.assertEqual(
+            result.diagnostics[0].code,
+            "flow.missing_argument_binding",
+        )
 
     def test_condition_plan_accepts_literal_values(self) -> None:
         plan = FlowConditionPlan(

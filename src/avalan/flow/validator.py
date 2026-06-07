@@ -25,7 +25,11 @@ from .diagnostics import (
     FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
 )
-from .registry import FlowNodeRegistry, default_flow_node_registry
+from .registry import (
+    FlowNodeConfigurationError,
+    FlowNodeRegistry,
+    default_flow_node_registry,
+)
 from .selector import (
     FlowSelector,
     FlowSelectorError,
@@ -241,7 +245,11 @@ def _validate_node_type(
             ),
         )
     diagnostics: list[FlowDiagnostic] = []
-    if node.ref is not None and _is_path_escape(node.ref):
+    if (
+        node.ref is not None
+        and _is_path_escape(node.ref)
+        and not registry.supports_tool_resolution(node_type)
+    ):
         diagnostics.append(_path_escape_diagnostic(f"nodes.{name}.ref"))
     if registry.supports(node_type):
         if node.ref is not None and not registry.supports_ref(node_type):
@@ -545,10 +553,31 @@ def _validate_strict_contract(
     diagnostics.extend(
         _validate_node_mappings(definition, node_names, registry)
     )
+    diagnostics.extend(_validate_tool_nodes(definition, registry))
     diagnostics.extend(
         _validate_node_policies(definition, node_names, registry)
     )
     diagnostics.extend(_validate_edge_routing(definition))
+    return tuple(diagnostics)
+
+
+def _validate_tool_nodes(
+    definition: FlowDefinition,
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    for node in definition.nodes:
+        if not registry.supports_tool_resolution(node.type):
+            continue
+        if node.ref is None:
+            continue
+        try:
+            registry.validate_tool_definition(
+                node,
+                require_explicit_arguments=True,
+            )
+        except FlowNodeConfigurationError as error:
+            diagnostics.append(_configuration_error_diagnostic(error))
     return tuple(diagnostics)
 
 
@@ -2351,6 +2380,17 @@ def _bad_reference_diagnostic(path: str) -> FlowDiagnostic:
         path=path,
         message="Flow reference does not match a declared node.",
         hint="Reference an existing node name.",
+    )
+
+
+def _configuration_error_diagnostic(
+    error: FlowNodeConfigurationError,
+) -> FlowDiagnostic:
+    return _diagnostic(
+        code=error.code,
+        path=error.path,
+        message=error.message,
+        hint=error.hint,
     )
 
 

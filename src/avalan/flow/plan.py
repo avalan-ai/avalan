@@ -452,8 +452,28 @@ def _compile_node(
         timeout=_compile_timeout(node.timeout_policy),
         loop=_compile_loop(node.loop_policy),
         config=node.config,
-        metadata=metadata.metadata,
+        metadata=_compile_node_metadata(node, registry, metadata.metadata),
     )
+
+
+def _compile_node_metadata(
+    node: FlowNodeDefinition,
+    registry: FlowNodeRegistry,
+    metadata: Mapping[str, object],
+) -> Mapping[str, object]:
+    compiled = dict(metadata)
+    if registry.supports_tool_resolution(node.type):
+        descriptor = registry.tool_descriptor(node)
+        tool_metadata: dict[str, object] = {
+            "canonical_name": descriptor.name,
+            "aliases": tuple(descriptor.aliases),
+        }
+        if descriptor.parameter_schema is not None:
+            tool_metadata["parameter_schema"] = descriptor.parameter_schema
+        if descriptor.return_schema is not None:
+            tool_metadata["return_schema"] = descriptor.return_schema
+        compiled["tool"] = tool_metadata
+    return compiled
 
 
 def _compile_mapping(mapping: FlowInputMapping) -> FlowMappingPlan:
