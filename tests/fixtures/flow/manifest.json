@@ -1,0 +1,352 @@
+{
+  "version": 1,
+  "required_case_types": [
+    "e2e",
+    "negative",
+    "positive",
+    "privacy",
+    "round_trip",
+    "security"
+  ],
+  "categories": [
+    {
+      "id": "mermaid_positive",
+      "name": "Mermaid positive",
+      "path": "tests/fixtures/flow/mermaid/positive",
+      "case_types": [
+        "positive",
+        "round_trip"
+      ],
+      "permanent": true,
+      "future_tests": [
+        "tests/flow/mermaid_parser_test.py",
+        "tests/flow/mermaid_round_trip_test.py"
+      ],
+      "acceptance": [
+        "AC04",
+        "AC07",
+        "AC19"
+      ]
+    },
+    {
+      "id": "mermaid_negative",
+      "name": "Mermaid negative",
+      "path": "tests/fixtures/flow/mermaid/negative",
+      "case_types": [
+        "negative"
+      ],
+      "permanent": true,
+      "future_tests": [
+        "tests/flow/mermaid_parser_test.py"
+      ],
+      "acceptance": [
+        "AC02",
+        "AC19"
+      ]
+    },
+    {
+      "id": "mermaid_security_executable_import",
+      "name": "Mermaid executable-import security",
+      "path": "tests/fixtures/flow/mermaid/security/executable_import",
+      "case_types": [
+        "negative",
+        "security"
+      ],
+      "permanent": true,
+      "future_tests": [
+        "tests/flow/mermaid_security_test.py"
+      ],
+      "unsafe_constructs": [
+        "ambiguous_shorthand",
+        "click_directive",
+        "frontmatter",
+        "html_label",
+        "init_directive",
+        "link_directive",
+        "malformed_subgraph",
+        "script_like_label",
+        "unsafe_external_link",
+        "unsupported_diagram_type",
+        "unknown_directive"
+      ],
+      "acceptance": [
+        "AC01",
+        "AC03",
+        "AC19"
+      ]
+    },
+    {
+      "id": "flow_view_binding",
+      "name": "Flow View binding",
+      "path": "tests/fixtures/flow/binding",
+      "case_types": [
+        "positive",
+        "negative",
+        "round_trip"
+      ],
+      "permanent": true,
+      "future_tests": [
+        "tests/flow/view_binding_test.py"
+      ],
+      "acceptance": [
+        "AC05",
+        "AC06"
+      ]
+    },
+    {
+      "id": "definition_validation",
+      "name": "Definition validation",
+      "path": "tests/fixtures/flow/definition",
+      "case_types": [
+        "positive",
+        "negative",
+        "privacy"
+      ],
+      "permanent": true,
+      "future_tests": [
+        "tests/flow/definition_validation_test.py"
+      ],
+      "acceptance": [
+        "AC08",
+        "AC09",
+        "AC14"
+      ]
+    },
+    {
+      "id": "runtime_semantics",
+      "name": "Runtime semantics",
+      "path": "tests/fixtures/flow/runtime",
+      "case_types": [
+        "positive",
+        "negative",
+        "e2e"
+      ],
+      "permanent": true,
+      "future_tests": [
+        "tests/flow/runtime_test.py",
+        "tests/flow/runtime_e2e_test.py"
+      ],
+      "acceptance": [
+        "AC10",
+        "AC11",
+        "AC13",
+        "AC15",
+        "AC17",
+        "AC18"
+      ]
+    },
+    {
+      "id": "privacy_projection",
+      "name": "Privacy projection",
+      "path": "tests/fixtures/flow/privacy",
+      "case_types": [
+        "negative",
+        "privacy"
+      ],
+      "permanent": true,
+      "future_tests": [
+        "tests/flow/privacy_test.py",
+        "tests/flow/trace_export_test.py"
+      ],
+      "acceptance": [
+        "AC12",
+        "AC20",
+        "AC21"
+      ]
+    },
+    {
+      "id": "cli_sdk_parity",
+      "name": "CLI and SDK parity",
+      "path": "tests/fixtures/flow/e2e",
+      "case_types": [
+        "positive",
+        "negative",
+        "e2e"
+      ],
+      "permanent": true,
+      "future_tests": [
+        "tests/cli/flow_command_test.py",
+        "tests/flow/sdk_e2e_test.py"
+      ],
+      "acceptance": [
+        "AC16"
+      ]
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC01",
+      "criterion": "Mermaid import rejects unsupported executable-mode syntax.",
+      "owner": "mermaid_security_executable_import",
+      "intended_tests": [
+        "tests/flow/mermaid_security_test.py"
+      ]
+    },
+    {
+      "id": "AC02",
+      "criterion": "Mermaid parsing preserves source spans and emits structured diagnostics.",
+      "owner": "mermaid_negative",
+      "intended_tests": [
+        "tests/flow/mermaid_parser_test.py"
+      ]
+    },
+    {
+      "id": "AC03",
+      "criterion": "Mermaid import supports explicit presentation and executable import modes.",
+      "owner": "mermaid_security_executable_import",
+      "intended_tests": [
+        "tests/flow/mermaid_security_test.py"
+      ]
+    },
+    {
+      "id": "AC04",
+      "criterion": "Mermaid normalization expands chains, multi-source shorthand, multi-target shorthand, and nested subgraphs deterministically.",
+      "owner": "mermaid_positive",
+      "intended_tests": [
+        "tests/flow/mermaid_parser_test.py"
+      ]
+    },
+    {
+      "id": "AC05",
+      "criterion": "Mermaid-derived Flow View remains execution-inert.",
+      "owner": "flow_view_binding",
+      "intended_tests": [
+        "tests/flow/view_binding_test.py"
+      ]
+    },
+    {
+      "id": "AC06",
+      "criterion": "Mermaid binding never infers runtime semantics from labels, shapes, classes, styles, or visual edge decorations.",
+      "owner": "flow_view_binding",
+      "intended_tests": [
+        "tests/flow/view_binding_test.py"
+      ]
+    },
+    {
+      "id": "AC07",
+      "criterion": "Mermaid render preserves presentation metadata.",
+      "owner": "mermaid_positive",
+      "intended_tests": [
+        "tests/flow/mermaid_round_trip_test.py"
+      ]
+    },
+    {
+      "id": "AC08",
+      "criterion": "Flow definitions validate node types, edges, selectors, mappings, conditions, joins, retries, loops, and outputs before execution.",
+      "owner": "definition_validation",
+      "intended_tests": [
+        "tests/flow/definition_validation_test.py"
+      ]
+    },
+    {
+      "id": "AC09",
+      "criterion": "Conditional routes can express practical business decisions without Python callbacks.",
+      "owner": "definition_validation",
+      "intended_tests": [
+        "tests/flow/definition_validation_test.py"
+      ]
+    },
+    {
+      "id": "AC10",
+      "criterion": "Fan-out and fan-in are deterministic and observable.",
+      "owner": "runtime_semantics",
+      "intended_tests": [
+        "tests/flow/runtime_test.py"
+      ]
+    },
+    {
+      "id": "AC11",
+      "criterion": "Tool, agent, file conversion, human review, and subflow nodes can coexist in one flow.",
+      "owner": "runtime_semantics",
+      "intended_tests": [
+        "tests/flow/runtime_e2e_test.py"
+      ]
+    },
+    {
+      "id": "AC12",
+      "criterion": "Errors, retries, and fallback paths preserve safe diagnostics.",
+      "owner": "privacy_projection",
+      "intended_tests": [
+        "tests/flow/privacy_test.py"
+      ]
+    },
+    {
+      "id": "AC13",
+      "criterion": "Paused human review can resume without losing execution state.",
+      "owner": "runtime_semantics",
+      "intended_tests": [
+        "tests/flow/runtime_e2e_test.py"
+      ]
+    },
+    {
+      "id": "AC14",
+      "criterion": "Unbounded cycles fail validation.",
+      "owner": "definition_validation",
+      "intended_tests": [
+        "tests/flow/definition_validation_test.py"
+      ]
+    },
+    {
+      "id": "AC15",
+      "criterion": "Parallel execution is bounded and deterministic.",
+      "owner": "runtime_semantics",
+      "intended_tests": [
+        "tests/flow/runtime_test.py"
+      ]
+    },
+    {
+      "id": "AC16",
+      "criterion": "CLI and SDK users can validate, parse, render, compare, skeletonize, run, inspect, and resume flows.",
+      "owner": "cli_sdk_parity",
+      "intended_tests": [
+        "tests/cli/flow_command_test.py",
+        "tests/flow/sdk_e2e_test.py"
+      ]
+    },
+    {
+      "id": "AC17",
+      "criterion": "Public flow execution is async-only and never depends on sync `Flow.execute` behavior.",
+      "owner": "runtime_semantics",
+      "intended_tests": [
+        "tests/flow/runtime_test.py"
+      ]
+    },
+    {
+      "id": "AC18",
+      "criterion": "Tool nodes resolve and execute only through enabled `ToolManager` descriptors, explicit argument mappings, and privacy-safe outcome projection.",
+      "owner": "runtime_semantics",
+      "intended_tests": [
+        "tests/flow/runtime_test.py"
+      ]
+    },
+    {
+      "id": "AC19",
+      "criterion": "Mermaid conformance tests cover positive, negative, round-trip, and security fixtures.",
+      "owner": "mermaid_positive",
+      "intended_tests": [
+        "tests/flow/mermaid_parser_test.py",
+        "tests/flow/mermaid_round_trip_test.py",
+        "tests/flow/mermaid_security_test.py"
+      ]
+    },
+    {
+      "id": "AC20",
+      "criterion": "Telemetry identifies skipped, executed, failed, retried, paused, and resumed nodes without leaking sensitive payloads.",
+      "owner": "privacy_projection",
+      "intended_tests": [
+        "tests/flow/privacy_test.py",
+        "tests/flow/trace_export_test.py"
+      ]
+    },
+    {
+      "id": "AC21",
+      "criterion": "Diagnostic projection is privacy-safe across SDK, CLI, task storage, server SSE, A2A, MCP, and trace export.",
+      "owner": "privacy_projection",
+      "intended_tests": [
+        "tests/flow/privacy_test.py",
+        "tests/flow/trace_export_test.py",
+        "tests/server/flow_trace_test.py"
+      ]
+    }
+  ]
+}

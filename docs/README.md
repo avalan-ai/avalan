@@ -27,6 +27,9 @@ tailored specifically to each use case.
 - [Native flow compatibility](FLOW_COMPATIBILITY.md) - Inventory current flow
   runtime and CLI support, the minimal TOML subset, and unsupported flow
   behaviors.
+- [Flow fixture inventory](FLOW_FIXTURE_INVENTORY.md) - Track fixture
+  categories, acceptance ownership, and permanent security buckets for strict
+  flow behavior.
 - [Terminal recording](RECORDING.md) - Capture Avalan CLI sessions as real
   terminal video with colors, live panels, and tool-call updates.
 
