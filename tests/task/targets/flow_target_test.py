@@ -1807,6 +1807,61 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_run_accepts_queued_file_from_durable_ref(self) -> None:
+        def inspect(inputs: Mapping[str, object]) -> dict[str, object]:
+            descriptor = cast(
+                TaskFileDescriptor,
+                inputs[FLOW_TASK_INPUT_KEY],
+            )
+            return {
+                "reference": descriptor.reference,
+                "source_kind": descriptor.source_kind.value,
+                "mime_type": descriptor.mime_type,
+            }
+
+        flow = Flow()
+        flow.add_node(Node("A", func=inspect))
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        file = TaskInputFile(
+            logical_path="artifact:source-1",
+            artifact_ref=TaskArtifactRef(
+                artifact_id="source-1",
+                store="local",
+                storage_key="so/source-1",
+                media_type="application/pdf",
+                size_bytes=10,
+                sha256="0" * 64,
+            ),
+            media_type="application/pdf",
+            size_bytes=10,
+        )
+
+        result = await runner.run(
+            self._context(
+                definition=self._context_definition(
+                    input_contract=TaskInputContract.file(
+                        mime_types=("application/pdf",),
+                    ),
+                    output_contract=self._object_output_contract(),
+                    run=TaskRunPolicy.queued("default"),
+                ),
+                input_value={
+                    "privacy": ENCRYPTED_MARKER,
+                    "raw": "private prompt",
+                },
+                files=(file,),
+            )
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "reference": "source-1",
+                "source_kind": "artifact",
+                "mime_type": "application/pdf",
+            },
+        )
+
     async def test_run_rejects_queued_file_inputs_without_refs_safely(
         self,
     ) -> None:

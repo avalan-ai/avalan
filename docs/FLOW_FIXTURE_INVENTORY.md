@@ -25,8 +25,9 @@ The machine-readable inventory lives at
 
 Executable import security fixtures are permanent regression cases. They must
 cover unsupported diagram types, init directives, frontmatter, click and link
-directives, HTML labels, script-like labels, unknown directives, malformed
-subgraphs, ambiguous shorthand, and unsafe external links.
+directives, callback and href directives, HTML labels, script-like labels,
+unknown directives, malformed directives, malformed subgraphs, ambiguous
+shorthand, and unsafe external links.
 
 These fixtures must remain in the Mermaid security root even if the parser
 later accepts a presentation-only form of the same syntax. Executable import

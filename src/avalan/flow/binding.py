@@ -50,7 +50,7 @@ def bind_flow_view_definition(
     assert isinstance(view, FlowView)
     assert isinstance(definition, FlowDefinition)
 
-    diagnostics: list[FlowDiagnostic] = []
+    diagnostics = list(view.diagnostics)
     definition_nodes = definition.node_map
     view_nodes = view.node_map
 
