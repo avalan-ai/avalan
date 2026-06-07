@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from re import Pattern, compile
@@ -36,6 +37,7 @@ _UNSAFE_FRAGMENTS = frozenset(
         "~",
     }
 )
+FLOW_SELECTOR_MISSING = object()
 
 
 class FlowSelectorRoot(StrEnum):
@@ -176,3 +178,38 @@ def _parse_segment(segment: str) -> tuple[str, tuple[int, ...]]:
 def _reject_unsafe_selector(selector: str) -> None:
     if any(fragment in selector for fragment in _UNSAFE_FRAGMENTS):
         raise FlowSelectorError("flow.unsafe_selector")
+
+
+def resolve_flow_selector_value(
+    selector: FlowSelector,
+    *,
+    inputs: Mapping[str, object],
+    node_outputs: Mapping[str, Mapping[str, object]],
+    missing: object = FLOW_SELECTOR_MISSING,
+) -> object:
+    assert isinstance(selector, FlowSelector)
+    assert isinstance(inputs, Mapping)
+    assert isinstance(node_outputs, Mapping)
+    if selector.root == FlowSelectorRoot.FLOW_INPUT:
+        current = inputs.get(selector.source, missing)
+    else:
+        outputs = node_outputs.get(selector.source)
+        if outputs is None or selector.output is None:
+            return missing
+        assert isinstance(outputs, Mapping)
+        current = outputs.get(selector.output, missing)
+    for step in selector.path:
+        if current is missing:
+            return missing
+        if step.kind == FlowSelectorStepKind.FIELD:
+            if not isinstance(current, Mapping):
+                return missing
+            current = current.get(step.value, missing)
+            continue
+        if not isinstance(current, list | tuple):
+            return missing
+        assert isinstance(step.value, int)
+        if step.value >= len(current):
+            return missing
+        current = current[step.value]
+    return current

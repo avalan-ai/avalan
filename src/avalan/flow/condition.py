@@ -1,7 +1,6 @@
 from .selector import (
-    FlowSelectorRoot,
-    FlowSelectorStepKind,
     parse_flow_selector,
+    resolve_flow_selector_value,
 )
 
 from collections.abc import Mapping
@@ -352,25 +351,9 @@ def _resolve_selector(
     context: FlowConditionEvaluationContext,
 ) -> object:
     parsed = parse_flow_selector(selector)
-    if parsed.root == FlowSelectorRoot.FLOW_INPUT:
-        current = context.inputs.get(parsed.source, _MISSING)
-    else:
-        outputs = context.node_outputs.get(parsed.source)
-        if outputs is None or parsed.output is None:
-            return _MISSING
-        current = outputs.get(parsed.output, _MISSING)
-    for step in parsed.path:
-        if current is _MISSING:
-            return _MISSING
-        if step.kind == FlowSelectorStepKind.FIELD:
-            if not isinstance(current, Mapping):
-                return _MISSING
-            current = current.get(step.value, _MISSING)
-            continue
-        if not isinstance(current, list | tuple):
-            return _MISSING
-        assert isinstance(step.value, int)
-        if step.value >= len(current):
-            return _MISSING
-        current = current[step.value]
-    return current
+    return resolve_flow_selector_value(
+        parsed,
+        inputs=context.inputs,
+        node_outputs=context.node_outputs,
+        missing=_MISSING,
+    )
