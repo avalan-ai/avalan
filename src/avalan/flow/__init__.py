@@ -130,6 +130,8 @@ from .registry import FlowToolResolver as FlowToolResolver
 from .registry import default_flow_node_registry as default_flow_node_registry
 from .registry import flow_input_binding as flow_input_binding
 from .registry import tool_flow_node_registry as tool_flow_node_registry
+from .runtime import FlowPlanExecutionResult as FlowPlanExecutionResult
+from .runtime import FlowPlanNodeRunner as FlowPlanNodeRunner
 from .runtime import FlowRuntimeContext as FlowRuntimeContext
 from .runtime import (
     FlowRuntimeEvaluationError as FlowRuntimeEvaluationError,
@@ -140,6 +142,7 @@ from .runtime import (
 from .runtime import evaluate_flow_mappings as evaluate_flow_mappings
 from .runtime import evaluate_flow_node_mappings as evaluate_flow_node_mappings
 from .runtime import evaluate_flow_selector as evaluate_flow_selector
+from .runtime import execute_flow_plan as execute_flow_plan
 from .selector import FLOW_SELECTOR_MISSING as FLOW_SELECTOR_MISSING
 from .selector import FlowSelector as FlowSelector
 from .selector import FlowSelectorError as FlowSelectorError
