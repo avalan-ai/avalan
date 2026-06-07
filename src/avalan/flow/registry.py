@@ -57,6 +57,17 @@ class FlowToolResolver(Protocol):
     ) -> Awaitable[ToolCallOutcome]: ...
 
 
+class FlowSubflowResolver(Protocol):
+    def compile_subflow(
+        self,
+        ref: str,
+        *,
+        parent_definition: FlowDefinition,
+        node: FlowNodeDefinition,
+        registry: "FlowNodeRegistry",
+    ) -> Mapping[str, object]: ...
+
+
 class FlowNodeConfigurationError(ValueError):
     def __init__(
         self,
@@ -95,6 +106,7 @@ class FlowNodeRegistry:
         self._validators: dict[str, FlowNodeDefinitionValidator] = {}
         self._tool_resolvers: dict[str, FlowToolResolver] = {}
         self._tool_descriptors: dict[str, Mapping[str, ToolDescriptor]] = {}
+        self._subflow_resolvers: dict[str, FlowSubflowResolver] = {}
         node_metadata = metadata or {}
         node_validators = validators or {}
         for node_type, factory in (factories or {}).items():
@@ -213,6 +225,34 @@ class FlowNodeRegistry:
             self._tool_resolvers[definition.type],
             self._tool_descriptors[definition.type],
             require_explicit_arguments=require_explicit_arguments,
+        )
+
+    def register_subflow_resolver(
+        self,
+        node_type: str,
+        resolver: FlowSubflowResolver,
+    ) -> "FlowNodeRegistry":
+        assert isinstance(node_type, str) and node_type.strip()
+        assert _is_flow_subflow_resolver(resolver)
+        self._subflow_resolvers[node_type] = resolver
+        return self
+
+    def supports_subflow_resolution(self, node_type: str) -> bool:
+        assert isinstance(node_type, str) and node_type.strip()
+        return node_type in self._subflow_resolvers
+
+    def subflow_metadata(
+        self,
+        definition: FlowDefinition,
+        node: FlowNodeDefinition,
+    ) -> Mapping[str, object]:
+        assert isinstance(definition, FlowDefinition)
+        assert isinstance(node, FlowNodeDefinition)
+        return self._subflow_resolvers[node.type].compile_subflow(
+            node.ref or "",
+            parent_definition=definition,
+            node=node,
+            registry=self,
         )
 
 
@@ -700,6 +740,12 @@ def _is_flow_tool_resolver(value: object) -> bool:
         and callable(getattr(value, "validate_tool_call"))
         and hasattr(value, "execute_call")
         and callable(getattr(value, "execute_call"))
+    )
+
+
+def _is_flow_subflow_resolver(value: object) -> bool:
+    return hasattr(value, "compile_subflow") and callable(
+        getattr(value, "compile_subflow")
     )
 
 

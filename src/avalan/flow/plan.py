@@ -421,7 +421,8 @@ def compile_flow_definition(
                 )
             },
             nodes=tuple(
-                _compile_node(node, node_registry) for node in definition.nodes
+                _compile_node(definition, node, node_registry)
+                for node in definition.nodes
             ),
             edges=tuple(
                 _compile_edge(index, edge)
@@ -432,6 +433,7 @@ def compile_flow_definition(
 
 
 def _compile_node(
+    definition: FlowDefinition,
     node: FlowNodeDefinition,
     registry: FlowNodeRegistry,
 ) -> FlowNodePlan:
@@ -452,11 +454,17 @@ def _compile_node(
         timeout=_compile_timeout(node.timeout_policy),
         loop=_compile_loop(node.loop_policy),
         config=node.config,
-        metadata=_compile_node_metadata(node, registry, metadata.metadata),
+        metadata=_compile_node_metadata(
+            definition,
+            node,
+            registry,
+            metadata.metadata,
+        ),
     )
 
 
 def _compile_node_metadata(
+    definition: FlowDefinition,
     node: FlowNodeDefinition,
     registry: FlowNodeRegistry,
     metadata: Mapping[str, object],
@@ -473,6 +481,8 @@ def _compile_node_metadata(
         if descriptor.return_schema is not None:
             tool_metadata["return_schema"] = descriptor.return_schema
         compiled["tool"] = tool_metadata
+    if registry.supports_subflow_resolution(node.type):
+        compiled["subflow"] = registry.subflow_metadata(definition, node)
     return compiled
 
 

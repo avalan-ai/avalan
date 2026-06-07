@@ -129,6 +129,7 @@ from .registry import (
 )
 from .registry import FlowNodeFactory as FlowNodeFactory
 from .registry import FlowNodeRegistry as FlowNodeRegistry
+from .registry import FlowSubflowResolver as FlowSubflowResolver
 from .registry import FlowToolResolver as FlowToolResolver
 from .registry import default_flow_node_registry as default_flow_node_registry
 from .registry import flow_input_binding as flow_input_binding
@@ -164,6 +165,9 @@ from .state import FlowEdgeTrace as FlowEdgeTrace
 from .state import FlowExecutionTrace as FlowExecutionTrace
 from .state import FlowNodeState as FlowNodeState
 from .state import FlowNodeTrace as FlowNodeTrace
+from .subflow import FLOW_SUBFLOW_NODE_TYPE as FLOW_SUBFLOW_NODE_TYPE
+from .subflow import LocalFlowSubflowResolver as LocalFlowSubflowResolver
+from .subflow import subflow_node_registry as subflow_node_registry
 from .validator import FlowValidationResult as FlowValidationResult
 from .validator import validate_flow_definition as validate_flow_definition
 from .view import FlowView as FlowView
