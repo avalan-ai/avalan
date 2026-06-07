@@ -136,6 +136,11 @@ from .selector import FlowSelectorRoot as FlowSelectorRoot
 from .selector import FlowSelectorStep as FlowSelectorStep
 from .selector import FlowSelectorStepKind as FlowSelectorStepKind
 from .selector import parse_flow_selector as parse_flow_selector
+from .state import FlowEdgeState as FlowEdgeState
+from .state import FlowEdgeTrace as FlowEdgeTrace
+from .state import FlowExecutionTrace as FlowExecutionTrace
+from .state import FlowNodeState as FlowNodeState
+from .state import FlowNodeTrace as FlowNodeTrace
 from .validator import FlowValidationResult as FlowValidationResult
 from .validator import validate_flow_definition as validate_flow_definition
 from .view import FlowView as FlowView
