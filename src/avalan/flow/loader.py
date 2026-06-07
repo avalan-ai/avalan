@@ -8,6 +8,7 @@ from .condition import (
 from .definition import (
     FlowDefinition,
     FlowEdgeDefinition,
+    FlowEdgeKind,
     FlowEntryBehavior,
     FlowEntryBehaviorType,
     FlowInputDefinition,
@@ -19,6 +20,7 @@ from .definition import (
     FlowOutputBehaviorType,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRouteMatchPolicy,
 )
 from .diagnostics import (
     FlowDiagnostic,
@@ -114,7 +116,11 @@ _ALLOWED_MAPPING_FIELDS = frozenset(
 _ALLOWED_EDGE_FIELDS = frozenset(
     {
         "condition",
+        "default",
+        "kind",
         "label",
+        "priority",
+        "routing_policy",
         "source",
         "target",
     }
@@ -935,10 +941,36 @@ def _edge_definitions(
         source = _required_str(item, f"{path}.source", "source", issues)
         target = _required_str(item, f"{path}.target", "target", issues)
         label = _optional_str(item, f"{path}.label", "label", issues)
+        kind = _optional_enum_value(
+            item,
+            f"{path}.kind",
+            "kind",
+            FlowEdgeKind,
+            issues,
+        )
         condition = _condition_definition(
             item.get("condition"),
             issues,
             path=f"{path}.condition",
+        )
+        priority = _optional_int(
+            item,
+            f"{path}.priority",
+            "priority",
+            issues,
+        )
+        default = _optional_bool(
+            item,
+            f"{path}.default",
+            "default",
+            issues,
+        )
+        routing_policy = _optional_enum_value(
+            item,
+            f"{path}.routing_policy",
+            "routing_policy",
+            FlowRouteMatchPolicy,
+            issues,
         )
         if source is None or target is None:
             continue
@@ -947,7 +979,13 @@ def _edge_definitions(
                 source=source,
                 target=target,
                 label=label,
+                kind=kind or FlowEdgeKind.SUCCESS,
                 condition=condition,
+                priority=0 if priority is None else priority,
+                default=False if default is None else default,
+                routing_policy=(
+                    routing_policy or FlowRouteMatchPolicy.EXCLUSIVE
+                ),
             )
         )
     return tuple(edges)
@@ -1165,6 +1203,48 @@ def _enum_value(
             )
         )
         return None
+
+
+def _optional_enum_value(
+    raw: RawSection,
+    path: str,
+    field: str,
+    enum_type: type[EnumValue],
+    issues: list[FlowLoadIssue],
+) -> EnumValue | None:
+    if field not in raw:
+        return None
+    return _enum_value(raw, path, field, enum_type, issues)
+
+
+def _optional_int(
+    raw: RawSection,
+    path: str,
+    field: str,
+    issues: list[FlowLoadIssue],
+) -> int | None:
+    value = raw.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        issues.append(_invalid_type(path, "Use an integer."))
+        return None
+    return value
+
+
+def _optional_bool(
+    raw: RawSection,
+    path: str,
+    field: str,
+    issues: list[FlowLoadIssue],
+) -> bool | None:
+    value = raw.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        issues.append(_invalid_type(path, "Use true or false."))
+        return None
+    return value
 
 
 def _string_tuple(

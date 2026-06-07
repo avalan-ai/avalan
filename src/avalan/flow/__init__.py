@@ -11,6 +11,7 @@ from .condition import evaluate_flow_condition as evaluate_flow_condition
 from .connection import Connection as Connection
 from .definition import FlowDefinition as FlowDefinition
 from .definition import FlowEdgeDefinition as FlowEdgeDefinition
+from .definition import FlowEdgeKind as FlowEdgeKind
 from .definition import FlowEntryBehavior as FlowEntryBehavior
 from .definition import FlowEntryBehaviorType as FlowEntryBehaviorType
 from .definition import FlowInputDefinition as FlowInputDefinition
@@ -26,6 +27,7 @@ from .definition import FlowOutputBehavior as FlowOutputBehavior
 from .definition import FlowOutputBehaviorType as FlowOutputBehaviorType
 from .definition import FlowOutputDefinition as FlowOutputDefinition
 from .definition import FlowOutputType as FlowOutputType
+from .definition import FlowRouteMatchPolicy as FlowRouteMatchPolicy
 from .diagnostics import FlowDiagnostic as FlowDiagnostic
 from .diagnostics import FlowDiagnosticCategory as FlowDiagnosticCategory
 from .diagnostics import FlowDiagnosticCodePrefix as FlowDiagnosticCodePrefix

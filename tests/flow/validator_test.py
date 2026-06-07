@@ -8,6 +8,7 @@ from avalan.flow import (
     FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowEdgeDefinition,
+    FlowEdgeKind,
     FlowEntryBehavior,
     FlowInputDefinition,
     FlowInputMapping,
@@ -22,6 +23,7 @@ from avalan.flow import (
     FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRouteMatchPolicy,
     FlowValidationResult,
     parse_flow_selector,
     validate_flow_definition,
@@ -1559,6 +1561,267 @@ class FlowValidatorTestCase(TestCase):
                     code,
                     [diagnostic.code for diagnostic in result.diagnostics],
                 )
+
+    def test_validate_flow_definition_accepts_edge_routing_policy(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="routed",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "approved.value"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="start", type="echo"),
+                    FlowNodeDefinition(name="approved", type="echo"),
+                    FlowNodeDefinition(name="rejected", type="echo"),
+                    FlowNodeDefinition(name="fallback", type="echo"),
+                    FlowNodeDefinition(name="timeout", type="echo"),
+                    FlowNodeDefinition(name="cleanup", type="echo"),
+                    FlowNodeDefinition(name="cancel", type="echo"),
+                    FlowNodeDefinition(name="pause", type="echo"),
+                    FlowNodeDefinition(name="resume", type="echo"),
+                ),
+                edges=(
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="approved",
+                        condition=FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value.approved",
+                        ),
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="rejected",
+                        condition=FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value.rejected",
+                        ),
+                        priority=1,
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="fallback",
+                        default=True,
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="timeout",
+                        kind=FlowEdgeKind.TIMEOUT,
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="cleanup",
+                        kind=FlowEdgeKind.FINALLY,
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="cancel",
+                        kind=FlowEdgeKind.CANCELLATION,
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="pause",
+                        kind=FlowEdgeKind.PAUSE,
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="resume",
+                        kind=FlowEdgeKind.RESUME,
+                    ),
+                ),
+            )
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_accepts_all_matching_routes(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="routed",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "left.value"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="start", type="echo"),
+                    FlowNodeDefinition(name="left", type="echo"),
+                    FlowNodeDefinition(name="right", type="echo"),
+                ),
+                edges=(
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="left",
+                        routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="right",
+                        routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                    ),
+                ),
+            )
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_bad_route_policy(
+        self,
+    ) -> None:
+        cases = (
+            (
+                (
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="left",
+                        default=True,
+                    ),
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="right",
+                        default=True,
+                    ),
+                ),
+                "flow.duplicate_default_route",
+            ),
+            (
+                (
+                    FlowEdgeDefinition(source="start", target="left"),
+                    FlowEdgeDefinition(source="start", target="right"),
+                ),
+                "flow.ambiguous_route",
+            ),
+            (
+                (
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="left",
+                        routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                    ),
+                    FlowEdgeDefinition(source="start", target="right"),
+                ),
+                "flow.mixed_routing_policy",
+            ),
+            (
+                (
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="left",
+                        priority=-1,
+                    ),
+                ),
+                "flow.invalid_route_priority",
+            ),
+            (
+                (
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="left",
+                        condition=FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value",
+                        ),
+                        default=True,
+                    ),
+                ),
+                "flow.default_route_condition",
+            ),
+        )
+
+        for edges, code in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="routed",
+                        version="2026-06-07",
+                        inputs=(
+                            FlowInputDefinition(
+                                name="payload",
+                                type=FlowInputType.OBJECT,
+                            ),
+                        ),
+                        outputs=(
+                            FlowOutputDefinition(
+                                name="answer",
+                                type=FlowOutputType.OBJECT,
+                            ),
+                        ),
+                        entry_behavior=FlowEntryBehavior(node="start"),
+                        output_behavior=FlowOutputBehavior(
+                            outputs={"answer": "left.value"},
+                        ),
+                        nodes=(
+                            FlowNodeDefinition(name="start", type="echo"),
+                            FlowNodeDefinition(name="left", type="echo"),
+                            FlowNodeDefinition(name="right", type="echo"),
+                        ),
+                        edges=edges,
+                    )
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_validate_flow_definition_rejects_legacy_edge_policy(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="legacy",
+                entrypoint="start",
+                output_node="finish",
+                nodes=(
+                    FlowNodeDefinition(name="start", type="echo"),
+                    FlowNodeDefinition(name="finish", type="echo"),
+                ),
+                edges=(
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="finish",
+                        kind=FlowEdgeKind.ERROR,
+                    ),
+                ),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.unsupported_edge_policy"],
+        )
 
     def test_mapping_private_helpers_cover_type_edges(self) -> None:
         registry = FlowNodeRegistry({"open": lambda definition: Node("open")})
