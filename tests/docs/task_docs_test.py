@@ -156,6 +156,19 @@ class TaskDocsTest(TestCase):
         self.assertIn("Agent nodes reuse the task agent runner", docs)
         self.assertIn("Dynamic Python callable imports.", docs)
         self.assertIn("support is available for compatible definitions", docs)
+        self.assertIn("## Target Boundary", docs)
+        self.assertIn(
+            "`Flow.parse_mermaid(...)` is a legacy topology importer only",
+            docs,
+        )
+        self.assertIn(
+            "declarative routing and must not import callables",
+            docs,
+        )
+        self.assertIn(
+            "explicitly named and documented as compatibility",
+            docs,
+        )
 
     def test_flow_compatibility_matrix_covers_poc_fields(self) -> None:
         docs = FLOW_COMPATIBILITY_DOC.read_text(encoding="utf-8")

@@ -5,8 +5,8 @@ from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 
 
-class FlowParseMermaidTestCase(TestCase):
-    def test_parse_mermaid(self):
+class FlowLegacyMermaidInventoryTestCase(TestCase):
+    def test_legacy_parse_mermaid_inventory(self):
         mermaid = """
         graph LR
         A[Start] -- go --> B{Decision}
@@ -34,7 +34,7 @@ class FlowParseMermaidTestCase(TestCase):
         self.assertEqual(flow.connections[1].src.name, "B")
         self.assertEqual(flow.connections[1].dest.name, "C")
 
-    def test_parse_mermaid_roundrect(self):
+    def test_legacy_parse_mermaid_roundrect_inventory(self):
         mermaid = """
         graph LR
         A(Start) --> B[End]
@@ -54,7 +54,7 @@ class FlowParseMermaidTestCase(TestCase):
         self.assertEqual(flow.connections[0].src.name, "A")
         self.assertEqual(flow.connections[0].dest.name, "B")
 
-    def test_parse_mermaid_pipe_label(self):
+    def test_legacy_parse_mermaid_pipe_label_inventory(self):
         mermaid = """
         graph LR
         A -->|edge| B

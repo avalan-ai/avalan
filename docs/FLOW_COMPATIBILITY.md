@@ -28,6 +28,23 @@ terminal node value when exactly one terminal node exists. When multiple
 terminal nodes exist, execution returns a mapping keyed by terminal node name.
 Cycles and unknown node references are runtime errors.
 
+## Target Boundary
+
+The current native flow surface is compatibility inventory. Future strict flow
+APIs must not treat these compatibility helpers as semantic authority:
+
+- `Flow.parse_mermaid(...)` is a legacy topology importer only. Mermaid
+  compiler, render, compare, binding, and executable-import APIs must construct
+  inert view data and diagnostics without calling it.
+- Callable `Connection.conditions` and `Connection.filters` are accepted only
+  on Python-constructed `Flow` objects. Structured TOML definitions must use
+  declarative routing and must not import callables, functions, modules, or
+  Python snippets.
+- `avalan flow run` currently executes compatible native TOML flows. Future
+  strict flow execution may replace that behavior; any compatibility runner
+  that remains must be explicitly named and documented as compatibility
+  behavior.
+
 ## Current CLI Inventory
 
 The CLI exposes `avalan flow run <flow>` for native TOML flows built from

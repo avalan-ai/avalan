@@ -1042,10 +1042,15 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                     self.assertIn(code, codes)
 
     def test_rejects_unknown_and_untrusted_node_types(self) -> None:
-        for node_type, code in (
+        cases = (
             ("unknown", "flow.unknown_node_type"),
             ("callable", "flow.untrusted_callable"),
-        ):
+            ("function", "flow.untrusted_callable"),
+            ("module", "flow.untrusted_callable"),
+            ("python", "flow.untrusted_callable"),
+            ("python_callable", "flow.untrusted_callable"),
+        )
+        for node_type, code in cases:
             with self.subTest(node_type=node_type):
                 result = loads_flow_definition_result(f"""
                     [flow]

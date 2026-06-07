@@ -5,8 +5,8 @@ from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 
 
-class FlowExtraTestCase(TestCase):
-    def test_parse_mermaid_ignores_invalid_lines(self) -> None:
+class FlowLegacyMermaidExtraTestCase(TestCase):
+    def test_legacy_parse_mermaid_ignores_invalid_lines(self) -> None:
         mermaid = """graph LR
 A --> B
 invalid
@@ -17,7 +17,7 @@ invalid
         self.assertIn("A", flow.nodes)
         self.assertIn("B", flow.nodes)
 
-    def test_parse_mermaid_updates_existing_node(self) -> None:
+    def test_legacy_parse_mermaid_updates_existing_node(self) -> None:
         flow = Flow()
         flow.add_node(Node("A"))
         flow.add_node(Node("B"))
