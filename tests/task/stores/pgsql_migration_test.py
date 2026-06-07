@@ -136,6 +136,7 @@ class PgsqlMigrationSchemaTest(TestCase):
             "ck_task_attempts_result_shape",
             "ck_task_flow_executions_trace_shape",
             "ck_task_flow_executions_node_attempts_shape",
+            "ck_task_flow_executions_node_outputs_shape",
             "ck_task_flow_executions_selected_outputs_shape",
             "ck_task_flow_executions_diagnostics_shape",
             "ck_task_flow_executions_artifact_refs_shape",

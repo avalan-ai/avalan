@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS "task_flow_executions" (
     "revision" INTEGER NOT NULL,
     "trace" JSONB NOT NULL,
     "node_attempts" JSONB NOT NULL DEFAULT '[]'::JSONB,
+    "node_outputs" JSONB NOT NULL DEFAULT '{}'::JSONB,
     "selected_outputs" JSONB NOT NULL DEFAULT '{}'::JSONB,
     "loop_counters" JSONB NOT NULL DEFAULT '{}'::JSONB,
     "pause_tokens" JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -129,6 +130,8 @@ CREATE TABLE IF NOT EXISTS "task_flow_executions" (
         CHECK (JSONB_TYPEOF("trace") = 'object'),
     CONSTRAINT "ck_task_flow_executions_node_attempts_shape"
         CHECK (JSONB_TYPEOF("node_attempts") = 'array'),
+    CONSTRAINT "ck_task_flow_executions_node_outputs_shape"
+        CHECK (JSONB_TYPEOF("node_outputs") = 'object'),
     CONSTRAINT "ck_task_flow_executions_selected_outputs_shape"
         CHECK (JSONB_TYPEOF("selected_outputs") = 'object'),
     CONSTRAINT "ck_task_flow_executions_loop_counters_shape"

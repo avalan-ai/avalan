@@ -4,6 +4,7 @@ from asyncio import sleep
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from inspect import isawaitable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -12,6 +13,31 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
 from avalan.event import Event, EventType
+from avalan.flow import (
+    FlowDefinition,
+    FlowEdgeDefinition,
+    FlowEdgeKind,
+    FlowEntryBehavior,
+    FlowExecutionPlan,
+    FlowExecutionTrace,
+    FlowInputDefinition,
+    FlowInputMapping,
+    FlowInputType,
+    FlowMappingKind,
+    FlowMappingPlan,
+    FlowNodeContract,
+    FlowNodeDefinition,
+    FlowNodeKind,
+    FlowNodePlan,
+    FlowNodeState,
+    FlowNodeTrace,
+    FlowOutputBehavior,
+    FlowOutputDefinition,
+    FlowOutputType,
+    InMemoryFlowStateStore,
+    compile_flow_definition,
+    parse_flow_selector,
+)
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
 from avalan.task import (
@@ -79,6 +105,7 @@ from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import FLOW_TASK_INPUT_KEY, FlowTaskTargetRunner
+from avalan.task.targets import flow as flow_target_module
 
 
 class StaticHmacProvider:
@@ -2454,6 +2481,295 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertTrue(output.ready)
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
 
+    async def test_queued_strict_flow_resumes_complete_state(self) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+        flow_definition = _strict_constant_flow_definition("fresh output")
+        plan_result = compile_flow_definition(flow_definition)
+        assert plan_result.plan is not None
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: flow_definition,
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="safe",
+        )
+        await flow_store.create_flow_execution(
+            submission.run.run_id,
+            trace=FlowExecutionTrace(
+                nodes=(
+                    FlowNodeTrace(
+                        node="answer",
+                        state=FlowNodeState.SUCCEEDED,
+                        attempts=1,
+                    ),
+                ),
+            ),
+            selected_outputs={"answer": "resumed output"},
+            metadata=flow_target_module._strict_flow_record_metadata(  # type: ignore[attr-defined]
+                plan_result.plan
+            ),
+        )
+
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        record = await flow_store.get_flow_execution(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(processed.output, "resumed output")
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(record.revision, 1)
+        self.assertEqual(
+            dict(record.selected_outputs),
+            {"answer": "resumed output"},
+        )
+
+    async def test_queued_strict_flow_runs_subflow_plan(self) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_subflow_flow_plan(),
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="queued seed",
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        record = await flow_store.get_flow_execution(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(processed.output, "queued seed")
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            dict(record.selected_outputs), {"answer": "queued seed"}
+        )
+        self.assertEqual(record.node_attempts[0].node, "child")
+        self.assertEqual(
+            record.node_attempts[0].state,
+            FlowNodeState.SUCCEEDED,
+        )
+
+    async def test_queued_strict_flow_reports_subflow_failure_safely(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=1),
+        )
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _failing_strict_subflow_flow_plan(),
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="private queued seed",
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        record = await flow_store.get_flow_execution(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNone(processed.completion)
+        self.assertIsNone(processed.retry)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(inspection.attempts[0].state, TaskAttemptState.FAILED)
+        self.assertEqual(
+            record.diagnostics[0].code,
+            "flow.execution.subflow_failed",
+        )
+        self.assertNotIn("private queued seed", str(inspection.as_dict()))
+        self.assertNotIn("private queued seed", str(record.as_snapshot()))
+
+    async def test_queued_strict_flow_resumes_partial_state(self) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+        flow_definition = _strict_two_step_flow_definition()
+        plan_result = compile_flow_definition(flow_definition)
+        assert plan_result.plan is not None
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: flow_definition,
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        calls: list[str] = []
+        real_runner_factory = flow_target_module.flow_node_registry_runner
+
+        def counting_runner_factory(registry: object) -> object:
+            runner = real_runner_factory(registry)
+
+            async def run(
+                node: FlowNodePlan, inputs: Mapping[str, object]
+            ) -> object:
+                calls.append(node.name)
+                output = runner(node, inputs)
+                if isawaitable(output):
+                    return await output
+                return output
+
+            return run
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="fresh input",
+        )
+        trace = FlowExecutionTrace.from_plan(plan_result.plan).with_node_state(
+            "start", FlowNodeState.SUCCEEDED, attempts=1
+        )
+        await flow_store.create_flow_execution(
+            submission.run.run_id,
+            trace=trace,
+            node_outputs={"start": {"value": "queued seed"}},
+            metadata=flow_target_module._strict_flow_record_metadata(  # type: ignore[attr-defined]
+                plan_result.plan
+            ),
+        )
+
+        with patch.object(
+            flow_target_module,
+            "flow_node_registry_runner",
+            counting_runner_factory,
+        ):
+            processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        record = await flow_store.get_flow_execution(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertEqual(calls, ["answer"])
+        self.assertEqual(processed.output, "queued seed")
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(
+            dict(record.node_outputs),
+            {
+                "start": {"value": "queued seed"},
+                "answer": {"value": "queued seed"},
+            },
+        )
+        self.assertEqual(
+            dict(record.selected_outputs), {"answer": "queued seed"}
+        )
+
+    async def test_queued_strict_flow_rejects_mismatched_state_safely(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=1),
+        )
+        previous_flow = _strict_constant_flow_definition("previous output")
+        plan_result = compile_flow_definition(previous_flow)
+        assert plan_result.plan is not None
+        current_flow = _strict_constant_flow_definition("fresh output")
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: current_flow,
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="private prompt",
+        )
+        await flow_store.create_flow_execution(
+            submission.run.run_id,
+            trace=FlowExecutionTrace(
+                nodes=(
+                    FlowNodeTrace(
+                        node="answer",
+                        state=FlowNodeState.SUCCEEDED,
+                        attempts=1,
+                    ),
+                ),
+            ),
+            selected_outputs={"answer": "private stale output"},
+            metadata=flow_target_module._strict_flow_record_metadata(  # type: ignore[attr-defined]
+                plan_result.plan
+            ),
+        )
+
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        record = await flow_store.get_flow_execution(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.claimed)
+        self.assertIsNone(processed.completion)
+        self.assertIsNone(processed.retry)
+        self.assertIsNone(processed.abandonment)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(len(inspection.attempts), 1)
+        self.assertEqual(
+            inspection.attempts[0].state,
+            TaskAttemptState.FAILED,
+        )
+        self.assertEqual(record.revision, 1)
+        self.assertEqual(
+            dict(record.selected_outputs),
+            {"answer": "private stale output"},
+        )
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private prompt", inspection_value)
+        self.assertNotIn("private stale output", inspection_value)
+        self.assertNotIn("private stale output", str(output.error))
+
     async def test_queued_flow_array_input_returns_json_array_output(
         self,
     ) -> None:
@@ -3043,6 +3359,174 @@ def _structured_definition(
         retry=retry,
         execution=execution,
         observability=observability,
+    )
+
+
+def _strict_constant_flow_definition(value: str) -> FlowDefinition:
+    return FlowDefinition(
+        name="queued-constant",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_behavior=FlowEntryBehavior(node="answer"),
+        output_behavior=FlowOutputBehavior(outputs={"answer": "answer.value"}),
+        nodes=(
+            FlowNodeDefinition(
+                name="answer",
+                type="constant",
+                config={"value": value},
+            ),
+        ),
+    )
+
+
+def _strict_two_step_flow_definition() -> FlowDefinition:
+    return FlowDefinition(
+        name="queued-two-step",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_behavior=FlowEntryBehavior(node="start"),
+        output_behavior=FlowOutputBehavior(outputs={"answer": "answer.value"}),
+        nodes=(
+            FlowNodeDefinition(
+                name="start",
+                type="pass-through",
+                mappings=(
+                    FlowInputMapping(target="value", source="input.prompt"),
+                ),
+            ),
+            FlowNodeDefinition(
+                name="answer",
+                type="pass-through",
+                mappings=(
+                    FlowInputMapping(target="value", source="start.value"),
+                ),
+            ),
+        ),
+        edges=(
+            FlowEdgeDefinition(
+                source="start",
+                target="answer",
+                kind=FlowEdgeKind.SUCCESS,
+            ),
+        ),
+    )
+
+
+def _strict_subflow_flow_plan() -> FlowExecutionPlan:
+    child_result = compile_flow_definition(_strict_two_step_flow_definition())
+    assert child_result.plan is not None
+    return FlowExecutionPlan(
+        name="queued-subflow",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_node="child",
+        output_selectors={"answer": parse_flow_selector("child.result")},
+        nodes=(
+            FlowNodePlan(
+                name="child",
+                type="subflow",
+                kind=FlowNodeKind.SUBFLOW,
+                input_contracts=(
+                    FlowNodeContract(
+                        name="prompt",
+                        type=FlowInputType.STRING,
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.TEXT,
+                    ),
+                ),
+                mappings=(
+                    FlowMappingPlan(
+                        target="prompt",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("input.prompt"),
+                    ),
+                ),
+                metadata={
+                    "subflow": {
+                        "plan": child_result.plan,
+                        "output_mapping": {"result": "answer"},
+                    }
+                },
+            ),
+        ),
+        edges=(),
+    )
+
+
+def _failing_strict_subflow_flow_plan() -> FlowExecutionPlan:
+    child_plan = FlowExecutionPlan(
+        name="queued-failing-child",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_node="missing",
+        output_selectors={"answer": parse_flow_selector("missing.value")},
+        nodes=(
+            FlowNodePlan(
+                name="missing",
+                type="missing",
+                kind=FlowNodeKind.PASS_THROUGH,
+            ),
+        ),
+    )
+    return FlowExecutionPlan(
+        name="queued-failing-subflow",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_node="child",
+        output_selectors={"answer": parse_flow_selector("child.result")},
+        nodes=(
+            FlowNodePlan(
+                name="child",
+                type="subflow",
+                kind=FlowNodeKind.SUBFLOW,
+                mappings=(
+                    FlowMappingPlan(
+                        target="prompt",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("input.prompt"),
+                    ),
+                ),
+                metadata={
+                    "subflow": {
+                        "plan": child_plan,
+                        "output_mapping": {"result": "answer"},
+                    }
+                },
+            ),
+        ),
+        edges=(),
     )
 
 

@@ -101,6 +101,9 @@ class FlowExecutionRecord:
     created_at: datetime
     updated_at: datetime
     node_attempts: tuple[FlowNodeAttemptRecord, ...] = ()
+    node_outputs: FlowSnapshotMetadata = field(
+        default_factory=empty_snapshot_metadata
+    )
     selected_outputs: FlowSnapshotMetadata = field(
         default_factory=empty_snapshot_metadata
     )
@@ -126,6 +129,11 @@ class FlowExecutionRecord:
             key = (attempt.node, attempt.attempt)
             assert key not in attempt_keys, "node attempts must be unique"
             attempt_keys.add(key)
+        object.__setattr__(
+            self,
+            "node_outputs",
+            freeze_snapshot_metadata(self.node_outputs),
+        )
         object.__setattr__(
             self,
             "selected_outputs",
@@ -161,6 +169,7 @@ class FlowExecutionRecord:
             "node_attempts": tuple(
                 attempt.as_snapshot() for attempt in self.node_attempts
             ),
+            "node_outputs": self.node_outputs,
             "selected_outputs": self.selected_outputs,
             "loop_counters": self.loop_counters,
             "pause_tokens": self.pause_tokens,
@@ -177,6 +186,7 @@ class FlowExecutionRecord:
 class FlowExecutionUpdate:
     trace: FlowExecutionTrace | None = None
     node_attempts: tuple[FlowNodeAttemptRecord, ...] | None = None
+    node_outputs: Mapping[str, object] | None = None
     selected_outputs: Mapping[str, object] | None = None
     loop_counters: Mapping[str, int] | None = None
     pause_tokens: Mapping[str, str] | None = None
@@ -191,6 +201,8 @@ class FlowExecutionUpdate:
             assert isinstance(self.node_attempts, tuple)
             for attempt in self.node_attempts:
                 assert isinstance(attempt, FlowNodeAttemptRecord)
+        if self.node_outputs is not None:
+            freeze_snapshot_metadata(self.node_outputs)
         if self.selected_outputs is not None:
             freeze_snapshot_metadata(self.selected_outputs)
         if self.loop_counters is not None:
@@ -212,6 +224,7 @@ class FlowStateStore(Protocol):
         *,
         trace: FlowExecutionTrace,
         node_attempts: tuple[FlowNodeAttemptRecord, ...] = (),
+        node_outputs: Mapping[str, object] | None = None,
         selected_outputs: Mapping[str, object] | None = None,
         loop_counters: Mapping[str, int] | None = None,
         pause_tokens: Mapping[str, str] | None = None,
@@ -254,6 +267,7 @@ class InMemoryFlowStateStore:
         *,
         trace: FlowExecutionTrace,
         node_attempts: tuple[FlowNodeAttemptRecord, ...] = (),
+        node_outputs: Mapping[str, object] | None = None,
         selected_outputs: Mapping[str, object] | None = None,
         loop_counters: Mapping[str, int] | None = None,
         pause_tokens: Mapping[str, str] | None = None,
@@ -274,6 +288,7 @@ class InMemoryFlowStateStore:
                 created_at=now,
                 updated_at=now,
                 node_attempts=node_attempts,
+                node_outputs=node_outputs,
                 selected_outputs=selected_outputs,
                 loop_counters=loop_counters,
                 pause_tokens=pause_tokens,
@@ -345,6 +360,7 @@ class PgsqlFlowStateStore:
         *,
         trace: FlowExecutionTrace,
         node_attempts: tuple[FlowNodeAttemptRecord, ...] = (),
+        node_outputs: Mapping[str, object] | None = None,
         selected_outputs: Mapping[str, object] | None = None,
         loop_counters: Mapping[str, int] | None = None,
         pause_tokens: Mapping[str, str] | None = None,
@@ -364,6 +380,7 @@ class PgsqlFlowStateStore:
                 created_at=now,
                 updated_at=now,
                 node_attempts=node_attempts,
+                node_outputs=node_outputs,
                 selected_outputs=selected_outputs,
                 loop_counters=loop_counters,
                 pause_tokens=pause_tokens,
@@ -539,6 +556,10 @@ def flow_execution_record_from_snapshot(
                 "node_attempts",
             )
         ),
+        node_outputs=_snapshot_mapping(
+            payload.get("node_outputs", {}),
+            "node_outputs",
+        ),
         selected_outputs=_snapshot_mapping(
             payload.get("selected_outputs", {}),
             "selected_outputs",
@@ -586,6 +607,7 @@ def _flow_execution_record(
     created_at: datetime,
     updated_at: datetime,
     node_attempts: tuple[FlowNodeAttemptRecord, ...],
+    node_outputs: Mapping[str, object] | None,
     selected_outputs: Mapping[str, object] | None,
     loop_counters: Mapping[str, int] | None,
     pause_tokens: Mapping[str, str] | None,
@@ -600,6 +622,7 @@ def _flow_execution_record(
         created_at=created_at,
         updated_at=updated_at,
         node_attempts=node_attempts,
+        node_outputs=freeze_snapshot_metadata(node_outputs),
         selected_outputs=freeze_snapshot_metadata(selected_outputs),
         loop_counters=_freeze_loop_counters(loop_counters or {}),
         pause_tokens=_freeze_pause_tokens(pause_tokens or {}),
@@ -625,6 +648,11 @@ def _updated_record(
             current.node_attempts
             if update.node_attempts is None
             else update.node_attempts
+        ),
+        node_outputs=(
+            current.node_outputs
+            if update.node_outputs is None
+            else freeze_snapshot_metadata(update.node_outputs)
         ),
         selected_outputs=(
             current.selected_outputs
@@ -768,6 +796,7 @@ def _insert_flow_execution_params(
         _json(
             tuple(attempt.as_snapshot() for attempt in record.node_attempts)
         ),
+        _json(record.node_outputs),
         _json(record.selected_outputs),
         _json(record.loop_counters),
         _json(record.pause_tokens),
@@ -804,6 +833,11 @@ def _update_flow_execution_params(
         (
             _json(freeze_snapshot_metadata(update.selected_outputs))
             if update.selected_outputs is not None
+            else None
+        ),
+        (
+            _json(freeze_snapshot_metadata(update.node_outputs))
+            if update.node_outputs is not None
             else None
         ),
         (
@@ -867,6 +901,10 @@ def _flow_execution_from_row(row: Mapping[str, object]) -> FlowExecutionRecord:
         node_attempts=tuple(
             flow_node_attempt_from_snapshot(item)
             for item in _sequence(row["node_attempts"], "node_attempts")
+        ),
+        node_outputs=_snapshot_mapping(
+            row.get("node_outputs", {}),
+            "node_outputs",
         ),
         selected_outputs=_snapshot_mapping(
             row["selected_outputs"],
@@ -1057,11 +1095,11 @@ SELECT "run_id" FROM "task_runs" WHERE "run_id" = %s
 _INSERT_FLOW_EXECUTION_SQL = """
 INSERT INTO "task_flow_executions" (
     "task_run_id", "revision", "trace", "node_attempts",
-    "selected_outputs", "loop_counters", "pause_tokens", "diagnostics",
-    "artifact_refs", "metadata", "created_at", "updated_at"
+    "node_outputs", "selected_outputs", "loop_counters", "pause_tokens",
+    "diagnostics", "artifact_refs", "metadata", "created_at", "updated_at"
 ) VALUES (
     %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
-    %s::jsonb, %s::jsonb, %s::jsonb, %s, %s
+    %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s
 )
 ON CONFLICT ("task_run_id") DO NOTHING
 RETURNING *
@@ -1075,6 +1113,7 @@ SET "revision" = "revision" + 1,
     "trace" = COALESCE(%s::jsonb, "trace"),
     "node_attempts" = COALESCE(%s::jsonb, "node_attempts"),
     "selected_outputs" = COALESCE(%s::jsonb, "selected_outputs"),
+    "node_outputs" = COALESCE(%s::jsonb, "node_outputs"),
     "loop_counters" = COALESCE(%s::jsonb, "loop_counters"),
     "pause_tokens" = COALESCE(%s::jsonb, "pause_tokens"),
     "diagnostics" = COALESCE(%s::jsonb, "diagnostics"),

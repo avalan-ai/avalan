@@ -414,14 +414,15 @@ class FakeCursor:
             "revision": params[1],
             "trace": loads(cast(str, params[2])),
             "node_attempts": loads(cast(str, params[3])),
-            "selected_outputs": loads(cast(str, params[4])),
-            "loop_counters": loads(cast(str, params[5])),
-            "pause_tokens": loads(cast(str, params[6])),
-            "diagnostics": loads(cast(str, params[7])),
-            "artifact_refs": loads(cast(str, params[8])),
-            "metadata": loads(cast(str, params[9])),
-            "created_at": params[10],
-            "updated_at": params[11],
+            "node_outputs": loads(cast(str, params[4])),
+            "selected_outputs": loads(cast(str, params[5])),
+            "loop_counters": loads(cast(str, params[6])),
+            "pause_tokens": loads(cast(str, params[7])),
+            "diagnostics": loads(cast(str, params[8])),
+            "artifact_refs": loads(cast(str, params[9])),
+            "metadata": loads(cast(str, params[10])),
+            "created_at": params[11],
+            "updated_at": params[12],
         }
         self.database.flow_executions[task_run_id] = row
         return row
@@ -430,24 +431,25 @@ class FakeCursor:
         self,
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
-        task_run_id = cast(str, params[9])
+        task_run_id = cast(str, params[10])
         row = self.database.flow_executions.get(task_run_id)
-        if row is None or row["revision"] != params[10]:
+        if row is None or row["revision"] != params[11]:
             return None
         for index, key in (
             (0, "trace"),
             (1, "node_attempts"),
             (2, "selected_outputs"),
-            (3, "loop_counters"),
-            (4, "pause_tokens"),
-            (5, "diagnostics"),
-            (6, "artifact_refs"),
-            (7, "metadata"),
+            (3, "node_outputs"),
+            (4, "loop_counters"),
+            (5, "pause_tokens"),
+            (6, "diagnostics"),
+            (7, "artifact_refs"),
+            (8, "metadata"),
         ):
             if params[index] is not None:
                 row[key] = loads(cast(str, params[index]))
         row["revision"] = cast(int, row["revision"]) + 1
-        row["updated_at"] = params[8]
+        row["updated_at"] = params[9]
         return row
 
     def _insert_attempt(
