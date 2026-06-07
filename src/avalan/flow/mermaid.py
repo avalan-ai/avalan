@@ -4,7 +4,20 @@ from .diagnostics import (
     FlowDiagnosticSeverity,
     FlowSourceSpan,
 )
-from .view import FlowViewImportMode
+from .view import (
+    FlowView,
+    FlowViewClassDefinition,
+    FlowViewComment,
+    FlowViewDirection,
+    FlowViewEdge,
+    FlowViewEdgeStyle,
+    FlowViewGroup,
+    FlowViewImportMode,
+    FlowViewLinkStyle,
+    FlowViewNode,
+    FlowViewNodeShape,
+    FlowViewStyle,
+)
 
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -326,6 +339,39 @@ class MermaidImportValidationResult:
     def __post_init__(self) -> None:
         assert isinstance(self.import_mode, FlowViewImportMode)
         assert isinstance(self.parse_result, MermaidParseResult)
+        assert isinstance(
+            self.diagnostics,
+            tuple,
+        ), "diagnostics must be a tuple"
+        for diagnostic in self.diagnostics:
+            assert isinstance(diagnostic, FlowDiagnostic)
+
+    @property
+    def ok(self) -> bool:
+        return not any(
+            diagnostic.severity == FlowDiagnosticSeverity.ERROR
+            for diagnostic in self.diagnostics
+        )
+
+    @property
+    def public_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MermaidFlowViewNormalizationResult:
+    import_validation: MermaidImportValidationResult
+    view: FlowView
+    diagnostics: tuple[FlowDiagnostic, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(
+            self.import_validation,
+            MermaidImportValidationResult,
+        )
+        assert isinstance(self.view, FlowView)
         assert isinstance(
             self.diagnostics,
             tuple,
@@ -970,9 +1016,10 @@ class _MermaidAstParser:
     ) -> tuple[list[MermaidAstNode], list[MermaidAstEdge], int]:
         nodes: list[MermaidAstNode] = []
         edges: list[MermaidAstEdge] = []
-        node, position = _parse_node(tokens, 0)
-        assert node is not None
-        nodes.append(node)
+        source_group, position = _parse_node_group(tokens, 0)
+        assert source_group
+        nodes.extend(source_group)
+        current_sources = source_group
         while position < len(tokens):
             arrow_position = position
             arrow = tokens[position]
@@ -986,22 +1033,26 @@ class _MermaidAstParser:
             ):
                 label = _strip_label(tokens[position].value)
                 position += 1
-            target, next_position = _parse_node(tokens, position)
-            if target is None:
+            target_group, next_position = _parse_node_group(tokens, position)
+            if not target_group:
                 return nodes, edges, arrow_position
-            assert target.source_span is not None
-            nodes.append(target)
-            edges.append(
-                MermaidAstEdge(
-                    source=nodes[-2].id,
-                    target=target.id,
-                    arrow=arrow.value,
-                    label=label,
-                    source_span=_combine_spans(
-                        arrow.source_span, target.source_span
-                    ),
-                )
-            )
+            nodes.extend(target_group)
+            for source in current_sources:
+                for target in target_group:
+                    assert target.source_span is not None
+                    edges.append(
+                        MermaidAstEdge(
+                            source=source.id,
+                            target=target.id,
+                            arrow=arrow.value,
+                            label=label,
+                            source_span=_combine_spans(
+                                arrow.source_span,
+                                target.source_span,
+                            ),
+                        )
+                    )
+            current_sources = target_group
             position = next_position
         return nodes, edges, position
 
@@ -1085,6 +1136,39 @@ def parse_mermaid_import(
     )
 
 
+def normalize_mermaid_flow_view(
+    text: str,
+    *,
+    import_mode: FlowViewImportMode,
+    source: str | None = None,
+) -> MermaidFlowViewNormalizationResult:
+    assert isinstance(text, str), "text must be a string"
+    assert isinstance(import_mode, FlowViewImportMode)
+    if source is not None:
+        assert source.strip(), "source must be non-empty"
+    return normalize_mermaid_import_to_flow_view(
+        parse_mermaid_import(
+            text,
+            import_mode=import_mode,
+            source=source,
+        )
+    )
+
+
+def normalize_mermaid_import_to_flow_view(
+    import_validation: MermaidImportValidationResult,
+) -> MermaidFlowViewNormalizationResult:
+    assert isinstance(import_validation, MermaidImportValidationResult)
+    view = _MermaidFlowViewNormalizer(
+        import_validation=import_validation,
+    ).normalize()
+    return MermaidFlowViewNormalizationResult(
+        import_validation=import_validation,
+        view=view,
+        diagnostics=view.diagnostics,
+    )
+
+
 def parse_mermaid_tokens(
     tokens: tuple[MermaidToken, ...],
     diagnostics: tuple[FlowDiagnostic, ...] = (),
@@ -1129,6 +1213,295 @@ def tokenize_mermaid(
     if source is not None:
         assert source.strip(), "source must be non-empty"
     return _MermaidTokenizer(text=text, source=source).tokenize()
+
+
+@dataclass(slots=True)
+class _FlowViewNodeDraft:
+    id: str
+    label: str | None = None
+    shape: FlowViewNodeShape = FlowViewNodeShape.RECTANGLE
+    source_span: FlowSourceSpan | None = None
+    implicit: bool = True
+    group: str | None = None
+    classes: list[str] = field(default_factory=list)
+    style: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def merge(
+        self,
+        node: MermaidAstNode,
+        *,
+        group: str | None,
+        implicit: bool,
+    ) -> None:
+        shape = _shape_from_tokens(node.shape_tokens)
+        if node.label is not None:
+            self.label = node.label
+        if shape != FlowViewNodeShape.RECTANGLE:
+            self.shape = shape
+        if self.source_span is None or not implicit:
+            self.source_span = node.source_span
+        self.implicit = self.implicit and implicit
+        if self.group is None:
+            self.group = group
+        if node.shape_tokens:
+            self.metadata["mermaid"] = {"shape_tokens": node.shape_tokens}
+
+    def to_node(self) -> FlowViewNode:
+        return FlowViewNode(
+            id=self.id,
+            label=self.label,
+            shape=self.shape,
+            classes=tuple(self.classes),
+            style=self.style,
+            metadata=self.metadata,
+            source_span=self.source_span,
+            implicit=self.implicit,
+            group=self.group,
+        )
+
+
+@dataclass(slots=True)
+class _FlowViewGroupDraft:
+    id: str
+    label: str | None = None
+    parent: str | None = None
+    source_span: FlowSourceSpan | None = None
+    nodes: list[str] = field(default_factory=list)
+    groups: list[str] = field(default_factory=list)
+    classes: list[str] = field(default_factory=list)
+    style: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def to_group(self) -> FlowViewGroup:
+        return FlowViewGroup(
+            id=self.id,
+            label=self.label,
+            parent=self.parent,
+            nodes=tuple(self.nodes),
+            groups=tuple(self.groups),
+            classes=tuple(self.classes),
+            style=self.style,
+            metadata=self.metadata,
+            source_span=self.source_span,
+        )
+
+
+@dataclass(slots=True)
+class _MermaidFlowViewNormalizer:
+    import_validation: MermaidImportValidationResult
+    nodes: dict[str, _FlowViewNodeDraft] = field(default_factory=dict)
+    edges: list[FlowViewEdge] = field(default_factory=list)
+    edge_ids: set[str] = field(default_factory=set)
+    groups: dict[str, _FlowViewGroupDraft] = field(default_factory=dict)
+    class_definitions: list[FlowViewClassDefinition] = field(
+        default_factory=list
+    )
+    styles: list[FlowViewStyle] = field(default_factory=list)
+    link_styles: list[FlowViewLinkStyle] = field(default_factory=list)
+    comments: list[FlowViewComment] = field(default_factory=list)
+
+    def normalize(self) -> FlowView:
+        ast = self.import_validation.parse_result.ast
+        self._visit_statements(ast.statements, group=None)
+        return FlowView(
+            import_mode=self.import_validation.import_mode,
+            direction=_view_direction(ast.direction),
+            nodes=tuple(draft.to_node() for draft in self.nodes.values()),
+            edges=tuple(self.edges),
+            groups=tuple(draft.to_group() for draft in self.groups.values()),
+            class_definitions=tuple(self.class_definitions),
+            styles=tuple(self.styles),
+            link_styles=tuple(self.link_styles),
+            comments=tuple(self.comments),
+            diagnostics=self.import_validation.diagnostics,
+            metadata={
+                "format": {
+                    "name": "mermaid",
+                    "diagram_kind": (
+                        ast.diagram_kind.value if ast.diagram_kind else None
+                    ),
+                }
+            },
+            source_span=ast.source_span,
+        )
+
+    def _visit_statements(
+        self,
+        statements: tuple[MermaidAstStatement, ...],
+        *,
+        group: str | None,
+    ) -> None:
+        for statement in statements:
+            if isinstance(statement, MermaidAstNodeStatement):
+                self._record_node(statement.node, group=group, implicit=False)
+            elif isinstance(statement, MermaidAstEdgeStatement):
+                self._record_edge_statement(statement, group=group)
+            elif isinstance(statement, MermaidAstSubgraph):
+                self._record_group(statement, parent=group)
+            elif isinstance(statement, MermaidAstDirective):
+                self._record_directive(statement)
+            elif isinstance(statement, MermaidAstComment):
+                self.comments.append(
+                    FlowViewComment(
+                        text=statement.text,
+                        source_span=statement.source_span,
+                    )
+                )
+
+    def _record_edge_statement(
+        self,
+        statement: MermaidAstEdgeStatement,
+        *,
+        group: str | None,
+    ) -> None:
+        for node in statement.nodes:
+            self._record_node(
+                node,
+                group=group,
+                implicit=not node.label and not node.shape_tokens,
+            )
+        for edge in statement.edges:
+            self._record_edge(edge)
+
+    def _record_group(
+        self,
+        statement: MermaidAstSubgraph,
+        *,
+        parent: str | None,
+    ) -> None:
+        draft = self.groups.get(statement.id)
+        if draft is None:
+            draft = _FlowViewGroupDraft(
+                id=statement.id,
+                label=statement.label,
+                parent=parent,
+                source_span=statement.source_span,
+            )
+            self.groups[statement.id] = draft
+        else:
+            if statement.label is not None:
+                draft.label = statement.label
+            if draft.parent is None:
+                draft.parent = parent
+        if parent is not None:
+            parent_draft = self.groups[parent]
+            _append_unique(parent_draft.groups, statement.id)
+        self._visit_statements(statement.statements, group=statement.id)
+
+    def _record_directive(self, statement: MermaidAstDirective) -> None:
+        match statement.kind:
+            case MermaidAstDirectiveKind.CLASS_DEF:
+                self._record_class_definition(statement)
+            case MermaidAstDirectiveKind.CLASS:
+                self._record_class(statement)
+            case MermaidAstDirectiveKind.STYLE:
+                self._record_style(statement)
+            case MermaidAstDirectiveKind.LINK_STYLE:
+                self._record_link_style(statement)
+            case _:
+                return
+
+    def _record_class_definition(
+        self,
+        statement: MermaidAstDirective,
+    ) -> None:
+        if len(statement.arguments) < 2:
+            return
+        self.class_definitions.append(
+            FlowViewClassDefinition(
+                name=statement.arguments[0],
+                properties=_style_properties(statement.arguments[1:]),
+                source_span=statement.source_span,
+            )
+        )
+
+    def _record_class(self, statement: MermaidAstDirective) -> None:
+        targets = _class_targets(statement.arguments)
+        classes = _class_names(statement.arguments)
+        for target in targets:
+            node = self.nodes.get(target)
+            if node is not None:
+                for class_name in classes:
+                    _append_unique(node.classes, class_name)
+
+    def _record_style(self, statement: MermaidAstDirective) -> None:
+        if len(statement.arguments) < 2:
+            return
+        target = statement.arguments[0]
+        properties = _style_properties(statement.arguments[1:])
+        self.styles.append(
+            FlowViewStyle(
+                target=target,
+                properties=properties,
+                source_span=statement.source_span,
+            )
+        )
+        node = self.nodes.get(target)
+        if node is not None:
+            node.style.update(properties)
+
+    def _record_link_style(self, statement: MermaidAstDirective) -> None:
+        if len(statement.arguments) < 2:
+            return
+        target = statement.arguments[0]
+        properties = _style_properties(statement.arguments[1:])
+        if target.isdigit():
+            self.link_styles.append(
+                FlowViewLinkStyle(
+                    edge_index=int(target),
+                    properties=properties,
+                    source_span=statement.source_span,
+                )
+            )
+            return
+        self.link_styles.append(
+            FlowViewLinkStyle(
+                edge=target,
+                properties=properties,
+                source_span=statement.source_span,
+            )
+        )
+
+    def _record_node(
+        self,
+        node: MermaidAstNode,
+        *,
+        group: str | None,
+        implicit: bool,
+    ) -> None:
+        draft = self.nodes.get(node.id)
+        if draft is None:
+            draft = _FlowViewNodeDraft(id=node.id)
+            self.nodes[node.id] = draft
+        draft.merge(node, group=group, implicit=implicit)
+        if group is not None:
+            _append_unique(self.groups[group].nodes, node.id)
+
+    def _record_edge(self, edge: MermaidAstEdge) -> None:
+        edge_id = self._next_edge_id(edge.source, edge.target)
+        self.edges.append(
+            FlowViewEdge(
+                id=edge_id,
+                source=edge.source,
+                target=edge.target,
+                label=edge.label,
+                style=_edge_style(edge.arrow),
+                metadata={"mermaid": {"arrow": edge.arrow}},
+                source_span=edge.source_span,
+                bidirectional=_is_bidirectional_arrow(edge.arrow),
+            )
+        )
+
+    def _next_edge_id(self, source: str, target: str) -> str:
+        base = f"{_id_fragment(source)}_to_{_id_fragment(target)}"
+        candidate = base
+        index = 2
+        while candidate in self.edge_ids:
+            candidate = f"{base}_{index}"
+            index += 1
+        self.edge_ids.add(candidate)
+        return candidate
 
 
 def _import_parser_diagnostics(
@@ -1552,6 +1925,28 @@ def _parse_node(
     )
 
 
+def _parse_node_group(
+    tokens: tuple[MermaidToken, ...],
+    position: int,
+) -> tuple[tuple[MermaidAstNode, ...], int]:
+    nodes: list[MermaidAstNode] = []
+    node, next_position = _parse_node(tokens, position)
+    if node is None:
+        return (), position
+    nodes.append(node)
+    position = next_position
+    while (
+        position < len(tokens)
+        and tokens[position].type == MermaidTokenType.SHORTHAND_SEPARATOR
+    ):
+        node, next_position = _parse_node(tokens, position + 1)
+        if node is None:
+            return tuple(nodes), position
+        nodes.append(node)
+        position = next_position
+    return tuple(nodes), position
+
+
 def _label_from_tokens(tokens: tuple[MermaidToken, ...]) -> str | None:
     for token in tokens:
         if token.type in (
@@ -1570,6 +1965,81 @@ def _strip_label(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in '"`|':
         return value[1:-1]
     return value
+
+
+def _view_direction(value: str | None) -> FlowViewDirection | None:
+    if value is None:
+        return None
+    return FlowViewDirection(value)
+
+
+def _shape_from_tokens(
+    tokens: tuple[str, ...],
+) -> FlowViewNodeShape:
+    match tokens:
+        case ("(", "[", "]", ")"):
+            return FlowViewNodeShape.STADIUM
+        case ("[", "[", "]", "]"):
+            return FlowViewNodeShape.SUBROUTINE
+        case ("[", "(", ")", "]"):
+            return FlowViewNodeShape.CYLINDER
+        case ("(", "(", ")", ")"):
+            return FlowViewNodeShape.CIRCLE
+        case ("{", "{", "}", "}"):
+            return FlowViewNodeShape.HEXAGON
+        case ("(", ")"):
+            return FlowViewNodeShape.ROUNDED
+        case ("{", "}"):
+            return FlowViewNodeShape.DIAMOND
+        case _:
+            return FlowViewNodeShape.RECTANGLE
+
+
+def _edge_style(value: str) -> FlowViewEdgeStyle:
+    if "=" in value:
+        return FlowViewEdgeStyle.THICK
+    if "." in value:
+        return FlowViewEdgeStyle.DOTTED
+    return FlowViewEdgeStyle.SOLID
+
+
+def _is_bidirectional_arrow(value: str) -> bool:
+    return value.startswith("<") and value.endswith(">")
+
+
+def _style_properties(arguments: tuple[str, ...]) -> dict[str, str]:
+    properties: dict[str, str] = {}
+    for pair in "".join(arguments).split(","):
+        key, separator, value = pair.partition(":")
+        if separator and key.strip() and value.strip():
+            properties[key.strip()] = value.strip()
+    return properties
+
+
+def _class_targets(arguments: tuple[str, ...]) -> tuple[str, ...]:
+    if len(arguments) < 2:
+        return ()
+    return tuple(argument for argument in arguments[:-1] if argument != ",")
+
+
+def _class_names(arguments: tuple[str, ...]) -> tuple[str, ...]:
+    if len(arguments) < 2:
+        return ()
+    return tuple(
+        name.strip() for name in arguments[-1].split(",") if name.strip()
+    )
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
+
+
+def _id_fragment(value: str) -> str:
+    fragment = "".join(
+        character if character.isalnum() else "_" for character in value
+    ).strip("_")
+    return fragment or "node"
 
 
 def _combine_spans(
