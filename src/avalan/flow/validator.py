@@ -8,6 +8,8 @@ from .definition import (
     FlowEdgeKind,
     FlowInputMapping,
     FlowInputType,
+    FlowJoinPolicy,
+    FlowJoinPolicyType,
     FlowMappingKind,
     FlowNodeContract,
     FlowNodeDefinition,
@@ -536,6 +538,7 @@ def _validate_strict_contract(
     diagnostics.extend(
         _validate_output_behavior(definition, node_names, registry)
     )
+    diagnostics.extend(_validate_join_policies(definition, registry))
     diagnostics.extend(
         _validate_node_mappings(definition, node_names, registry)
     )
@@ -689,6 +692,123 @@ def _validate_named_contracts(
     return tuple(diagnostics)
 
 
+def _validate_join_policies(
+    definition: FlowDefinition,
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    inbound_counts = {node.name: 0 for node in definition.nodes}
+    for edge in definition.edges:
+        inbound_counts[edge.target] += 1
+    for node in definition.nodes:
+        inbound_count = inbound_counts[node.name]
+        path = f"nodes.{node.name}.join_policy"
+        if inbound_count > 1 and node.join_policy is None:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.missing_join_policy",
+                    path=path,
+                    message="Flow node has multiple inbound paths.",
+                    hint="Declare a join policy for fan-in nodes.",
+                )
+            )
+            continue
+        if node.join_policy is None:
+            continue
+        diagnostics.extend(
+            _validate_join_policy_shape(
+                node.join_policy,
+                path=path,
+                inbound_count=inbound_count,
+            )
+        )
+        diagnostics.extend(
+            _validate_join_policy_optional_inputs(
+                node,
+                registry,
+                path=path,
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_join_policy_shape(
+    policy: FlowJoinPolicy,
+    *,
+    path: str,
+    inbound_count: int,
+) -> tuple[FlowDiagnostic, ...]:
+    if policy.type == FlowJoinPolicyType.QUORUM:
+        if policy.quorum is None:
+            return (
+                _diagnostic(
+                    code="flow.missing_join_quorum",
+                    path=f"{path}.quorum",
+                    message="Flow quorum join policy is missing quorum.",
+                    hint="Set a positive quorum no larger than inbound paths.",
+                ),
+            )
+        if policy.quorum <= 0 or policy.quorum > inbound_count:
+            return (
+                _diagnostic(
+                    code="flow.invalid_join_quorum",
+                    path=f"{path}.quorum",
+                    message="Flow quorum join policy is invalid.",
+                    hint="Use a positive quorum no larger than inbound paths.",
+                ),
+            )
+        return ()
+    if policy.quorum is None:
+        return ()
+    return (
+        _diagnostic(
+            code="flow.unsupported_join_field",
+            path=f"{path}.quorum",
+            message="Flow join policy field is not supported.",
+            hint="Use quorum only with the quorum join policy.",
+        ),
+    )
+
+
+def _validate_join_policy_optional_inputs(
+    node: FlowNodeDefinition,
+    registry: FlowNodeRegistry,
+    *,
+    path: str,
+) -> tuple[FlowDiagnostic, ...]:
+    assert node.join_policy is not None
+    diagnostics: list[FlowDiagnostic] = []
+    seen: set[str] = set()
+    metadata = registry.metadata(node.type)
+    known_inputs = {
+        contract.name
+        for contract in (metadata.input_contracts if metadata else ())
+        if contract.name is not None
+    }
+    for index, name in enumerate(node.join_policy.optional_inputs):
+        input_path = f"{path}.optional_inputs[{index}]"
+        if name in seen:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.duplicate_join_optional_input",
+                    path=input_path,
+                    message="Flow join optional input is duplicated.",
+                    hint="List each optional input once.",
+                )
+            )
+        seen.add(name)
+        if name not in known_inputs:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.unknown_join_optional_input",
+                    path=input_path,
+                    message="Flow join optional input is unknown.",
+                    hint="Reference a declared target input contract.",
+                )
+            )
+    return tuple(diagnostics)
+
+
 def _validate_output_behavior(
     definition: FlowDefinition,
     node_names: set[str],
@@ -796,6 +916,7 @@ def _validate_node_mappings(
             if contract.name is not None
             and not contract.metadata.get("optional")
             and not contract.metadata.get("dynamic")
+            and contract.name not in _join_optional_inputs(node.join_policy)
         }
         mapped_targets: set[str] = set()
         seen_targets: set[str] = set()
@@ -846,6 +967,14 @@ def _validate_node_mappings(
                 )
             )
     return tuple(diagnostics)
+
+
+def _join_optional_inputs(
+    join_policy: FlowJoinPolicy | None,
+) -> frozenset[str]:
+    if join_policy is None:
+        return frozenset()
+    return frozenset(join_policy.optional_inputs)
 
 
 def _validate_edge_conditions(

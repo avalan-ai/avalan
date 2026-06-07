@@ -86,6 +86,16 @@ class FlowRouteMatchPolicy(StrEnum):
     ALL_MATCHING = "all_matching"
 
 
+class FlowJoinPolicyType(StrEnum):
+    ALL_SUCCESS = "all_success"
+    ALL_DONE = "all_done"
+    ANY_SUCCESS = "any_success"
+    QUORUM = "quorum"
+    FIRST_SUCCESS = "first_success"
+    FAIL_FAST = "fail_fast"
+    COLLECT = "collect"
+
+
 def _empty_mapping() -> FlowMetadata:
     return MappingProxyType({})
 
@@ -258,6 +268,22 @@ class FlowInputMapping:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class FlowJoinPolicy:
+    type: FlowJoinPolicyType
+    quorum: int | None = None
+    optional_inputs: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.type, FlowJoinPolicyType)
+        if self.quorum is not None:
+            assert isinstance(self.quorum, int) and not isinstance(
+                self.quorum,
+                bool,
+            )
+        _assert_string_tuple(self.optional_inputs, "optional_inputs")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FlowNodeMetadata:
     kind: FlowNodeKind | None = None
     supports_ref: bool = False
@@ -315,6 +341,7 @@ class FlowNodeDefinition:
     ref: str | None = None
     input: str | None = None
     output: str | None = None
+    join_policy: FlowJoinPolicy | None = None
     mappings: tuple[FlowInputMapping, ...] = ()
     config: FlowMetadata = field(default_factory=_empty_mapping)
 
@@ -327,6 +354,8 @@ class FlowNodeDefinition:
             _assert_non_empty_string(self.input, "input")
         if self.output is not None:
             _assert_non_empty_string(self.output, "output")
+        if self.join_policy is not None:
+            assert isinstance(self.join_policy, FlowJoinPolicy)
         _assert_mapping_tuple(self.mappings, "mappings")
         object.__setattr__(self, "config", _freeze_mapping(self.config))
 
