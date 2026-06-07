@@ -78,3 +78,15 @@ from .selector import FlowSelectorStepKind as FlowSelectorStepKind
 from .selector import parse_flow_selector as parse_flow_selector
 from .validator import FlowValidationResult as FlowValidationResult
 from .validator import validate_flow_definition as validate_flow_definition
+from .view import FlowView as FlowView
+from .view import FlowViewClassDefinition as FlowViewClassDefinition
+from .view import FlowViewComment as FlowViewComment
+from .view import FlowViewDirection as FlowViewDirection
+from .view import FlowViewEdge as FlowViewEdge
+from .view import FlowViewEdgeStyle as FlowViewEdgeStyle
+from .view import FlowViewGroup as FlowViewGroup
+from .view import FlowViewImportMode as FlowViewImportMode
+from .view import FlowViewLinkStyle as FlowViewLinkStyle
+from .view import FlowViewNode as FlowViewNode
+from .view import FlowViewNodeShape as FlowViewNodeShape
+from .view import FlowViewStyle as FlowViewStyle
