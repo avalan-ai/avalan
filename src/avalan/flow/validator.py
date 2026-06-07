@@ -1,11 +1,25 @@
-from .definition import FlowDefinition, FlowNodeDefinition, FlowNodeKind
+from .definition import (
+    FlowDefinition,
+    FlowNodeContract,
+    FlowNodeDefinition,
+    FlowNodeKind,
+)
 from .diagnostics import (
     FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
 )
 from .registry import FlowNodeRegistry, default_flow_node_registry
+from .selector import (
+    FlowSelector,
+    FlowSelectorError,
+    FlowSelectorRoot,
+    FlowSelectorStep,
+    FlowSelectorStepKind,
+    parse_flow_selector,
+)
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 
@@ -29,14 +43,6 @@ _UNTRUSTED_NODE_TYPES = frozenset(
         "module",
         "python",
         "python_callable",
-    }
-)
-_RESERVED_FILE_SELECTOR_SOURCES = frozenset(
-    {
-        "__task_files__",
-        "__task_input__",
-        "file",
-        "files",
     }
 )
 _UNSUPPORTED_NODE_CODES = frozenset(
@@ -250,7 +256,7 @@ def _validate_graph_contract(
         )
     else:
         diagnostics.extend(_validate_legacy_graph_contract(definition))
-    diagnostics.extend(_validate_agent_file_selectors(definition))
+    diagnostics.extend(_validate_agent_file_selectors(definition, registry))
     if _cycle_nodes(definition):
         diagnostics.append(
             _diagnostic(
@@ -504,35 +510,44 @@ def _validate_output_behavior(
             )
         )
     for name, selector in definition.output_behavior.outputs.items():
-        parts = selector.split(".", 1)
-        if len(parts) != 2 or any(not part.strip() for part in parts):
-            diagnostics.append(
-                _diagnostic(
-                    code="flow.invalid_output_selector",
-                    path=f"flow.output_behavior.outputs.{name}",
-                    message="Flow output behavior selector is invalid.",
-                    hint="Use a node output selector.",
-                )
+        path = f"flow.output_behavior.outputs.{name}"
+        try:
+            parsed = parse_flow_selector(
+                selector,
+                allowed_roots=frozenset({FlowSelectorRoot.NODE_OUTPUT}),
             )
+        except FlowSelectorError as error:
+            diagnostics.append(_selector_diagnostic(error, path=path))
             continue
-        if parts[0] not in node_names:
+        if parsed.source not in node_names:
             diagnostics.append(
                 _diagnostic(
                     code="flow.unknown_output_selector_node",
-                    path=f"flow.output_behavior.outputs.{name}",
+                    path=path,
                     message="Flow output behavior references an unknown node.",
                     hint="Reference a declared node output.",
                 )
             )
             continue
-        node = definition.node_map[parts[0]]
-        if not _supports_output_name(registry, node.type, parts[1]):
+        node = definition.node_map[parsed.source]
+        assert parsed.output is not None
+        if not _supports_output_name(registry, node.type, parsed.output):
             diagnostics.append(
                 _diagnostic(
                     code="flow.unknown_node_output",
-                    path=f"flow.output_behavior.outputs.{name}",
+                    path=path,
                     message="Flow output behavior references unknown output.",
                     hint="Reference a declared output for the selected node.",
+                )
+            )
+            continue
+        if not _supports_output_path(registry, node.type, parsed):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.unknown_selector_path",
+                    path=path,
+                    message="Flow output behavior selector path is unknown.",
+                    hint="Reference fields declared by the selected output.",
                 )
             )
     return tuple(diagnostics)
@@ -555,8 +570,80 @@ def _supports_output_name(
     return output_name in names
 
 
+def _supports_output_path(
+    registry: FlowNodeRegistry,
+    node_type: str,
+    selector: FlowSelector,
+) -> bool:
+    if not selector.path:
+        return True
+    assert selector.output is not None
+    metadata = registry.metadata(node_type)
+    if metadata is None or not metadata.output_contracts:
+        return True
+    for contract in metadata.output_contracts:
+        if contract.name == selector.output:
+            return _contract_supports_path(contract, selector.path)
+        if contract.metadata.get("dynamic"):
+            return True
+    return False
+
+
+def _contract_supports_path(
+    contract: FlowNodeContract,
+    path: tuple[FlowSelectorStep, ...],
+) -> bool:
+    if contract.metadata.get("dynamic") or contract.schema_ref is not None:
+        return True
+    if contract.schema is None:
+        return True
+    return _schema_supports_path(contract.schema, path)
+
+
+def _schema_supports_path(
+    schema: Mapping[str, object],
+    path: tuple[FlowSelectorStep, ...],
+) -> bool:
+    current = schema
+    for step in path:
+        schema_type = current.get("type")
+        if step.kind == FlowSelectorStepKind.FIELD:
+            if schema_type is not None and not _schema_has_type(
+                schema_type,
+                "object",
+            ):
+                return False
+            properties = current.get("properties")
+            if not isinstance(properties, Mapping):
+                return True
+            field_schema = properties.get(step.value)
+            if not isinstance(field_schema, Mapping):
+                return False
+            current = field_schema
+            continue
+        if schema_type is not None and not _schema_has_type(
+            schema_type,
+            "array",
+        ):
+            return False
+        items = current.get("items")
+        if not isinstance(items, Mapping):
+            return True
+        current = items
+    return True
+
+
+def _schema_has_type(schema_type: object, expected: str) -> bool:
+    if isinstance(schema_type, str):
+        return schema_type == expected
+    if isinstance(schema_type, list | tuple):
+        return expected in schema_type
+    return True
+
+
 def _validate_agent_file_selectors(
     definition: FlowDefinition,
+    registry: FlowNodeRegistry,
 ) -> tuple[FlowDiagnostic, ...]:
     diagnostics: list[FlowDiagnostic] = []
     node_names = {node.name for node in definition.nodes}
@@ -580,32 +667,42 @@ def _validate_agent_file_selectors(
                 )
             )
             continue
-        parts = selector.split(".")
-        if len(parts) != 2 or any(not part.strip() for part in parts):
-            diagnostics.append(
-                _diagnostic(
-                    code="flow.invalid_node",
-                    path=path,
-                    message="Flow agent file input selector is invalid.",
-                    hint="Use a dotted upstream node output selector.",
-                )
+        try:
+            parsed = parse_flow_selector(
+                selector,
+                allowed_roots=frozenset({FlowSelectorRoot.NODE_OUTPUT}),
             )
+        except FlowSelectorError as error:
+            diagnostics.append(_selector_diagnostic(error, path=path))
             continue
-        source, _ = parts
-        if source in _RESERVED_FILE_SELECTOR_SOURCES:
-            diagnostics.append(
-                _diagnostic(
-                    code="flow.invalid_node",
-                    path=path,
-                    message="Flow agent file input selector is reserved.",
-                    hint="Reference a named upstream node output instead.",
-                )
-            )
-            continue
-        if source not in node_names:
+        if parsed.source not in node_names:
             diagnostics.append(_bad_reference_diagnostic(path))
             continue
-        if source not in incoming_sources[node.name]:
+        source_node = definition.node_map[parsed.source]
+        assert parsed.output is not None
+        if not _supports_output_name(
+            registry, source_node.type, parsed.output
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.unknown_node_output",
+                    path=path,
+                    message="Flow agent file input selector is unknown.",
+                    hint="Reference a declared upstream node output.",
+                )
+            )
+            continue
+        if not _supports_output_path(registry, source_node.type, parsed):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.unknown_selector_path",
+                    path=path,
+                    message="Flow agent file input selector path is unknown.",
+                    hint="Reference fields declared by the selected output.",
+                )
+            )
+            continue
+        if parsed.source not in incoming_sources[node.name]:
             diagnostics.append(
                 _diagnostic(
                     code="flow.bad_reference",
@@ -644,6 +741,35 @@ def _cycle_nodes(definition: FlowDefinition) -> frozenset[str]:
     for node in definition.nodes:
         visit(node.name)
     return frozenset(cycle)
+
+
+def _selector_diagnostic(
+    error: FlowSelectorError,
+    *,
+    path: str,
+) -> FlowDiagnostic:
+    if error.code == "flow.unsafe_selector":
+        return _diagnostic(
+            code=error.code,
+            path=path,
+            message="Flow selector uses an unsafe reference.",
+            hint="Use declared flow inputs or node outputs only.",
+            category=FlowDiagnosticCategory.PRIVACY,
+        )
+    if error.code == "flow.reserved_selector":
+        return _diagnostic(
+            code=error.code,
+            path=path,
+            message="Flow selector uses a reserved reference.",
+            hint="Use declared flow inputs or node outputs only.",
+            category=FlowDiagnosticCategory.PRIVACY,
+        )
+    return _diagnostic(
+        code="flow.invalid_output_selector",
+        path=path,
+        message="Flow selector is invalid.",
+        hint="Use a safe dotted selector.",
+    )
 
 
 def _is_path_escape(ref: str) -> bool:
