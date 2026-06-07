@@ -8,6 +8,17 @@ from .definition import FlowNodeDefinition as FlowNodeDefinition
 from .definition import FlowNodeMetadata as FlowNodeMetadata
 from .definition import FlowOutputDefinition as FlowOutputDefinition
 from .definition import FlowOutputType as FlowOutputType
+from .diagnostics import FlowDiagnostic as FlowDiagnostic
+from .diagnostics import FlowDiagnosticCategory as FlowDiagnosticCategory
+from .diagnostics import FlowDiagnosticCodePrefix as FlowDiagnosticCodePrefix
+from .diagnostics import FlowDiagnosticSeverity as FlowDiagnosticSeverity
+from .diagnostics import FlowSourceSpan as FlowSourceSpan
+from .diagnostics import (
+    all_flow_diagnostic_code_prefixes as all_flow_diagnostic_code_prefixes,
+)
+from .diagnostics import (
+    flow_diagnostic_code_prefixes as flow_diagnostic_code_prefixes,
+)
 from .flow import Flow as Flow
 from .loader import FlowDefinitionLoader as FlowDefinitionLoader
 from .loader import FlowLoadError as FlowLoadError

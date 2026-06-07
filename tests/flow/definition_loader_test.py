@@ -17,6 +17,7 @@ from avalan.flow import (
     FLOW_TOOL_NODE_TYPE,
     FlowDefinition,
     FlowDefinitionLoader,
+    FlowDiagnosticCategory,
     FlowInputType,
     FlowLoadError,
     FlowLoadIssueCategory,
@@ -811,8 +812,18 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             result.issues[0].category, FlowLoadIssueCategory.PARSE
         )
+        self.assertEqual(
+            result.diagnostics[0].category,
+            FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+        )
+        self.assertEqual(
+            result.public_diagnostics,
+            (result.issues[0].as_public_diagnostic_dict(),),
+        )
         self.assertNotIn("private", str(result.issues[0].as_dict()))
         self.assertNotIn("customer", str(result.issues[0].as_dict()))
+        self.assertNotIn("private", str(result.public_diagnostics))
+        self.assertNotIn("customer", str(result.public_diagnostics))
 
     def test_missing_sections_and_invalid_shapes_are_aggregated(self) -> None:
         result = loads_flow_definition_result("""
@@ -1217,6 +1228,25 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
 
                 self.assertFalse(result.ok)
                 self.assertIn(code, [issue.code for issue in result.issues])
+
+    def test_privacy_load_issues_project_to_privacy_diagnostics(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "invalid"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "echo"
+            ref = "../private-token"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "flow.path_escape")
+        self.assertEqual(
+            result.diagnostics[0].category, FlowDiagnosticCategory.PRIVACY
+        )
+        self.assertNotIn("private-token", str(result.public_diagnostics))
 
     def test_rejects_bad_edge_references_and_cycles(self) -> None:
         cases = (
