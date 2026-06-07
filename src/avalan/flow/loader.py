@@ -7,6 +7,11 @@ from .definition import (
     FlowOutputDefinition,
     FlowOutputType,
 )
+from .diagnostics import (
+    FlowDiagnostic,
+    FlowDiagnosticCategory,
+    FlowDiagnosticSeverity,
+)
 from .flow import Flow
 from .registry import (
     FlowNodeConfigurationError,
@@ -124,6 +129,19 @@ class FlowLoadIssue:
             "hint": self.hint,
         }
 
+    def to_diagnostic(self) -> FlowDiagnostic:
+        return FlowDiagnostic(
+            code=self.code,
+            path=self.path,
+            category=_diagnostic_category(self.category),
+            severity=FlowDiagnosticSeverity(self.severity.value),
+            message=self.message,
+            hint=self.hint,
+        )
+
+    def as_public_diagnostic_dict(self) -> dict[str, object]:
+        return self.to_diagnostic().as_public_dict()
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FlowLoadResult:
@@ -134,6 +152,16 @@ class FlowLoadResult:
     @property
     def ok(self) -> bool:
         return not self.issues and self.definition is not None
+
+    @property
+    def diagnostics(self) -> tuple[FlowDiagnostic, ...]:
+        return tuple(issue.to_diagnostic() for issue in self.issues)
+
+    @property
+    def public_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+        )
 
 
 class FlowLoadError(ValueError):
@@ -1062,6 +1090,14 @@ def _issue(
         hint=hint,
         category=category,
     )
+
+
+def _diagnostic_category(
+    category: FlowLoadIssueCategory,
+) -> FlowDiagnosticCategory:
+    if category == FlowLoadIssueCategory.PRIVACY:
+        return FlowDiagnosticCategory.PRIVACY
+    return FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION
 
 
 def _has_issue(
