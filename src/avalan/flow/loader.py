@@ -18,11 +18,15 @@ from .registry import (
     FlowNodeRegistry,
     default_flow_node_registry,
 )
+from .validator import (
+    flow_validation_diagnostic_load_category,
+    validate_flow_definition,
+)
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from tomllib import TOMLDecodeError, loads
 from typing import TypeVar
 
@@ -70,30 +74,6 @@ _ALLOWED_NODE_FIELDS = frozenset(
         "ref",
         "type",
         "value",
-    }
-)
-_KNOWN_DEFERRED_NODE_TYPES = frozenset(
-    {
-        "agent",
-        "file_convert",
-        "pdf_to_images",
-    }
-)
-_UNTRUSTED_NODE_TYPES = frozenset(
-    {
-        "callable",
-        "function",
-        "module",
-        "python",
-        "python_callable",
-    }
-)
-_RESERVED_FILE_SELECTOR_SOURCES = frozenset(
-    {
-        "__task_files__",
-        "__task_input__",
-        "file",
-        "files",
     }
 )
 
@@ -321,13 +301,10 @@ def _build_result(
         if variables_raw is not None
         else {}
     )
-    nodes = _node_definitions(nodes_raw, registry, issues)
+    nodes = _node_definitions(nodes_raw, issues)
     edges = _edge_definitions(raw.get("edges"), issues)
-    if issues:
+    if name is None or entrypoint is None or output_node is None:
         return FlowLoadResult(definition=None, issues=tuple(issues))
-    assert name is not None
-    assert entrypoint is not None
-    assert output_node is not None
     definition = FlowDefinition(
         name=name,
         version=version,
@@ -343,7 +320,11 @@ def _build_result(
             Path(source_path).parent if source_path is not None else None
         ),
     )
-    issues.extend(_validate_graph_contract(definition))
+    validation_result = validate_flow_definition(definition, registry)
+    issues.extend(
+        _issue_from_diagnostic(diagnostic)
+        for diagnostic in validation_result.diagnostics
+    )
     if issues:
         return FlowLoadResult(definition=None, issues=tuple(issues))
     try:
@@ -523,7 +504,6 @@ def _output_definition(
 
 def _node_definitions(
     raw: RawSection,
-    registry: FlowNodeRegistry,
     issues: list[FlowLoadIssue],
 ) -> tuple[FlowNodeDefinition, ...]:
     nodes: list[FlowNodeDefinition] = []
@@ -561,13 +541,6 @@ def _node_definitions(
         )
         if node_type is None:
             continue
-        _validate_node_type(
-            name,
-            node_type,
-            ref,
-            registry,
-            issues,
-        )
         config = _node_config(value, issues, path=f"nodes.{name}")
         nodes.append(
             FlowNodeDefinition(
@@ -625,232 +598,6 @@ def _node_config(
         if key in raw:
             config[key] = raw[key]
     return config
-
-
-def _validate_node_type(
-    name: str,
-    node_type: str,
-    ref: str | None,
-    registry: FlowNodeRegistry,
-    issues: list[FlowLoadIssue],
-) -> None:
-    path = f"nodes.{name}.type"
-    if node_type in _UNTRUSTED_NODE_TYPES:
-        issues.append(
-            _issue(
-                code="flow.untrusted_callable",
-                path=path,
-                message="Flow TOML cannot import dynamic callables.",
-                hint="Use a registered built-in node type.",
-                category=FlowLoadIssueCategory.UNSUPPORTED,
-            )
-        )
-        return
-    if ref is not None and _is_path_escape(ref):
-        issues.append(_path_escape_issue(f"nodes.{name}.ref"))
-    if registry.supports(node_type):
-        if ref is not None and not registry.supports_ref(node_type):
-            issues.append(
-                _issue(
-                    code="flow.untrusted_callable",
-                    path=f"nodes.{name}.ref",
-                    message="Built-in flow nodes cannot load external refs.",
-                    hint="Remove ref or use a later trusted node type.",
-                    category=FlowLoadIssueCategory.UNSUPPORTED,
-                )
-            )
-        return
-    if node_type in _KNOWN_DEFERRED_NODE_TYPES:
-        issues.append(
-            _issue(
-                code="flow.unsupported_node_type",
-                path=path,
-                message="Flow node type is not supported by this runtime.",
-                hint="Use a currently registered built-in node type.",
-                category=FlowLoadIssueCategory.UNSUPPORTED,
-            )
-        )
-        return
-    issues.append(
-        _issue(
-            code="flow.unknown_node_type",
-            path=path,
-            message="Flow node type is unknown.",
-            hint="Use a registered built-in node type.",
-            category=FlowLoadIssueCategory.UNSUPPORTED,
-        )
-    )
-
-
-def _validate_graph_contract(
-    definition: FlowDefinition,
-) -> tuple[FlowLoadIssue, ...]:
-    issues: list[FlowLoadIssue] = []
-    node_names = {node.name for node in definition.nodes}
-    if definition.entrypoint not in node_names:
-        issues.append(
-            _issue(
-                code="flow.unknown_entrypoint",
-                path="flow.entrypoint",
-                message="Flow entrypoint does not reference a node.",
-                hint="Set flow.entrypoint to a declared node name.",
-                category=FlowLoadIssueCategory.VALUE,
-            )
-        )
-    if definition.output_node not in node_names:
-        issues.append(
-            _issue(
-                code="flow.unknown_output_node",
-                path="flow.output_node",
-                message="Flow output node does not reference a node.",
-                hint="Set flow.output_node to a declared node name.",
-                category=FlowLoadIssueCategory.VALUE,
-            )
-        )
-    for edge in definition.edges:
-        if edge.source not in node_names:
-            issues.append(_bad_reference_issue("edges.source"))
-        if edge.target not in node_names:
-            issues.append(_bad_reference_issue("edges.target"))
-    if issues:
-        return tuple(issues)
-    outgoing = {node.name: 0 for node in definition.nodes}
-    incoming = {node.name: 0 for node in definition.nodes}
-    for edge in definition.edges:
-        outgoing[edge.source] += 1
-        incoming[edge.target] += 1
-    terminals = {name for name, count in outgoing.items() if count == 0}
-    start_nodes = {name for name, count in incoming.items() if count == 0}
-    if definition.entrypoint not in start_nodes:
-        issues.append(
-            _issue(
-                code="flow.invalid_entrypoint",
-                path="flow.entrypoint",
-                message="Flow entrypoint must be a start node.",
-                hint="Use a node without inbound edges as the entrypoint.",
-                category=FlowLoadIssueCategory.VALUE,
-            )
-        )
-    if len(terminals) > 1:
-        issues.append(
-            _issue(
-                code="flow.multiple_outputs",
-                path="flow.output_node",
-                message="Flow has multiple terminal output nodes.",
-                hint="Connect nodes so only one terminal output remains.",
-                category=FlowLoadIssueCategory.VALUE,
-            )
-        )
-    elif definition.output_node not in terminals:
-        issues.append(
-            _issue(
-                code="flow.invalid_output_node",
-                path="flow.output_node",
-                message="Flow output node must be terminal.",
-                hint="Use a node without outbound edges as the output node.",
-                category=FlowLoadIssueCategory.VALUE,
-            )
-        )
-    issues.extend(_validate_agent_file_selectors(definition))
-    cycle = _cycle_nodes(definition)
-    if cycle:
-        issues.append(
-            _issue(
-                code="flow.cycle",
-                path="edges",
-                message="Flow graph contains a cycle.",
-                hint="Remove the cyclic edge before running the flow.",
-                category=FlowLoadIssueCategory.VALUE,
-            )
-        )
-    return tuple(issues)
-
-
-def _validate_agent_file_selectors(
-    definition: FlowDefinition,
-) -> tuple[FlowLoadIssue, ...]:
-    issues: list[FlowLoadIssue] = []
-    node_names = {node.name for node in definition.nodes}
-    incoming_sources: dict[str, set[str]] = {
-        name: set() for name in node_names
-    }
-    for edge in definition.edges:
-        incoming_sources[edge.target].add(edge.source)
-    for node in definition.nodes:
-        selector = node.config.get("files_input")
-        if selector is None or node.type != "agent":
-            continue
-        path = f"nodes.{node.name}.config.files_input"
-        if not isinstance(selector, str) or not selector.strip():
-            issues.append(_invalid_type(path, "Use a dotted node output."))
-            continue
-        parts = selector.split(".")
-        if len(parts) != 2 or any(not part.strip() for part in parts):
-            issues.append(
-                _issue(
-                    code="flow.invalid_node",
-                    path=path,
-                    message="Flow agent file input selector is invalid.",
-                    hint="Use a dotted upstream node output selector.",
-                    category=FlowLoadIssueCategory.VALUE,
-                )
-            )
-            continue
-        source, _ = parts
-        if source in _RESERVED_FILE_SELECTOR_SOURCES:
-            issues.append(
-                _issue(
-                    code="flow.invalid_node",
-                    path=path,
-                    message="Flow agent file input selector is reserved.",
-                    hint="Reference a named upstream node output instead.",
-                    category=FlowLoadIssueCategory.VALUE,
-                )
-            )
-            continue
-        if source not in node_names:
-            issues.append(_bad_reference_issue(path))
-            continue
-        if source not in incoming_sources[node.name]:
-            issues.append(
-                _issue(
-                    code="flow.bad_reference",
-                    path=path,
-                    message="Flow agent file input selector is disconnected.",
-                    hint="Add an edge from the selected node to this agent.",
-                    category=FlowLoadIssueCategory.VALUE,
-                )
-            )
-    return tuple(issues)
-
-
-def _cycle_nodes(definition: FlowDefinition) -> frozenset[str]:
-    outgoing: dict[str, list[str]] = {
-        node.name: [] for node in definition.nodes
-    }
-    for edge in definition.edges:
-        outgoing[edge.source].append(edge.target)
-    visited: set[str] = set()
-    stack: set[str] = set()
-    cycle: set[str] = set()
-
-    def visit(name: str) -> None:
-        if name in stack:
-            cycle.add(name)
-            return
-        if name in visited:
-            return
-        visited.add(name)
-        stack.add(name)
-        for target in outgoing[name]:
-            visit(target)
-            if target in cycle:
-                cycle.add(name)
-        stack.remove(name)
-
-    for node in definition.nodes:
-        visit(node.name)
-    return frozenset(cycle)
 
 
 def _validate_unknown_fields(
@@ -995,16 +742,6 @@ def _metadata_value(value: object) -> object:
     return value
 
 
-def _is_path_escape(ref: str) -> bool:
-    if "://" in ref or "\\" in ref:
-        return True
-    posix_path = PurePosixPath(ref)
-    windows_path = PureWindowsPath(ref)
-    if posix_path.is_absolute() or windows_path.is_absolute():
-        return True
-    return ".." in posix_path.parts or ".." in windows_path.parts
-
-
 def _missing_section(section: str) -> FlowLoadIssue:
     return _issue(
         code="flow.missing_section",
@@ -1055,26 +792,6 @@ def _unsupported_section_issue(path: str) -> FlowLoadIssue:
     )
 
 
-def _path_escape_issue(path: str) -> FlowLoadIssue:
-    return _issue(
-        code="flow.path_escape",
-        path=path,
-        message="Flow reference escapes the flow directory.",
-        hint="Use a safe relative reference inside the flow directory.",
-        category=FlowLoadIssueCategory.PRIVACY,
-    )
-
-
-def _bad_reference_issue(path: str) -> FlowLoadIssue:
-    return _issue(
-        code="flow.bad_reference",
-        path=path,
-        message="Flow reference does not match a declared node.",
-        hint="Reference an existing node name.",
-        category=FlowLoadIssueCategory.VALUE,
-    )
-
-
 def _issue(
     *,
     code: str,
@@ -1088,6 +805,21 @@ def _issue(
         path=path,
         message=message,
         hint=hint,
+        category=category,
+    )
+
+
+def _issue_from_diagnostic(diagnostic: FlowDiagnostic) -> FlowLoadIssue:
+    assert isinstance(diagnostic, FlowDiagnostic)
+    assert diagnostic.path is not None
+    category = FlowLoadIssueCategory(
+        flow_validation_diagnostic_load_category(diagnostic)
+    )
+    return _issue(
+        code=diagnostic.code,
+        path=diagnostic.path,
+        message=diagnostic.message,
+        hint=diagnostic.hint or "Fix the flow definition.",
         category=category,
     )
 
