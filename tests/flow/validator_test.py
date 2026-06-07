@@ -18,9 +18,11 @@ from avalan.flow import (
     FlowOutputDefinition,
     FlowOutputType,
     FlowValidationResult,
+    parse_flow_selector,
     validate_flow_definition,
 )
 from avalan.flow import loader as flow_loader
+from avalan.flow import validator as flow_validator
 from avalan.flow.node import Node
 
 
@@ -264,6 +266,313 @@ class FlowValidatorTestCase(TestCase):
             [diagnostic.code for diagnostic in result.diagnostics],
             ["flow.invalid_output_selector"],
         )
+
+    def test_validate_flow_definition_accepts_nested_output_selector(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {"schema": lambda definition: Node(definition.name)},
+            {
+                "schema": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"},
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    ),
+                ),
+            },
+        )
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(FlowNodeDefinition(name="start", type="schema"),),
+                output_selector="start.result.items[0].name",
+            ),
+            registry,
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_unsafe_output_selectors(
+        self,
+    ) -> None:
+        cases = (
+            ("answer", "env.SECRET", "flow.reserved_selector"),
+            ("answer", "start.result/{{secret}}", "flow.unsafe_selector"),
+        )
+
+        for output, selector, code in cases:
+            with self.subTest(selector=selector):
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="strict",
+                        version="2026-06-07",
+                        inputs=(
+                            FlowInputDefinition(
+                                name="payload",
+                                type=FlowInputType.OBJECT,
+                            ),
+                        ),
+                        outputs=(
+                            FlowOutputDefinition(
+                                name=output,
+                                type=FlowOutputType.OBJECT,
+                            ),
+                        ),
+                        entry_behavior=FlowEntryBehavior(node="start"),
+                        output_behavior=FlowOutputBehavior(
+                            outputs={output: selector},
+                        ),
+                        nodes=(FlowNodeDefinition(name="start", type="echo"),),
+                    )
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.diagnostics[0].code, code)
+                self.assertEqual(
+                    result.diagnostics[0].category,
+                    FlowDiagnosticCategory.PRIVACY,
+                )
+                self.assertNotIn("secret", str(result.public_diagnostics))
+
+    def test_validate_flow_definition_rejects_unknown_selector_path(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {"schema": lambda definition: Node(definition.name)},
+            {
+                "schema": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "known": {"type": "string"},
+                                "items": {"type": "array"},
+                            },
+                        },
+                    ),
+                ),
+            },
+        )
+
+        cases = (
+            "start.result.missing",
+            "start.result.known[0]",
+            "start.result.known.name",
+        )
+        for selector in cases:
+            with self.subTest(selector=selector):
+                result = validate_flow_definition(
+                    self._strict_definition(
+                        nodes=(
+                            FlowNodeDefinition(name="start", type="schema"),
+                        ),
+                        output_selector=selector,
+                    ),
+                    registry,
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    result.diagnostics[-1].code,
+                    "flow.unknown_selector_path",
+                )
+
+    def test_validate_flow_definition_accepts_unknown_nested_schema(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {"schema": lambda definition: Node(definition.name)},
+            {
+                "schema": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        schema={
+                            "type": ["object", "null"],
+                            "properties": {"items": {"type": "array"}},
+                        },
+                    ),
+                ),
+            },
+        )
+
+        result = validate_flow_definition(
+            self._strict_definition(
+                nodes=(FlowNodeDefinition(name="start", type="schema"),),
+                output_selector="start.result.items[0].name",
+            ),
+            registry,
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_accepts_open_selector_contracts(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FlowNodeMetadata(kind=FlowNodeKind.SELECT),
+                "start.result.any[0]",
+            ),
+            (
+                FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        metadata={"dynamic": True},
+                    ),
+                ),
+                "start.result.any",
+            ),
+            (
+                FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        schema_ref="schemas/result.json",
+                    ),
+                ),
+                "start.result.any",
+            ),
+            (
+                FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(name="result"),
+                ),
+                "start.result.any",
+            ),
+            (
+                FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        schema={"type": "object"},
+                    ),
+                ),
+                "start.result.any",
+            ),
+            (
+                FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        schema={"type": 7},
+                    ),
+                ),
+                "start.result.any",
+            ),
+        )
+
+        for metadata, selector in cases:
+            with self.subTest(selector=selector, metadata=metadata):
+                registry = FlowNodeRegistry(
+                    {"open": lambda definition: Node(definition.name)},
+                    {"open": metadata},
+                )
+                result = validate_flow_definition(
+                    self._strict_definition(
+                        nodes=(FlowNodeDefinition(name="start", type="open"),),
+                        output_selector=selector,
+                    ),
+                    registry,
+                )
+
+                self.assertTrue(result.ok)
+
+        selector = parse_flow_selector("start.result.any")
+        self.assertFalse(
+            flow_validator._supports_output_path(  # type: ignore[attr-defined]
+                FlowNodeRegistry(
+                    {"open": lambda definition: Node(definition.name)},
+                    {
+                        "open": FlowNodeMetadata(
+                            kind=FlowNodeKind.SELECT,
+                            output_contract=FlowNodeContract(name="other"),
+                        ),
+                    },
+                ),
+                "open",
+                selector,
+            )
+        )
+
+    def test_validate_flow_definition_rejects_agent_file_selector_contracts(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "render.missing",
+                "flow.unknown_node_output",
+                FlowNodeContract(name="files"),
+            ),
+            (
+                "render.files.missing",
+                "flow.unknown_selector_path",
+                FlowNodeContract(
+                    name="files",
+                    schema={
+                        "type": "object",
+                        "properties": {"known": {"type": "string"}},
+                    },
+                ),
+            ),
+        )
+
+        for selector, code, output_contract in cases:
+            with self.subTest(selector=selector):
+                registry = FlowNodeRegistry(
+                    {
+                        "agent": lambda definition: Node(definition.name),
+                        "render": lambda definition: Node(definition.name),
+                    },
+                    {
+                        "agent": FlowNodeMetadata(kind=FlowNodeKind.AGENT),
+                        "render": FlowNodeMetadata(
+                            kind=FlowNodeKind.FILE_CONVERSION,
+                            output_contract=output_contract,
+                        ),
+                    },
+                )
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="files",
+                        entrypoint="render",
+                        output_node="agent",
+                        nodes=(
+                            FlowNodeDefinition(name="render", type="render"),
+                            FlowNodeDefinition(
+                                name="agent",
+                                type="agent",
+                                config={"files_input": selector},
+                            ),
+                        ),
+                        edges=(
+                            FlowEdgeDefinition(
+                                source="render",
+                                target="agent",
+                            ),
+                        ),
+                    ),
+                    registry,
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.diagnostics[0].code, code)
 
     def test_validate_flow_definition_rejects_topology_output_inference(
         self,

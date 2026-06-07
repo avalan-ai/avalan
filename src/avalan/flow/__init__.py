@@ -50,5 +50,11 @@ from .registry import FlowToolResolver as FlowToolResolver
 from .registry import default_flow_node_registry as default_flow_node_registry
 from .registry import flow_input_binding as flow_input_binding
 from .registry import tool_flow_node_registry as tool_flow_node_registry
+from .selector import FlowSelector as FlowSelector
+from .selector import FlowSelectorError as FlowSelectorError
+from .selector import FlowSelectorRoot as FlowSelectorRoot
+from .selector import FlowSelectorStep as FlowSelectorStep
+from .selector import FlowSelectorStepKind as FlowSelectorStepKind
+from .selector import parse_flow_selector as parse_flow_selector
 from .validator import FlowValidationResult as FlowValidationResult
 from .validator import validate_flow_definition as validate_flow_definition

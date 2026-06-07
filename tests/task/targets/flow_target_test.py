@@ -1109,7 +1109,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             (
                 "malformed_selector",
                 'files_input = "render"\nfile_policy = "replace"',
-                "flow.invalid_node",
+                "flow.invalid_output_selector",
                 "nodes.review.config.files_input",
             ),
             (
@@ -1124,7 +1124,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                     'files_input = "__task_files__.files"\n'
                     'file_policy = "replace"'
                 ),
-                "flow.invalid_node",
+                "flow.reserved_selector",
                 "nodes.review.config.files_input",
             ),
             (

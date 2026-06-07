@@ -1824,8 +1824,10 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                     result.issues[0].code,
                     {
                         "flow.bad_reference",
+                        "flow.invalid_output_selector",
                         "flow.invalid_node",
                         "flow.invalid_type",
+                        "flow.reserved_selector",
                     },
                 )
                 self.assertEqual(
