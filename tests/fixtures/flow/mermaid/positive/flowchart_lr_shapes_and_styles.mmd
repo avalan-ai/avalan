@@ -1,0 +1,12 @@
+flowchart LR
+Start(["Start"]) --> Check{Check}
+Check ==> Store[(Store)]
+Store -.-> Worker[[Worker]]
+Worker --> Circle((Circle))
+Circle --> Done(((Done)))
+Done --> Hex{{Hex}}
+Hex --> Round(Round)
+classDef active fill:#fff,stroke:#333,stroke-width:2px
+class Start active
+style Check fill:#eee,stroke:#111
+linkStyle 1 stroke:#f00
