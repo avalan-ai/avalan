@@ -52,16 +52,29 @@ class FlowFixtureInventoryTest(TestCase):
             set(security["unsafe_constructs"]),
             {
                 "ambiguous_shorthand",
+                "callback_directive",
                 "click_directive",
                 "frontmatter",
+                "href_directive",
                 "html_label",
                 "init_directive",
                 "link_directive",
+                "malformed_directive",
                 "malformed_subgraph",
                 "script_like_label",
                 "unsafe_external_link",
                 "unsupported_diagram_type",
                 "unknown_directive",
+            },
+        )
+        self.assertEqual(
+            set(security["unsafe_constructs"]),
+            {
+                path.stem
+                for path in (
+                    Path(__file__).parents[1]
+                    / security["path"].removeprefix("tests/")
+                ).glob("*.mmd")
             },
         )
 

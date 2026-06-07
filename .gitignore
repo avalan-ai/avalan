@@ -2,6 +2,7 @@ build/
 .coverage
 .coverage.*
 coverage.json
+coverage.xml
 specs/
 docs/examples/playground
 docs/images/*.mov
