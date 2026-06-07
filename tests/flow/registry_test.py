@@ -22,8 +22,10 @@ from avalan.flow import (
     FLOW_TOOL_NODE_TYPE,
     FlowInputDefinition,
     FlowInputType,
+    FlowNodeCapability,
     FlowNodeContract,
     FlowNodeDefinition,
+    FlowNodeKind,
     FlowNodeMetadata,
     FlowNodeRegistry,
     FlowOutputType,
@@ -322,9 +324,16 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(registry.output_contract("missing"))
         echo_input = registry.input_contract("echo")
         echo_output = registry.output_contract("echo")
+        echo_metadata = registry.metadata("echo")
 
         assert echo_input is not None
         assert echo_output is not None
+        assert echo_metadata is not None
+        self.assertEqual(echo_metadata.kind, FlowNodeKind.PASS_THROUGH)
+        self.assertIn(
+            FlowNodeCapability.DIRECT_ASYNC,
+            echo_metadata.capabilities,
+        )
         self.assertEqual(echo_input.name, "value")
         self.assertTrue(echo_input.metadata["dynamic"])
         self.assertEqual(echo_output.name, "value")
@@ -337,6 +346,7 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
             return Node(definition.name, func=lambda _: definition.ref)
 
         metadata = FlowNodeMetadata(
+            kind=FlowNodeKind.SUBFLOW,
             supports_ref=True,
             async_only=True,
             input_contract=FlowNodeContract(
@@ -349,12 +359,23 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
                 type=FlowOutputType.JSON,
                 schema={"type": "string"},
             ),
+            capabilities=(FlowNodeCapability.TASK_BACKED,),
+            requires_ref=True,
+            required_config_keys=("mode",),
         )
         registry = FlowNodeRegistry({"remote": factory}, {"remote": metadata})
 
         self.assertTrue(registry.supports("remote"))
         self.assertTrue(registry.supports_ref("remote"))
         self.assertTrue(registry.is_async_only("remote"))
+        remote_metadata = registry.metadata("remote")
+        assert remote_metadata is not None
+        self.assertEqual(remote_metadata.kind, FlowNodeKind.SUBFLOW)
+        self.assertTrue(remote_metadata.requires_ref)
+        self.assertEqual(
+            remote_metadata.required_config_keys,
+            ("mode",),
+        )
         self.assertEqual(
             registry.input_contract("remote"), metadata.input_contract
         )

@@ -9,8 +9,10 @@ from avalan.flow import (
     FlowEntryBehaviorType,
     FlowInputDefinition,
     FlowInputType,
+    FlowNodeCapability,
     FlowNodeContract,
     FlowNodeDefinition,
+    FlowNodeKind,
     FlowNodeMetadata,
     FlowOutputBehavior,
     FlowOutputBehaviorType,
@@ -176,11 +178,18 @@ class FlowDefinitionTestCase(TestCase):
     def test_behavior_type_enums_are_stable(self) -> None:
         self.assertEqual(FlowEntryBehaviorType.NODE.value, "node")
         self.assertEqual(FlowOutputBehaviorType.MAP.value, "map")
+        self.assertEqual(FlowNodeKind.HUMAN_REVIEW.value, "human_review")
+        self.assertEqual(FlowNodeKind.SUBFLOW.value, "subflow")
+        self.assertEqual(
+            FlowNodeCapability.DURABLE_PAUSE.value,
+            "durable_pause",
+        )
 
     def test_node_metadata_is_frozen_and_copy_nested_mappings(self) -> None:
         schema = {"type": "object", "properties": {"name": {"type": "str"}}}
         metadata = {"source": {"name": "tool"}, "tags": ["runtime"]}
         node_metadata = FlowNodeMetadata(
+            kind=FlowNodeKind.TOOL,
             supports_ref=True,
             async_only=True,
             input_contract=FlowNodeContract(
@@ -194,6 +203,15 @@ class FlowDefinitionTestCase(TestCase):
                 type=FlowOutputType.JSON,
                 schema_ref="schemas/result.json",
             ),
+            input_contracts=(
+                FlowNodeContract(name="extra", type=FlowInputType.STRING),
+            ),
+            output_contracts=(
+                FlowNodeContract(name="audit", type=FlowOutputType.JSON),
+            ),
+            capabilities=(FlowNodeCapability.TASK_BACKED,),
+            requires_ref=True,
+            required_config_keys=("tool_mode",),
             metadata={"canonical_schema": schema},
         )
 
@@ -215,10 +233,44 @@ class FlowDefinitionTestCase(TestCase):
             "tool",
         )
         self.assertEqual(input_contract.metadata["tags"], ("runtime",))
+        self.assertEqual(node_metadata.kind, FlowNodeKind.TOOL)
         self.assertTrue(node_metadata.supports_ref)
         self.assertTrue(node_metadata.async_only)
+        self.assertEqual(
+            node_metadata.input_contracts,
+            (FlowNodeContract(name="extra", type=FlowInputType.STRING),),
+        )
+        self.assertEqual(
+            node_metadata.output_contracts,
+            (FlowNodeContract(name="audit", type=FlowOutputType.JSON),),
+        )
+        self.assertEqual(
+            node_metadata.capabilities,
+            (
+                FlowNodeCapability.TASK_BACKED,
+                FlowNodeCapability.ASYNC_ONLY,
+            ),
+        )
+        self.assertTrue(node_metadata.requires_ref)
+        self.assertEqual(node_metadata.required_config_keys, ("tool_mode",))
         with self.assertRaises(FrozenInstanceError):
             node_metadata.supports_ref = False  # type: ignore[misc]
+
+    def test_node_metadata_uses_single_contract_aliases(self) -> None:
+        input_contract = FlowNodeContract(name="payload")
+        output_contract = FlowNodeContract(name="result")
+
+        metadata = FlowNodeMetadata(
+            input_contract=input_contract,
+            output_contract=output_contract,
+        )
+
+        self.assertEqual(metadata.input_contracts, (input_contract,))
+        self.assertEqual(metadata.output_contracts, (output_contract,))
+        self.assertEqual(
+            metadata.capabilities,
+            (FlowNodeCapability.DIRECT_ASYNC,),
+        )
 
     def test_invalid_node_metadata_raise_assertion_errors(self) -> None:
         with self.assertRaises(AssertionError):
@@ -231,6 +283,24 @@ class FlowDefinitionTestCase(TestCase):
             FlowNodeMetadata(
                 input_contract=object(),  # type: ignore[arg-type]
             )
+        with self.assertRaises(AssertionError):
+            FlowNodeMetadata(
+                kind="tool",  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeMetadata(
+                input_contracts=[FlowNodeContract()],  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeMetadata(
+                output_contracts=(object(),),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeMetadata(
+                capabilities=("async_only",),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowNodeMetadata(required_config_keys=("",))
 
 
 if __name__ == "__main__":

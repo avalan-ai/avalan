@@ -1,4 +1,4 @@
-from .definition import FlowDefinition
+from .definition import FlowDefinition, FlowNodeDefinition, FlowNodeKind
 from .diagnostics import (
     FlowDiagnostic,
     FlowDiagnosticCategory,
@@ -12,8 +12,14 @@ from pathlib import PurePosixPath, PureWindowsPath
 _KNOWN_DEFERRED_NODE_TYPES = frozenset(
     {
         "agent",
+        "decision",
         "file_convert",
+        "human_review",
+        "join",
+        "notification",
         "pdf_to_images",
+        "subflow",
+        "validation",
     }
 )
 _UNTRUSTED_NODE_TYPES = frozenset(
@@ -72,7 +78,7 @@ def validate_flow_definition(
     node_registry = registry or default_flow_node_registry()
     diagnostics: list[FlowDiagnostic] = []
     diagnostics.extend(_validate_node_types(definition, node_registry))
-    diagnostics.extend(_validate_graph_contract(definition))
+    diagnostics.extend(_validate_graph_contract(definition, node_registry))
     return FlowValidationResult(diagnostics=tuple(diagnostics))
 
 
@@ -104,18 +110,17 @@ def _validate_node_types(
                 )
             )
         seen.add(node.name)
-        diagnostics.extend(
-            _validate_node_type(node.name, node.type, node.ref, registry)
-        )
+        diagnostics.extend(_validate_node_type(node, registry, definition))
     return tuple(diagnostics)
 
 
 def _validate_node_type(
-    name: str,
-    node_type: str,
-    ref: str | None,
+    node: FlowNodeDefinition,
     registry: FlowNodeRegistry,
+    definition: FlowDefinition,
 ) -> tuple[FlowDiagnostic, ...]:
+    name = node.name
+    node_type = node.type
     path = f"nodes.{name}.type"
     if node_type in _UNTRUSTED_NODE_TYPES:
         return (
@@ -127,10 +132,10 @@ def _validate_node_type(
             ),
         )
     diagnostics: list[FlowDiagnostic] = []
-    if ref is not None and _is_path_escape(ref):
+    if node.ref is not None and _is_path_escape(node.ref):
         diagnostics.append(_path_escape_diagnostic(f"nodes.{name}.ref"))
     if registry.supports(node_type):
-        if ref is not None and not registry.supports_ref(node_type):
+        if node.ref is not None and not registry.supports_ref(node_type):
             diagnostics.append(
                 _diagnostic(
                     code="flow.untrusted_callable",
@@ -139,6 +144,13 @@ def _validate_node_type(
                     hint="Remove ref or use a later trusted node type.",
                 )
             )
+        diagnostics.extend(
+            _validate_registered_node_metadata(
+                node,
+                registry,
+                strict=definition.is_strict,
+            )
+        )
         return tuple(diagnostics)
     if node_type in _KNOWN_DEFERRED_NODE_TYPES:
         diagnostics.append(
@@ -161,8 +173,67 @@ def _validate_node_type(
     return tuple(diagnostics)
 
 
+def _validate_registered_node_metadata(
+    node: FlowNodeDefinition,
+    registry: FlowNodeRegistry,
+    *,
+    strict: bool,
+) -> tuple[FlowDiagnostic, ...]:
+    metadata = registry.metadata(node.type)
+    assert metadata is not None
+    diagnostics: list[FlowDiagnostic] = []
+    if strict and metadata.kind is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_node_kind",
+                path=f"nodes.{node.name}.type",
+                message="Flow node type is missing semantic kind metadata.",
+                hint="Register the node type with a semantic node kind.",
+            )
+        )
+    elif metadata.kind is not None:
+        diagnostics.extend(_validate_node_kind(node, metadata.kind))
+    if metadata.requires_ref and node.ref is None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_ref",
+                path=f"nodes.{node.name}.ref",
+                message="Flow node reference is required.",
+                hint="Set ref for the registered node type.",
+            )
+        )
+    for key in metadata.required_config_keys:
+        if key not in node.config:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.missing_node_config",
+                    path=f"nodes.{node.name}.config.{key}",
+                    message="Flow node configuration is missing.",
+                    hint="Add the required node configuration field.",
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _validate_node_kind(
+    node: FlowNodeDefinition,
+    kind: FlowNodeKind,
+) -> tuple[FlowDiagnostic, ...]:
+    if kind != FlowNodeKind.INPUT and node.type == FlowNodeKind.INPUT.value:
+        return (
+            _diagnostic(
+                code="flow.invalid_node_kind",
+                path=f"nodes.{node.name}.type",
+                message="Flow node type has conflicting semantic kind.",
+                hint="Register the node type with matching kind metadata.",
+            ),
+        )
+    return ()
+
+
 def _validate_graph_contract(
     definition: FlowDefinition,
+    registry: FlowNodeRegistry,
 ) -> tuple[FlowDiagnostic, ...]:
     diagnostics: list[FlowDiagnostic] = []
     node_names = {node.name for node in definition.nodes}
@@ -174,7 +245,9 @@ def _validate_graph_contract(
     if diagnostics:
         return tuple(diagnostics)
     if definition.is_strict:
-        diagnostics.extend(_validate_strict_contract(definition, node_names))
+        diagnostics.extend(
+            _validate_strict_contract(definition, node_names, registry)
+        )
     else:
         diagnostics.extend(_validate_legacy_graph_contract(definition))
     diagnostics.extend(_validate_agent_file_selectors(definition))
@@ -275,6 +348,7 @@ def _validate_legacy_graph_contract(
 def _validate_strict_contract(
     definition: FlowDefinition,
     node_names: set[str],
+    registry: FlowNodeRegistry,
 ) -> tuple[FlowDiagnostic, ...]:
     diagnostics: list[FlowDiagnostic] = []
     if definition.version is None and definition.revision is None:
@@ -351,7 +425,9 @@ def _validate_strict_contract(
                 hint="Reference a declared node.",
             )
         )
-    diagnostics.extend(_validate_output_behavior(definition, node_names))
+    diagnostics.extend(
+        _validate_output_behavior(definition, node_names, registry)
+    )
     return tuple(diagnostics)
 
 
@@ -395,6 +471,7 @@ def _validate_named_contracts(
 def _validate_output_behavior(
     definition: FlowDefinition,
     node_names: set[str],
+    registry: FlowNodeRegistry,
 ) -> tuple[FlowDiagnostic, ...]:
     if definition.output_behavior is None:
         return (
@@ -447,7 +524,35 @@ def _validate_output_behavior(
                     hint="Reference a declared node output.",
                 )
             )
+            continue
+        node = definition.node_map[parts[0]]
+        if not _supports_output_name(registry, node.type, parts[1]):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.unknown_node_output",
+                    path=f"flow.output_behavior.outputs.{name}",
+                    message="Flow output behavior references unknown output.",
+                    hint="Reference a declared output for the selected node.",
+                )
+            )
     return tuple(diagnostics)
+
+
+def _supports_output_name(
+    registry: FlowNodeRegistry,
+    node_type: str,
+    output_name: str,
+) -> bool:
+    metadata = registry.metadata(node_type)
+    if metadata is None or not metadata.output_contracts:
+        return True
+    names: set[str] = set()
+    for contract in metadata.output_contracts:
+        if contract.metadata.get("dynamic"):
+            return True
+        if contract.name is not None:
+            names.add(contract.name)
+    return output_name in names
 
 
 def _validate_agent_file_selectors(

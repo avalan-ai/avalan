@@ -16,8 +16,10 @@ from ..utils import tool_call_diagnostic_payload, tool_call_error_payload
 from .definition import (
     FlowInputDefinition,
     FlowInputType,
+    FlowNodeCapability,
     FlowNodeContract,
     FlowNodeDefinition,
+    FlowNodeKind,
     FlowNodeMetadata,
     FlowOutputType,
 )
@@ -149,12 +151,14 @@ def default_flow_node_registry() -> FlowNodeRegistry:
         },
         {
             "constant": FlowNodeMetadata(
+                kind=FlowNodeKind.CONSTANT,
                 output_contract=FlowNodeContract(
                     name="value",
                     metadata={"dynamic": True},
                 ),
             ),
             "echo": FlowNodeMetadata(
+                kind=FlowNodeKind.PASS_THROUGH,
                 input_contract=FlowNodeContract(
                     name="value",
                     metadata={"dynamic": True},
@@ -165,6 +169,7 @@ def default_flow_node_registry() -> FlowNodeRegistry:
                 ),
             ),
             "input": FlowNodeMetadata(
+                kind=FlowNodeKind.INPUT,
                 output_contract=FlowNodeContract(
                     name="value",
                     type=FlowOutputType.OBJECT,
@@ -172,6 +177,7 @@ def default_flow_node_registry() -> FlowNodeRegistry:
                 ),
             ),
             "passthrough": FlowNodeMetadata(
+                kind=FlowNodeKind.PASS_THROUGH,
                 input_contract=FlowNodeContract(
                     name="value",
                     metadata={"dynamic": True},
@@ -182,6 +188,7 @@ def default_flow_node_registry() -> FlowNodeRegistry:
                 ),
             ),
             "select": FlowNodeMetadata(
+                kind=FlowNodeKind.SELECT,
                 input_contract=FlowNodeContract(
                     name="value",
                     type=FlowInputType.OBJECT,
@@ -212,8 +219,10 @@ def tool_flow_node_registry(
         FLOW_TOOL_NODE_TYPE,
         _tool_node_factory(resolver, descriptors),
         metadata=FlowNodeMetadata(
+            kind=FlowNodeKind.TOOL,
             supports_ref=True,
             async_only=True,
+            capabilities=(FlowNodeCapability.ASYNC_ONLY,),
             input_contract=FlowNodeContract(
                 name="arguments",
                 type=FlowInputType.OBJECT,
@@ -224,6 +233,7 @@ def tool_flow_node_registry(
                 type=FlowOutputType.JSON,
                 metadata={"dynamic": True},
             ),
+            requires_ref=True,
             metadata={"tools": _tool_contracts(descriptors.values())},
         ),
     )
