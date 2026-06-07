@@ -19,12 +19,14 @@ from avalan.flow import (
     FlowDefinition,
     FlowDefinitionLoader,
     FlowDiagnosticCategory,
+    FlowEdgeKind,
     FlowInputType,
     FlowLoadError,
     FlowLoadIssueCategory,
     FlowNodeDefinition,
     FlowNodeMetadata,
     FlowNodeRegistry,
+    FlowRouteMatchPolicy,
     build_flow,
     flow_input_binding,
     load_flow_definition,
@@ -1315,6 +1317,55 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         assert result.definition is not None
         self.assertEqual(result.definition.revision, "rev-1")
 
+    def test_loads_strict_edge_routing_policy(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.result"
+
+            [nodes.start]
+            type = "echo"
+
+            [nodes.finish]
+            type = "echo"
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+            kind = "error"
+            priority = 3
+            routing_policy = "all_matching"
+            default = true
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        edge = result.definition.edges[0]
+        self.assertEqual(edge.kind, FlowEdgeKind.ERROR)
+        self.assertEqual(edge.priority, 3)
+        self.assertEqual(
+            edge.routing_policy, FlowRouteMatchPolicy.ALL_MATCHING
+        )
+        self.assertTrue(edge.default)
+
     def test_loads_declarative_node_mappings(self) -> None:
         result = loads_flow_definition_result("""
             [flow]
@@ -2071,6 +2122,118 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
 
                 self.assertFalse(result.ok)
                 self.assertIn(code, [issue.code for issue in result.issues])
+
+    def test_loader_rejects_invalid_edge_routing_policy(self) -> None:
+        cases = (
+            ('kind = "unknown"', "flow.invalid_enum", "strict"),
+            ("priority = -1", "flow.invalid_route_priority", "strict"),
+            ("priority = true", "flow.invalid_type", "strict"),
+            ('default = "yes"', "flow.invalid_type", "strict"),
+            ('routing_policy = "first"', "flow.invalid_enum", "strict"),
+            ('kind = "error"', "flow.unsupported_edge_policy", "legacy"),
+        )
+
+        for edge_toml, code, mode in cases:
+            with self.subTest(code=code, mode=mode):
+                strict_toml = """
+                    version = "2026-06-07"
+                    """
+                entry_toml = """
+                    [[inputs]]
+                    name = "payload"
+                    type = "object"
+
+                    [[outputs]]
+                    name = "answer"
+                    type = "object"
+
+                    [entry]
+                    type = "node"
+                    node = "start"
+
+                    [output_behavior]
+                    type = "map"
+
+                    [output_behavior.outputs]
+                    answer = "finish.result"
+                    """
+                if mode == "legacy":
+                    strict_toml = """
+                    entrypoint = "start"
+                    output_node = "finish"
+                    """
+                    entry_toml = ""
+                result = loads_flow_definition_result(f"""
+                    [flow]
+                    name = "invalid"
+                    {strict_toml}
+
+                    {entry_toml}
+
+                    [nodes.start]
+                    type = "echo"
+
+                    [nodes.finish]
+                    type = "echo"
+
+                    [[edges]]
+                    source = "start"
+                    target = "finish"
+                    {edge_toml}
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertIn(code, [issue.code for issue in result.issues])
+
+    def test_loader_rejects_duplicate_default_routes(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "left.result"
+
+            [nodes.start]
+            type = "echo"
+
+            [nodes.left]
+            type = "echo"
+
+            [nodes.right]
+            type = "echo"
+
+            [[edges]]
+            source = "start"
+            target = "left"
+            default = true
+
+            [[edges]]
+            source = "start"
+            target = "right"
+            default = true
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            "flow.duplicate_default_route",
+            [issue.code for issue in result.issues],
+        )
 
     def test_rejects_unknown_entrypoint_and_output_node(self) -> None:
         result = loads_flow_definition_result("""

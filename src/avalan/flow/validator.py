@@ -4,6 +4,8 @@ from .condition import (
 )
 from .definition import (
     FlowDefinition,
+    FlowEdgeDefinition,
+    FlowEdgeKind,
     FlowInputMapping,
     FlowInputType,
     FlowMappingKind,
@@ -11,6 +13,7 @@ from .definition import (
     FlowNodeDefinition,
     FlowNodeKind,
     FlowOutputType,
+    FlowRouteMatchPolicy,
 )
 from .diagnostics import (
     FlowDiagnostic,
@@ -351,6 +354,7 @@ def _validate_graph_contract(
         )
     else:
         diagnostics.extend(_validate_legacy_graph_contract(definition))
+        diagnostics.extend(_validate_legacy_edge_routing(definition))
     diagnostics.extend(
         _validate_edge_conditions(definition, node_names, registry)
     )
@@ -535,6 +539,116 @@ def _validate_strict_contract(
     diagnostics.extend(
         _validate_node_mappings(definition, node_names, registry)
     )
+    diagnostics.extend(_validate_edge_routing(definition))
+    return tuple(diagnostics)
+
+
+def _validate_legacy_edge_routing(
+    definition: FlowDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    for index, edge in enumerate(definition.edges):
+        if (
+            edge.kind != FlowEdgeKind.SUCCESS
+            or edge.priority != 0
+            or edge.default
+            or edge.routing_policy != FlowRouteMatchPolicy.EXCLUSIVE
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.unsupported_edge_policy",
+                    path=f"edges[{index}]",
+                    message="Flow edge routing policy is not supported.",
+                    hint="Use strict flow definitions for route policy.",
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _validate_edge_routing(
+    definition: FlowDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    groups: dict[tuple[str, str], list[tuple[int, FlowEdgeDefinition]]] = {}
+    for index, edge in enumerate(definition.edges):
+        path = f"edges[{index}]"
+        if edge.priority < 0:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.invalid_route_priority",
+                    path=f"{path}.priority",
+                    message="Flow edge priority is invalid.",
+                    hint="Use zero or a positive integer priority.",
+                )
+            )
+        if edge.default and edge.condition is not None:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.default_route_condition",
+                    path=f"{path}.condition",
+                    message="Flow default route cannot have a condition.",
+                    hint="Remove the condition or unset default.",
+                )
+            )
+        groups.setdefault((edge.source, edge.kind.value), []).append(
+            (
+                index,
+                edge,
+            )
+        )
+    for (_, _), indexed_edges in groups.items():
+        diagnostics.extend(_validate_route_group(indexed_edges))
+    return tuple(diagnostics)
+
+
+def _validate_route_group(
+    indexed_edges: list[tuple[int, FlowEdgeDefinition]],
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    default_indexes = [index for index, edge in indexed_edges if edge.default]
+    for index in default_indexes[1:]:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.duplicate_default_route",
+                path=f"edges[{index}].default",
+                message="Flow source has multiple default routes.",
+                hint="Keep only one default route for each source and kind.",
+            )
+        )
+    policies = {edge.routing_policy for _, edge in indexed_edges}
+    if len(policies) > 1:
+        index = indexed_edges[0][0]
+        diagnostics.append(
+            _diagnostic(
+                code="flow.mixed_routing_policy",
+                path=f"edges[{index}].routing_policy",
+                message="Flow source has mixed route policies.",
+                hint="Use one routing policy for each source and kind.",
+            )
+        )
+        return tuple(diagnostics)
+    policy = next(iter(policies), FlowRouteMatchPolicy.EXCLUSIVE)
+    if policy == FlowRouteMatchPolicy.ALL_MATCHING:
+        return tuple(diagnostics)
+    priority_indexes: dict[int, list[int]] = {}
+    for index, edge in indexed_edges:
+        if edge.default:
+            continue
+        priority_indexes.setdefault(edge.priority, []).append(index)
+    for indexes in priority_indexes.values():
+        if len(indexes) <= 1:
+            continue
+        diagnostics.append(
+            _diagnostic(
+                code="flow.ambiguous_route",
+                path=f"edges[{indexes[1]}].priority",
+                message="Flow source has ambiguous outgoing routes.",
+                hint=(
+                    "Use distinct priorities, all_matching, or one "
+                    "explicit default route."
+                ),
+            )
+        )
     return tuple(diagnostics)
 
 

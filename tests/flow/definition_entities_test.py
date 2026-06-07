@@ -7,6 +7,7 @@ from avalan.flow import (
     FlowConditionOperator,
     FlowDefinition,
     FlowEdgeDefinition,
+    FlowEdgeKind,
     FlowEntryBehavior,
     FlowEntryBehaviorType,
     FlowInputDefinition,
@@ -22,6 +23,7 @@ from avalan.flow import (
     FlowOutputBehaviorType,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRouteMatchPolicy,
 )
 
 
@@ -89,10 +91,14 @@ class FlowDefinitionTestCase(TestCase):
                     source="start",
                     target="start",
                     label="done",
+                    kind=FlowEdgeKind.FINALLY,
                     condition=FlowCondition(
                         operator=FlowConditionOperator.EXISTS,
                         selector="start.result",
                     ),
+                    priority=5,
+                    default=False,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
                 ),
             ),
         )
@@ -131,6 +137,13 @@ class FlowDefinitionTestCase(TestCase):
                 operator=FlowConditionOperator.EXISTS,
                 selector="start.result",
             ),
+        )
+        self.assertEqual(definition.edges[0].kind, FlowEdgeKind.FINALLY)
+        self.assertEqual(definition.edges[0].priority, 5)
+        self.assertFalse(definition.edges[0].default)
+        self.assertEqual(
+            definition.edges[0].routing_policy,
+            FlowRouteMatchPolicy.ALL_MATCHING,
         )
         self.assertEqual(
             cast(dict[str, object], definition.nodes[0].config["value"])[
@@ -225,12 +238,51 @@ class FlowDefinitionTestCase(TestCase):
                 target="finish",
                 condition=object(),  # type: ignore[arg-type]
             )
+        with self.assertRaises(AssertionError):
+            FlowEdgeDefinition(
+                source="start",
+                target="finish",
+                kind="success",  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowEdgeDefinition(
+                source="start",
+                target="finish",
+                priority=True,  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowEdgeDefinition(
+                source="start",
+                target="finish",
+                default="yes",  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowEdgeDefinition(
+                source="start",
+                target="finish",
+                routing_policy="exclusive",  # type: ignore[arg-type]
+            )
 
     def test_behavior_type_enums_are_stable(self) -> None:
         self.assertEqual(FlowEntryBehaviorType.NODE.value, "node")
         self.assertEqual(FlowOutputBehaviorType.MAP.value, "map")
         self.assertEqual(FlowConditionOperator.CONTAINS.value, "contains")
         self.assertEqual(FlowMappingKind.FILE_ARRAY.value, "file[]")
+        self.assertEqual(FlowEdgeKind.CANCELLATION.value, "cancellation")
+        self.assertEqual(FlowEdgeKind.ERROR.value, "error")
+        self.assertEqual(FlowEdgeKind.FINALLY.value, "finally")
+        self.assertEqual(FlowEdgeKind.PAUSE.value, "pause")
+        self.assertEqual(FlowEdgeKind.RESUME.value, "resume")
+        self.assertEqual(FlowEdgeKind.SUCCESS.value, "success")
+        self.assertEqual(FlowEdgeKind.TIMEOUT.value, "timeout")
+        self.assertEqual(
+            FlowRouteMatchPolicy.ALL_MATCHING.value,
+            "all_matching",
+        )
+        self.assertEqual(
+            FlowRouteMatchPolicy.EXCLUSIVE.value,
+            "exclusive",
+        )
         self.assertEqual(FlowNodeKind.HUMAN_REVIEW.value, "human_review")
         self.assertEqual(FlowNodeKind.SUBFLOW.value, "subflow")
         self.assertEqual(

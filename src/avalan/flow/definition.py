@@ -71,6 +71,21 @@ class FlowMappingKind(StrEnum):
     FILE_ARRAY = "file[]"
 
 
+class FlowEdgeKind(StrEnum):
+    SUCCESS = "success"
+    ERROR = "error"
+    TIMEOUT = "timeout"
+    FINALLY = "finally"
+    CANCELLATION = "cancellation"
+    PAUSE = "pause"
+    RESUME = "resume"
+
+
+class FlowRouteMatchPolicy(StrEnum):
+    EXCLUSIVE = "exclusive"
+    ALL_MATCHING = "all_matching"
+
+
 def _empty_mapping() -> FlowMetadata:
     return MappingProxyType({})
 
@@ -321,15 +336,26 @@ class FlowEdgeDefinition:
     source: str
     target: str
     label: str | None = None
+    kind: FlowEdgeKind = FlowEdgeKind.SUCCESS
     condition: FlowCondition | None = None
+    priority: int = 0
+    default: bool = False
+    routing_policy: FlowRouteMatchPolicy = FlowRouteMatchPolicy.EXCLUSIVE
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.source, "source")
         _assert_non_empty_string(self.target, "target")
         if self.label is not None:
             _assert_non_empty_string(self.label, "label")
+        assert isinstance(self.kind, FlowEdgeKind)
         if self.condition is not None:
             assert isinstance(self.condition, FlowCondition)
+        assert isinstance(self.priority, int) and not isinstance(
+            self.priority,
+            bool,
+        )
+        assert isinstance(self.default, bool)
+        assert isinstance(self.routing_policy, FlowRouteMatchPolicy)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
