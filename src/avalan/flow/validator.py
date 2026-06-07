@@ -1,3 +1,7 @@
+from .condition import (
+    FlowCondition,
+    FlowConditionOperator,
+)
 from .definition import (
     FlowDefinition,
     FlowInputMapping,
@@ -55,6 +59,92 @@ _UNSUPPORTED_NODE_CODES = frozenset(
         "flow.unknown_node_type",
         "flow.unsupported_node_type",
         "flow.untrusted_callable",
+    }
+)
+_BOOLEAN_CONDITION_OPERATORS = frozenset(
+    {
+        FlowConditionOperator.ALL,
+        FlowConditionOperator.ANY,
+        FlowConditionOperator.NOT,
+    }
+)
+_SELECTOR_CONDITION_OPERATORS = frozenset(
+    {
+        FlowConditionOperator.EQ,
+        FlowConditionOperator.NE,
+        FlowConditionOperator.EXISTS,
+        FlowConditionOperator.NOT_EXISTS,
+        FlowConditionOperator.IS_TYPE,
+        FlowConditionOperator.IN,
+        FlowConditionOperator.NOT_IN,
+        FlowConditionOperator.GT,
+        FlowConditionOperator.GTE,
+        FlowConditionOperator.LT,
+        FlowConditionOperator.LTE,
+        FlowConditionOperator.STARTS_WITH,
+        FlowConditionOperator.ENDS_WITH,
+        FlowConditionOperator.CONTAINS,
+        FlowConditionOperator.IS_NULL,
+        FlowConditionOperator.NOT_NULL,
+    }
+)
+_COMPARISON_CONDITION_OPERATORS = frozenset(
+    {
+        FlowConditionOperator.EQ,
+        FlowConditionOperator.NE,
+        FlowConditionOperator.GT,
+        FlowConditionOperator.GTE,
+        FlowConditionOperator.LT,
+        FlowConditionOperator.LTE,
+        FlowConditionOperator.STARTS_WITH,
+        FlowConditionOperator.ENDS_WITH,
+        FlowConditionOperator.CONTAINS,
+    }
+)
+_NUMERIC_CONDITION_OPERATORS = frozenset(
+    {
+        FlowConditionOperator.GT,
+        FlowConditionOperator.GTE,
+        FlowConditionOperator.LT,
+        FlowConditionOperator.LTE,
+    }
+)
+_STRING_CONDITION_OPERATORS = frozenset(
+    {
+        FlowConditionOperator.STARTS_WITH,
+        FlowConditionOperator.ENDS_WITH,
+        FlowConditionOperator.CONTAINS,
+    }
+)
+_UNSAFE_CONDITION_VALUE_FRAGMENTS = frozenset(
+    {
+        "$(",
+        "${",
+        "/",
+        "\\",
+        "{%",
+        "{{",
+        "%}",
+        "}}",
+        "~",
+    }
+)
+_UNSAFE_CONDITION_VALUE_PREFIXES = frozenset(
+    {
+        "__",
+        "env.",
+        "environment.",
+        "eval(",
+        "file.",
+        "files.",
+        "fs.",
+        "import ",
+        "network.",
+        "runtime.",
+        "secret.",
+        "secrets.",
+        "shell.",
+        "task.",
     }
 )
 
@@ -261,6 +351,9 @@ def _validate_graph_contract(
         )
     else:
         diagnostics.extend(_validate_legacy_graph_contract(definition))
+    diagnostics.extend(
+        _validate_edge_conditions(definition, node_names, registry)
+    )
     diagnostics.extend(_validate_agent_file_selectors(definition, registry))
     if _cycle_nodes(definition):
         diagnostics.append(
@@ -639,6 +732,389 @@ def _validate_node_mappings(
                 )
             )
     return tuple(diagnostics)
+
+
+def _validate_edge_conditions(
+    definition: FlowDefinition,
+    node_names: set[str],
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    input_names = {
+        input_definition.name for input_definition in definition.inputs
+    }
+    if definition.input is not None:
+        input_names.add(definition.input.name)
+    diagnostics: list[FlowDiagnostic] = []
+    for index, edge in enumerate(definition.edges):
+        if edge.condition is None:
+            continue
+        diagnostics.extend(
+            _validate_condition(
+                definition,
+                edge.condition,
+                path=f"edges[{index}].condition",
+                edge_source=edge.source,
+                input_names=input_names,
+                node_names=node_names,
+                registry=registry,
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_condition(
+    definition: FlowDefinition,
+    condition: FlowCondition,
+    *,
+    path: str,
+    edge_source: str,
+    input_names: set[str],
+    node_names: set[str],
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    diagnostics.extend(_validate_condition_shape(condition, path=path))
+    diagnostics.extend(
+        _validate_condition_literal_values(condition, path=path)
+    )
+    if condition.selector is not None:
+        diagnostics.extend(
+            _validate_condition_selector(
+                definition,
+                condition.selector,
+                path=f"{path}.selector",
+                edge_source=edge_source,
+                input_names=input_names,
+                node_names=node_names,
+                registry=registry,
+            )
+        )
+    if condition.value_selector is not None:
+        diagnostics.extend(
+            _validate_condition_selector(
+                definition,
+                condition.value_selector,
+                path=f"{path}.value_selector",
+                edge_source=edge_source,
+                input_names=input_names,
+                node_names=node_names,
+                registry=registry,
+            )
+        )
+    for index, child in enumerate(condition.conditions):
+        diagnostics.extend(
+            _validate_condition(
+                definition,
+                child,
+                path=f"{path}.conditions[{index}]",
+                edge_source=edge_source,
+                input_names=input_names,
+                node_names=node_names,
+                registry=registry,
+            )
+        )
+    if condition.condition is not None:
+        diagnostics.extend(
+            _validate_condition(
+                definition,
+                condition.condition,
+                path=f"{path}.condition",
+                edge_source=edge_source,
+                input_names=input_names,
+                node_names=node_names,
+                registry=registry,
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_condition_shape(
+    condition: FlowCondition,
+    *,
+    path: str,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    operator = condition.operator
+    if (
+        operator in _SELECTOR_CONDITION_OPERATORS
+        and condition.selector is None
+    ):
+        diagnostics.append(
+            _condition_diagnostic(
+                code="flow.missing_condition_selector",
+                path=f"{path}.selector",
+                message="Flow condition is missing a selector.",
+                hint="Set a safe selector for this condition.",
+            )
+        )
+    if operator in _COMPARISON_CONDITION_OPERATORS:
+        has_literal = condition.value is not None
+        if not has_literal and condition.value_selector is None:
+            diagnostics.append(
+                _condition_diagnostic(
+                    code="flow.missing_condition_value",
+                    path=f"{path}.value",
+                    message="Flow condition is missing a comparison value.",
+                    hint="Set value or value_selector.",
+                )
+            )
+    elif (
+        operator
+        not in {
+            FlowConditionOperator.IN,
+            FlowConditionOperator.NOT_IN,
+        }
+        and operator not in _BOOLEAN_CONDITION_OPERATORS
+    ):
+        if condition.value is not None:
+            diagnostics.append(_unsupported_condition_field(path, "value"))
+        if condition.value_selector is not None:
+            diagnostics.append(
+                _unsupported_condition_field(path, "value_selector")
+            )
+    if operator in _NUMERIC_CONDITION_OPERATORS:
+        if condition.value is not None and not _is_condition_number(
+            condition.value
+        ):
+            diagnostics.append(_invalid_condition_value(path))
+    if operator in _STRING_CONDITION_OPERATORS:
+        if condition.value is not None and not isinstance(
+            condition.value,
+            str,
+        ):
+            diagnostics.append(_invalid_condition_value(path))
+    if operator == FlowConditionOperator.IS_TYPE:
+        if condition.value_type is None:
+            diagnostics.append(
+                _condition_diagnostic(
+                    code="flow.missing_condition_value_type",
+                    path=f"{path}.value_type",
+                    message="Flow condition is missing a value type.",
+                    hint="Set value_type for type checks.",
+                )
+            )
+    elif (
+        condition.value_type is not None
+        and operator not in _BOOLEAN_CONDITION_OPERATORS
+    ):
+        diagnostics.append(_unsupported_condition_field(path, "value_type"))
+    if operator in {
+        FlowConditionOperator.IN,
+        FlowConditionOperator.NOT_IN,
+    }:
+        if (
+            not condition.values
+            and condition.value_selector is None
+            and not isinstance(condition.value, list | tuple)
+        ):
+            diagnostics.append(
+                _condition_diagnostic(
+                    code="flow.missing_condition_values",
+                    path=f"{path}.values",
+                    message="Flow condition is missing membership values.",
+                    hint="Set values or value_selector.",
+                )
+            )
+    elif condition.values:
+        diagnostics.append(_unsupported_condition_field(path, "values"))
+    if operator in {FlowConditionOperator.ALL, FlowConditionOperator.ANY}:
+        if not condition.conditions:
+            diagnostics.append(
+                _condition_diagnostic(
+                    code="flow.missing_condition_children",
+                    path=f"{path}.conditions",
+                    message="Flow condition is missing child conditions.",
+                    hint="Add one or more child conditions.",
+                )
+            )
+    elif condition.conditions and operator not in _BOOLEAN_CONDITION_OPERATORS:
+        diagnostics.append(_unsupported_condition_field(path, "conditions"))
+    if operator == FlowConditionOperator.NOT:
+        if condition.condition is None:
+            diagnostics.append(
+                _condition_diagnostic(
+                    code="flow.missing_condition_child",
+                    path=f"{path}.condition",
+                    message="Flow condition is missing a child condition.",
+                    hint="Add a child condition.",
+                )
+            )
+    elif condition.condition is not None:
+        diagnostics.append(_unsupported_condition_field(path, "condition"))
+    if operator not in _BOOLEAN_CONDITION_OPERATORS:
+        return tuple(diagnostics)
+    for field_name, value in (
+        ("selector", condition.selector),
+        ("value", condition.value),
+        ("value_selector", condition.value_selector),
+        ("value_type", condition.value_type),
+    ):
+        if value is not None:
+            diagnostics.append(_unsupported_condition_field(path, field_name))
+    if operator == FlowConditionOperator.NOT and condition.conditions:
+        diagnostics.append(_unsupported_condition_field(path, "conditions"))
+    return tuple(diagnostics)
+
+
+def _validate_condition_selector(
+    definition: FlowDefinition,
+    selector: str,
+    *,
+    path: str,
+    edge_source: str,
+    input_names: set[str],
+    node_names: set[str],
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    try:
+        parsed = parse_flow_selector(selector)
+    except FlowSelectorError as error:
+        return (_selector_diagnostic(error, path=path),)
+    if parsed.root == FlowSelectorRoot.FLOW_INPUT:
+        if parsed.source in input_names:
+            return ()
+        return (
+            _diagnostic(
+                code="flow.unknown_condition_source",
+                path=path,
+                message="Flow condition references an unknown input.",
+                hint="Reference a declared flow input.",
+            ),
+        )
+    if parsed.source not in node_names:
+        return (
+            _diagnostic(
+                code="flow.unknown_condition_source",
+                path=path,
+                message="Flow condition references an unknown node.",
+                hint="Reference the condition edge source node.",
+            ),
+        )
+    if parsed.source != edge_source:
+        return (
+            _diagnostic(
+                code="flow.bad_reference",
+                path=path,
+                message="Flow condition selector is disconnected.",
+                hint="Reference the source node for this edge.",
+            ),
+        )
+    node = definition.node_map[parsed.source]
+    assert parsed.output is not None
+    if not _supports_output_name(registry, node.type, parsed.output):
+        return (
+            _diagnostic(
+                code="flow.unknown_node_output",
+                path=path,
+                message="Flow condition references unknown output.",
+                hint="Reference a declared output for the edge source node.",
+            ),
+        )
+    if not _supports_output_path(registry, node.type, parsed):
+        return (
+            _diagnostic(
+                code="flow.unknown_selector_path",
+                path=path,
+                message="Flow condition selector path is unknown.",
+                hint="Reference fields declared by the selected output.",
+            ),
+        )
+    return ()
+
+
+def _validate_condition_literal_values(
+    condition: FlowCondition,
+    *,
+    path: str,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    for value_path, value in _condition_literals(condition, path=path):
+        if _condition_value_is_unsafe(value):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.unsafe_condition_value",
+                    path=value_path,
+                    message="Flow condition literal is unsafe.",
+                    hint="Use inert literal values only.",
+                    category=FlowDiagnosticCategory.PRIVACY,
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _condition_literals(
+    condition: FlowCondition,
+    *,
+    path: str,
+) -> tuple[tuple[str, object], ...]:
+    literals: list[tuple[str, object]] = []
+    if condition.value is not None:
+        literals.append((f"{path}.value", condition.value))
+    literals.extend(
+        (f"{path}.values[{index}]", value)
+        for index, value in enumerate(condition.values)
+    )
+    return tuple(literals)
+
+
+def _condition_value_is_unsafe(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            _condition_value_is_unsafe(key) or _condition_value_is_unsafe(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(_condition_value_is_unsafe(item) for item in value)
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().lower()
+    return any(
+        fragment in normalized
+        for fragment in _UNSAFE_CONDITION_VALUE_FRAGMENTS
+    ) or any(
+        normalized.startswith(prefix)
+        for prefix in _UNSAFE_CONDITION_VALUE_PREFIXES
+    )
+
+
+def _is_condition_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _invalid_condition_value(path: str) -> FlowDiagnostic:
+    return _condition_diagnostic(
+        code="flow.invalid_condition_value",
+        path=f"{path}.value",
+        message="Flow condition value has an invalid type.",
+        hint="Use a value compatible with the condition operator.",
+    )
+
+
+def _unsupported_condition_field(
+    path: str,
+    field_name: str,
+) -> FlowDiagnostic:
+    return _condition_diagnostic(
+        code="flow.unsupported_condition_field",
+        path=f"{path}.{field_name}",
+        message="Flow condition field is not supported for this operator.",
+        hint="Remove fields that do not apply to the condition operator.",
+    )
+
+
+def _condition_diagnostic(
+    *,
+    code: str,
+    path: str,
+    message: str,
+    hint: str,
+) -> FlowDiagnostic:
+    return _diagnostic(
+        code=code,
+        path=path,
+        message=message,
+        hint=hint,
+    )
 
 
 def _validate_mapping(

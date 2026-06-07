@@ -3,6 +3,8 @@ from typing import cast
 from unittest import TestCase, main
 
 from avalan.flow import (
+    FlowCondition,
+    FlowConditionOperator,
     FlowDefinition,
     FlowEdgeDefinition,
     FlowEntryBehavior,
@@ -87,6 +89,10 @@ class FlowDefinitionTestCase(TestCase):
                     source="start",
                     target="start",
                     label="done",
+                    condition=FlowCondition(
+                        operator=FlowConditionOperator.EXISTS,
+                        selector="start.result",
+                    ),
                 ),
             ),
         )
@@ -119,6 +125,13 @@ class FlowDefinitionTestCase(TestCase):
         self.assertEqual(definition.tags, ("ops",))
         self.assertEqual(definition.ownership["team"], "platform")
         self.assertTrue(definition.is_strict)
+        self.assertEqual(
+            definition.edges[0].condition,
+            FlowCondition(
+                operator=FlowConditionOperator.EXISTS,
+                selector="start.result",
+            ),
+        )
         self.assertEqual(
             cast(dict[str, object], definition.nodes[0].config["value"])[
                 "answer"
@@ -206,10 +219,17 @@ class FlowDefinitionTestCase(TestCase):
                 type="echo",
                 mappings=(object(),),  # type: ignore[arg-type]
             )
+        with self.assertRaises(AssertionError):
+            FlowEdgeDefinition(
+                source="start",
+                target="finish",
+                condition=object(),  # type: ignore[arg-type]
+            )
 
     def test_behavior_type_enums_are_stable(self) -> None:
         self.assertEqual(FlowEntryBehaviorType.NODE.value, "node")
         self.assertEqual(FlowOutputBehaviorType.MAP.value, "map")
+        self.assertEqual(FlowConditionOperator.CONTAINS.value, "contains")
         self.assertEqual(FlowMappingKind.FILE_ARRAY.value, "file[]")
         self.assertEqual(FlowNodeKind.HUMAN_REVIEW.value, "human_review")
         self.assertEqual(FlowNodeKind.SUBFLOW.value, "subflow")

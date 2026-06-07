@@ -1,6 +1,9 @@
 from unittest import TestCase, main
 
 from avalan.flow import (
+    FlowCondition,
+    FlowConditionOperator,
+    FlowConditionValueType,
     FlowDefinition,
     FlowDiagnostic,
     FlowDiagnosticCategory,
@@ -1124,6 +1127,438 @@ class FlowValidatorTestCase(TestCase):
                 "flow.missing_input_mapping",
             ],
         )
+
+    def test_validate_flow_definition_accepts_declarative_conditions(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="conditioned",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "finish.value"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="start", type="echo"),
+                    FlowNodeDefinition(name="finish", type="echo"),
+                ),
+                edges=(
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="finish",
+                        condition=FlowCondition(
+                            operator=FlowConditionOperator.ALL,
+                            conditions=(
+                                FlowCondition(
+                                    operator=FlowConditionOperator.EQ,
+                                    selector="start.value.status",
+                                    value_selector="input.payload.expected",
+                                ),
+                                FlowCondition(
+                                    operator=FlowConditionOperator.IS_TYPE,
+                                    selector="start.value.score",
+                                    value_type=FlowConditionValueType.NUMBER,
+                                ),
+                                FlowCondition(
+                                    operator=FlowConditionOperator.NOT,
+                                    condition=FlowCondition(
+                                        operator=FlowConditionOperator.EXISTS,
+                                        selector="start.value.blocked",
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_declarative_conditions(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    value="ready",
+                ),
+                "flow.missing_condition_selector",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    selector="start.value.status",
+                ),
+                "flow.missing_condition_value",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.GT,
+                    selector="start.value.score",
+                    value="3",
+                ),
+                "flow.invalid_condition_value",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.CONTAINS,
+                    selector="start.value.status",
+                    value=3,
+                ),
+                "flow.invalid_condition_value",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.IS_TYPE,
+                    selector="start.value.status",
+                ),
+                "flow.missing_condition_value_type",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.IN,
+                    selector="start.value.status",
+                ),
+                "flow.missing_condition_values",
+            ),
+            (
+                FlowCondition(operator=FlowConditionOperator.ALL),
+                "flow.missing_condition_children",
+            ),
+            (
+                FlowCondition(operator=FlowConditionOperator.NOT),
+                "flow.missing_condition_child",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="start.value.status",
+                    value="ready",
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="start.value.status",
+                    value_selector="start.value.other",
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    selector="start.value.status",
+                    value="ready",
+                    value_type=FlowConditionValueType.STRING,
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    selector="start.value.status",
+                    value="ready",
+                    values=("ready",),
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    selector="start.value.status",
+                    value="ready",
+                    conditions=(
+                        FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value.status",
+                        ),
+                    ),
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.ALL,
+                    selector="start.value.status",
+                    conditions=(
+                        FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value.status",
+                        ),
+                    ),
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.ALL,
+                    conditions=(
+                        FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value.status",
+                        ),
+                    ),
+                    condition=FlowCondition(
+                        operator=FlowConditionOperator.EXISTS,
+                        selector="start.value.other",
+                    ),
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.NOT,
+                    conditions=(
+                        FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value.status",
+                        ),
+                    ),
+                    condition=FlowCondition(
+                        operator=FlowConditionOperator.EXISTS,
+                        selector="start.value.other",
+                    ),
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="input.missing",
+                ),
+                "flow.unknown_condition_source",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="missing.value",
+                ),
+                "flow.unknown_condition_source",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="other.value.status",
+                ),
+                "flow.bad_reference",
+            ),
+        )
+
+        for condition, code in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="conditioned",
+                        version="2026-06-07",
+                        inputs=(
+                            FlowInputDefinition(
+                                name="payload",
+                                type=FlowInputType.OBJECT,
+                            ),
+                        ),
+                        outputs=(
+                            FlowOutputDefinition(
+                                name="answer",
+                                type=FlowOutputType.OBJECT,
+                            ),
+                        ),
+                        entry_behavior=FlowEntryBehavior(node="start"),
+                        output_behavior=FlowOutputBehavior(
+                            outputs={"answer": "finish.value"},
+                        ),
+                        nodes=(
+                            FlowNodeDefinition(name="start", type="echo"),
+                            FlowNodeDefinition(name="other", type="echo"),
+                            FlowNodeDefinition(name="finish", type="echo"),
+                        ),
+                        edges=(
+                            FlowEdgeDefinition(
+                                source="start",
+                                target="finish",
+                                condition=condition,
+                            ),
+                        ),
+                    )
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_validate_flow_definition_rejects_private_conditions(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="env.SECRET",
+                ),
+                "flow.reserved_selector",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    selector="start.value.status",
+                    value="{{secret}}",
+                ),
+                "flow.unsafe_condition_value",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    selector="start.value.status",
+                    value={"token": "{{secret}}"},
+                ),
+                "flow.unsafe_condition_value",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.IN,
+                    selector="start.value.status",
+                    values=(("{{secret}}",),),
+                ),
+                "flow.unsafe_condition_value",
+            ),
+        )
+
+        for condition, code in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="conditioned",
+                        version="2026-06-07",
+                        inputs=(
+                            FlowInputDefinition(
+                                name="payload",
+                                type=FlowInputType.OBJECT,
+                            ),
+                        ),
+                        outputs=(
+                            FlowOutputDefinition(
+                                name="answer",
+                                type=FlowOutputType.OBJECT,
+                            ),
+                        ),
+                        entry_behavior=FlowEntryBehavior(node="start"),
+                        output_behavior=FlowOutputBehavior(
+                            outputs={"answer": "finish.value"},
+                        ),
+                        nodes=(
+                            FlowNodeDefinition(name="start", type="echo"),
+                            FlowNodeDefinition(name="finish", type="echo"),
+                        ),
+                        edges=(
+                            FlowEdgeDefinition(
+                                source="start",
+                                target="finish",
+                                condition=condition,
+                            ),
+                        ),
+                    )
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+                self.assertIn(
+                    FlowDiagnosticCategory.PRIVACY,
+                    {
+                        diagnostic.category
+                        for diagnostic in result.diagnostics
+                        if diagnostic.code == code
+                    },
+                )
+                self.assertNotIn("secret", str(result.public_diagnostics))
+
+    def test_validate_flow_definition_rejects_condition_contract_mismatches(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {"schema": lambda definition: Node(definition.name)},
+            {
+                "schema": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        schema={
+                            "type": "object",
+                            "properties": {"known": {"type": "string"}},
+                        },
+                    ),
+                ),
+            },
+        )
+        cases = (
+            ("start.missing", "flow.unknown_node_output"),
+            ("start.result.missing", "flow.unknown_selector_path"),
+        )
+
+        for selector, code in cases:
+            with self.subTest(selector=selector):
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="conditioned",
+                        version="2026-06-07",
+                        inputs=(
+                            FlowInputDefinition(
+                                name="payload",
+                                type=FlowInputType.OBJECT,
+                            ),
+                        ),
+                        outputs=(
+                            FlowOutputDefinition(
+                                name="answer",
+                                type=FlowOutputType.OBJECT,
+                            ),
+                        ),
+                        entry_behavior=FlowEntryBehavior(node="start"),
+                        output_behavior=FlowOutputBehavior(
+                            outputs={"answer": "finish.result"},
+                        ),
+                        nodes=(
+                            FlowNodeDefinition(name="start", type="schema"),
+                            FlowNodeDefinition(name="finish", type="schema"),
+                        ),
+                        edges=(
+                            FlowEdgeDefinition(
+                                source="start",
+                                target="finish",
+                                condition=FlowCondition(
+                                    operator=FlowConditionOperator.EXISTS,
+                                    selector=selector,
+                                ),
+                            ),
+                        ),
+                    ),
+                    registry,
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
 
     def test_mapping_private_helpers_cover_type_edges(self) -> None:
         registry = FlowNodeRegistry({"open": lambda definition: Node("open")})

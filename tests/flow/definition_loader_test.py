@@ -15,6 +15,7 @@ from avalan.entities import (
 from avalan.flow import (
     FLOW_INPUT_KEY,
     FLOW_TOOL_NODE_TYPE,
+    FlowConditionOperator,
     FlowDefinition,
     FlowDefinitionLoader,
     FlowDiagnosticCategory,
@@ -144,6 +145,170 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(output, {"answer": "ok"})
+
+    async def test_loads_edge_conditions_and_applies_them(self) -> None:
+        cases = (("pass", "go", "go"), ("block", "stop", None))
+
+        for name, expected, output in cases:
+            with self.subTest(name=name):
+                result = loads_flow_definition_result(f"""
+                    [flow]
+                    name = "conditioned"
+                    entrypoint = "start"
+                    output_node = "finish"
+
+                    [nodes.start]
+                    type = "constant"
+                    value = "go"
+
+                    [nodes.finish]
+                    type = "echo"
+
+                    [[edges]]
+                    source = "start"
+                    target = "finish"
+
+                    [edges.condition]
+                    op = "eq"
+                    selector = "start.value"
+                    value = "{expected}"
+                    """)
+
+                self.assertTrue(result.ok)
+                assert result.definition is not None
+                assert result.flow is not None
+                assert result.definition.edges[0].condition is not None
+                self.assertEqual(
+                    result.definition.edges[0].condition.operator,
+                    FlowConditionOperator.EQ,
+                )
+                self.assertEqual(
+                    await result.flow.execute_async(
+                        initial_node=result.definition.entrypoint,
+                    ),
+                    output,
+                )
+
+    def test_loads_nested_edge_conditions(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "conditioned"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [nodes.start]
+            type = "constant"
+            value = "go"
+
+            [nodes.finish]
+            type = "echo"
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+
+            [edges.condition]
+            op = "all"
+
+            [[edges.condition.conditions]]
+            op = "is_type"
+            selector = "start.value"
+            value_type = "string"
+
+            [[edges.condition.conditions]]
+            op = "in"
+            selector = "start.value"
+            values = ["go", "stop"]
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        condition = result.definition.edges[0].condition
+        assert condition is not None
+        self.assertEqual(condition.operator.value, "all")
+        self.assertEqual(len(condition.conditions), 2)
+
+    def test_loader_rejects_invalid_edge_conditions(self) -> None:
+        cases = (
+            (
+                """
+                condition = "invalid"
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [edges.condition]
+                op = "eval"
+                selector = "start.value"
+                value = "private-token"
+                """,
+                "flow.invalid_enum",
+            ),
+            (
+                """
+                [edges.condition]
+                op = "eq"
+                selector = "start.value"
+                eval = "import os"
+                """,
+                "flow.unsupported_field",
+            ),
+            (
+                """
+                [edges.condition]
+                op = "all"
+                conditions = "invalid"
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [edges.condition]
+                op = "in"
+                selector = "start.value"
+                values = "invalid"
+                """,
+                "flow.invalid_type",
+            ),
+            (
+                """
+                [edges.condition]
+                op = "all"
+
+                [[edges.condition.conditions]]
+                selector = "start.value"
+                """,
+                "flow.missing_field",
+            ),
+        )
+
+        for condition_toml, code in cases:
+            with self.subTest(code=code):
+                result = loads_flow_definition_result(f"""
+                    [flow]
+                    name = "conditioned"
+                    entrypoint = "start"
+                    output_node = "finish"
+
+                    [nodes.start]
+                    type = "constant"
+                    value = "go"
+
+                    [nodes.finish]
+                    type = "echo"
+
+                    [[edges]]
+                    source = "start"
+                    target = "finish"
+                    {condition_toml}
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertIn(code, [issue.code for issue in result.issues])
+                self.assertNotIn(
+                    "private-token", str(result.public_diagnostics)
+                )
 
     async def test_load_accepts_top_level_input_and_custom_registry(
         self,
@@ -2120,6 +2285,15 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(string_mapping)
         self.assertEqual(node_mappings, ())
         self.assertIsNone(optional_mapping)
+        self.assertEqual(
+            flow_loader._condition_output_names(  # type: ignore[attr-defined]
+                FlowNodeRegistry(
+                    {"custom": lambda definition: Node("custom")}
+                ),
+                "custom",
+            ),
+            ("value", "result"),
+        )
         self.assertIn("flow.invalid_type", [issue.code for issue in issues])
 
     def _load_agent_selector_case(
