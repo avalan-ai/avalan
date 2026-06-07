@@ -14,7 +14,19 @@ from avalan.entities import (
     MessageRole,
 )
 from avalan.event import Event, EventType
-from avalan.flow import FlowNodeDefinition
+from avalan.flow import (
+    FlowDefinition,
+    FlowEntryBehavior,
+    FlowInputDefinition,
+    FlowInputMapping,
+    FlowInputType,
+    FlowMappingKind,
+    FlowNodeDefinition,
+    FlowOutputBehavior,
+    FlowOutputDefinition,
+    FlowOutputType,
+    validate_flow_definition,
+)
 from avalan.flow.flow import Flow
 from avalan.flow.loader import FlowDefinitionLoader
 from avalan.flow.node import Node
@@ -724,6 +736,481 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         node = result.definition.node_map["render_pages"]
         self.assertEqual(node.config["converter"], "pdf_image")
         self.assertIsNotNone(result.flow)
+
+    def test_strict_file_convert_node_preflights_task_contract(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        context = self._context(
+            artifact_store=FailingArtifactStore(),
+            task_store=InMemoryTaskStore(),
+            file_converters={"pdf_image": converter},
+        )
+        definition = FlowDefinition(
+            name="render",
+            version="1",
+            inputs=(
+                FlowInputDefinition(
+                    name="documents",
+                    type=FlowInputType.FILE_ARRAY,
+                    mime_types=("application/pdf",),
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="pages",
+                    type=FlowOutputType.FILE_ARRAY,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="render"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"pages": "render.files"},
+            ),
+            nodes=(
+                FlowNodeDefinition(
+                    name="render",
+                    type="pdf_to_images",
+                    mappings=(
+                        FlowInputMapping(
+                            target="files",
+                            kind=FlowMappingKind.FILE_ARRAY,
+                            source="input.documents",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_flow_definition(
+            definition,
+            task_flow_node_registry(context),
+        )
+
+        self.assertTrue(result.ok, result.diagnostics)
+        self.assertEqual(converter.calls, [])
+
+    def test_strict_file_convert_node_rejects_missing_backing_safely(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        definition = FlowDefinition(
+            name="render",
+            version="1",
+            inputs=(
+                FlowInputDefinition(
+                    name="documents",
+                    type=FlowInputType.FILE_ARRAY,
+                    mime_types=("application/pdf",),
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="pages",
+                    type=FlowOutputType.FILE_ARRAY,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="render"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"pages": "render.files"},
+            ),
+            nodes=(
+                FlowNodeDefinition(
+                    name="render",
+                    type="file_convert",
+                    config={"converter": "pdf_image"},
+                    mappings=(
+                        FlowInputMapping(
+                            target="files",
+                            kind=FlowMappingKind.FILE_ARRAY,
+                            source="input.documents",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_flow_definition(
+            definition,
+            task_flow_node_registry(
+                self._context(file_converters={"pdf_image": converter})
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.missing_artifact_store", "flow.missing_task_store"],
+        )
+        self.assertNotIn("documents", str(result.public_diagnostics))
+        self.assertEqual(converter.calls, [])
+
+    def test_strict_file_convert_node_rejects_mime_mismatch_safely(
+        self,
+    ) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        context = self._context(
+            artifact_store=FailingArtifactStore(),
+            task_store=InMemoryTaskStore(),
+            file_converters={"pdf_image": converter},
+        )
+        definition = FlowDefinition(
+            name="render",
+            version="1",
+            inputs=(
+                FlowInputDefinition(
+                    name="private_upload",
+                    type=FlowInputType.FILE_ARRAY,
+                    mime_types=("image/jpeg",),
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="pages",
+                    type=FlowOutputType.FILE_ARRAY,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="render"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"pages": "render.files"},
+            ),
+            nodes=(
+                FlowNodeDefinition(
+                    name="render",
+                    type="pdf_to_images",
+                    mappings=(
+                        FlowInputMapping(
+                            target="files",
+                            kind=FlowMappingKind.FILE_ARRAY,
+                            source="input.private_upload",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_flow_definition(
+            definition,
+            task_flow_node_registry(context),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.diagnostics[0].code,
+            "flow.incompatible_file_mime",
+        )
+        self.assertNotIn("private_upload", str(result.public_diagnostics))
+        self.assertEqual(converter.calls, [])
+
+    def test_file_conversion_mime_private_helper_covers_safe_skips(
+        self,
+    ) -> None:
+        class EmptySourceCapability:
+            source_mime_types: tuple[str, ...] = ()
+
+        class EmptySourceConverter:
+            capability = EmptySourceCapability()
+
+        definition = FlowDefinition(
+            name="render",
+            version="1",
+            inputs=(
+                FlowInputDefinition(
+                    name="documents",
+                    type=FlowInputType.FILE_ARRAY,
+                    mime_types=("application/pdf",),
+                ),
+                FlowInputDefinition(
+                    name="unknown_mime",
+                    type=FlowInputType.FILE_ARRAY,
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="pages",
+                    type=FlowOutputType.FILE_ARRAY,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="render"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"pages": "render.files"},
+            ),
+            nodes=(FlowNodeDefinition(name="render", type="pdf_to_images"),),
+        )
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+
+        self.assertEqual(
+            flow_target_module._validate_file_conversion_mime(
+                definition,
+                FlowNodeDefinition(
+                    name="render",
+                    type="pdf_to_images",
+                    mappings=(
+                        FlowInputMapping(
+                            target="files",
+                            kind=FlowMappingKind.FILE_ARRAY,
+                            source="input.documents",
+                        ),
+                    ),
+                ),
+                cast(Any, EmptySourceConverter()),
+            ),
+            (),
+        )
+        for node in (
+            FlowNodeDefinition(
+                name="render",
+                type="pdf_to_images",
+                mappings=(
+                    FlowInputMapping(
+                        target="input",
+                        source="input.documents",
+                    ),
+                ),
+            ),
+            FlowNodeDefinition(
+                name="render",
+                type="pdf_to_images",
+                mappings=(
+                    FlowInputMapping(
+                        target="files",
+                        kind=FlowMappingKind.FILE_ARRAY,
+                        source="input.unknown_mime",
+                    ),
+                ),
+            ),
+            FlowNodeDefinition(
+                name="render",
+                type="pdf_to_images",
+                mappings=(
+                    FlowInputMapping(
+                        target="files",
+                        kind=FlowMappingKind.ARRAY,
+                        items=("input.documents", "__task_files__.files"),
+                    ),
+                ),
+            ),
+            FlowNodeDefinition(
+                name="render",
+                type="pdf_to_images",
+                mappings=(
+                    FlowInputMapping(
+                        target="files",
+                        kind=FlowMappingKind.OBJECT,
+                        fields={"value": "input.documents"},
+                    ),
+                ),
+            ),
+        ):
+            with self.subTest(node=node):
+                validate_mime = (
+                    flow_target_module._validate_file_conversion_mime
+                )
+                diagnostics = validate_mime(
+                    definition,
+                    node,
+                    cast(
+                        Any,
+                        flow_target_module._FlowFileConverter(
+                            converter,
+                            limits=flow_target_module._FlowConversionLimits(),
+                        ),
+                    ),
+                )
+
+                self.assertEqual(diagnostics, ())
+
+    def test_strict_agent_node_preflights_task_contract(self) -> None:
+        context = self._context(task_store=InMemoryTaskStore())
+        definition = FlowDefinition(
+            name="review",
+            version="1",
+            inputs=(
+                FlowInputDefinition(name="payload", type=FlowInputType.OBJECT),
+            ),
+            outputs=(
+                FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
+            ),
+            entry_behavior=FlowEntryBehavior(node="review"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "review.result"},
+            ),
+            nodes=(
+                FlowNodeDefinition(
+                    name="review",
+                    type="agent",
+                    ref="agents/review.toml",
+                    mappings=(
+                        FlowInputMapping(
+                            target="input",
+                            source="input.payload",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_flow_definition(
+            definition,
+            task_flow_node_registry(
+                context,
+                agent_runner=CapturingTaskTargetRunner(),
+            ),
+        )
+
+        self.assertTrue(result.ok, result.diagnostics)
+
+    def test_strict_agent_node_rejects_ref_escape_safely(self) -> None:
+        context = self._context(task_store=InMemoryTaskStore())
+        definition = FlowDefinition(
+            name="review",
+            version="1",
+            inputs=(
+                FlowInputDefinition(name="payload", type=FlowInputType.OBJECT),
+            ),
+            outputs=(
+                FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
+            ),
+            entry_behavior=FlowEntryBehavior(node="review"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "review.result"},
+            ),
+            nodes=(
+                FlowNodeDefinition(
+                    name="review",
+                    type="agent",
+                    ref="../private-review.toml",
+                    mappings=(
+                        FlowInputMapping(
+                            target="input",
+                            source="input.payload",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_flow_definition(
+            definition,
+            task_flow_node_registry(
+                context,
+                agent_runner=CapturingTaskTargetRunner(),
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            "flow.path_escape",
+            [diagnostic.code for diagnostic in result.diagnostics],
+        )
+        self.assertNotIn("private-review", str(result.public_diagnostics))
+
+    def test_strict_agent_node_rejects_missing_task_store_safely(self) -> None:
+        definition = FlowDefinition(
+            name="review",
+            version="1",
+            inputs=(
+                FlowInputDefinition(name="payload", type=FlowInputType.OBJECT),
+            ),
+            outputs=(
+                FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
+            ),
+            entry_behavior=FlowEntryBehavior(node="review"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "review.result"},
+            ),
+            nodes=(
+                FlowNodeDefinition(
+                    name="review",
+                    type="agent",
+                    ref="agents/private-review.toml",
+                    mappings=(
+                        FlowInputMapping(
+                            target="input",
+                            source="input.payload",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_flow_definition(
+            definition,
+            task_flow_node_registry(
+                self._context(),
+                agent_runner=CapturingTaskTargetRunner(),
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.missing_task_store")
+        self.assertNotIn("private-review", str(result.public_diagnostics))
+
+    def test_file_convert_direct_build_rejects_preflight_failures(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "missing",
+                self._context(),
+                FlowNodeDefinition(
+                    name="render",
+                    type="file_convert",
+                    config={"converter": "missing"},
+                ),
+                "flow.converter_unsupported",
+            ),
+            (
+                "dependency",
+                self._context(
+                    file_converters={
+                        "pdf_image": RecordingPdfPageConverter(
+                            (_page_result(1, b"page"),),
+                            dependency_gates=(
+                                TaskFeature.PDF_IMAGE_CONVERSION,
+                            ),
+                        )
+                    },
+                ),
+                FlowNodeDefinition(name="render", type="pdf_to_images"),
+                "dependency.task_pdf_images_missing",
+            ),
+            (
+                "options",
+                self._context(
+                    file_converters={
+                        "pdf_image": RecordingPdfPageConverter(
+                            (_page_result(1, b"page"),),
+                        )
+                    },
+                ),
+                FlowNodeDefinition(
+                    name="render",
+                    type="file_convert",
+                    config={"converter": "pdf_image", "format": "gif"},
+                ),
+                "flow.invalid_node",
+            ),
+        )
+
+        for name, context, definition, expected_code in cases:
+            with self.subTest(name=name):
+                if name == "dependency":
+                    patcher = patch(
+                        "avalan.task.targets.flow.feature_available",
+                        return_value=False,
+                    )
+                else:
+                    patcher = patch(
+                        "avalan.task.targets.flow.feature_available",
+                        return_value=True,
+                    )
+                with patcher:
+                    with self.assertRaises(
+                        FlowNodeConfigurationError
+                    ) as error:
+                        task_flow_node_registry(context).build(definition)
+
+                self.assertEqual(error.exception.code, expected_code)
 
     def test_task_scoped_registry_rejects_bad_file_convert_config(
         self,

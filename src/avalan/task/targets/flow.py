@@ -1,9 +1,15 @@
 from ...event import Event, EventType
 from ...flow.definition import (
+    FlowDefinition,
+    FlowInputMapping,
+    FlowInputType,
+    FlowMappingKind,
     FlowNodeCapability,
+    FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeKind,
     FlowNodeMetadata,
+    FlowOutputType,
 )
 from ...flow.flow import Flow
 from ...flow.node import Node
@@ -12,6 +18,11 @@ from ...flow.registry import (
     FlowNodeFactory,
     FlowNodeRegistry,
     default_flow_node_registry,
+)
+from ...flow.selector import (
+    FlowSelectorError,
+    FlowSelectorRoot,
+    parse_flow_selector,
 )
 from ..artifact import TaskArtifactRef, TaskArtifactRetention
 from ..context import TaskInputFile, TaskTargetContext
@@ -248,11 +259,20 @@ def task_flow_node_registry(
         metadata=FlowNodeMetadata(
             kind=FlowNodeKind.FILE_CONVERSION,
             async_only=True,
+            input_contract=FlowNodeContract(
+                name="files",
+                type=FlowInputType.FILE_ARRAY,
+            ),
+            output_contract=FlowNodeContract(
+                name="files",
+                type=FlowOutputType.FILE_ARRAY,
+            ),
             capabilities=(
                 FlowNodeCapability.ASYNC_ONLY,
                 FlowNodeCapability.TASK_BACKED,
             ),
         ),
+        validator=_file_convert_definition_validator(context),
     )
     registry.register(
         "pdf_to_images",
@@ -260,10 +280,22 @@ def task_flow_node_registry(
         metadata=FlowNodeMetadata(
             kind=FlowNodeKind.FILE_CONVERSION,
             async_only=True,
+            input_contract=FlowNodeContract(
+                name="files",
+                type=FlowInputType.FILE_ARRAY,
+            ),
+            output_contract=FlowNodeContract(
+                name="files",
+                type=FlowOutputType.FILE_ARRAY,
+            ),
             capabilities=(
                 FlowNodeCapability.ASYNC_ONLY,
                 FlowNodeCapability.TASK_BACKED,
             ),
+        ),
+        validator=_file_convert_definition_validator(
+            context,
+            default_converter="pdf_image",
         ),
     )
     if agent_runner is not None:
@@ -283,6 +315,19 @@ def task_flow_node_registry(
                     FlowNodeCapability.TASK_BACKED,
                 ),
                 requires_ref=True,
+                input_contract=FlowNodeContract(
+                    name="input",
+                    type="any",
+                ),
+                output_contract=FlowNodeContract(
+                    name="result",
+                    type=FlowOutputType.JSON,
+                    metadata={"dynamic": True},
+                ),
+            ),
+            validator=_agent_definition_validator(
+                context,
+                execution_roots=execution_roots,
             ),
         )
     return registry
@@ -400,6 +445,217 @@ class _FlowFileConverter:
                     "file conversion exceeded the pixel limit"
                 )
         return collection
+
+
+def _file_convert_definition_validator(
+    context: TaskTargetContext,
+    *,
+    default_converter: str | None = None,
+) -> Callable[
+    [FlowDefinition, FlowNodeDefinition],
+    tuple[FlowNodeConfigurationError, ...],
+]:
+    def validate(
+        definition: FlowDefinition,
+        node: FlowNodeDefinition,
+    ) -> tuple[FlowNodeConfigurationError, ...]:
+        errors: list[FlowNodeConfigurationError] = []
+        try:
+            request = _file_conversion_request(
+                node,
+                default_converter=default_converter,
+            )
+            limits = _file_conversion_limits(node.config)
+        except ValueError:
+            return (
+                _flow_node_config_error(
+                    node.name,
+                    message="Flow file conversion node is invalid.",
+                    hint="Use supported file conversion configuration.",
+                ),
+            )
+        converter = context.file_converters.get(request.name)
+        if converter is None:
+            errors.append(
+                FlowNodeConfigurationError(
+                    code="flow.converter_unsupported",
+                    path=f"nodes.{node.name}.config.converter",
+                    message="Flow file conversion is not supported.",
+                    hint="Use a registered task file converter.",
+                )
+            )
+            return tuple(errors)
+        adapted = _FlowFileConverter(converter, limits=limits)
+        try:
+            _validate_file_conversion_preflight(adapted, request)
+        except TaskFileConversionDependencyError as error:
+            diagnostic = feature_diagnostic(
+                error.feature,
+                path=f"nodes.{node.name}.config.converter",
+            )
+            errors.append(
+                FlowNodeConfigurationError(
+                    code=diagnostic.code,
+                    path=diagnostic.path,
+                    message=diagnostic.message,
+                    hint=diagnostic.hint,
+                )
+            )
+        except TaskFileConversionError:
+            errors.append(
+                _flow_node_config_error(
+                    node.name,
+                    message="Flow file conversion options are invalid.",
+                    hint="Use supported file conversion options.",
+                )
+            )
+        if definition.is_strict and context.artifact_store is None:
+            errors.append(
+                FlowNodeConfigurationError(
+                    code="flow.missing_artifact_store",
+                    path=f"nodes.{node.name}.config",
+                    message="Flow file conversion requires artifact storage.",
+                    hint="Configure artifact storage for task-backed flows.",
+                )
+            )
+        if definition.is_strict and context.task_store is None:
+            errors.append(
+                FlowNodeConfigurationError(
+                    code="flow.missing_task_store",
+                    path=f"nodes.{node.name}.config",
+                    message="Flow file conversion requires a task store.",
+                    hint="Run file conversion inside task execution.",
+                )
+            )
+        errors.extend(
+            _validate_file_conversion_mime(definition, node, adapted)
+        )
+        return tuple(errors)
+
+    return validate
+
+
+def _agent_definition_validator(
+    context: TaskTargetContext,
+    *,
+    execution_roots: Iterable[str | Path],
+) -> Callable[
+    [FlowDefinition, FlowNodeDefinition],
+    tuple[FlowNodeConfigurationError, ...],
+]:
+    roots = tuple(Path(root) for root in execution_roots)
+
+    def validate(
+        definition: FlowDefinition,
+        node: FlowNodeDefinition,
+    ) -> tuple[FlowNodeConfigurationError, ...]:
+        errors: list[FlowNodeConfigurationError] = []
+        try:
+            _agent_file_plan(node)
+        except FlowNodeConfigurationError as error:
+            errors.append(error)
+        ref_issue = _validate_flow_reference(
+            node.ref,
+            context=TaskValidationContext(execution_roots=roots),
+            ref_base=None,
+        )
+        if ref_issue is not None:
+            errors.append(
+                FlowNodeConfigurationError(
+                    code=ref_issue.code,
+                    path=f"nodes.{node.name}.ref",
+                    message="Flow agent node ref is invalid.",
+                    hint="Reference an agent under an allowed execution root.",
+                )
+            )
+        if definition.is_strict and context.task_store is None:
+            errors.append(
+                FlowNodeConfigurationError(
+                    code="flow.missing_task_store",
+                    path=f"nodes.{node.name}.config",
+                    message="Flow agent node requires a task store.",
+                    hint="Run agent nodes inside task execution.",
+                )
+            )
+        return tuple(errors)
+
+    return validate
+
+
+def _validate_file_conversion_mime(
+    definition: FlowDefinition,
+    node: FlowNodeDefinition,
+    converter: _FlowFileConverter,
+) -> tuple[FlowNodeConfigurationError, ...]:
+    source_mime_types = frozenset(converter.capability.source_mime_types)
+    if not source_mime_types:
+        return ()
+    errors: list[FlowNodeConfigurationError] = []
+    input_mime_types = {
+        input_definition.name: frozenset(input_definition.mime_types)
+        for input_definition in definition.inputs
+        if input_definition.type
+        in {FlowInputType.FILE, FlowInputType.FILE_ARRAY}
+    }
+    for mapping in node.mappings:
+        if mapping.target != "files":
+            continue
+        declared_mime_types = _file_mapping_input_mime_types(
+            mapping,
+            input_mime_types,
+        )
+        if not declared_mime_types:
+            continue
+        if declared_mime_types.isdisjoint(source_mime_types):
+            errors.append(
+                FlowNodeConfigurationError(
+                    code="flow.incompatible_file_mime",
+                    path=f"nodes.{node.name}.mapping.{mapping.target}",
+                    message="Flow file conversion input MIME is incompatible.",
+                    hint=(
+                        "Use a converter that accepts the declared file input."
+                    ),
+                )
+            )
+    return tuple(errors)
+
+
+def _file_mapping_input_mime_types(
+    mapping: FlowInputMapping,
+    input_mime_types: Mapping[str, frozenset[str]],
+) -> frozenset[str]:
+    sources: tuple[str, ...]
+    if mapping.kind in {FlowMappingKind.FILE, FlowMappingKind.FILE_ARRAY}:
+        sources = (mapping.source,) if mapping.source is not None else ()
+    elif mapping.kind == FlowMappingKind.ARRAY:
+        sources = mapping.items
+    else:
+        sources = ()
+    found: set[str] = set()
+    for source in sources:
+        try:
+            selector = parse_flow_selector(
+                source,
+                allowed_roots=frozenset({FlowSelectorRoot.FLOW_INPUT}),
+            )
+        except FlowSelectorError:
+            continue
+        found.update(input_mime_types.get(selector.source, ()))
+    return frozenset(found)
+
+
+def _flow_node_config_error(
+    node_name: str,
+    *,
+    message: str,
+    hint: str,
+) -> FlowNodeConfigurationError:
+    return FlowNodeConfigurationError(
+        code="flow.invalid_node",
+        path=f"nodes.{node_name}.config",
+        message=message,
+        hint=hint,
+    )
 
 
 def _file_convert_node_factory(
