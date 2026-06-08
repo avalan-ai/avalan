@@ -145,14 +145,34 @@ class SanitizedTaskEventTest(TestCase):
             Event(
                 type=EventType.FLOW_NODE_FAILED,
                 payload={
+                    "flow_id": "onboarding@1#abc",
                     "flow_name": "onboarding",
+                    "flow_version": "1",
+                    "flow_revision": "abc",
                     "node": "classify",
                     "status": "failed",
+                    "attempt": 1,
                     "attempts": 2,
+                    "duration_ms": 25.0,
+                    "edge_count": 2,
+                    "edge_index": 1,
+                    "edge_kind": "error",
+                    "eligible": False,
+                    "matched": False,
+                    "node_count": 3,
+                    "output_name": "answer",
+                    "ready": False,
+                    "retry_delay_seconds": 0.0,
                     "route_kind": "error",
+                    "source": "classify",
+                    "target": "fallback",
                     "diagnostic_codes": ("flow.execution.node_failed",),
+                    "file_data": b"raw file bytes",
                     "prompt": "private prompt",
+                    "provider_body": {"secret": "private provider body"},
                     "result": "private result",
+                    "response_body": "private model output",
+                    "token_text": "private token text",
                 },
             ),
             PrivacySanitizer(),
@@ -161,17 +181,37 @@ class SanitizedTaskEventTest(TestCase):
         payload = cast(dict[str, object], draft.payload)
         self.assertEqual(draft.category, TaskEventCategory.ENGINE)
         self.assertEqual(payload["event_type"], "flow_node_failed")
+        self.assertEqual(payload["flow_id"], "onboarding@1#abc")
         self.assertEqual(payload["flow_name"], "onboarding")
+        self.assertEqual(payload["flow_version"], "1")
+        self.assertEqual(payload["flow_revision"], "abc")
         self.assertEqual(payload["node"], "classify")
         self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["attempt"], 1)
         self.assertEqual(payload["attempts"], 2)
+        self.assertEqual(payload["duration_ms"], 25.0)
+        self.assertEqual(payload["edge_count"], 2)
+        self.assertEqual(payload["edge_index"], 1)
+        self.assertEqual(payload["edge_kind"], "error")
+        self.assertFalse(payload["eligible"])
+        self.assertFalse(payload["matched"])
+        self.assertEqual(payload["node_count"], 3)
+        self.assertEqual(payload["output_name"], "answer")
+        self.assertFalse(payload["ready"])
+        self.assertEqual(payload["retry_delay_seconds"], 0.0)
         self.assertEqual(payload["route_kind"], "error")
+        self.assertEqual(payload["source"], "classify")
+        self.assertEqual(payload["target"], "fallback")
         self.assertEqual(
             payload["diagnostic_codes"],
             ("flow.execution.node_failed",),
         )
+        self.assertNotIn("file_data", payload)
         self.assertNotIn("prompt", payload)
+        self.assertNotIn("provider_body", payload)
         self.assertNotIn("result", payload)
+        self.assertNotIn("response_body", payload)
+        self.assertNotIn("token_text", payload)
         self.assertNotIn("private", str(payload))
 
     def test_closed_sanitizer_reduces_event_sanitization_errors(

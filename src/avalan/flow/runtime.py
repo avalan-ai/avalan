@@ -1317,6 +1317,7 @@ def _flow_event_payload(
     payload: Mapping[str, object],
 ) -> dict[str, object]:
     value: dict[str, object] = {
+        "flow_id": _flow_event_id(plan),
         "flow_name": plan.name,
     }
     if plan.version is not None:
@@ -1327,6 +1328,15 @@ def _flow_event_payload(
         assert isinstance(key, str) and key.strip()
         value[key] = _flow_event_value(item)
     return value
+
+
+def _flow_event_id(plan: FlowExecutionPlan) -> str:
+    identifier = plan.name
+    if plan.version is not None:
+        identifier = f"{identifier}@{plan.version}"
+    if plan.revision is not None:
+        identifier = f"{identifier}#{plan.revision}"
+    return identifier
 
 
 def _flow_event_value(value: object) -> object:

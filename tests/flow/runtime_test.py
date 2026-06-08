@@ -331,6 +331,13 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(result.ok, result.public_diagnostics)
         self.assertEqual(result.outputs, {"answer": "left"})
+        self.assertTrue(
+            all(
+                cast(Mapping[str, object], event.payload)["flow_id"]
+                == "runtime"
+                for event in events
+            )
+        )
         self.assertEqual(
             [event.type for event in events],
             [
@@ -612,6 +619,7 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                 outputs={"answer": "start.value"},
                 nodes=(self._node("start"),),
             ),
+            version="v1",
             revision="r1",
         )
 
@@ -654,6 +662,8 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(events, [])
+        self.assertEqual(payload["flow_id"], "runtime@v1#r1")
+        self.assertEqual(payload["flow_version"], "v1")
         self.assertEqual(payload["flow_revision"], "r1")
         self.assertEqual(payload["nested"], {"value": {"type": "object"}})
         self.assertEqual(payload["opaque"], {"type": "object"})

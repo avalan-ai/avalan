@@ -44,6 +44,7 @@ _COMMON_SAFE_FIELDS = frozenset(
         "event_type",
         "failed_attempt_count",
         "finished_at",
+        "flow_id",
         "flow_name",
         "flow_revision",
         "flow_version",
