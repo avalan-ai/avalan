@@ -150,10 +150,13 @@ class MermaidConformanceTestCase(TestCase):
         self.assertTrue(seen.nested_groups)
         self.assertTrue(seen.comments)
         self.assertTrue(seen.semicolons)
+        self.assertTrue(seen.class_definitions)
         self.assertTrue(seen.classes)
         self.assertTrue(seen.styles)
         self.assertTrue(seen.link_styles)
+        self.assertTrue(seen.labeled_edges)
         self.assertTrue(seen.quoted_labels)
+        self.assertTrue(seen.unquoted_labels)
         self.assertTrue(seen.markdown_labels)
 
     def test_negative_fixtures_fail_with_stable_diagnostics(self) -> None:
@@ -264,10 +267,13 @@ class _SeenMermaidSurface:
         self.nested_groups = False
         self.comments = False
         self.semicolons = False
+        self.class_definitions = False
         self.classes = False
         self.styles = False
         self.link_styles = False
+        self.labeled_edges = False
         self.quoted_labels = False
+        self.unquoted_labels = False
         self.markdown_labels = False
 
     def record(
@@ -301,6 +307,9 @@ class _SeenMermaidSurface:
             token.type == MermaidTokenType.SEMICOLON
             for token in parsed.cst.tokens
         )
+        self.class_definitions = self.class_definitions or bool(
+            normalized.view.class_definitions
+        )
         self.classes = self.classes or any(
             node.classes for node in normalized.view.nodes
         )
@@ -308,9 +317,15 @@ class _SeenMermaidSurface:
         self.link_styles = self.link_styles or bool(
             normalized.view.link_styles
         )
+        self.labeled_edges = self.labeled_edges or any(
+            edge.label is not None for edge in normalized.view.edges
+        )
         self.quoted_labels = self.quoted_labels or any(
             token.type == MermaidTokenType.QUOTED_LABEL
             for token in parsed.cst.tokens
+        )
+        self.unquoted_labels = (
+            self.unquoted_labels or _has_unquoted_mermaid_label(parsed)
         )
         self.markdown_labels = self.markdown_labels or any(
             token.type == MermaidTokenType.MARKDOWN_LABEL
@@ -329,6 +344,21 @@ def _fixture_names(root: Path) -> set[str]:
 def _codes(result: object) -> tuple[str, ...]:
     diagnostics = getattr(result, "diagnostics")
     return tuple(diagnostic.code for diagnostic in diagnostics)
+
+
+def _has_unquoted_mermaid_label(parsed: MermaidParseResult) -> bool:
+    tokens = parsed.cst.tokens
+    for index, token in enumerate(tokens[1:-1], start=1):
+        if token.type != MermaidTokenType.IDENTIFIER:
+            continue
+        previous_token = tokens[index - 1]
+        next_token = tokens[index + 1]
+        if (
+            previous_token.type == MermaidTokenType.SHAPE_DELIMITER
+            and next_token.type == MermaidTokenType.SHAPE_DELIMITER
+        ):
+            return True
+    return False
 
 
 def _view_signature(view: FlowView) -> dict[str, object]:
