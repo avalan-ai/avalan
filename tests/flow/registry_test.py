@@ -8,6 +8,7 @@ from avalan.entities import (
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
+    ToolCallDiagnosticStatus,
     ToolCallOutcome,
     ToolCallResult,
     ToolDescriptor,
@@ -920,6 +921,50 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
         )
         self.assertFalse(envelope_resolver.executed)
         self.assertEqual(len(envelope_resolver.validated), 1)
+
+    async def test_tool_node_envelope_exports_manager_diagnostic_safely(
+        self,
+    ) -> None:
+        node = tool_flow_node_registry(_tool_manager()).build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+                config={
+                    "arguments": {"a": "left", "b": "right"},
+                    "output_mode": "envelope",
+                },
+            )
+        )
+
+        envelope = await node.execute_async(
+            {"payload": {"left": "private-secret", "right": 2}}
+        )
+
+        assert isinstance(envelope, dict)
+        diagnostic = envelope["diagnostic"]
+        assert isinstance(diagnostic, dict)
+        self.assertEqual(envelope["status"], "diagnostic")
+        self.assertEqual(envelope["canonical_name"], "flow_adder")
+        self.assertIsNone(envelope["result"])
+        self.assertIsNone(envelope["error"])
+        self.assertEqual(
+            diagnostic["status"],
+            ToolCallDiagnosticStatus.NON_EXECUTED.value,
+        )
+        self.assertEqual(
+            diagnostic["code"],
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED.value,
+        )
+        self.assertEqual(
+            diagnostic["stage"],
+            ToolCallDiagnosticStage.VALIDATE.value,
+        )
+        self.assertEqual(diagnostic["requested_name"], "flow_adder")
+        self.assertEqual(diagnostic["canonical_name"], "flow_adder")
+        self.assertFalse(diagnostic["retryable"])
+        self.assertNotIn("private-secret", str(envelope))
+        self.assertNotIn("arguments", diagnostic)
 
     async def test_tool_node_output_modes_cover_outcomes(self) -> None:
         success = tool_flow_node_registry(_tool_manager()).build(
