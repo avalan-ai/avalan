@@ -1,8 +1,10 @@
 from datetime import UTC, datetime
+from json import dumps
 from types import SimpleNamespace
 from unittest import TestCase
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
 from avalan.flow import (
@@ -15,6 +17,7 @@ from avalan.flow import (
     InMemoryFlowStateStore,
     default_flow_node_registry,
 )
+from avalan.server.routers import flow as flow_router
 from avalan.server.routers.flow import router
 from avalan.task import TaskClientUnsupportedOperationError, TaskRunState
 from avalan.task.event import SanitizedTaskEvent, TaskEventCategory
@@ -47,6 +50,70 @@ class FlowRouterTestCase(TestCase):
             "flow.malformed_toml",
         )
         self.assertNotIn("private customer prompt", failure.text)
+
+    def test_request_validation_errors_are_sanitized(self) -> None:
+        invalid_source = self.client.post(
+            "/flows/validate",
+            json={"source": {"secret": "private customer prompt"}},
+        )
+        invalid_resume = self.client.post(
+            "/flows/runs/run-1/resume",
+            json={
+                "source": _strict_flow_source(),
+                "decisions": {"review": "private resume token"},
+            },
+        )
+        invalid_query = self.client.get(
+            "/flows/runs/run-1/events",
+            params={"after_sequence": -1},
+        )
+        invalid_mode = self.client.post(
+            "/flows/mermaid/parse",
+            json={
+                "source": "graph TD\nA --> B",
+                "mode": "private-mode-token",
+            },
+        )
+
+        self.assertEqual(invalid_source.status_code, 422)
+        self.assertEqual(invalid_resume.status_code, 422)
+        self.assertEqual(invalid_query.status_code, 422)
+        self.assertEqual(invalid_mode.status_code, 422)
+        for response, path in (
+            (invalid_source, "body.source"),
+            (invalid_resume, "body.decisions.review"),
+            (invalid_query, "query.after_sequence"),
+            (invalid_mode, "body.mode"),
+        ):
+            payload = response.json()
+            self.assertFalse(payload["ok"])
+            self.assertEqual(
+                payload["diagnostics"][0]["code"],
+                "flow.definition.request_invalid",
+            )
+            self.assertEqual(payload["diagnostics"][0]["path"], path)
+            self.assertNotIn("private", response.text)
+            self.assertNotIn("customer prompt", response.text)
+            self.assertNotIn("resume token", response.text)
+            self.assertNotIn("private-mode-token", response.text)
+
+    def test_request_validation_response_fallbacks_are_sanitized(
+        self,
+    ) -> None:
+        empty = flow_router._request_validation_response(
+            RequestValidationError([])
+        )
+        missing_location = flow_router._request_validation_response(
+            RequestValidationError(
+                [{"msg": "private validator detail", "type": "value_error"}]
+            )
+        )
+
+        self.assertEqual(empty.status_code, 422)
+        self.assertEqual(missing_location.status_code, 422)
+        self.assertIn(b'"path":"request"', empty.body)
+        self.assertIn(b'"path":"request"', missing_location.body)
+        self.assertNotIn(b"private validator detail", missing_location.body)
 
     def test_mermaid_parse_render_and_compare(self) -> None:
         parsed = self.client.post(
@@ -132,11 +199,23 @@ class FlowRouterTestCase(TestCase):
         self.assertEqual(run.status_code, 200)
         self.assertTrue(run.json()["ok"], run.text)
         self.assertEqual(run.json()["outputs"], {"answer": "private input"})
+        self.assertNotIn(
+            "private input",
+            dumps(run.json()["inspection"], sort_keys=True),
+        )
+        self.assertNotIn(
+            "private input",
+            dumps(run.json()["trace"], sort_keys=True),
+        )
         self.assertEqual(run.json()["record_revision"], 1)
         self.assertEqual(inspect.status_code, 200)
         self.assertEqual(
             inspect.json()["inspection"]["state"],
             "succeeded",
+        )
+        self.assertNotIn(
+            "private input",
+            dumps(inspect.json()["inspection"], sort_keys=True),
         )
         self.assertEqual(trace.status_code, 200)
         self.assertNotIn("private input", trace.text)

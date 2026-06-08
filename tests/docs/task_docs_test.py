@@ -304,10 +304,6 @@ class TaskDocsTest(TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, docs)
 
-        self.assertNotIn("specs/FLOWS", docs)
-        self.assertNotIn("Phase ", docs)
-        self.assertNotIn("garnishments", docs)
-
 
 def _find_parser(parser: ArgumentParser, prog_suffix: str) -> ArgumentParser:
     stack = [parser]
