@@ -37,6 +37,7 @@ from avalan.flow import (
     FlowDiagnosticSeverity,
     FlowEdgeDefinition,
     FlowEdgeKind,
+    FlowEdgePlan,
     FlowEdgeState,
     FlowEdgeTrace,
     FlowEntryBehavior,
@@ -1651,6 +1652,177 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             dict(record.selected_outputs), {"answer": "stored seed"}
         )
+
+    async def test_run_records_strict_human_review_pause(
+        self,
+    ) -> None:
+        plan = _strict_human_review_plan()
+        flow_store = InMemoryFlowStateStore()
+        calls: list[str] = []
+        real_runner_factory = flow_target_module.flow_node_registry_runner
+
+        def counting_runner_factory(registry: Any) -> Any:
+            runner = real_runner_factory(registry)
+
+            async def run(
+                node: FlowNodePlan, inputs: Mapping[str, object]
+            ) -> object:
+                calls.append(node.name)
+                output = runner(node, inputs)
+                if isawaitable(output):
+                    return await output
+                return output
+
+            return run
+
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+
+        with patch.object(
+            flow_target_module,
+            "flow_node_registry_runner",
+            counting_runner_factory,
+        ):
+            with self.assertRaises(TaskValidationError) as error:
+                await runner.run(self._context(input_value="safe"))
+        record = await flow_store.get_flow_execution("run-1")
+
+        self.assertEqual(
+            error.exception.issues[0].code, "flow.execution.paused"
+        )
+        self.assertEqual(calls, ["start"])
+        self.assertEqual(record.revision, 2)
+        self.assertEqual(set(record.pause_tokens), {"review"})
+        self.assertTrue(record.pause_tokens["review"])
+        self.assertEqual(
+            {node.node: node.state for node in record.trace.nodes},
+            {
+                "start": FlowNodeState.SUCCEEDED,
+                "review": FlowNodeState.PAUSED,
+                "finish": FlowNodeState.PENDING,
+                "rejected": FlowNodeState.PENDING,
+            },
+        )
+        self.assertEqual(
+            dict(record.node_outputs),
+            {"start": {"value": "safe"}},
+        )
+        self.assertEqual(dict(record.selected_outputs), {})
+
+    async def test_run_resumes_strict_human_review_from_metadata(
+        self,
+    ) -> None:
+        plan = _strict_human_review_plan()
+        flow_store = InMemoryFlowStateStore()
+        first_runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+        with self.assertRaises(TaskValidationError):
+            await first_runner.run(self._context(input_value="safe"))
+        calls: list[str] = []
+        real_runner_factory = flow_target_module.flow_node_registry_runner
+
+        def counting_runner_factory(registry: Any) -> Any:
+            runner = real_runner_factory(registry)
+
+            async def run(
+                node: FlowNodePlan, inputs: Mapping[str, object]
+            ) -> object:
+                calls.append(node.name)
+                output = runner(node, inputs)
+                if isawaitable(output):
+                    return await output
+                return output
+
+            return run
+
+        resume_runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+
+        with patch.object(
+            flow_target_module,
+            "flow_node_registry_runner",
+            counting_runner_factory,
+        ):
+            metadata_key = (
+                flow_target_module.FLOW_RESUME_DECISIONS_METADATA_KEY
+            )
+            result = await resume_runner.run(
+                self._context(
+                    input_value="new",
+                    metadata={
+                        metadata_key: {
+                            "review": {
+                                "decision": "approved",
+                                "comment": "safe",
+                            },
+                        },
+                    },
+                )
+            )
+        record = await flow_store.get_flow_execution("run-1")
+
+        self.assertEqual(result, "approved")
+        self.assertEqual(calls, ["finish"])
+        self.assertEqual(record.revision, 3)
+        self.assertEqual(dict(record.pause_tokens), {})
+        self.assertEqual(dict(record.selected_outputs), {"answer": "approved"})
+        review_output = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], record.node_outputs["review"])[
+                "result"
+            ],
+        )
+        self.assertEqual(review_output["decision"], "approved")
+
+    async def test_run_rejects_invalid_strict_human_review_resume_metadata(
+        self,
+    ) -> None:
+        plan = _strict_human_review_plan()
+        flow_store = InMemoryFlowStateStore()
+        await flow_store.create_flow_execution(
+            "run-1",
+            trace=FlowExecutionTrace.from_plan(plan),
+            metadata=flow_target_module._strict_flow_record_metadata(  # type: ignore[attr-defined]
+                plan
+            ),
+        )
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+        cases = (
+            "private-token",
+            {"review": "private-token"},
+        )
+
+        for metadata_value in cases:
+            with self.subTest(metadata_value=metadata_value):
+                with self.assertRaises(TaskValidationError) as error:
+                    await runner.run(
+                        self._context(
+                            input_value="private prompt",
+                            metadata={
+                                (
+                                    flow_target_module.FLOW_RESUME_DECISIONS_METADATA_KEY
+                                ): metadata_value,
+                            },
+                        )
+                    )
+                record = await flow_store.get_flow_execution("run-1")
+
+                self.assertEqual(
+                    error.exception.issues[0].code,
+                    "flow.execution.invalid_resume_payload",
+                )
+                self.assertEqual(record.revision, 1)
+                self.assertNotIn("private-token", str(error.exception))
+                self.assertNotIn("private prompt", str(error.exception))
 
     async def test_run_reruns_partial_strict_state_without_node_outputs(
         self,
@@ -4186,6 +4358,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         artifact_store: object | None = None,
         task_store: object | None = None,
         file_converters: Mapping[str, object] | None = None,
+        metadata: Mapping[str, object] | None = None,
     ) -> TaskTargetContext:
         return TaskTargetContext(
             definition=definition or self._context_definition(),
@@ -4202,6 +4375,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             artifact_store=cast(Any, artifact_store),
             task_store=cast(Any, task_store),
             file_converters=cast(Mapping[str, Any], file_converters or {}),
+            metadata=metadata or {},
         )
 
     def _context_definition(
@@ -5577,6 +5751,110 @@ def _strict_two_step_definition() -> FlowDefinition:
                 source="start",
                 target="answer",
                 kind=FlowEdgeKind.SUCCESS,
+            ),
+        ),
+    )
+
+
+def _strict_human_review_plan() -> FlowExecutionPlan:
+    return FlowExecutionPlan(
+        name="task-review",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_node="start",
+        output_selectors={"answer": parse_flow_selector("finish.value")},
+        nodes=(
+            FlowNodePlan(
+                name="start",
+                type="pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("inputs.prompt"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(name="value", type=FlowOutputType.JSON),
+                ),
+            ),
+            FlowNodePlan(
+                name="review",
+                type="human_review",
+                kind=FlowNodeKind.HUMAN_REVIEW,
+                config={"allowed_decisions": ("approved", "rejected")},
+                mappings=(
+                    FlowMappingPlan(
+                        target="payload",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("start.value"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+            ),
+            FlowNodePlan(
+                name="finish",
+                type="pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("review.result.decision"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(name="value", type=FlowOutputType.JSON),
+                ),
+            ),
+            FlowNodePlan(
+                name="rejected",
+                type="pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("review.result.decision"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(name="value", type=FlowOutputType.JSON),
+                ),
+            ),
+        ),
+        edges=(
+            FlowEdgePlan(
+                index=0,
+                source="start",
+                target="review",
+                kind=FlowEdgeKind.SUCCESS,
+            ),
+            FlowEdgePlan(
+                index=1,
+                source="review",
+                target="finish",
+                kind=FlowEdgeKind.RESUME,
+                label="approved",
+            ),
+            FlowEdgePlan(
+                index=2,
+                source="review",
+                target="rejected",
+                kind=FlowEdgeKind.RESUME,
+                label="rejected",
             ),
         ),
     )

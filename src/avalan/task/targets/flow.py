@@ -143,6 +143,7 @@ _UNAVAILABLE_PRIVACY_MARKERS = frozenset(
     }
 )
 _NO_STRICT_RESUME = object()
+FLOW_RESUME_DECISIONS_METADATA_KEY = "flow_resume_decisions"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -294,6 +295,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         )
         try:
             record = await self._strict_flow_record(context, plan)
+            resume_decisions = _strict_resume_decisions(context)
             resumed_output = _strict_resumed_output(plan, record)
             if resumed_output is _NO_STRICT_RESUME:
                 resume_node_outputs = _strict_resume_node_outputs(
@@ -323,10 +325,15 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     concurrency_limit=self._concurrency_limit,
                     resume_trace=(
                         record.trace
-                        if resume_node_outputs is not None and record
+                        if record
+                        and (
+                            resume_node_outputs is not None
+                            or resume_decisions is not None
+                        )
                         else None
                     ),
                     resume_node_outputs=resume_node_outputs,
+                    resume_decisions=resume_decisions,
                 )
                 await self._record_strict_flow_state(
                     context,
@@ -335,7 +342,12 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     outputs=result.outputs,
                     node_outputs=result.node_outputs,
                     diagnostics=result.diagnostics,
+                    pause_tokens=result.pause_tokens,
                 )
+                if result.pause_tokens:
+                    raise TaskValidationError(
+                        (_flow_paused_issue(result.pause_tokens),)
+                    )
                 if not result.ok:
                     raise TaskValidationError(
                         _flow_diagnostics_to_issues(result.diagnostics)
@@ -446,6 +458,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         outputs: Mapping[str, object],
         node_outputs: Mapping[str, Mapping[str, object]],
         diagnostics: tuple[FlowDiagnostic, ...] = (),
+        pause_tokens: Mapping[str, str] | None = None,
     ) -> None:
         if self._flow_state_store is None:
             return
@@ -455,6 +468,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
             node_outputs=_flow_node_outputs_snapshot(trace, node_outputs),
             selected_outputs=_flow_snapshot_mapping(outputs),
             loop_counters=_loop_counters(plan, trace),
+            pause_tokens=pause_tokens,
             diagnostics=diagnostics,
             artifact_refs=_artifact_refs(outputs),
             metadata=_strict_flow_record_metadata(plan),
@@ -471,6 +485,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                 node_outputs=update.node_outputs,
                 selected_outputs=update.selected_outputs,
                 loop_counters=update.loop_counters,
+                pause_tokens=update.pause_tokens,
                 diagnostics=diagnostics,
                 artifact_refs=update.artifact_refs or (),
                 metadata=update.metadata,
@@ -1836,6 +1851,51 @@ def _flow_state_mismatch_issue() -> TaskValidationIssue:
         hint="Use a fresh task run id or the matching flow definition.",
         category=TaskValidationCategory.DEPENDENCY,
     )
+
+
+def _flow_paused_issue(
+    pause_tokens: Mapping[str, str],
+) -> TaskValidationIssue:
+    assert isinstance(pause_tokens, Mapping)
+    return TaskValidationIssue(
+        code="flow.execution.paused",
+        path="execution.run_id",
+        message="Flow execution paused for human review.",
+        hint="Resume the paused review with a decision payload.",
+        category=TaskValidationCategory.DEPENDENCY,
+    )
+
+
+def _invalid_flow_resume_decisions_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="flow.execution.invalid_resume_payload",
+        path=f"metadata.{FLOW_RESUME_DECISIONS_METADATA_KEY}",
+        message="Flow resume decisions are invalid.",
+        hint="Provide a mapping of paused review nodes to decision payloads.",
+        category=TaskValidationCategory.STRUCTURE,
+    )
+
+
+def _strict_resume_decisions(
+    context: TaskTargetContext,
+) -> Mapping[str, Mapping[str, object]] | None:
+    value = context.metadata.get(FLOW_RESUME_DECISIONS_METADATA_KEY)
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TaskValidationError((_invalid_flow_resume_decisions_issue(),))
+    decisions: dict[str, Mapping[str, object]] = {}
+    for node, payload in value.items():
+        if (
+            not isinstance(node, str)
+            or not node.strip()
+            or not isinstance(payload, Mapping)
+        ):
+            raise TaskValidationError(
+                (_invalid_flow_resume_decisions_issue(),)
+            )
+        decisions[node] = _flow_snapshot_mapping(payload)
+    return MappingProxyType(decisions)
 
 
 def _strict_resumed_output(
