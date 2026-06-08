@@ -7,6 +7,8 @@ from ...flow import (
     FlowDiagnosticSeverity,
     FlowEdgeDefinition,
     FlowEntryBehavior,
+    FlowExecutionUpdate,
+    FlowExecutor,
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
@@ -24,6 +26,8 @@ from ...flow import (
     FlowOutputType,
     FlowRetryPolicy,
     FlowSourceSpan,
+    FlowStateStore,
+    FlowTaskExecutor,
     FlowTimeoutPolicy,
     FlowToolResolver,
     FlowView,
@@ -36,6 +40,7 @@ from ...flow import (
     FlowViewNode,
     FlowViewStyle,
     Node,
+    PgsqlFlowStateStore,
     compare_flow_topology,
     default_flow_node_registry,
     flow_input_binding,
@@ -44,6 +49,7 @@ from ...flow import (
     skeleton_from_mermaid_view,
 )
 from ...task import (
+    TaskClientUnsupportedOperationError,
     TaskDefinition,
     TaskExecutionTarget,
     TaskInputContract,
@@ -59,6 +65,7 @@ from ...task import (
     validate_task_input,
     validate_task_output,
 )
+from ...task.store import TaskStoreConflictError, TaskStoreNotFoundError
 from ...tool import ToolSet
 from ...tool.browser import (
     HAS_BROWSER_DEPENDENCIES,
@@ -77,18 +84,24 @@ from .task import (
     TaskCliInputError,
     _format_task_cli_value,
     _print_issues,
+    _print_missing_inspection_store,
     _print_task_cli_input_error,
     _print_task_command_error,
     _print_task_execution_error,
     _print_task_run_failure,
     _run_awaitable,
+    _task_cli_after_sequence,
     _task_cli_client_context,
+    _task_cli_inspection_client_context,
     _task_command_metadata,
     _task_diagnostic_console,
     _task_output_is_structured,
+    _task_pgsql_database,
     _task_run_json_output,
     _task_run_quiet,
     _task_run_structured_output_requested,
+    _task_store_dsn,
+    _task_store_schema,
     _validate_task_run_output_path,
     _write_task_run_structured_output,
     task_cli_input,
@@ -97,8 +110,9 @@ from .task import (
 from argparse import Namespace
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from enum import Enum
-from json import dumps
+from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from os import strerror
 from pathlib import Path
@@ -167,6 +181,46 @@ def flow_run(
     """Run a native flow definition."""
     _ = theme
     return _run_awaitable(_flow_run(args, console, hub=hub, logger=logger))
+
+
+def flow_inspect(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Inspect a durable flow run."""
+    _ = theme
+    return _run_awaitable(_flow_inspect(args, console))
+
+
+def flow_trace(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Export a sanitized flow trace."""
+    _ = theme
+    return _run_awaitable(_flow_trace(args, console))
+
+
+def flow_cancel(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Request cancellation for a durable flow run."""
+    _ = theme
+    return _run_awaitable(_flow_cancel(args, console))
+
+
+def flow_resume(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Resume a paused strict flow from durable state."""
+    _ = theme
+    return _run_awaitable(_flow_resume(args, console))
 
 
 def _flow_mermaid_parse(args: Namespace, console: Console) -> bool:
@@ -885,6 +939,156 @@ def _toml_value(value: object) -> str:
     raise AssertionError("unsupported TOML value")
 
 
+async def _flow_inspect(args: Namespace, console: Console) -> bool:
+    task_context = _task_cli_inspection_client_context(args, console)
+    if task_context is None:
+        return False
+    assert task_context.database is not None
+    try:
+        async with task_context as client:
+            executor = FlowTaskExecutor(
+                client,
+                flow_state_store=PgsqlFlowStateStore(task_context.database),
+            )
+            inspection = await executor.inspect(
+                args.run_id,
+                after_sequence=_task_cli_after_sequence(args),
+            )
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_flow_inspection_error(console, exc)
+        return False
+    _print_flow_runtime_value(
+        args,
+        console,
+        label="inspect",
+        value=inspection.as_public_dict(),
+    )
+    return True
+
+
+async def _flow_trace(args: Namespace, console: Console) -> bool:
+    task_context = _task_cli_inspection_client_context(args, console)
+    if task_context is None:
+        return False
+    assert task_context.database is not None
+    try:
+        async with task_context as client:
+            executor = FlowTaskExecutor(
+                client,
+                flow_state_store=PgsqlFlowStateStore(task_context.database),
+            )
+            trace = await executor.export_trace(
+                args.run_id,
+                after_sequence=_task_cli_after_sequence(args),
+            )
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_flow_inspection_error(console, exc)
+        return False
+    _print_flow_runtime_value(args, console, label="trace", value=trace)
+    return True
+
+
+async def _flow_cancel(args: Namespace, console: Console) -> bool:
+    task_context = _task_cli_inspection_client_context(args, console)
+    if task_context is None:
+        return False
+    try:
+        async with task_context as client:
+            run = await client.cancel(args.run_id)
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskClientUnsupportedOperationError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_flow_command_error(console, exc)
+        return False
+    _print_flow_runtime_value(
+        args,
+        console,
+        label="cancel",
+        value={"run_id": run.run_id, "state": run.state.value},
+    )
+    return True
+
+
+async def _flow_resume(args: Namespace, console: Console) -> bool:
+    decisions = _flow_resume_decisions(args, console)
+    if decisions is None:
+        return False
+    load_result = _flow_load_validation_result(args.flow, console, args)
+    if load_result is None or not load_result.ok:
+        return False
+    assert load_result.definition is not None
+    state_context = _flow_state_store_context(args, console)
+    if state_context is None:
+        return False
+    try:
+        async with state_context as store:
+            record = await store.get_flow_execution(args.run_id)
+            result = await FlowExecutor().resume(
+                load_result.definition,
+                record,
+                decisions=decisions,
+            )
+            if result.result is not None:
+                await store.update_flow_execution(
+                    args.run_id,
+                    FlowExecutionUpdate(
+                        trace=result.result.trace,
+                        node_outputs=result.result.node_outputs,
+                        selected_outputs=result.result.outputs,
+                        diagnostics=result.result.diagnostics,
+                        pause_tokens=result.result.pause_tokens,
+                    ),
+                    expected_revision=record.revision,
+                )
+    except (
+        AssertionError,
+        ImportError,
+        OSError,
+        TaskStoreConflictError,
+        TaskStoreNotFoundError,
+    ) as exc:
+        _print_flow_command_error(console, exc)
+        return False
+    diagnostics = result.diagnostics
+    if result.result is not None:
+        diagnostics = diagnostics + result.result.diagnostics
+    if diagnostics:
+        if _flow_json_output(args):
+            _print_flow_json_result(
+                console,
+                ok=result.ok,
+                diagnostics=diagnostics,
+            )
+        else:
+            _print_flow_diagnostics(
+                console,
+                "Flow resume produced diagnostics.",
+                diagnostics,
+            )
+        return result.ok
+    _print_flow_runtime_value(
+        args,
+        console,
+        label="resume",
+        value=result.outputs,
+    )
+    return result.ok
+
+
 async def _flow_run(
     args: Namespace,
     console: Console,
@@ -984,7 +1188,7 @@ async def _flow_run(
         if not output_written:
             return False
     if not _task_run_json_output(args) and not _task_run_quiet(args):
-        console.print("Flow run completed.", markup=False)
+        console.print("Legacy native flow run completed.", markup=False)
         console.print(f"output {_format_task_cli_value(result)}", markup=False)
     return True
 
@@ -1095,6 +1299,165 @@ async def _flow_run_with_task_context(
             markup=False,
         )
     return True
+
+
+@dataclass(slots=True)
+class _FlowStateStoreContext:
+    store: FlowStateStore
+    database: object | None = None
+
+    async def __aenter__(self) -> FlowStateStore:
+        if self.database is not None:
+            open_database = getattr(self.database, "open")
+            opened = open_database()
+            if hasattr(opened, "__await__"):
+                await opened
+        return self.store
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> bool | None:
+        _ = exc_type, exc, traceback
+        if self.database is not None:
+            close_database = getattr(self.database, "aclose")
+            closed = close_database()
+            if hasattr(closed, "__await__"):
+                await closed
+        return None
+
+
+def _flow_state_store_context(
+    args: Namespace,
+    console: Console,
+) -> _FlowStateStoreContext | None:
+    dsn = _task_store_dsn(args)
+    if dsn is None:
+        _print_missing_inspection_store(console)
+        return None
+    database = _task_pgsql_database(dsn, _task_store_schema(args))
+    return _FlowStateStoreContext(
+        store=PgsqlFlowStateStore(database),
+        database=database,
+    )
+
+
+def _flow_resume_decisions(
+    args: Namespace,
+    console: Console,
+) -> Mapping[str, Mapping[str, object]] | None:
+    raw_value = getattr(args, "decision_json", None)
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        _print_task_command_error(
+            console,
+            "Flow resume decision JSON is required.",
+            "flow.resume_decision_missing",
+            "Pass --decision-json with a node-to-decision object.",
+        )
+        return None
+    source = raw_value.strip()
+    if source.startswith("@"):
+        try:
+            source = Path(source[1:]).read_text(encoding="utf-8")
+        except OSError:
+            _print_task_command_error(
+                console,
+                "Flow resume decision JSON could not be read.",
+                "file.read",
+                "Use a readable local JSON file.",
+            )
+            return None
+    try:
+        value = loads(source)
+    except JSONDecodeError:
+        _print_task_command_error(
+            console,
+            "Flow resume decision JSON is invalid.",
+            "flow.resume_decision_json",
+            "Use a JSON object keyed by review node.",
+        )
+        return None
+    if not isinstance(value, Mapping):
+        _print_task_command_error(
+            console,
+            "Flow resume decisions are invalid.",
+            "flow.resume_decision_shape",
+            "Use a JSON object keyed by review node.",
+        )
+        return None
+    decisions: dict[str, Mapping[str, object]] = {}
+    for node, payload in value.items():
+        if (
+            not isinstance(node, str)
+            or not node.strip()
+            or not isinstance(payload, Mapping)
+        ):
+            _print_task_command_error(
+                console,
+                "Flow resume decisions are invalid.",
+                "flow.resume_decision_shape",
+                "Map each review node to a decision payload object.",
+            )
+            return None
+        decisions[node] = {str(key): item for key, item in payload.items()}
+    return decisions
+
+
+def _print_flow_runtime_value(
+    args: Namespace,
+    console: Console,
+    *,
+    label: str,
+    value: object,
+) -> None:
+    serialized = _format_task_cli_value(value)
+    if _flow_json_output(args):
+        console.file.write(serialized + "\n")
+        console.file.flush()
+        return
+    console.print(f"{label} {serialized}", markup=False, soft_wrap=True)
+
+
+def _print_flow_inspection_error(
+    console: Console,
+    error: BaseException,
+) -> None:
+    console.print("Flow inspection failed.", markup=False)
+    if isinstance(error, TaskStoreNotFoundError):
+        console.print("error flow.not_found", markup=False)
+        return
+    if isinstance(error, ImportError):
+        console.print("error dependency.missing", markup=False)
+        return
+    if isinstance(error, OSError):
+        console.print("error io.failure", markup=False)
+        return
+    console.print("error flow.inspection", markup=False)
+
+
+def _print_flow_command_error(
+    console: Console,
+    error: BaseException,
+) -> None:
+    console.print("Flow command failed.", markup=False)
+    if isinstance(error, TaskStoreNotFoundError):
+        console.print("error flow.not_found", markup=False)
+        return
+    if isinstance(error, TaskStoreConflictError):
+        console.print("error flow.conflict", markup=False)
+        return
+    if isinstance(error, TaskClientUnsupportedOperationError):
+        console.print(f"error {error.code}", markup=False)
+        return
+    if isinstance(error, ImportError):
+        console.print("error dependency.missing", markup=False)
+        return
+    if isinstance(error, OSError):
+        console.print("error io.failure", markup=False)
+        return
+    console.print("error flow.command", markup=False)
 
 
 def _flow_missing_tool_resolver_issues(
