@@ -2,19 +2,45 @@ from ...cli.theme import Theme
 from ...flow import (
     FlowDefinition,
     FlowDefinitionLoader,
+    FlowDiagnostic,
+    FlowDiagnosticCategory,
+    FlowDiagnosticSeverity,
+    FlowEdgeDefinition,
+    FlowEntryBehavior,
     FlowInputDefinition,
+    FlowInputMapping,
     FlowInputType,
+    FlowJoinPolicy,
     FlowLoadIssue,
     FlowLoadIssueCategory,
+    FlowLoadResult,
+    FlowLoopPolicy,
     FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeKind,
     FlowNodeMetadata,
+    FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRetryPolicy,
+    FlowSourceSpan,
+    FlowTimeoutPolicy,
+    FlowView,
+    FlowViewClassDefinition,
+    FlowViewComment,
+    FlowViewEdge,
+    FlowViewGroup,
+    FlowViewImportMode,
+    FlowViewLinkStyle,
+    FlowViewNode,
+    FlowViewStyle,
     Node,
+    compare_flow_topology,
     default_flow_node_registry,
     flow_input_binding,
+    parse_mermaid_view,
+    render_flow_view,
+    skeleton_from_mermaid_view,
 )
 from ...task import (
     TaskDefinition,
@@ -55,11 +81,64 @@ from .task import (
 
 from argparse import Namespace
 from collections.abc import Mapping
+from enum import Enum
+from json import dumps
 from logging import Logger
 from os import strerror
 from pathlib import Path
 
 from rich.console import Console
+
+
+def flow_validate(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Validate a flow definition without executing it."""
+    _ = theme
+    load_result = _flow_load_validation_result(args.flow, console, args)
+    if load_result is None:
+        return False
+    ok = load_result.ok
+    diagnostics = load_result.diagnostics
+    if _flow_json_output(args):
+        _print_flow_json_result(console, ok=ok, diagnostics=diagnostics)
+    elif ok:
+        assert load_result.definition is not None
+        console.print(
+            "Flow definition is valid: "
+            f"{load_result.definition.name} "
+            f"{_flow_definition_identity(load_result.definition)}",
+            markup=False,
+        )
+    else:
+        _print_flow_diagnostics(
+            console,
+            "Flow definition is invalid.",
+            diagnostics,
+        )
+    return ok
+
+
+def flow_mermaid(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Run non-executing Mermaid flow authoring commands."""
+    _ = theme
+    command = args.flow_mermaid_command
+    match command:
+        case "compare":
+            return _flow_mermaid_compare(args, console)
+        case "parse":
+            return _flow_mermaid_parse(args, console)
+        case "render":
+            return _flow_mermaid_render(args, console)
+        case "skeleton":
+            return _flow_mermaid_skeleton(args, console)
+    raise AssertionError("unsupported Mermaid flow command")
 
 
 def flow_run(
@@ -72,6 +151,722 @@ def flow_run(
     """Run a native flow definition."""
     _ = theme
     return _run_awaitable(_flow_run(args, console, hub=hub, logger=logger))
+
+
+def _flow_mermaid_parse(args: Namespace, console: Console) -> bool:
+    source = _flow_read_text(args.diagram, console, args, "Mermaid diagram")
+    if source is None:
+        return False
+    result = parse_mermaid_view(
+        source,
+        import_mode=_flow_import_mode(args),
+    )
+    ok = result.ok
+    if _flow_json_output(args):
+        _print_flow_json_result(
+            console,
+            ok=ok,
+            diagnostics=result.diagnostics,
+            view=_flow_view_public_dict(result.view),
+        )
+    elif ok:
+        console.print(
+            "Mermaid diagram parsed: "
+            f"{len(result.view.nodes)} nodes, {len(result.view.edges)} edges.",
+            markup=False,
+        )
+        if result.diagnostics:
+            _print_flow_diagnostics(
+                console,
+                "Mermaid diagnostics.",
+                result.diagnostics,
+            )
+    else:
+        _print_flow_diagnostics(
+            console,
+            "Mermaid diagram is invalid.",
+            result.diagnostics,
+        )
+    return ok
+
+
+def _flow_mermaid_render(args: Namespace, console: Console) -> bool:
+    source = _flow_read_text(args.diagram, console, args, "Mermaid diagram")
+    if source is None:
+        return False
+    parsed = parse_mermaid_view(
+        source,
+        import_mode=_flow_import_mode(args),
+    )
+    if not parsed.ok:
+        if _flow_json_output(args):
+            _print_flow_json_result(
+                console,
+                ok=False,
+                diagnostics=parsed.diagnostics,
+            )
+        else:
+            _print_flow_diagnostics(
+                console,
+                "Mermaid diagram is invalid.",
+                parsed.diagnostics,
+            )
+        return False
+    rendered = render_flow_view(parsed.view)
+    diagnostics = parsed.diagnostics + rendered.diagnostics
+    ok = rendered.ok
+    if _flow_json_output(args):
+        _print_flow_json_result(
+            console,
+            ok=ok,
+            diagnostics=diagnostics,
+            source=rendered.source,
+        )
+    elif ok:
+        console.print(rendered.source, markup=False)
+    else:
+        _print_flow_diagnostics(
+            console,
+            "Mermaid diagram could not be rendered.",
+            diagnostics,
+        )
+    return ok
+
+
+def _flow_mermaid_compare(args: Namespace, console: Console) -> bool:
+    source = _flow_read_text(args.diagram, console, args, "Mermaid diagram")
+    if source is None:
+        return False
+    parsed = parse_mermaid_view(
+        source,
+        import_mode=_flow_import_mode(args),
+    )
+    load_result = _flow_load_validation_result(args.flow, console, args)
+    if load_result is None:
+        return False
+    diagnostics: tuple[FlowDiagnostic, ...]
+    definition = load_result.definition
+    if parsed.ok and load_result.ok and definition is not None:
+        comparison = compare_flow_topology(parsed.view, definition)
+        diagnostics = comparison.diagnostics
+        ok = comparison.ok
+    else:
+        diagnostics = parsed.diagnostics + load_result.diagnostics
+        ok = _flow_diagnostics_ok(diagnostics)
+    if _flow_json_output(args):
+        _print_flow_json_result(console, ok=ok, diagnostics=diagnostics)
+    elif ok:
+        console.print("Flow topology matches.", markup=False)
+        if diagnostics:
+            _print_flow_diagnostics(
+                console,
+                "Flow topology diagnostics.",
+                diagnostics,
+            )
+    else:
+        _print_flow_diagnostics(
+            console,
+            "Flow topology does not match.",
+            diagnostics,
+        )
+    return ok
+
+
+def _flow_mermaid_skeleton(args: Namespace, console: Console) -> bool:
+    source = _flow_read_text(args.diagram, console, args, "Mermaid diagram")
+    if source is None:
+        return False
+    parsed = parse_mermaid_view(
+        source,
+        import_mode=_flow_import_mode(args),
+    )
+    if not parsed.ok:
+        if _flow_json_output(args):
+            _print_flow_json_result(
+                console,
+                ok=False,
+                diagnostics=parsed.diagnostics,
+            )
+        else:
+            _print_flow_diagnostics(
+                console,
+                "Mermaid diagram is invalid.",
+                parsed.diagnostics,
+            )
+        return False
+    result = skeleton_from_mermaid_view(
+        parsed.view,
+        name=args.name,
+        version=args.version,
+        revision=args.revision,
+    )
+    if _flow_json_output(args):
+        _print_flow_json_result(
+            console,
+            ok=result.ok,
+            diagnostics=result.diagnostics,
+            definition=_flow_definition_public_dict(result.definition),
+        )
+    elif result.ok:
+        console.print(_flow_definition_toml(result.definition), markup=False)
+    else:
+        _print_flow_diagnostics(
+            console,
+            "Flow skeleton could not be created.",
+            result.diagnostics,
+        )
+    return result.ok
+
+
+def _flow_load_validation_result(
+    path: str | Path,
+    console: Console,
+    args: Namespace,
+) -> FlowLoadResult | None:
+    try:
+        return FlowDefinitionLoader().load_validation_result(Path(path))
+    except OSError as exc:
+        diagnostic = _flow_file_read_diagnostic(exc)
+        if _flow_json_output(args):
+            _print_flow_json_result(
+                console,
+                ok=False,
+                diagnostics=(diagnostic,),
+            )
+        else:
+            _print_flow_diagnostics(
+                console,
+                "Flow definition could not be read.",
+                (diagnostic,),
+            )
+        return None
+
+
+def _flow_read_text(
+    path: str | Path,
+    console: Console,
+    args: Namespace,
+    noun: str,
+) -> str | None:
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        diagnostic = _flow_file_read_diagnostic(exc)
+        if _flow_json_output(args):
+            _print_flow_json_result(
+                console,
+                ok=False,
+                diagnostics=(diagnostic,),
+            )
+        else:
+            _print_flow_diagnostics(
+                console,
+                f"{noun} could not be read.",
+                (diagnostic,),
+            )
+        return None
+
+
+def _flow_file_read_diagnostic(exc: OSError) -> FlowDiagnostic:
+    message = strerror(exc.errno) if exc.errno else "Unable to read file."
+    return FlowDiagnostic(
+        code="file.read",
+        path="file",
+        category=FlowDiagnosticCategory.PRIVACY,
+        severity=FlowDiagnosticSeverity.ERROR,
+        message=message,
+        hint="Use a readable local file.",
+    )
+
+
+def _flow_import_mode(args: Namespace) -> FlowViewImportMode:
+    return FlowViewImportMode(args.mode)
+
+
+def _flow_json_output(args: Namespace) -> bool:
+    return bool(getattr(args, "flow_json", False))
+
+
+def _flow_diagnostics_ok(
+    diagnostics: tuple[FlowDiagnostic, ...],
+) -> bool:
+    return not any(
+        diagnostic.severity == FlowDiagnosticSeverity.ERROR
+        for diagnostic in diagnostics
+    )
+
+
+def _print_flow_json_result(
+    console: Console,
+    *,
+    ok: bool,
+    diagnostics: tuple[FlowDiagnostic, ...],
+    **values: object,
+) -> None:
+    payload: dict[str, object] = {
+        "ok": ok,
+        "diagnostics": tuple(
+            diagnostic.as_public_dict() for diagnostic in diagnostics
+        ),
+    }
+    payload.update(values)
+    console.print(
+        dumps(
+            _flow_public_value(payload),
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        markup=False,
+        soft_wrap=True,
+    )
+
+
+def _print_flow_diagnostics(
+    console: Console,
+    title: str,
+    diagnostics: tuple[FlowDiagnostic, ...],
+) -> None:
+    console.print(title, markup=False)
+    for diagnostic in diagnostics:
+        value = diagnostic.as_public_dict()
+        location = _flow_diagnostic_location(value)
+        console.print(
+            f"{value['severity']} {value['code']}{location}",
+            markup=False,
+        )
+        console.print(str(value["message"]), markup=False)
+        hint = value.get("hint")
+        if hint is not None:
+            console.print(f"hint {hint}", markup=False)
+
+
+def _flow_diagnostic_location(value: Mapping[str, object]) -> str:
+    path = value.get("path")
+    if isinstance(path, str):
+        return f" {path}"
+    span = value.get("source_span")
+    if not isinstance(span, Mapping):
+        return ""
+    line = span.get("start_line")
+    column = span.get("start_column")
+    if isinstance(line, int) and isinstance(column, int):
+        return f" line {line}, column {column}"
+    return ""
+
+
+def _flow_definition_identity(definition: FlowDefinition) -> str:
+    if definition.version is not None:
+        return definition.version
+    if definition.revision is not None:
+        return definition.revision
+    return "unversioned"
+
+
+def _flow_view_public_dict(view: FlowView) -> dict[str, object]:
+    return {
+        "import_mode": view.import_mode.value,
+        "direction": (
+            view.direction.value if view.direction is not None else None
+        ),
+        "nodes": tuple(
+            _flow_view_node_public_dict(node) for node in view.nodes
+        ),
+        "edges": tuple(
+            _flow_view_edge_public_dict(edge) for edge in view.edges
+        ),
+        "groups": tuple(
+            _flow_view_group_public_dict(group) for group in view.groups
+        ),
+        "class_definitions": tuple(
+            _flow_view_class_public_dict(class_definition)
+            for class_definition in view.class_definitions
+        ),
+        "styles": tuple(
+            _flow_view_style_public_dict(style) for style in view.styles
+        ),
+        "link_styles": tuple(
+            _flow_view_link_style_public_dict(link_style)
+            for link_style in view.link_styles
+        ),
+        "comments": tuple(
+            _flow_view_comment_public_dict(comment)
+            for comment in view.comments
+        ),
+        "metadata": view.metadata,
+    }
+
+
+def _flow_view_node_public_dict(node: FlowViewNode) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "id": node.id,
+            "label": node.label,
+            "shape": node.shape.value,
+            "classes": node.classes,
+            "style": node.style,
+            "metadata": node.metadata,
+            "source_span": _flow_source_span_public_dict(node.source_span),
+            "implicit": node.implicit,
+            "group": node.group,
+        }
+    )
+
+
+def _flow_view_edge_public_dict(edge: FlowViewEdge) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "id": edge.id,
+            "source": edge.source,
+            "target": edge.target,
+            "label": edge.label,
+            "style": edge.style.value,
+            "classes": edge.classes,
+            "metadata": edge.metadata,
+            "source_span": _flow_source_span_public_dict(edge.source_span),
+            "bidirectional": edge.bidirectional,
+        }
+    )
+
+
+def _flow_view_group_public_dict(group: FlowViewGroup) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "id": group.id,
+            "label": group.label,
+            "parent": group.parent,
+            "direction": (
+                group.direction.value if group.direction is not None else None
+            ),
+            "nodes": group.nodes,
+            "groups": group.groups,
+            "classes": group.classes,
+            "style": group.style,
+            "metadata": group.metadata,
+            "source_span": _flow_source_span_public_dict(group.source_span),
+        }
+    )
+
+
+def _flow_view_class_public_dict(
+    class_definition: FlowViewClassDefinition,
+) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "name": class_definition.name,
+            "properties": class_definition.properties,
+            "source_span": _flow_source_span_public_dict(
+                class_definition.source_span
+            ),
+        }
+    )
+
+
+def _flow_view_style_public_dict(style: FlowViewStyle) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "target": style.target,
+            "properties": style.properties,
+            "source_span": _flow_source_span_public_dict(style.source_span),
+        }
+    )
+
+
+def _flow_view_link_style_public_dict(
+    link_style: FlowViewLinkStyle,
+) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "edge": link_style.edge,
+            "edge_index": link_style.edge_index,
+            "properties": link_style.properties,
+            "source_span": _flow_source_span_public_dict(
+                link_style.source_span
+            ),
+        }
+    )
+
+
+def _flow_view_comment_public_dict(
+    comment: FlowViewComment,
+) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "text": comment.text,
+            "source_span": _flow_source_span_public_dict(comment.source_span),
+        }
+    )
+
+
+def _flow_definition_public_dict(
+    definition: FlowDefinition,
+) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "name": definition.name,
+            "version": definition.version,
+            "revision": definition.revision,
+            "description": definition.description,
+            "inputs": tuple(
+                _flow_input_public_dict(input_definition)
+                for input_definition in definition.inputs
+            ),
+            "outputs": tuple(
+                _flow_output_public_dict(output_definition)
+                for output_definition in definition.outputs
+            ),
+            "entry": _flow_entry_public_dict(definition.entry_behavior),
+            "output_behavior": _flow_output_behavior_public_dict(
+                definition.output_behavior
+            ),
+            "nodes": tuple(
+                _flow_node_public_dict(node) for node in definition.nodes
+            ),
+            "edges": tuple(
+                _flow_edge_public_dict(edge) for edge in definition.edges
+            ),
+            "tags": definition.tags,
+            "variables": definition.variables,
+        }
+    )
+
+
+def _flow_input_public_dict(
+    input_definition: FlowInputDefinition,
+) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "name": input_definition.name,
+            "type": input_definition.type.value,
+            "mime_types": input_definition.mime_types,
+            "schema": input_definition.schema,
+            "schema_ref": input_definition.schema_ref,
+        }
+    )
+
+
+def _flow_output_public_dict(
+    output_definition: FlowOutputDefinition,
+) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "name": output_definition.name,
+            "type": output_definition.type.value,
+            "schema": output_definition.schema,
+            "schema_ref": output_definition.schema_ref,
+        }
+    )
+
+
+def _flow_entry_public_dict(
+    entry_behavior: FlowEntryBehavior | None,
+) -> dict[str, object] | None:
+    if entry_behavior is None:
+        return None
+    return {"type": entry_behavior.type.value, "node": entry_behavior.node}
+
+
+def _flow_output_behavior_public_dict(
+    output_behavior: FlowOutputBehavior | None,
+) -> dict[str, object] | None:
+    if output_behavior is None:
+        return None
+    return {
+        "type": output_behavior.type.value,
+        "outputs": output_behavior.outputs,
+    }
+
+
+def _flow_node_public_dict(node: FlowNodeDefinition) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "name": node.name,
+            "type": node.type,
+            "ref": node.ref,
+            "input": node.input,
+            "output": node.output,
+            "join_policy": _flow_join_policy_public_dict(node.join_policy),
+            "retry_policy": _flow_retry_policy_public_dict(node.retry_policy),
+            "timeout_policy": _flow_timeout_policy_public_dict(
+                node.timeout_policy
+            ),
+            "loop_policy": _flow_loop_policy_public_dict(node.loop_policy),
+            "mappings": tuple(
+                _flow_mapping_public_dict(mapping) for mapping in node.mappings
+            ),
+            "config": node.config,
+        }
+    )
+
+
+def _flow_edge_public_dict(edge: FlowEdgeDefinition) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "source": edge.source,
+            "target": edge.target,
+            "label": edge.label,
+            "kind": edge.kind.value,
+            "priority": edge.priority,
+            "default": edge.default,
+            "routing_policy": edge.routing_policy.value,
+        }
+    )
+
+
+def _flow_mapping_public_dict(
+    mapping: FlowInputMapping,
+) -> dict[str, object]:
+    return _flow_drop_none(
+        {
+            "target": mapping.target,
+            "type": mapping.kind.value,
+            "source": mapping.source,
+            "sources": mapping.sources,
+            "fields": mapping.fields,
+            "items": mapping.items,
+        }
+    )
+
+
+def _flow_join_policy_public_dict(
+    policy: FlowJoinPolicy | None,
+) -> dict[str, object] | None:
+    if policy is None:
+        return None
+    return _flow_drop_none(
+        {
+            "type": policy.type.value,
+            "quorum": policy.quorum,
+            "optional_inputs": policy.optional_inputs,
+        }
+    )
+
+
+def _flow_retry_policy_public_dict(
+    policy: FlowRetryPolicy | None,
+) -> dict[str, object] | None:
+    if policy is None:
+        return None
+    return _flow_drop_none(
+        {
+            "max_attempts": policy.max_attempts,
+            "backoff": policy.backoff.value,
+            "initial_delay_seconds": policy.initial_delay_seconds,
+            "max_delay_seconds": policy.max_delay_seconds,
+            "retryable_categories": policy.retryable_categories,
+            "non_retryable_categories": policy.non_retryable_categories,
+            "exhausted_route": policy.exhausted_route,
+        }
+    )
+
+
+def _flow_timeout_policy_public_dict(
+    policy: FlowTimeoutPolicy | None,
+) -> dict[str, object] | None:
+    if policy is None:
+        return None
+    return _flow_drop_none({"per_attempt_seconds": policy.per_attempt_seconds})
+
+
+def _flow_loop_policy_public_dict(
+    policy: FlowLoopPolicy | None,
+) -> dict[str, object] | None:
+    if policy is None:
+        return None
+    return _flow_drop_none(
+        {
+            "max_iterations": policy.max_iterations,
+            "max_elapsed_seconds": policy.max_elapsed_seconds,
+            "output_selector": policy.output_selector,
+            "limit_route": policy.limit_route,
+        }
+    )
+
+
+def _flow_source_span_public_dict(
+    source_span: FlowSourceSpan | None,
+) -> object:
+    if source_span is None:
+        return None
+    return source_span.as_public_dict()
+
+
+def _flow_drop_none(value: Mapping[str, object]) -> dict[str, object]:
+    return {key: item for key, item in value.items() if item is not None}
+
+
+def _flow_public_value(value: object) -> object:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Mapping):
+        return {
+            str(key): _flow_public_value(item) for key, item in value.items()
+        }
+    if isinstance(value, list | tuple):
+        return [_flow_public_value(item) for item in value]
+    return value
+
+
+def _flow_definition_toml(definition: FlowDefinition) -> str:
+    lines = ["[flow]", f"name = {_toml_value(definition.name)}"]
+    if definition.version is not None:
+        lines.append(f"version = {_toml_value(definition.version)}")
+    if definition.revision is not None:
+        lines.append(f"revision = {_toml_value(definition.revision)}")
+    if definition.description is not None:
+        lines.append(f"description = {_toml_value(definition.description)}")
+    if definition.tags:
+        lines.append(f"tags = {_toml_value(definition.tags)}")
+    if definition.variables:
+        lines.append("")
+        lines.append("[variables]")
+        lines.extend(_toml_mapping_lines(definition.variables))
+    for node in definition.nodes:
+        lines.append("")
+        lines.append(f"[nodes.{_toml_key(node.name)}]")
+        lines.append(f"type = {_toml_value(node.type)}")
+        if node.config:
+            lines.append("")
+            lines.append(f"[nodes.{_toml_key(node.name)}.config]")
+            lines.extend(_toml_mapping_lines(node.config))
+    for edge in definition.edges:
+        lines.append("")
+        lines.append("[[edges]]")
+        lines.append(f"source = {_toml_value(edge.source)}")
+        lines.append(f"target = {_toml_value(edge.target)}")
+        if edge.label is not None:
+            lines.append(f"label = {_toml_value(edge.label)}")
+    return "\n".join(lines) + "\n"
+
+
+def _toml_mapping_lines(value: Mapping[str, object]) -> list[str]:
+    return [
+        f"{_toml_key(key)} = {_toml_value(item)}"
+        for key, item in sorted(value.items())
+    ]
+
+
+def _toml_key(value: str) -> str:
+    return dumps(value)
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return dumps(value)
+    if isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, Enum):
+        return _toml_value(value.value)
+    if isinstance(value, list | tuple):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    if isinstance(value, Mapping):
+        items = ", ".join(
+            f"{_toml_key(key)} = {_toml_value(item)}"
+            for key, item in sorted(value.items())
+        )
+        return "{" + items + "}"
+    raise AssertionError("unsupported TOML value")
 
 
 async def _flow_run(

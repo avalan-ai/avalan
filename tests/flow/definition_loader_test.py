@@ -152,6 +152,44 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(output, {"answer": "ok"})
 
+    def test_loads_validation_result_does_not_build_nodes(self) -> None:
+        build_calls = 0
+
+        def factory(definition: FlowNodeDefinition) -> Node:
+            nonlocal build_calls
+            _ = definition
+            build_calls += 1
+            raise AssertionError("factory should not build")
+
+        loader = FlowDefinitionLoader(
+            FlowNodeRegistry(
+                {"external": factory},
+                {"external": FlowNodeMetadata(supports_ref=True)},
+            )
+        )
+        source = """
+            [flow]
+            name = "validation_only"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "external"
+            ref = "safe.toml"
+            """
+
+        result = loader.loads_validation_result(source)
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "flow.toml"
+            path.write_text(source, encoding="utf-8")
+            file_result = loader.load_validation_result(path)
+
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.flow)
+        self.assertTrue(file_result.ok)
+        self.assertIsNone(file_result.flow)
+        self.assertEqual(build_calls, 0)
+
     async def test_loads_edge_conditions_and_applies_them(self) -> None:
         cases = (("pass", "go", "go"), ("block", "stop", None))
 
@@ -2805,6 +2843,7 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             raw,  # type: ignore[arg-type]
             registry=FlowNodeRegistry(),
             source_path=None,
+            build_runtime=True,
         )
         tuple_value = flow_loader._string_tuple(  # type: ignore[attr-defined]
             {"mime_types": None},

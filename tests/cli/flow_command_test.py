@@ -3,8 +3,9 @@ from asyncio import run as asyncio_run
 from base64 import b64decode
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from enum import Enum
 from io import StringIO
-from json import dumps
+from json import dumps, loads
 from os import chdir
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -25,13 +26,27 @@ from avalan.entities import (
 )
 from avalan.flow import (
     FlowDefinition,
+    FlowDiagnostic,
+    FlowDiagnosticCategory,
+    FlowEdgeDefinition,
+    FlowEntryBehavior,
     FlowInputDefinition,
+    FlowInputMapping,
     FlowInputType,
+    FlowJoinPolicy,
+    FlowJoinPolicyType,
     FlowLoadIssue,
     FlowLoadIssueCategory,
+    FlowLoopPolicy,
+    FlowMappingKind,
     FlowNodeDefinition,
+    FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRetryBackoffStrategy,
+    FlowRetryPolicy,
+    FlowTimeoutPolicy,
+    MermaidRenderResult,
 )
 from avalan.task import (
     TaskInputType,
@@ -76,6 +91,800 @@ TASK_ARGS = {
 class FlowRunCommandTestCase(TestCase):
     def setUp(self) -> None:
         self.theme = SimpleNamespace()
+
+    def test_flow_validate_json_success(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            flow_path = _write_strict_constant_flow(Path(temporary_directory))
+            result = flow_cmds.flow_validate(
+                _args(flow=flow_path, flow_json=True),
+                console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertTrue(result)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["diagnostics"], [])
+
+    def test_flow_validate_reports_load_failure_safely(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "private.flow.toml"
+            flow_path.write_text(
+                "[flow\nsecret = 'private customer prompt'",
+                encoding="utf-8",
+            )
+            result = flow_cmds.flow_validate(
+                _args(flow=flow_path),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Flow definition is invalid.", output)
+        self.assertIn("flow.malformed_toml", output)
+        self.assertNotIn("private customer prompt", output)
+        self.assertNotIn("private.flow.toml", output)
+
+    def test_flow_validate_reports_read_failure_as_json_safely(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            flow_path = Path(temporary_directory) / "private.flow.toml"
+            result = flow_cmds.flow_validate(
+                _args(flow=flow_path, flow_json=True),
+                console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertFalse(result)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["diagnostics"][0]["code"], "file.read")
+        self.assertNotIn("private.flow.toml", stream.getvalue())
+
+    def test_flow_mermaid_parse_json_success(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            diagram = Path(temporary_directory) / "topology.mmd"
+            diagram.write_text("graph TD\nA[Start] --> B[Done]", "utf-8")
+            result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                    flow_json=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertTrue(result)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            [(node["id"], node["label"]) for node in payload["view"]["nodes"]],
+            [("A", "Start"), ("B", "Done")],
+        )
+
+    def test_flow_mermaid_parse_json_metadata_and_read_failure(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        failure_stream = StringIO()
+        failure_console = Console(file=failure_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            diagram = root / "metadata.mmd"
+            diagram.write_text(
+                "\n".join(
+                    (
+                        "graph LR",
+                        "subgraph lane[Lane]",
+                        "A[Start] --> B[Done]",
+                        "end",
+                        "classDef active fill:#fff,stroke:#333",
+                        "class A active",
+                        "style B fill:#eee,stroke:#111",
+                        "linkStyle 0 stroke:#f00",
+                        "%% note",
+                    )
+                ),
+                "utf-8",
+            )
+            success = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                    flow_json=True,
+                ),
+                console,
+                self.theme,
+            )
+            failure = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=root / "missing.mmd",
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                    flow_json=True,
+                ),
+                failure_console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        failure_payload = loads(failure_stream.getvalue())
+        self.assertTrue(success)
+        self.assertEqual(payload["view"]["groups"][0]["id"], "lane")
+        self.assertEqual(
+            payload["view"]["class_definitions"][0]["name"],
+            "active",
+        )
+        self.assertEqual(payload["view"]["styles"][0]["target"], "B")
+        self.assertEqual(payload["view"]["link_styles"][0]["edge_index"], 0)
+        self.assertEqual(payload["view"]["comments"][0]["text"], "note")
+        self.assertFalse(failure)
+        self.assertEqual(
+            failure_payload["diagnostics"][0]["code"], "file.read"
+        )
+
+    def test_flow_mermaid_parse_executable_negative_is_safe(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            diagram = Path(temporary_directory) / "private-topology.mmd"
+            diagram.write_text(
+                "graph TD\nA & B --> C\n%% private customer prompt",
+                "utf-8",
+            )
+            result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="executable",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("flow.mermaid.security.ambiguous_shorthand", output)
+        self.assertNotIn("private customer prompt", output)
+        self.assertNotIn("private-topology.mmd", output)
+
+    def test_flow_mermaid_render_outputs_safe_source(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            diagram = Path(temporary_directory) / "topology.mmd"
+            diagram.write_text("graph TD\nA[Start] --> B[Done]", "utf-8")
+            result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="render",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("flowchart TD", output)
+        self.assertIn('A["Start"]', output)
+
+    def test_flow_mermaid_compare_reports_mismatch(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            diagram = root / "topology.mmd"
+            diagram.write_text("graph TD\nA --> B", "utf-8")
+            flow_path = _write_strict_topology_flow(root)
+            result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    flow=flow_path,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="compare",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Flow topology does not match.", output)
+        self.assertIn("flow.view.binding.extra_node", output)
+        self.assertIn("flow.view.binding.missing_node", output)
+
+    def test_flow_mermaid_skeleton_prints_toml(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            diagram = Path(temporary_directory) / "topology.mmd"
+            diagram.write_text("graph TD\nA --> B", "utf-8")
+            result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    name="topology",
+                    version="1",
+                    revision=None,
+                    flow_command="mermaid",
+                    flow_mermaid_command="skeleton",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn('[nodes."A"]', output)
+        self.assertIn('type = "flow_view_skeleton"', output)
+        self.assertIn('"executable" = false', output)
+
+    def test_flow_mermaid_skeleton_json_negative(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            diagram = Path(temporary_directory) / "topology.mmd"
+            diagram.write_text("graph TD\nA & B --> C", "utf-8")
+            result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="executable",
+                    name="topology",
+                    version=None,
+                    revision=None,
+                    flow_command="mermaid",
+                    flow_mermaid_command="skeleton",
+                    flow_json=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertFalse(result)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(
+            payload["diagnostics"][0]["code"],
+            "flow.mermaid.security.ambiguous_shorthand",
+        )
+
+    def test_flow_validate_human_success_and_missing_file(self) -> None:
+        success_console = Console(record=True, width=160)
+        failure_console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_constant_flow(root)
+            success = flow_cmds.flow_validate(
+                _args(flow=flow_path),
+                success_console,
+                self.theme,
+            )
+            failure = flow_cmds.flow_validate(
+                _args(flow=root / "missing.flow.toml"),
+                failure_console,
+                self.theme,
+            )
+
+        self.assertTrue(success)
+        self.assertIn(
+            "Flow definition is valid: strict 1",
+            success_console.export_text(),
+        )
+        self.assertFalse(failure)
+        self.assertIn(
+            "Flow definition could not be read.",
+            failure_console.export_text(),
+        )
+
+    def test_flow_mermaid_dispatch_rejects_unknown_command(self) -> None:
+        console = Console(record=True, width=160)
+
+        with self.assertRaises(AssertionError):
+            flow_cmds.flow_mermaid(
+                _args(flow_command="mermaid", flow_mermaid_command="bogus"),
+                console,
+                self.theme,
+            )
+
+    def test_flow_mermaid_parse_human_warning_and_read_failure(self) -> None:
+        warning_console = Console(record=True, width=160)
+        failure_console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            diagram = root / "topology.mmd"
+            diagram.write_text("graph TD\nA & B --> C", "utf-8")
+            warning = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                ),
+                warning_console,
+                self.theme,
+            )
+            failure = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=root / "missing.mmd",
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                ),
+                failure_console,
+                self.theme,
+            )
+
+        self.assertTrue(warning)
+        warning_output = warning_console.export_text()
+        self.assertIn("Mermaid diagnostics.", warning_output)
+        self.assertIn(
+            "flow.mermaid.security.ambiguous_shorthand", warning_output
+        )
+        self.assertFalse(failure)
+        self.assertIn(
+            "Mermaid diagram could not be read.",
+            failure_console.export_text(),
+        )
+
+    def test_flow_mermaid_render_negative_json_and_forced_failure(
+        self,
+    ) -> None:
+        json_stream = StringIO()
+        json_console = Console(file=json_stream, width=160)
+        human_console = Console(record=True, width=160)
+        forced_console = Console(record=True, width=160)
+        diagnostic = _flow_cli_diagnostic("flow.execution.render_failed")
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            invalid = root / "invalid.mmd"
+            invalid.write_text(
+                "sequenceDiagram\nA->>B: private prompt", "utf-8"
+            )
+            valid = root / "valid.mmd"
+            valid.write_text("graph TD\nA --> B", "utf-8")
+            json_result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=invalid,
+                    mode="executable",
+                    flow_command="mermaid",
+                    flow_mermaid_command="render",
+                    flow_json=True,
+                ),
+                json_console,
+                self.theme,
+            )
+            human_result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=invalid,
+                    mode="executable",
+                    flow_command="mermaid",
+                    flow_mermaid_command="render",
+                ),
+                human_console,
+                self.theme,
+            )
+            with patch.object(
+                flow_cmds,
+                "render_flow_view",
+                return_value=MermaidRenderResult(
+                    source="",
+                    diagnostics=(diagnostic,),
+                ),
+            ):
+                forced_result = flow_cmds.flow_mermaid(
+                    _args(
+                        diagram=valid,
+                        mode="presentation",
+                        flow_command="mermaid",
+                        flow_mermaid_command="render",
+                    ),
+                    forced_console,
+                    self.theme,
+                )
+
+        payload = loads(json_stream.getvalue())
+        self.assertFalse(json_result)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(human_result)
+        self.assertIn(
+            "Mermaid diagram is invalid.", human_console.export_text()
+        )
+        self.assertNotIn("private prompt", human_console.export_text())
+        self.assertFalse(forced_result)
+        self.assertIn(
+            "Mermaid diagram could not be rendered.",
+            forced_console.export_text(),
+        )
+
+    def test_flow_mermaid_render_json_success_and_read_failure(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        failure_console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            diagram = root / "topology.mmd"
+            diagram.write_text("graph TD\nA --> B", "utf-8")
+            success = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="render",
+                    flow_json=True,
+                ),
+                console,
+                self.theme,
+            )
+            failure = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=root / "missing.mmd",
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="render",
+                ),
+                failure_console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertTrue(success)
+        self.assertIn("flowchart TD", payload["source"])
+        self.assertFalse(failure)
+        self.assertIn(
+            "Mermaid diagram could not be read.",
+            failure_console.export_text(),
+        )
+
+    def test_flow_mermaid_compare_json_warning_and_read_failures(self) -> None:
+        json_stream = StringIO()
+        json_console = Console(file=json_stream, width=160)
+        warning_console = Console(record=True, width=160)
+        source_failure_console = Console(record=True, width=160)
+        flow_failure_console = Console(record=True, width=160)
+        invalid_console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            diagram = root / "topology.mmd"
+            diagram.write_text("graph TD\nA --> B", "utf-8")
+            ambiguous = root / "ambiguous.mmd"
+            ambiguous.write_text("graph TD\nA & B --> C", "utf-8")
+            flow_path = _write_strict_topology_flow(root)
+            ambiguous_flow = _write_ambiguous_topology_flow(root)
+            json_result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    flow=flow_path,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="compare",
+                    flow_json=True,
+                ),
+                json_console,
+                self.theme,
+            )
+            warning_result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=ambiguous,
+                    flow=ambiguous_flow,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="compare",
+                ),
+                warning_console,
+                self.theme,
+            )
+            source_failure = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=root / "missing.mmd",
+                    flow=flow_path,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="compare",
+                ),
+                source_failure_console,
+                self.theme,
+            )
+            flow_failure = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    flow=root / "missing.flow.toml",
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="compare",
+                ),
+                flow_failure_console,
+                self.theme,
+            )
+            invalid_result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=ambiguous,
+                    flow=flow_path,
+                    mode="executable",
+                    flow_command="mermaid",
+                    flow_mermaid_command="compare",
+                ),
+                invalid_console,
+                self.theme,
+            )
+
+        payload = loads(json_stream.getvalue())
+        self.assertFalse(json_result)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(warning_result)
+        warning_output = warning_console.export_text()
+        self.assertIn("Flow topology matches.", warning_output)
+        self.assertIn("Flow topology diagnostics.", warning_output)
+        self.assertFalse(source_failure)
+        self.assertIn(
+            "Mermaid diagram could not be read.",
+            source_failure_console.export_text(),
+        )
+        self.assertFalse(flow_failure)
+        self.assertIn(
+            "Flow definition could not be read.",
+            flow_failure_console.export_text(),
+        )
+        self.assertFalse(invalid_result)
+        self.assertIn(
+            "Flow topology does not match.",
+            invalid_console.export_text(),
+        )
+
+    def test_flow_mermaid_skeleton_json_success_and_negative_human(
+        self,
+    ) -> None:
+        json_stream = StringIO()
+        json_console = Console(file=json_stream, width=160)
+        negative_console = Console(record=True, width=160)
+        read_console = Console(record=True, width=160)
+        forced_console = Console(record=True, width=160)
+        diagnostic = _flow_cli_diagnostic("flow.execution.skeleton_failed")
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            diagram = root / "topology.mmd"
+            diagram.write_text("graph TD\nA -->|yes| B", "utf-8")
+            invalid = root / "invalid.mmd"
+            invalid.write_text("graph TD\nA & B --> C", "utf-8")
+            json_result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    name="topology",
+                    version=None,
+                    revision="r1",
+                    flow_command="mermaid",
+                    flow_mermaid_command="skeleton",
+                    flow_json=True,
+                ),
+                json_console,
+                self.theme,
+            )
+            negative_result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=invalid,
+                    mode="executable",
+                    name="topology",
+                    version=None,
+                    revision=None,
+                    flow_command="mermaid",
+                    flow_mermaid_command="skeleton",
+                ),
+                negative_console,
+                self.theme,
+            )
+            read_result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=root / "missing.mmd",
+                    mode="presentation",
+                    name="topology",
+                    version=None,
+                    revision=None,
+                    flow_command="mermaid",
+                    flow_mermaid_command="skeleton",
+                ),
+                read_console,
+                self.theme,
+            )
+            with patch.object(
+                flow_cmds,
+                "skeleton_from_mermaid_view",
+                return_value=SimpleNamespace(
+                    ok=False,
+                    diagnostics=(diagnostic,),
+                    definition=FlowDefinition(name="failed", nodes=()),
+                ),
+            ):
+                forced_result = flow_cmds.flow_mermaid(
+                    _args(
+                        diagram=diagram,
+                        mode="presentation",
+                        name="topology",
+                        version=None,
+                        revision=None,
+                        flow_command="mermaid",
+                        flow_mermaid_command="skeleton",
+                    ),
+                    forced_console,
+                    self.theme,
+                )
+
+        payload = loads(json_stream.getvalue())
+        self.assertTrue(json_result)
+        self.assertEqual(payload["definition"]["revision"], "r1")
+        self.assertEqual(payload["definition"]["edges"][0]["label"], "yes")
+        self.assertFalse(negative_result)
+        self.assertIn(
+            "Mermaid diagram is invalid.", negative_console.export_text()
+        )
+        self.assertFalse(read_result)
+        self.assertIn(
+            "Mermaid diagram could not be read.",
+            read_console.export_text(),
+        )
+        self.assertFalse(forced_result)
+        self.assertIn(
+            "Flow skeleton could not be created.",
+            forced_console.export_text(),
+        )
+
+    def test_flow_cli_private_serializers_cover_branches(self) -> None:
+        class LocalEnum(Enum):
+            VALUE = "value"
+
+        definition = FlowDefinition(
+            name="full",
+            revision="r2",
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                    schema={"type": "object"},
+                    schema_ref="schema/input.json",
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="result",
+                    type=FlowOutputType.OBJECT,
+                    schema={"type": "object"},
+                    schema_ref="schema/output.json",
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="start"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"result": "finish.value"}
+            ),
+            nodes=(
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(
+                    name="finish",
+                    type="pass-through",
+                    ref="safe.toml",
+                    input="start.value",
+                    output="value",
+                    join_policy=FlowJoinPolicy(
+                        type=FlowJoinPolicyType.ALL_DONE,
+                        optional_inputs=("start",),
+                    ),
+                    retry_policy=FlowRetryPolicy(
+                        max_attempts=2,
+                        backoff=FlowRetryBackoffStrategy.CONSTANT,
+                        initial_delay_seconds=1,
+                        max_delay_seconds=2,
+                        retryable_categories=("transient",),
+                        non_retryable_categories=("validation",),
+                        exhausted_route="fallback",
+                    ),
+                    timeout_policy=FlowTimeoutPolicy(per_attempt_seconds=3),
+                    loop_policy=FlowLoopPolicy(
+                        max_iterations=1,
+                        max_elapsed_seconds=5,
+                        output_selector="finish.value",
+                        limit_route="fallback",
+                    ),
+                    mappings=(
+                        FlowInputMapping(
+                            target="payload",
+                            kind=FlowMappingKind.OBJECT,
+                            fields={"answer": "inputs.payload.answer"},
+                        ),
+                    ),
+                    config={
+                        "count": 3,
+                        "nested": {"enabled": True},
+                    },
+                ),
+            ),
+            edges=(
+                FlowEdgeDefinition(
+                    source="start", target="finish", label="ok"
+                ),
+            ),
+            tags=("cli",),
+            variables={"rank": 1},
+        )
+
+        public = flow_cmds._flow_definition_public_dict(definition)
+        toml = flow_cmds._flow_definition_toml(definition)
+
+        self.assertEqual(
+            public["inputs"][0]["schema_ref"], "schema/input.json"
+        )
+        self.assertEqual(public["nodes"][1]["join_policy"]["type"], "all_done")
+        self.assertEqual(public["nodes"][1]["retry_policy"]["max_attempts"], 2)
+        self.assertEqual(
+            public["nodes"][1]["timeout_policy"]["per_attempt_seconds"],
+            3,
+        )
+        self.assertEqual(
+            public["nodes"][1]["loop_policy"]["limit_route"], "fallback"
+        )
+        self.assertEqual(public["nodes"][1]["mappings"][0]["type"], "object")
+        self.assertIn('revision = "r2"', toml)
+        self.assertIn('label = "ok"', toml)
+        self.assertEqual(
+            flow_cmds._flow_definition_identity(
+                FlowDefinition(name="revisioned", revision="r3", nodes=())
+            ),
+            "r3",
+        )
+        self.assertEqual(
+            flow_cmds._flow_definition_identity(
+                FlowDefinition(name="unversioned", nodes=())
+            ),
+            "unversioned",
+        )
+        self.assertEqual(flow_cmds._flow_diagnostic_location({}), "")
+        self.assertEqual(
+            flow_cmds._flow_diagnostic_location(
+                {"source_span": {"start_line": 1}}
+            ),
+            "",
+        )
+        self.assertEqual(
+            flow_cmds._flow_source_span_public_dict(None),
+            None,
+        )
+        self.assertEqual(
+            flow_cmds._flow_public_value(FlowRetryBackoffStrategy.CONSTANT),
+            "constant",
+        )
+        self.assertEqual(flow_cmds._toml_value(5), "5")
+        self.assertEqual(flow_cmds._toml_value(LocalEnum.VALUE), '"value"')
+        self.assertIn(
+            '"nested"', flow_cmds._toml_value({"nested": {"ok": True}})
+        )
+        with self.assertRaises(AssertionError):
+            flow_cmds._toml_value(object())
 
     def test_flow_run_json_prints_only_output(self) -> None:
         stream = StringIO()
@@ -937,6 +1746,15 @@ def _args(**overrides: object) -> Namespace:
     return Namespace(**values)
 
 
+def _flow_cli_diagnostic(code: str) -> FlowDiagnostic:
+    return FlowDiagnostic(
+        code=code,
+        path="flow",
+        category=FlowDiagnosticCategory.EXECUTION,
+        message="Flow command test diagnostic.",
+    )
+
+
 def _write_object_echo_flow(root: Path) -> Path:
     flow_path = root / "object.flow.toml"
     flow_path.write_text(
@@ -991,6 +1809,114 @@ def _write_file_echo_flow(root: Path) -> Path:
         [nodes.start]
         type = "echo"
         input = "document"
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _write_strict_constant_flow(root: Path) -> Path:
+    flow_path = root / "strict.flow.toml"
+    flow_path.write_text(
+        """
+        [flow]
+        name = "strict"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "result"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "start"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        result = "start.value"
+
+        [nodes.start]
+        type = "constant"
+        value = {answer = "ok"}
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _write_strict_topology_flow(root: Path) -> Path:
+    flow_path = root / "topology.flow.toml"
+    flow_path.write_text(
+        """
+        [flow]
+        name = "topology"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "result"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "A"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        result = "C.value"
+
+        [nodes.A]
+        type = "input"
+
+        [nodes.C]
+        type = "pass-through"
+        input = "A.value"
+
+        [[edges]]
+        source = "A"
+        target = "C"
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _write_ambiguous_topology_flow(root: Path) -> Path:
+    flow_path = root / "ambiguous.flow.toml"
+    flow_path.write_text(
+        """
+        [flow]
+        name = "ambiguous"
+        entrypoint = "A"
+        output_node = "C"
+
+        [nodes.A]
+        type = "echo"
+
+        [nodes.B]
+        type = "echo"
+
+        [nodes.C]
+        type = "echo"
+
+        [[edges]]
+        source = "A"
+        target = "C"
+
+        [[edges]]
+        source = "B"
+        target = "C"
         """,
         encoding="utf-8",
     )
