@@ -22,13 +22,16 @@ from ...task import TaskClientUnsupportedOperationError
 from ...task.event import SanitizedTaskEvent
 from ...task.store import TaskStoreConflictError, TaskStoreNotFoundError
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from json import dumps
 from typing import Any, Protocol, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
+from starlette.responses import Response
 
 
 class FlowTaskProtocolClient(Protocol):
@@ -72,7 +75,20 @@ class FlowResumeRequest(BaseModel):
     expected_revision: int | None = Field(None, ge=1)
 
 
-router = APIRouter(tags=["flows"])
+class FlowRoute(APIRoute):
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        handler = super().get_route_handler()
+
+        async def flow_route_handler(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except RequestValidationError as exc:
+                return _request_validation_response(exc)
+
+        return flow_route_handler
+
+
+router = APIRouter(tags=["flows"], route_class=FlowRoute)
 
 
 @router.post("/validate")
@@ -451,6 +467,40 @@ def _flow_result(
         if value is not None:
             result[key] = value
     return cast(dict[str, object], _public_value(result))
+
+
+def _request_validation_response(
+    exc: RequestValidationError,
+) -> JSONResponse:
+    diagnostics = tuple(
+        _request_validation_diagnostic(_request_validation_path(error))
+        for error in exc.errors()
+    )
+    if not diagnostics:
+        diagnostics = (_request_validation_diagnostic("request"),)
+    return JSONResponse(
+        status_code=422,
+        content=_flow_result(ok=False, diagnostics=diagnostics),
+    )
+
+
+def _request_validation_diagnostic(path: str) -> FlowDiagnostic:
+    return FlowDiagnostic(
+        code="flow.definition.request_invalid",
+        path=path,
+        category=FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+        severity=FlowDiagnosticSeverity.ERROR,
+        message="Flow request payload is invalid.",
+        hint="Check request field types and numeric bounds.",
+    )
+
+
+def _request_validation_path(error: Mapping[str, object]) -> str:
+    loc = error.get("loc")
+    if not isinstance(loc, list | tuple):
+        return "request"
+    parts = tuple(str(part) for part in loc if isinstance(part, str | int))
+    return ".".join(parts) or "request"
 
 
 def _diagnostics_ok(

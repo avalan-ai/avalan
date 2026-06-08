@@ -613,6 +613,7 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
 
     async def test_flow_event_helpers_cover_defensive_paths(self) -> None:
         events: list[Event] = []
+        async_events: list[Event] = []
         plan = replace(
             self._plan(
                 entry_node="start",
@@ -632,6 +633,22 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                 state=FlowNodeState.READY,
                 route_kind=FlowEdgeKind.SUCCESS,
                 attempts=0,
+                diagnostics=(),
+            ),
+        )
+
+        async def listener(event: Event) -> None:
+            async_events.append(event)
+            await sleep(0)
+
+        await _emit_node_outcome_event(
+            listener,
+            plan,
+            _NodeRunOutcome(
+                node=self._node("start"),
+                state=FlowNodeState.SUCCEEDED,
+                route_kind=FlowEdgeKind.SUCCESS,
+                attempts=1,
                 diagnostics=(),
             ),
         )
@@ -662,6 +679,10 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(events, [])
+        self.assertEqual(
+            [event.type for event in async_events],
+            [EventType.FLOW_NODE_COMPLETED],
+        )
         self.assertEqual(payload["flow_id"], "runtime@v1#r1")
         self.assertEqual(payload["flow_version"], "v1")
         self.assertEqual(payload["flow_revision"], "r1")
