@@ -1,5 +1,6 @@
 from dataclasses import FrozenInstanceError
 from unittest import TestCase, main
+from unittest.mock import patch
 
 import avalan.flow as flow
 from avalan.flow import (
@@ -164,6 +165,25 @@ class FlowAuthoringTestCase(TestCase):
         self,
     ) -> None:
         self.assertFalse(hasattr(flow, "_MermaidTokenizer"))
+
+    def test_mermaid_authoring_apis_do_not_call_flow_parse_helper(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        original = flow.Flow.parse_mermaid
+
+        def blocked(_: flow.Flow, source_text: str) -> None:
+            calls.append(source_text)
+            raise AssertionError("unexpected helper call")
+
+        with patch.object(flow.Flow, "parse_mermaid", blocked):
+            parsed = parse_mermaid_view("graph TD\nA --> B")
+            direct = flow.parse_mermaid("graph TD\nA --> B")
+
+        self.assertIs(flow.Flow.parse_mermaid, original)
+        self.assertTrue(parsed.ok, parsed.public_diagnostics)
+        self.assertTrue(direct.ok, direct.public_diagnostics)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":
