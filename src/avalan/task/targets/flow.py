@@ -340,6 +340,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                         files=context.files,
                     ),
                     cancellation_checker=context.check_cancelled,
+                    event_listener=context.event_listener,
                     concurrency_limit=self._concurrency_limit,
                     resume_trace=(
                         record.trace

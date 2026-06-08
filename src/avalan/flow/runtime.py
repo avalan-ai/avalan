@@ -1,3 +1,4 @@
+from ..event import Event, EventType
 from .condition import FlowConditionOperator, FlowConditionValueType
 from .definition import (
     FlowEdgeKind,
@@ -47,6 +48,7 @@ FlowPlanNodeRunner: TypeAlias = Callable[
     [FlowNodePlan, Mapping[str, object]],
     object | Awaitable[object],
 ]
+FlowEventListener: TypeAlias = Callable[[Event], Awaitable[None] | None]
 
 
 class _JsonSchemaValidator(Protocol):
@@ -80,6 +82,24 @@ class _NodeRunOutcome:
     exhausted_route_kind: FlowEdgeKind | None = None
     pause_token: str | None = None
     output: object = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _FlowEventDraft:
+    type: EventType
+    payload: Mapping[str, object]
+    started: float | None = None
+    finished: float | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.type, EventType)
+        assert isinstance(self.payload, Mapping)
+        if self.started is not None:
+            assert isinstance(self.started, int | float)
+            assert not isinstance(self.started, bool)
+        if self.finished is not None:
+            assert isinstance(self.finished, int | float)
+            assert not isinstance(self.finished, bool)
 
 
 class FlowNodeExecutionError(Exception):
@@ -313,6 +333,7 @@ async def execute_flow_plan(
     *,
     inputs: Mapping[str, object] | None = None,
     cancellation_checker: CancellationChecker | None = None,
+    event_listener: FlowEventListener | None = None,
     concurrency_limit: int = 1,
     resume_trace: FlowExecutionTrace | None = None,
     resume_node_outputs: Mapping[str, Mapping[str, object]] | None = None,
@@ -320,6 +341,8 @@ async def execute_flow_plan(
 ) -> FlowPlanExecutionResult:
     assert isinstance(plan, FlowExecutionPlan)
     assert callable(runner)
+    if event_listener is not None:
+        assert callable(event_listener)
     if inputs is not None:
         assert isinstance(inputs, Mapping)
     if resume_trace is not None:
@@ -346,6 +369,7 @@ async def execute_flow_plan(
     diagnostics: list[FlowDiagnostic] = []
     trace = resume_trace or FlowExecutionTrace.from_plan(plan)
     node_map = plan.node_map
+    event_drafts: list[_FlowEventDraft] = []
     ready, queued, processed, trace, resume_diagnostics = (
         _initial_runtime_queue(
             plan,
@@ -353,119 +377,201 @@ async def execute_flow_plan(
             node_outputs,
             resume_payloads,
             trace,
+            event_drafts=event_drafts,
         )
     )
     diagnostics.extend(resume_diagnostics)
     paused = False
+    flow_started_at = monotonic()
+    await _emit_flow_event(
+        event_listener,
+        EventType.FLOW_VALIDATION,
+        plan,
+        payload={
+            "status": "failed" if resume_diagnostics else "succeeded",
+            "node_count": len(plan.nodes),
+            "edge_count": len(plan.edges),
+            "diagnostic_codes": _diagnostic_codes(resume_diagnostics),
+        },
+    )
+    await _emit_flow_event(
+        event_listener,
+        EventType.FLOW_STARTED,
+        plan,
+        payload={"status": "started"},
+        started=flow_started_at,
+    )
+    await _emit_flow_event_drafts(event_listener, plan, event_drafts)
 
-    while ready:
-        await _check_cancelled(cancellation_checker)
-        batch: list[tuple[FlowNodePlan, Mapping[str, object]]] = []
-        batch_outcomes: list[_NodeRunOutcome] = []
-        batch_context = FlowRuntimeContext(
-            inputs=input_values,
-            node_outputs=node_outputs,
-        )
-        while ready and len(batch) < concurrency_limit:
-            node_name = ready.popleft()
-            queued.discard(node_name)
-            node = node_map[node_name]
-            started_at = monotonic()
-            mapped_inputs, mapping_diagnostic = _node_inputs(
-                node,
-                batch_context,
+    try:
+        while ready:
+            await _check_cancelled(cancellation_checker)
+            batch: list[tuple[FlowNodePlan, Mapping[str, object]]] = []
+            batch_outcomes: list[_NodeRunOutcome] = []
+            batch_context = FlowRuntimeContext(
+                inputs=input_values,
+                node_outputs=node_outputs,
             )
-            trace = trace.with_node_state(node.name, FlowNodeState.READY)
-            if mapping_diagnostic is not None:
-                batch_outcomes.append(
-                    _NodeRunOutcome(
-                        node=node,
-                        state=FlowNodeState.FAILED,
-                        route_kind=FlowEdgeKind.ERROR,
-                        attempts=1,
-                        diagnostics=(mapping_diagnostic,),
-                        duration_ms=_elapsed_ms(started_at),
-                    )
-                )
-                continue
-            pause_outcome = _human_review_pause_outcome(
-                node,
-                started_at,
-            )
-            if pause_outcome is not None:
-                batch_outcomes.append(pause_outcome)
-                continue
-            trace = trace.with_node_state(
-                node.name,
-                FlowNodeState.RUNNING,
-                attempts=1,
-            )
-            batch.append((node, mapped_inputs))
-        if batch:
-            batch_outcomes.extend(
-                await gather(
-                    *(
-                        _run_plan_node(
-                            node,
-                            mapped_inputs,
-                            runner,
-                            batch_context,
-                            cancellation_checker,
-                        )
-                        for node, mapped_inputs in batch
-                    )
-                )
-            )
-        for outcome in batch_outcomes:
-            trace = trace.with_node_state(
-                outcome.node.name,
-                outcome.state,
-                attempts=outcome.attempts,
-                duration_ms=outcome.duration_ms,
-                diagnostics=outcome.diagnostics,
-            )
-            diagnostics.extend(outcome.diagnostics)
-            if outcome.route_kind == FlowEdgeKind.SUCCESS:
-                node_outputs[outcome.node.name] = _node_output_mapping(
-                    outcome.node,
-                    outcome.output,
-                )
-            if outcome.pause_token is not None:
-                pause_tokens[outcome.node.name] = outcome.pause_token
-                paused = True
-            processed.add(outcome.node.name)
-        for outcome in batch_outcomes:
-            if outcome.state == FlowNodeState.PAUSED:
-                continue
-            route_context = _route_context(
-                input_values,
-                batch_context.node_outputs,
-                outcome,
-            )
-            routed, trace, route_diagnostics = _route_from_node(
-                plan,
-                outcome.node.name,
-                outcome.route_kind,
-                route_context,
-                trace,
-                forced_target=outcome.exhausted_route,
-                forced_kind=outcome.exhausted_route_kind,
-            )
-            diagnostics.extend(route_diagnostics)
-            for target in routed:
-                trace, join_diagnostics = _queue_target_if_ready(
+            while ready and len(batch) < concurrency_limit:
+                node_name = ready.popleft()
+                queued.discard(node_name)
+                node = node_map[node_name]
+                started_at = monotonic()
+                await _emit_flow_event(
+                    event_listener,
+                    EventType.FLOW_NODE_STARTED,
                     plan,
-                    target,
-                    ready=ready,
-                    queued=queued,
-                    processed=processed,
-                    trace=trace,
+                    payload={
+                        "node": node.name,
+                        "status": "started",
+                        "attempt": (
+                            _node_trace_attempts(
+                                trace,
+                                node.name,
+                            )
+                            + 1
+                        ),
+                    },
+                    started=started_at,
                 )
-                diagnostics.extend(join_diagnostics)
-        if paused:
-            break
+                mapped_inputs, mapping_diagnostic = _node_inputs(
+                    node,
+                    batch_context,
+                )
+                trace = trace.with_node_state(node.name, FlowNodeState.READY)
+                if mapping_diagnostic is not None:
+                    batch_outcomes.append(
+                        _NodeRunOutcome(
+                            node=node,
+                            state=FlowNodeState.FAILED,
+                            route_kind=FlowEdgeKind.ERROR,
+                            attempts=1,
+                            diagnostics=(mapping_diagnostic,),
+                            duration_ms=_elapsed_ms(started_at),
+                        )
+                    )
+                    continue
+                pause_outcome = _human_review_pause_outcome(
+                    node,
+                    started_at,
+                )
+                if pause_outcome is not None:
+                    batch_outcomes.append(pause_outcome)
+                    continue
+                trace = trace.with_node_state(
+                    node.name,
+                    FlowNodeState.RUNNING,
+                    attempts=1,
+                )
+                batch.append((node, mapped_inputs))
+            if batch:
+                batch_outcomes.extend(
+                    await gather(
+                        *(
+                            _run_plan_node(
+                                node,
+                                mapped_inputs,
+                                runner,
+                                batch_context,
+                                cancellation_checker,
+                                plan=plan,
+                                event_listener=event_listener,
+                            )
+                            for node, mapped_inputs in batch
+                        )
+                    )
+                )
+            for outcome in batch_outcomes:
+                trace = trace.with_node_state(
+                    outcome.node.name,
+                    outcome.state,
+                    attempts=outcome.attempts,
+                    duration_ms=outcome.duration_ms,
+                    diagnostics=outcome.diagnostics,
+                )
+                diagnostics.extend(outcome.diagnostics)
+                await _emit_node_outcome_event(
+                    event_listener,
+                    plan,
+                    outcome,
+                )
+                if outcome.route_kind == FlowEdgeKind.SUCCESS:
+                    node_outputs[outcome.node.name] = _node_output_mapping(
+                        outcome.node,
+                        outcome.output,
+                    )
+                if outcome.pause_token is not None:
+                    pause_tokens[outcome.node.name] = outcome.pause_token
+                    paused = True
+                processed.add(outcome.node.name)
+            for outcome in batch_outcomes:
+                if outcome.state == FlowNodeState.PAUSED:
+                    continue
+                route_context = _route_context(
+                    input_values,
+                    batch_context.node_outputs,
+                    outcome,
+                )
+                route_event_drafts: list[_FlowEventDraft] = []
+                routed, trace, route_diagnostics = _route_from_node(
+                    plan,
+                    outcome.node.name,
+                    outcome.route_kind,
+                    route_context,
+                    trace,
+                    forced_target=outcome.exhausted_route,
+                    forced_kind=outcome.exhausted_route_kind,
+                    event_drafts=route_event_drafts,
+                )
+                diagnostics.extend(route_diagnostics)
+                for target in routed:
+                    trace, join_diagnostics = _queue_target_if_ready(
+                        plan,
+                        target,
+                        ready=ready,
+                        queued=queued,
+                        processed=processed,
+                        trace=trace,
+                        event_drafts=route_event_drafts,
+                    )
+                    diagnostics.extend(join_diagnostics)
+                await _emit_flow_event_drafts(
+                    event_listener,
+                    plan,
+                    route_event_drafts,
+                )
+            if paused:
+                break
+    except CancelledError:
+        finished_at = monotonic()
+        await _emit_flow_event(
+            event_listener,
+            EventType.FLOW_CANCELLED,
+            plan,
+            payload={"status": "cancelled"},
+            started=flow_started_at,
+            finished=finished_at,
+        )
+        await _emit_flow_event(
+            event_listener,
+            EventType.FLOW_COMPLETED,
+            plan,
+            payload={"status": "cancelled"},
+            started=flow_started_at,
+            finished=finished_at,
+        )
+        raise
 
     if paused:
+        finished_at = monotonic()
+        await _emit_flow_event(
+            event_listener,
+            EventType.FLOW_COMPLETED,
+            plan,
+            payload={"status": "paused"},
+            started=flow_started_at,
+            finished=finished_at,
+        )
         return FlowPlanExecutionResult(
             outputs={},
             trace=trace,
@@ -473,12 +579,57 @@ async def execute_flow_plan(
             node_outputs=node_outputs,
             pause_tokens=pause_tokens,
         )
+    skipped_nodes = tuple(
+        node.node
+        for node in trace.nodes
+        if node.state == FlowNodeState.PENDING
+    )
     trace = _mark_unscheduled_nodes_skipped(trace)
+    for node_name in skipped_nodes:
+        await _emit_flow_event(
+            event_listener,
+            EventType.FLOW_NODE_SKIPPED,
+            plan,
+            payload={"node": node_name, "status": "skipped"},
+        )
     outputs, output_diagnostics = _select_flow_outputs(
         plan,
         FlowRuntimeContext(inputs=input_values, node_outputs=node_outputs),
     )
     diagnostics.extend(output_diagnostics)
+    if output_diagnostics:
+        await _emit_flow_event(
+            event_listener,
+            EventType.FLOW_OUTPUT_SELECTED,
+            plan,
+            payload={
+                "status": "failed",
+                "diagnostic_codes": _diagnostic_codes(output_diagnostics),
+            },
+        )
+    else:
+        for output_name in outputs:
+            await _emit_flow_event(
+                event_listener,
+                EventType.FLOW_OUTPUT_SELECTED,
+                plan,
+                payload={
+                    "output_name": output_name,
+                    "status": "selected",
+                },
+            )
+    finished_at = monotonic()
+    await _emit_flow_event(
+        event_listener,
+        EventType.FLOW_COMPLETED,
+        plan,
+        payload={
+            "status": "failed" if diagnostics else "succeeded",
+            "diagnostic_codes": _diagnostic_codes(diagnostics),
+        },
+        started=flow_started_at,
+        finished=finished_at,
+    )
     return FlowPlanExecutionResult(
         outputs=outputs,
         trace=trace,
@@ -493,6 +644,8 @@ def _initial_runtime_queue(
     node_outputs: dict[str, Mapping[str, object]],
     resume_decisions: Mapping[str, Mapping[str, object]],
     trace: FlowExecutionTrace,
+    *,
+    event_drafts: list[_FlowEventDraft] | None = None,
 ) -> tuple[
     deque[str],
     set[str],
@@ -523,12 +676,27 @@ def _initial_runtime_queue(
                 FlowNodeState.FAILED,
                 diagnostics=(diagnostic,),
             )
+            _append_node_event_draft(
+                event_drafts,
+                EventType.FLOW_NODE_FAILED,
+                node=node.name,
+                status="failed",
+                diagnostics=(diagnostic,),
+            )
             continue
         node_outputs[node.name] = _node_output_mapping(node, payload)
+        attempts = max(1, _node_trace_attempts(trace, node.name))
         trace = trace.with_node_state(
             node.name,
             FlowNodeState.SUCCEEDED,
-            attempts=max(1, _node_trace_attempts(trace, node.name)),
+            attempts=attempts,
+        )
+        _append_node_event_draft(
+            event_drafts,
+            EventType.FLOW_NODE_RESUMED,
+            node=node.name,
+            status="resumed",
+            attempts=attempts,
         )
         resume_routes[node.name] = FlowEdgeKind.RESUME
     processed = {
@@ -554,6 +722,7 @@ def _initial_runtime_queue(
             resume_routes.get(source, FlowEdgeKind.SUCCESS),
             context,
             trace,
+            event_drafts=event_drafts,
         )
         diagnostics.extend(route_diagnostics)
         for target in routed:
@@ -564,6 +733,7 @@ def _initial_runtime_queue(
                 queued=queued,
                 processed=processed,
                 trace=trace,
+                event_drafts=event_drafts,
             )
             diagnostics.extend(join_diagnostics)
     return ready, queued, processed, trace, tuple(diagnostics)
@@ -784,6 +954,9 @@ async def _run_plan_node(
     runner: FlowPlanNodeRunner,
     context: FlowRuntimeContext,
     cancellation_checker: CancellationChecker | None,
+    *,
+    plan: FlowExecutionPlan,
+    event_listener: FlowEventListener | None,
 ) -> _NodeRunOutcome:
     if node.loop is not None:
         return await _run_loop_plan_node(
@@ -792,12 +965,16 @@ async def _run_plan_node(
             runner,
             context,
             cancellation_checker,
+            plan=plan,
+            event_listener=event_listener,
         )
     return await _run_plan_node_attempts(
         node,
         inputs,
         runner,
         cancellation_checker,
+        plan=plan,
+        event_listener=event_listener,
     )
 
 
@@ -806,6 +983,9 @@ async def _run_plan_node_attempts(
     inputs: Mapping[str, object],
     runner: FlowPlanNodeRunner,
     cancellation_checker: CancellationChecker | None,
+    *,
+    plan: FlowExecutionPlan,
+    event_listener: FlowEventListener | None,
 ) -> _NodeRunOutcome:
     started_at = monotonic()
     attempts = 0
@@ -849,6 +1029,18 @@ async def _run_plan_node_attempts(
             )
         await _check_cancelled(cancellation_checker)
         delay_seconds = _retry_delay_seconds(node.retry, attempts)
+        await _emit_flow_event(
+            event_listener,
+            EventType.FLOW_NODE_RETRYING,
+            plan,
+            payload={
+                "node": node.name,
+                "status": "retrying",
+                "attempt": attempts,
+                "retry_delay_seconds": delay_seconds,
+                "diagnostic_codes": _diagnostic_codes(outcome.diagnostics),
+            },
+        )
         if delay_seconds > 0:
             await sleep(delay_seconds)
             await _check_cancelled(cancellation_checker)
@@ -860,6 +1052,9 @@ async def _run_loop_plan_node(
     runner: FlowPlanNodeRunner,
     base_context: FlowRuntimeContext,
     cancellation_checker: CancellationChecker | None,
+    *,
+    plan: FlowExecutionPlan,
+    event_listener: FlowEventListener | None,
 ) -> _NodeRunOutcome:
     assert node.loop is not None
     started_at = monotonic()
@@ -870,6 +1065,8 @@ async def _run_loop_plan_node(
             inputs,
             runner,
             cancellation_checker,
+            plan=plan,
+            event_listener=event_listener,
         )
         attempts += outcome.attempts
         if outcome.route_kind != FlowEdgeKind.SUCCESS:
@@ -890,7 +1087,17 @@ async def _run_loop_plan_node(
             inputs=base_context.inputs,
             node_outputs=node_outputs,
         )
-        selected_output, diagnostic = _loop_selected_output(node, context)
+        loop_event_drafts: list[_FlowEventDraft] = []
+        selected_output, diagnostic = _loop_selected_output(
+            node,
+            context,
+            event_drafts=loop_event_drafts,
+        )
+        await _emit_flow_event_drafts(
+            event_listener,
+            plan,
+            loop_event_drafts,
+        )
         if diagnostic is not None:
             return _NodeRunOutcome(
                 node=node,
@@ -934,28 +1141,55 @@ async def _run_loop_plan_node(
 def _loop_selected_output(
     node: FlowNodePlan,
     context: FlowRuntimeContext,
+    *,
+    event_drafts: list[_FlowEventDraft] | None = None,
 ) -> tuple[object, FlowDiagnostic | None]:
     assert node.loop is not None
     try:
-        if evaluate_flow_condition_plan(node.loop.exit_condition, context):
+        exit_matched = evaluate_flow_condition_plan(
+            node.loop.exit_condition,
+            context,
+        )
+        _append_condition_event_draft(
+            event_drafts,
+            node=node.name,
+            status="matched" if exit_matched else "unmatched",
+            matched=exit_matched,
+        )
+        if exit_matched:
             return (
                 evaluate_flow_selector(node.loop.output_selector, context),
                 None,
             )
-        if evaluate_flow_condition_plan(
+        continue_matched = evaluate_flow_condition_plan(
             node.loop.continue_condition,
             context,
-        ):
+        )
+        _append_condition_event_draft(
+            event_drafts,
+            node=node.name,
+            status="matched" if continue_matched else "unmatched",
+            matched=continue_matched,
+        )
+        if continue_matched:
             return _MISSING, None
     except FlowRuntimeEvaluationError as error:
+        diagnostic = _execution_diagnostic(
+            code=error.code,
+            path=f"nodes.{node.name}.loop_policy",
+            message="Flow loop condition evaluation failed.",
+            hint="Check loop selectors and node output contracts.",
+        )
+        _append_condition_event_draft(
+            event_drafts,
+            node=node.name,
+            status="failed",
+            matched=False,
+            diagnostics=(diagnostic,),
+        )
         return (
             _MISSING,
-            _execution_diagnostic(
-                code=error.code,
-                path=f"nodes.{node.name}.loop_policy",
-                message="Flow loop condition evaluation failed.",
-                hint="Check loop selectors and node output contracts.",
-            ),
+            diagnostic,
         )
     return (
         _MISSING,
@@ -987,6 +1221,265 @@ def _loop_limit_reached(
 
 def _elapsed_ms(started_at: float) -> float:
     return (monotonic() - started_at) * 1000
+
+
+def _elapsed_ms_between(started_at: float, finished_at: float) -> float:
+    return (finished_at - started_at) * 1000
+
+
+async def _emit_flow_event(
+    event_listener: FlowEventListener | None,
+    event_type: EventType,
+    plan: FlowExecutionPlan,
+    *,
+    payload: Mapping[str, object] | None = None,
+    started: float | None = None,
+    finished: float | None = None,
+) -> None:
+    if event_listener is None:
+        return
+    result = event_listener(
+        Event(
+            type=event_type,
+            payload=_flow_event_payload(plan, payload or {}),
+            started=started,
+            finished=finished,
+            elapsed=(
+                finished - started
+                if started is not None and finished is not None
+                else None
+            ),
+        )
+    )
+    if result is not None:
+        await result
+
+
+async def _emit_flow_event_drafts(
+    event_listener: FlowEventListener | None,
+    plan: FlowExecutionPlan,
+    drafts: list[_FlowEventDraft],
+) -> None:
+    for draft in drafts:
+        await _emit_flow_event(
+            event_listener,
+            draft.type,
+            plan,
+            payload=draft.payload,
+            started=draft.started,
+            finished=draft.finished,
+        )
+
+
+async def _emit_node_outcome_event(
+    event_listener: FlowEventListener | None,
+    plan: FlowExecutionPlan,
+    outcome: _NodeRunOutcome,
+) -> None:
+    event_type = _node_outcome_event_type(outcome.state)
+    if event_type is None:
+        return
+    payload: dict[str, object] = {
+        "node": outcome.node.name,
+        "status": outcome.state.value,
+        "attempts": outcome.attempts,
+        "route_kind": outcome.route_kind.value,
+        "diagnostic_codes": _diagnostic_codes(outcome.diagnostics),
+    }
+    if outcome.duration_ms is not None:
+        payload["duration_ms"] = outcome.duration_ms
+    await _emit_flow_event(
+        event_listener,
+        event_type,
+        plan,
+        payload=payload,
+    )
+
+
+def _node_outcome_event_type(
+    state: FlowNodeState,
+) -> EventType | None:
+    match state:
+        case FlowNodeState.SUCCEEDED:
+            return EventType.FLOW_NODE_COMPLETED
+        case FlowNodeState.FAILED:
+            return EventType.FLOW_NODE_FAILED
+        case FlowNodeState.CANCELLED:
+            return EventType.FLOW_NODE_CANCELLED
+        case FlowNodeState.PAUSED:
+            return EventType.FLOW_NODE_PAUSED
+        case _:
+            return None
+
+
+def _flow_event_payload(
+    plan: FlowExecutionPlan,
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    value: dict[str, object] = {
+        "flow_name": plan.name,
+    }
+    if plan.version is not None:
+        value["flow_version"] = plan.version
+    if plan.revision is not None:
+        value["flow_revision"] = plan.revision
+    for key, item in payload.items():
+        assert isinstance(key, str) and key.strip()
+        value[key] = _flow_event_value(item)
+    return value
+
+
+def _flow_event_value(value: object) -> object:
+    if value is None or isinstance(value, bool | str | int | float):
+        return value
+    if isinstance(value, Mapping):
+        return {
+            key: _flow_event_value(item)
+            for key, item in value.items()
+            if isinstance(key, str) and key.strip()
+        }
+    if isinstance(value, list | tuple):
+        return tuple(_flow_event_value(item) for item in value)
+    return {"type": type(value).__name__}
+
+
+def _diagnostic_codes(
+    diagnostics: tuple[FlowDiagnostic, ...] | list[FlowDiagnostic],
+) -> tuple[str, ...]:
+    return tuple(diagnostic.code for diagnostic in diagnostics)
+
+
+def _append_node_event_draft(
+    drafts: list[_FlowEventDraft] | None,
+    event_type: EventType,
+    *,
+    node: str,
+    status: str,
+    attempts: int | None = None,
+    diagnostics: tuple[FlowDiagnostic, ...] = (),
+) -> None:
+    if drafts is None:
+        return
+    payload: dict[str, object] = {
+        "node": node,
+        "status": status,
+        "diagnostic_codes": _diagnostic_codes(diagnostics),
+    }
+    if attempts is not None:
+        payload["attempts"] = attempts
+    drafts.append(_FlowEventDraft(type=event_type, payload=payload))
+
+
+def _append_condition_event_draft(
+    drafts: list[_FlowEventDraft] | None,
+    *,
+    status: str,
+    matched: bool,
+    edge: FlowEdgePlan | None = None,
+    node: str | None = None,
+    diagnostics: tuple[FlowDiagnostic, ...] = (),
+    started: float | None = None,
+    finished: float | None = None,
+) -> None:
+    if drafts is None:
+        return
+    payload: dict[str, object] = {
+        "status": status,
+        "matched": matched,
+        "diagnostic_codes": _diagnostic_codes(diagnostics),
+    }
+    if edge is not None:
+        payload.update(_edge_event_payload(edge))
+    if node is not None:
+        payload["node"] = node
+    drafts.append(
+        _FlowEventDraft(
+            type=EventType.FLOW_CONDITION_EVALUATED,
+            payload=payload,
+            started=started,
+            finished=finished,
+        )
+    )
+
+
+def _append_edge_eligible_event_draft(
+    drafts: list[_FlowEventDraft] | None,
+    *,
+    edge: FlowEdgePlan,
+    status: str,
+    eligible: bool,
+    diagnostics: tuple[FlowDiagnostic, ...] = (),
+    started: float | None = None,
+    finished: float | None = None,
+) -> None:
+    if drafts is None:
+        return
+    payload = _edge_event_payload(edge)
+    payload.update(
+        {
+            "status": status,
+            "eligible": eligible,
+            "diagnostic_codes": _diagnostic_codes(diagnostics),
+        }
+    )
+    drafts.append(
+        _FlowEventDraft(
+            type=EventType.FLOW_EDGE_ELIGIBLE,
+            payload=payload,
+            started=started,
+            finished=finished,
+        )
+    )
+
+
+def _append_edge_routed_event_draft(
+    drafts: list[_FlowEventDraft] | None,
+    *,
+    edge: FlowEdgePlan,
+    status: str,
+) -> None:
+    if drafts is None:
+        return
+    payload = _edge_event_payload(edge)
+    payload["status"] = status
+    drafts.append(
+        _FlowEventDraft(
+            type=EventType.FLOW_EDGE_ROUTED,
+            payload=payload,
+        )
+    )
+
+
+def _append_join_event_draft(
+    drafts: list[_FlowEventDraft] | None,
+    *,
+    node: str,
+    ready: bool,
+    status: str,
+    diagnostics: tuple[FlowDiagnostic, ...] = (),
+) -> None:
+    if drafts is None:
+        return
+    drafts.append(
+        _FlowEventDraft(
+            type=EventType.FLOW_JOIN_READY,
+            payload={
+                "node": node,
+                "ready": ready,
+                "status": status,
+                "diagnostic_codes": _diagnostic_codes(diagnostics),
+            },
+        )
+    )
+
+
+def _edge_event_payload(edge: FlowEdgePlan) -> dict[str, object]:
+    return {
+        "edge_index": edge.index,
+        "edge_kind": edge.kind.value,
+        "source": edge.source,
+        "target": edge.target,
+    }
 
 
 async def _run_plan_node_once(
@@ -1149,6 +1642,7 @@ def _route_from_node(
     *,
     forced_target: str | None = None,
     forced_kind: FlowEdgeKind | None = None,
+    event_drafts: list[_FlowEventDraft] | None = None,
 ) -> tuple[tuple[str, ...], FlowExecutionTrace, tuple[FlowDiagnostic, ...]]:
     diagnostics: list[FlowDiagnostic] = []
     routed: list[str] = []
@@ -1160,6 +1654,7 @@ def _route_from_node(
         trace,
         forced_target=forced_target,
         forced_kind=forced_kind,
+        event_drafts=event_drafts,
     )
     routed.extend(edge.target for edge in selected)
     diagnostics.extend(route_diagnostics)
@@ -1179,6 +1674,7 @@ def _route_from_node(
             FlowEdgeKind.FINALLY,
             context,
             trace,
+            event_drafts=event_drafts,
         )
         routed.extend(edge.target for edge in selected)
         diagnostics.extend(route_diagnostics)
@@ -1193,6 +1689,7 @@ def _queue_target_if_ready(
     queued: set[str],
     processed: set[str],
     trace: FlowExecutionTrace,
+    event_drafts: list[_FlowEventDraft] | None = None,
 ) -> tuple[FlowExecutionTrace, tuple[FlowDiagnostic, ...]]:
     if target in processed or target in queued:
         return trace, ()
@@ -1208,6 +1705,13 @@ def _queue_target_if_ready(
     )
     if failed_diagnostic is not None:
         processed.add(target)
+        _append_join_event_draft(
+            event_drafts,
+            node=target,
+            ready=False,
+            status="failed",
+            diagnostics=(failed_diagnostic,),
+        )
         return (
             trace.with_node_state(
                 target,
@@ -1219,6 +1723,12 @@ def _queue_target_if_ready(
     if ready_for_join:
         ready.append(target)
         queued.add(target)
+    _append_join_event_draft(
+        event_drafts,
+        node=target,
+        ready=ready_for_join,
+        status="ready" if ready_for_join else "waiting",
+    )
     return trace, ()
 
 
@@ -1287,6 +1797,7 @@ def _select_routes(
     *,
     forced_target: str | None = None,
     forced_kind: FlowEdgeKind | None = None,
+    event_drafts: list[_FlowEventDraft] | None = None,
 ) -> tuple[
     tuple[FlowEdgePlan, ...],
     FlowExecutionTrace,
@@ -1300,6 +1811,7 @@ def _select_routes(
             kind,
             trace,
             forced_kind=forced_kind,
+            event_drafts=event_drafts,
         )
     edges = tuple(
         edge
@@ -1320,7 +1832,11 @@ def _select_routes(
         try:
             matched = _edge_condition_matches(edge, context)
         except FlowRuntimeEvaluationError as error:
-            edge_durations[edge.index] = _elapsed_ms(started_at)
+            finished_at = monotonic()
+            edge_durations[edge.index] = _elapsed_ms_between(
+                started_at,
+                finished_at,
+            )
             diagnostic = _execution_diagnostic(
                 code=error.code,
                 path=f"edges[{edge.index}].condition",
@@ -1334,8 +1850,49 @@ def _select_routes(
                 duration_ms=edge_durations[edge.index],
                 diagnostics=(diagnostic,),
             )
+            _append_condition_event_draft(
+                event_drafts,
+                edge=edge,
+                status="failed",
+                matched=False,
+                diagnostics=(diagnostic,),
+                started=started_at,
+                finished=finished_at,
+            )
+            _append_edge_eligible_event_draft(
+                event_drafts,
+                edge=edge,
+                status="failed",
+                eligible=False,
+                diagnostics=(diagnostic,),
+                started=started_at,
+                finished=finished_at,
+            )
             continue
-        edge_durations[edge.index] = _elapsed_ms(started_at)
+        finished_at = monotonic()
+        edge_durations[edge.index] = _elapsed_ms_between(
+            started_at,
+            finished_at,
+        )
+        if edge.condition is not None or (
+            edge.kind == FlowEdgeKind.RESUME and edge.label is not None
+        ):
+            _append_condition_event_draft(
+                event_drafts,
+                edge=edge,
+                status="matched" if matched else "unmatched",
+                matched=matched,
+                started=started_at,
+                finished=finished_at,
+            )
+        _append_edge_eligible_event_draft(
+            event_drafts,
+            edge=edge,
+            status="eligible" if matched else "suppressed",
+            eligible=matched,
+            started=started_at,
+            finished=finished_at,
+        )
         if matched:
             matches.append(edge)
         else:
@@ -1356,6 +1913,18 @@ def _select_routes(
             FlowEdgeState.TAKEN,
             duration_ms=edge_durations.get(edge.index, 0.0),
         )
+        if edge.default:
+            _append_edge_eligible_event_draft(
+                event_drafts,
+                edge=edge,
+                status="eligible",
+                eligible=True,
+            )
+        _append_edge_routed_event_draft(
+            event_drafts,
+            edge=edge,
+            status="taken",
+        )
     selected_indexes = {edge.index for edge in selected}
     suppressed = [
         edge for edge in matches if edge.index not in selected_indexes
@@ -1368,6 +1937,18 @@ def _select_routes(
             FlowEdgeState.SUPPRESSED,
             duration_ms=edge_durations.get(edge.index, 0.0),
         )
+        if edge.default:
+            _append_edge_eligible_event_draft(
+                event_drafts,
+                edge=edge,
+                status="suppressed",
+                eligible=False,
+            )
+        _append_edge_routed_event_draft(
+            event_drafts,
+            edge=edge,
+            status="suppressed",
+        )
     return selected, trace, tuple(diagnostics)
 
 
@@ -1379,6 +1960,7 @@ def _select_forced_route(
     trace: FlowExecutionTrace,
     *,
     forced_kind: FlowEdgeKind | None = None,
+    event_drafts: list[_FlowEventDraft] | None = None,
 ) -> tuple[
     tuple[FlowEdgePlan, ...],
     FlowExecutionTrace,
@@ -1406,6 +1988,20 @@ def _select_forced_route(
     for edge in source_edges:
         if edge.kind != selected.kind:
             continue
+        status = "taken" if edge.index == selected.index else "suppressed"
+        if edge.index == selected.index:
+            _append_edge_eligible_event_draft(
+                event_drafts,
+                edge=edge,
+                status="eligible",
+                eligible=True,
+                started=started_at,
+            )
+        _append_edge_routed_event_draft(
+            event_drafts,
+            edge=edge,
+            status=status,
+        )
         trace = trace.with_edge_state(
             edge.index,
             (
