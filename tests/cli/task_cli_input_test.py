@@ -1159,9 +1159,12 @@ class CliTaskInputTestCase(TestCase):
         self.assertIn("<redacted>", fallback_console.export_text())
         self.assertNotIn("private input", fallback_console.export_text())
 
-    def test_pdf_input_sugar_builds_single_pdf_descriptor(self) -> None:
+    def test_pdf_input_sugar_builds_pdf_descriptor(self) -> None:
         definition = self._definition(
             TaskInputContract.file(mime_types=("application/pdf",))
+        )
+        array_definition = self._definition(
+            TaskInputContract.file_array(mime_types=("application/pdf",))
         )
 
         task_input = task_cmds.task_cli_input(
@@ -1174,6 +1177,16 @@ class CliTaskInputTestCase(TestCase):
             ),
             definition,
         )
+        array_input = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_pdf="sample.pdf",
+                task_input_fields=(),
+                task_files=(),
+            ),
+            array_definition,
+        )
 
         self.assertTrue(task_input.provided)
         self.assertEqual(
@@ -1184,12 +1197,12 @@ class CliTaskInputTestCase(TestCase):
                 "mime_type": "application/pdf",
             },
         )
+        self.assertEqual(array_input.value, [task_input.value])
 
     def test_pdf_input_sugar_rejects_conflicts_and_non_file_contracts(
         self,
     ) -> None:
         file_definition = self._definition(TaskInputContract.file())
-        array_definition = self._definition(TaskInputContract.file_array())
         object_definition = self._definition(self._object_contract())
         cases = (
             (
@@ -1214,17 +1227,6 @@ class CliTaskInputTestCase(TestCase):
                     task_file_mime_types=("input=text/plain",),
                 ),
                 "Pass --pdf by itself",
-            ),
-            (
-                array_definition,
-                Namespace(
-                    task_input=None,
-                    task_input_json=None,
-                    task_pdf="sample.pdf",
-                    task_input_fields=(),
-                    task_files=(),
-                ),
-                "single top-level file input",
             ),
             (
                 object_definition,

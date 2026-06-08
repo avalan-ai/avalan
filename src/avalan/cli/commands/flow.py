@@ -2,11 +2,15 @@ from ...cli.theme import Theme
 from ...flow import (
     FlowDefinition,
     FlowDefinitionLoader,
+    FlowInputDefinition,
     FlowInputType,
     FlowLoadIssue,
     FlowLoadIssueCategory,
+    FlowNodeContract,
     FlowNodeDefinition,
+    FlowNodeKind,
     FlowNodeMetadata,
+    FlowOutputDefinition,
     FlowOutputType,
     Node,
     default_flow_node_registry,
@@ -89,6 +93,14 @@ async def _flow_run(
         )
         diagnostic_console.print(f"error file.read {message}", markup=False)
         return False
+    if load_result.definition is not None and load_result.definition.is_strict:
+        return await _flow_run_with_task_context(
+            args,
+            console,
+            flow_path=flow_path,
+            hub=hub,
+            logger=logger,
+        )
     if load_result.definition is None or load_result.flow is None:
         if _flow_needs_task_context(load_result.issues):
             return await _flow_run_with_task_context(
@@ -292,7 +304,7 @@ def _flow_task_definition_or_report(
 
 
 def _flow_task_input(definition: FlowDefinition) -> TaskInputContract:
-    input_definition = definition.input
+    input_definition = _flow_primary_input(definition)
     if input_definition is None:
         return TaskInputContract.object()
     match input_definition.type:
@@ -324,7 +336,7 @@ def _flow_task_input(definition: FlowDefinition) -> TaskInputContract:
 
 
 def _flow_task_output(definition: FlowDefinition) -> TaskOutputContract:
-    output_definition = definition.output
+    output_definition = _flow_primary_output(definition)
     if output_definition is None:
         return TaskOutputContract.json({})
     schema = _flow_output_schema(definition)
@@ -347,7 +359,7 @@ def _flow_task_output(definition: FlowDefinition) -> TaskOutputContract:
 def _flow_output_schema(
     definition: FlowDefinition,
 ) -> Mapping[str, object] | None:
-    output_definition = definition.output
+    output_definition = _flow_primary_output(definition)
     if output_definition is None:
         return None
     schema = _plain_mapping(output_definition.schema)
@@ -359,6 +371,26 @@ def _flow_output_schema(
         path="flow.output.schema_ref",
     )
     return _plain_mapping(resolved.schema)
+
+
+def _flow_primary_input(
+    definition: FlowDefinition,
+) -> FlowInputDefinition | None:
+    if definition.input is not None:
+        return definition.input
+    if len(definition.inputs) == 1:
+        return definition.inputs[0]
+    return None
+
+
+def _flow_primary_output(
+    definition: FlowDefinition,
+) -> FlowOutputDefinition | None:
+    if definition.output is not None:
+        return definition.output
+    if len(definition.outputs) == 1:
+        return definition.outputs[0]
+    return None
 
 
 def _flow_load_task_issues(
@@ -410,13 +442,43 @@ def _flow_schema_issue() -> TaskValidationIssue:
 def _flow_metadata_loader() -> FlowDefinitionLoader:
     registry = default_flow_node_registry()
     for node_type in ("agent", "file_convert", "pdf_to_images"):
+        metadata: FlowNodeMetadata
+        if node_type == "agent":
+            metadata = FlowNodeMetadata(
+                kind=FlowNodeKind.AGENT,
+                supports_ref=True,
+                async_only=True,
+                input_contracts=(
+                    FlowNodeContract(name="input", type="any"),
+                    FlowNodeContract(
+                        name=None,
+                        type="object",
+                        metadata={"dynamic": True},
+                    ),
+                ),
+                output_contract=FlowNodeContract(
+                    name="result",
+                    type=FlowOutputType.JSON,
+                    metadata={"dynamic": True},
+                ),
+            )
+        else:
+            metadata = FlowNodeMetadata(
+                kind=FlowNodeKind.FILE_CONVERSION,
+                async_only=True,
+                input_contract=FlowNodeContract(
+                    name="files",
+                    type=FlowInputType.FILE_ARRAY,
+                ),
+                output_contract=FlowNodeContract(
+                    name="files",
+                    type=FlowOutputType.FILE_ARRAY,
+                ),
+            )
         registry.register(
             node_type,
             _flow_task_context_metadata_node,
-            metadata=FlowNodeMetadata(
-                supports_ref=node_type == "agent",
-                async_only=True,
-            ),
+            metadata=metadata,
         )
     return FlowDefinitionLoader(registry)
 

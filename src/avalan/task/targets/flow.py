@@ -576,9 +576,16 @@ def task_flow_node_registry(
                     FlowNodeCapability.TASK_BACKED,
                 ),
                 requires_ref=True,
-                input_contract=FlowNodeContract(
-                    name="input",
-                    type="any",
+                input_contracts=(
+                    FlowNodeContract(
+                        name="input",
+                        type="any",
+                    ),
+                    FlowNodeContract(
+                        name=None,
+                        type="object",
+                        metadata={"dynamic": True},
+                    ),
                 ),
                 output_contract=FlowNodeContract(
                     name="result",

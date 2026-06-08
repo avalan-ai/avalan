@@ -123,6 +123,65 @@ class FlowRunCommandTestCase(TestCase):
         self.assertEqual(stream.getvalue(), "")
         self.assertEqual(written, '{"answer":"ok"}\n')
 
+    def test_flow_run_strict_builtin_flow_uses_task_context(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "strict.flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "strict_constant"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+                schema = {type = "object"}
+
+                [[outputs]]
+                name = "result"
+                type = "object"
+
+                [outputs.schema]
+                type = "object"
+                required = ["answer"]
+
+                [outputs.schema.properties.answer]
+                type = "string"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                result = "start.value"
+
+                [nodes.start]
+                type = "constant"
+                value = {answer = "ok"}
+                """,
+                encoding="utf-8",
+            )
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json="{}",
+                        task_run_json=True,
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
+
     def test_flow_run_text_output_prints_human_summary(self) -> None:
         console = Console(record=True, width=160)
 
@@ -1148,23 +1207,35 @@ def _write_agent_context_flow(
         f"""
         [flow]
         name = "agent_context"
-        entrypoint = "extract"
-        output_node = "extract"
+        version = "1"
 
-        [flow.input]
+        [[inputs]]
         name = "payload"
         type = "{input_type}"
         mime_types = ["application/pdf"]
 
-        [flow.output]
+        [[outputs]]
         name = "result"
         type = "{output_type}"
         {schema_line}
 
+        [entry]
+        type = "node"
+        node = "extract"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        result = "extract.result"
+
         [nodes.extract]
         type = "agent"
         ref = "{node_ref}"
-        input = "__task_input__"
+        input = "input"
+
+        [nodes.extract.mapping]
+        input = "input.payload"
         """,
         encoding="utf-8",
     )

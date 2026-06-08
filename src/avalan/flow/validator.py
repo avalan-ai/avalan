@@ -1786,6 +1786,7 @@ def _validate_node_mappings(
     for node in definition.nodes:
         metadata = registry.metadata(node.type)
         contracts = metadata.input_contracts if metadata is not None else ()
+        dynamic_targets = _supports_dynamic_mapping_targets(contracts)
         target_contracts = {
             contract.name: contract
             for contract in contracts
@@ -1813,7 +1814,11 @@ def _validate_node_mappings(
                     )
                 )
             seen_targets.add(mapping.target)
-            if target_contracts and mapping.target not in target_contracts:
+            if (
+                target_contracts
+                and mapping.target not in target_contracts
+                and not dynamic_targets
+            ):
                 diagnostics.append(
                     _diagnostic(
                         code="flow.unknown_mapping_target",
@@ -1848,6 +1853,15 @@ def _validate_node_mappings(
                 )
             )
     return tuple(diagnostics)
+
+
+def _supports_dynamic_mapping_targets(
+    contracts: tuple[FlowNodeContract, ...],
+) -> bool:
+    return any(
+        contract.name is None and bool(contract.metadata.get("dynamic"))
+        for contract in contracts
+    )
 
 
 def _join_optional_inputs(
