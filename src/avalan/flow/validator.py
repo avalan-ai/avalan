@@ -55,6 +55,7 @@ _KNOWN_DEFERRED_NODE_TYPES = frozenset(
         "notification",
         "pdf_to_images",
         "subflow",
+        "tool",
         "validation",
     }
 )

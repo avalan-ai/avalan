@@ -32,7 +32,9 @@ from ...flow.registry import (
     FlowNodeConfigurationError,
     FlowNodeFactory,
     FlowNodeRegistry,
+    FlowToolResolver,
     default_flow_node_registry,
+    tool_flow_node_registry,
 )
 from ...flow.runtime import (
     execute_flow_plan,
@@ -177,6 +179,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         flow_state_store: FlowStateStore | None = None,
         agent_runner: TaskTargetRunner | None = None,
         execution_roots: Iterable[str | Path] = (),
+        tool_resolver: FlowToolResolver | None = None,
         concurrency_limit: int = 1,
     ) -> None:
         self._ref_base = Path(ref_base) if ref_base is not None else None
@@ -185,6 +188,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         self._flow_state_store = flow_state_store
         self._agent_runner = agent_runner
         self._execution_roots = tuple(Path(root) for root in execution_roots)
+        self._tool_resolver = tool_resolver
         assert isinstance(concurrency_limit, int)
         assert not isinstance(concurrency_limit, bool)
         assert concurrency_limit > 0
@@ -332,6 +336,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                             context,
                             agent_runner=self._agent_runner,
                             execution_roots=self._execution_roots,
+                            tool_resolver=self._tool_resolver,
                         )
                     ),
                     inputs=_strict_flow_input_binding(
@@ -434,6 +439,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
             context,
             agent_runner=self._agent_runner,
             execution_roots=self._execution_roots,
+            tool_resolver=self._tool_resolver,
         )
         result = compile_flow_definition(resolved, registry)
         if not result.ok:
@@ -562,6 +568,7 @@ def task_flow_node_registry(
     *,
     agent_runner: TaskTargetRunner | None = None,
     execution_roots: Iterable[str | Path] = (),
+    tool_resolver: FlowToolResolver | None = None,
 ) -> FlowNodeRegistry:
     assert isinstance(context, TaskTargetContext)
     registry = default_flow_node_registry()
@@ -648,6 +655,11 @@ def task_flow_node_registry(
                 context,
                 execution_roots=execution_roots,
             ),
+        )
+    if tool_resolver is not None:
+        registry = tool_flow_node_registry(
+            tool_resolver,
+            base_registry=registry,
         )
     return registry
 

@@ -23,6 +23,7 @@ from avalan.entities import (
     MessageContentFile,
     MessageContentImage,
     MessageContentText,
+    ToolManagerSettings,
 )
 from avalan.flow import (
     FlowDefinition,
@@ -62,6 +63,8 @@ from avalan.task.converters import (
     TaskFileConverterCapability,
 )
 from avalan.task.converters.pdf_image import pdf_image_converter_capability
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
 
 TASK_HMAC_ENV = {
     "AVALAN_TASK_HMAC_KEY_ID": "flow-cli-test-v1",
@@ -85,7 +88,13 @@ TASK_ARGS = {
     "task_run_json": False,
     "task_output_path": None,
     "quiet": False,
+    "tool": None,
+    "tools": None,
 }
+
+
+async def flow_cli_adder(a: int, b: int) -> int:
+    return a + b
 
 
 class FlowRunCommandTestCase(TestCase):
@@ -991,6 +1000,99 @@ class FlowRunCommandTestCase(TestCase):
         self.assertTrue(result)
         self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
 
+    def test_flow_run_strict_tool_node_uses_enabled_resolver(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        manager = ToolManager.create_instance(
+            enable_tools=["flow_cli_adder"],
+            available_toolsets=[ToolSet(tools=[flow_cli_adder])],
+            settings=ToolManagerSettings(),
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            flow_path = _write_strict_tool_flow(Path(temporary_directory))
+            with (
+                patch.object(
+                    flow_cmds,
+                    "_flow_tool_manager",
+                    return_value=manager,
+                ),
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            ):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"left":2,"right":5}',
+                        task_run_json=True,
+                        tool=["flow_cli_adder"],
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), "7\n")
+
+    def test_flow_run_strict_tool_node_requires_enabled_resolver(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            flow_path = _write_strict_tool_flow(Path(temporary_directory))
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"left":2,"right":"private"}',
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("flow.unsupported_node_type", output)
+        self.assertNotIn("private", output)
+
+    def test_flow_tool_manager_builds_enabled_resolver_from_args(self) -> None:
+        def toolset_factory(**kwargs: object) -> ToolSet:
+            return ToolSet(
+                namespace=cast(str | None, kwargs.get("namespace")),
+                tools=[],
+            )
+
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", True),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", True),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", True),
+            patch.object(
+                flow_cmds, "GraphToolSet", side_effect=toolset_factory
+            ),
+            patch.object(
+                flow_cmds, "CodeToolSet", side_effect=toolset_factory
+            ),
+            patch.object(
+                flow_cmds,
+                "BrowserToolSet",
+                side_effect=toolset_factory,
+            ),
+            patch.object(
+                flow_cmds,
+                "DatabaseToolSet",
+                side_effect=toolset_factory,
+            ),
+        ):
+            manager = flow_cmds._flow_tool_manager(
+                _args(
+                    tool=["math.calculator"],
+                    tools=["math"],
+                    tool_database_dsn="postgresql://example.invalid/db",
+                )
+            )
+
+        self.assertIsNotNone(manager)
+        assert manager is not None
+        self.assertIsNotNone(manager.describe_tool("math.calculator"))
+
     def test_flow_run_text_output_prints_human_summary(self) -> None:
         console = Console(record=True, width=160)
 
@@ -1844,6 +1946,52 @@ def _write_strict_constant_flow(root: Path) -> Path:
         [nodes.start]
         type = "constant"
         value = {answer = "ok"}
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _write_strict_tool_flow(root: Path) -> Path:
+    flow_path = root / "strict_tool.flow.toml"
+    flow_path.write_text(
+        """
+        [flow]
+        name = "strict_tool"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "json"
+
+        [entry]
+        type = "node"
+        node = "calculate"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "calculate.result"
+
+        [nodes.calculate]
+        type = "tool"
+        ref = "flow_cli_adder"
+
+        [nodes.calculate.mapping.arguments]
+        type = "object"
+
+        [nodes.calculate.mapping.arguments.fields]
+        left = "input.payload.left"
+        right = "input.payload.right"
+
+        [nodes.calculate.config.arguments]
+        a = "left"
+        b = "right"
         """,
         encoding="utf-8",
     )
