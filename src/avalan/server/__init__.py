@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from uvicorn import Server
 
 
-_ALLOWED_PROTOCOLS = frozenset({"a2a", "mcp", "openai"})
+_ALLOWED_PROTOCOLS = frozenset({"a2a", "flow", "mcp", "openai"})
 _OPENAI_ENDPOINTS = frozenset({"completions", "responses"})
 
 
@@ -174,6 +174,7 @@ def _include_protocol_routers(
     *,
     selected_protocols: Mapping[str, set[str]],
     openai_prefix: str,
+    flow_prefix: str,
     mcp_prefix: str,
     a2a_prefix: str,
 ) -> None:
@@ -200,6 +201,10 @@ def _include_protocol_routers(
     if "mcp" in selected_protocols:
         mcp_http_router = mcp_router.create_router()
         app.include_router(mcp_http_router, prefix=mcp_prefix)
+
+    if "flow" in selected_protocols:
+        flow_router_module = import_module("avalan.server.routers.flow")
+        app.include_router(flow_router_module.router, prefix=flow_prefix)
 
 
 def _attach_lifespan(
@@ -232,6 +237,7 @@ def register_agent_endpoints(
     mcp_prefix: str,
     openai_prefix: str,
     mcp_name: str,
+    flow_prefix: str = "/flows",
     mcp_description: str | None = None,
     a2a_prefix: str = "/a2a",
     a2a_tool_name: str = "run",
@@ -280,6 +286,7 @@ def register_agent_endpoints(
         app,
         selected_protocols=selected_protocols,
         openai_prefix=openai_prefix,
+        flow_prefix=flow_prefix,
         mcp_prefix=mcp_prefix,
         a2a_prefix=a2a_prefix,
     )
@@ -299,6 +306,7 @@ def agents_server(
     openai_prefix: str,
     mcp_name: str,
     logger: Logger,
+    flow_prefix: str = "/flows",
     mcp_description: str | None = None,
     a2a_prefix: str = "/a2a",
     a2a_tool_name: str = "run",
@@ -352,6 +360,7 @@ def agents_server(
         app,
         selected_protocols=selected_protocols,
         openai_prefix=openai_prefix,
+        flow_prefix=flow_prefix,
         mcp_prefix=mcp_prefix,
         a2a_prefix=a2a_prefix,
     )
