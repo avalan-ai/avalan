@@ -4,6 +4,7 @@ from ...flow import (
     Flow,
     FlowDefinition,
     FlowStateStore,
+    FlowToolResolver,
     InMemoryFlowStateStore,
     PgsqlFlowStateStore,
 )
@@ -1033,6 +1034,7 @@ def _task_cli_client_context(
     hub: object | None,
     logger: Logger | None,
     input_value: object = None,
+    flow_tool_resolver: FlowToolResolver | None = None,
 ) -> _TaskCliClientContext:
     stack = AsyncExitStack()
     artifact_store = _task_artifact_store()
@@ -1059,6 +1061,7 @@ def _task_cli_client_context(
             definition_path,
             agent_target=agent_target,
             flow_state_store=InMemoryFlowStateStore(task_store=memory_store),
+            flow_tool_resolver=flow_tool_resolver,
         )
         return _TaskCliClientContext(
             TaskClient(
@@ -1079,6 +1082,7 @@ def _task_cli_client_context(
         definition_path,
         agent_target=agent_target,
         flow_state_store=PgsqlFlowStateStore(database),
+        flow_tool_resolver=flow_tool_resolver,
     )
     return _TaskCliClientContext(
         TaskClient(
@@ -1100,6 +1104,7 @@ def _task_cli_target_runner(
     *,
     agent_target: TaskTargetRunner,
     flow_state_store: FlowStateStore,
+    flow_tool_resolver: FlowToolResolver | None = None,
 ) -> TaskTargetRunner:
     return TaskTargetRunnerRegistry(
         agent_target,
@@ -1109,10 +1114,12 @@ def _task_cli_target_runner(
                 strict_resolver=_task_strict_flow_resolver(
                     definition_path.parent,
                     agent_runner=agent_target,
+                    tool_resolver=flow_tool_resolver,
                 ),
                 flow_state_store=flow_state_store,
                 agent_runner=agent_target,
                 execution_roots=(definition_path.parent,),
+                tool_resolver=flow_tool_resolver,
             )
         },
     )
@@ -1172,6 +1179,7 @@ def _task_flow_resolver(
     ref_base: Path,
     *,
     agent_runner: TaskTargetRunner | None = None,
+    tool_resolver: FlowToolResolver | None = None,
 ) -> Callable[[TaskTargetContext], Flow]:
     def resolve(context: TaskTargetContext) -> Flow:
         flow_ref = context.definition.execution.ref
@@ -1183,6 +1191,7 @@ def _task_flow_resolver(
                 context,
                 agent_runner=agent_runner,
                 execution_roots=(ref_base,),
+                tool_resolver=tool_resolver,
             )
         ).load_result(path)
         if result.flow is None:
@@ -1207,6 +1216,7 @@ def _task_strict_flow_resolver(
     ref_base: Path,
     *,
     agent_runner: TaskTargetRunner | None = None,
+    tool_resolver: FlowToolResolver | None = None,
 ) -> Callable[[TaskTargetContext], FlowDefinition]:
     def resolve(context: TaskTargetContext) -> FlowDefinition:
         flow_ref = context.definition.execution.ref
@@ -1218,6 +1228,7 @@ def _task_strict_flow_resolver(
                 context,
                 agent_runner=agent_runner,
                 execution_roots=(ref_base,),
+                tool_resolver=tool_resolver,
             )
         ).load_result(path)
         if result.definition is None:

@@ -413,7 +413,7 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             """)
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.issues[0].code, "flow.unknown_node_type")
+        self.assertEqual(result.issues[0].code, "flow.unsupported_node_type")
         self.assertEqual(result.issues[0].path, "nodes.start.type")
 
     def test_tool_node_accepts_enabled_ref_and_mcp_remote_name(self) -> None:

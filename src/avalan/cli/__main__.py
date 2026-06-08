@@ -1566,6 +1566,35 @@ class CLI:
             default=None,
             help="Write successful flow output to a JSON file.",
         )
+        flow_run_parser.add_argument(
+            "--tool",
+            type=str,
+            action="append",
+            help="Enable a tool for strict flow tool nodes.",
+        )
+        flow_run_parser.add_argument(
+            "--tools",
+            type=str,
+            action="append",
+            help=(
+                "Enable tools matching a namespace for strict flow tool nodes."
+            ),
+        )
+        CLI._add_tool_settings_arguments(
+            flow_run_parser,
+            prefix="browser",
+            settings_cls=BrowserToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            flow_run_parser,
+            prefix="database",
+            settings_cls=DatabaseToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            flow_run_parser,
+            prefix="graph",
+            settings_cls=GraphToolSettings,
+        )
         flow_validate_parser = flow_command_parsers.add_parser(
             name="validate",
             description="Validate a flow definition",

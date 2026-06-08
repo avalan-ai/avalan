@@ -25,6 +25,7 @@ from ...flow import (
     FlowRetryPolicy,
     FlowSourceSpan,
     FlowTimeoutPolicy,
+    FlowToolResolver,
     FlowView,
     FlowViewClassDefinition,
     FlowViewComment,
@@ -58,6 +59,20 @@ from ...task import (
     validate_task_input,
     validate_task_output,
 )
+from ...tool import ToolSet
+from ...tool.browser import (
+    HAS_BROWSER_DEPENDENCIES,
+    BrowserToolSet,
+    BrowserToolSettings,
+)
+from ...tool.code import HAS_CODE_DEPENDENCIES, CodeToolSet
+from ...tool.database.settings import DatabaseToolSettings
+from ...tool.database.toolset import DatabaseToolSet
+from ...tool.graph import HAS_GRAPH_DEPENDENCIES, GraphToolSet
+from ...tool.graph_settings import GraphToolSettings
+from ...tool.manager import ToolManager
+from ...tool.math import MathToolSet
+from .agent import get_tool_settings
 from .task import (
     TaskCliInputError,
     _format_task_cli_value,
@@ -81,6 +96,7 @@ from .task import (
 
 from argparse import Namespace
 from collections.abc import Mapping
+from contextlib import AsyncExitStack
 from enum import Enum
 from json import dumps
 from logging import Logger
@@ -1023,23 +1039,40 @@ async def _flow_run_with_task_context(
         return False
     if not _validate_task_run_output_path(args, diagnostic_console):
         return False
-    client_context = _task_cli_client_context(
-        flow_path,
-        dsn=None,
-        schema=None,
-        queue=False,
-        ephemeral=True,
-        hub=hub,
-        logger=logger,
-        input_value=flow_input.value,
+    tool_manager = _flow_tool_manager(args)
+    resolver_issues = _flow_missing_tool_resolver_issues(
+        definition,
+        tool_manager,
     )
+    if resolver_issues:
+        _print_issues(
+            diagnostic_console,
+            "Flow definition could not be loaded.",
+            resolver_issues,
+        )
+        return False
     try:
-        async with client_context as client:
-            result = await client.run(
-                task_definition,
+        async with AsyncExitStack() as stack:
+            tool_resolver: FlowToolResolver | None = None
+            if tool_manager is not None:
+                tool_resolver = await stack.enter_async_context(tool_manager)
+            client_context = _task_cli_client_context(
+                flow_path,
+                dsn=None,
+                schema=None,
+                queue=False,
+                ephemeral=True,
+                hub=hub,
+                logger=logger,
                 input_value=flow_input.value,
-                metadata=_task_command_metadata(ephemeral=True),
+                flow_tool_resolver=tool_resolver,
             )
+            async with client_context as client:
+                result = await client.run(
+                    task_definition,
+                    input_value=flow_input.value,
+                    metadata=_task_command_metadata(ephemeral=True),
+                )
     except (AssertionError, ImportError, OSError, TaskValidationError) as exc:
         _print_task_execution_error(diagnostic_console, exc)
         return False
@@ -1062,6 +1095,82 @@ async def _flow_run_with_task_context(
             markup=False,
         )
     return True
+
+
+def _flow_missing_tool_resolver_issues(
+    definition: FlowDefinition,
+    resolver: FlowToolResolver | None,
+) -> tuple[TaskValidationIssue, ...]:
+    assert isinstance(definition, FlowDefinition)
+    if resolver is not None:
+        return ()
+    return tuple(
+        TaskValidationIssue(
+            code="flow.unsupported_node_type",
+            path=f"nodes.{node.name}.type",
+            message="Flow node type is not supported by this runtime.",
+            hint="Use --tool or --tools to enable strict flow tool nodes.",
+            category=TaskValidationCategory.UNSUPPORTED,
+        )
+        for node in definition.nodes
+        if node.type == "tool"
+    )
+
+
+def _flow_tool_manager(args: Namespace) -> ToolManager | None:
+    enabled_tools = _flow_enabled_tools(args)
+    if not enabled_tools:
+        return None
+    available_toolsets: list[ToolSet] = [MathToolSet(namespace="math")]
+    if HAS_GRAPH_DEPENDENCIES:
+        available_toolsets.append(
+            GraphToolSet(
+                settings=get_tool_settings(
+                    args,
+                    prefix="graph",
+                    settings_cls=GraphToolSettings,
+                )
+                or GraphToolSettings(),
+                namespace="graph",
+            )
+        )
+    if HAS_CODE_DEPENDENCIES:
+        available_toolsets.append(CodeToolSet(namespace="code"))
+    if HAS_BROWSER_DEPENDENCIES:
+        available_toolsets.append(
+            BrowserToolSet(
+                settings=get_tool_settings(
+                    args,
+                    prefix="browser",
+                    settings_cls=BrowserToolSettings,
+                )
+                or BrowserToolSettings(),
+                namespace="browser",
+            )
+        )
+    database_settings = get_tool_settings(
+        args,
+        prefix="database",
+        settings_cls=DatabaseToolSettings,
+    )
+    if database_settings is not None:
+        available_toolsets.append(
+            DatabaseToolSet(settings=database_settings, namespace="database")
+        )
+    return ToolManager.create_instance(
+        available_toolsets=available_toolsets,
+        enable_tools=enabled_tools,
+    )
+
+
+def _flow_enabled_tools(args: Namespace) -> list[str]:
+    tools = (getattr(args, "tool", None) or []) + (
+        getattr(args, "tools", None) or []
+    )
+    assert isinstance(tools, list)
+    for tool in tools:
+        assert isinstance(tool, str) and tool.strip()
+    return tools
 
 
 def _flow_task_definition(
@@ -1236,7 +1345,7 @@ def _flow_schema_issue() -> TaskValidationIssue:
 
 def _flow_metadata_loader() -> FlowDefinitionLoader:
     registry = default_flow_node_registry()
-    for node_type in ("agent", "file_convert", "pdf_to_images"):
+    for node_type in ("agent", "file_convert", "pdf_to_images", "tool"):
         metadata: FlowNodeMetadata
         if node_type == "agent":
             metadata = FlowNodeMetadata(
@@ -1256,6 +1365,23 @@ def _flow_metadata_loader() -> FlowDefinitionLoader:
                     type=FlowOutputType.JSON,
                     metadata={"dynamic": True},
                 ),
+            )
+        elif node_type == "tool":
+            metadata = FlowNodeMetadata(
+                kind=FlowNodeKind.TOOL,
+                supports_ref=True,
+                async_only=True,
+                input_contract=FlowNodeContract(
+                    name="arguments",
+                    type=FlowInputType.OBJECT,
+                    metadata={"dynamic": True},
+                ),
+                output_contract=FlowNodeContract(
+                    name="result",
+                    type=FlowOutputType.JSON,
+                    metadata={"dynamic": True},
+                ),
+                requires_ref=True,
             )
         else:
             metadata = FlowNodeMetadata(
