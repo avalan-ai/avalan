@@ -18,6 +18,12 @@ The CLI offers the following commands, some of them with multiple subcommands:
   * [avalan deploy run](#avalan-deploy-run)
 * [avalan flow](#avalan-flow)
   * [avalan flow run](#avalan-flow-run)
+  * [avalan flow validate](#avalan-flow-validate)
+  * [avalan flow mermaid](#avalan-flow-mermaid)
+  * [avalan flow inspect](#avalan-flow-inspect)
+  * [avalan flow trace](#avalan-flow-trace)
+  * [avalan flow cancel](#avalan-flow-cancel)
+  * [avalan flow resume](#avalan-flow-resume)
 * [avalan task](#avalan-task)
   * [avalan task validate](#avalan-task-validate)
   * [avalan task run](#avalan-task-run)
@@ -1513,137 +1519,154 @@ plicate}
 
 ## avalan flow
 
+`avalan flow` validates, renders, compares, runs, inspects, resumes, cancels,
+and exports sanitized traces for flow definitions. Strict flow definitions use
+declared inputs, declared outputs, explicit entry behavior, and explicit output
+selection. Mermaid commands operate on inert Flow Views and do not execute
+nodes.
+
+```bash
+avalan flow validate flow.toml
+avalan flow mermaid parse topology.mmd --mode presentation --json
+avalan flow run flow.toml --input-json '{"name":"Ada"}' --json
 ```
-usage: avalan flow [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
-                   [--device DEVICE]
-                   [--parallel 
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
-plicate}]
-                   [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
-                   [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
-                   [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
-                   [--skip-hub-access-check] [--verbose] [--version]
-                   [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
-                   {run} ...
 
-Manage AI flows
+Flow subcommands:
 
-positional arguments:
-  {run}
+| Command | Purpose |
+| --- | --- |
+| `run` | Execute a local strict flow or a compatible native flow. |
+| `validate` | Validate a flow definition without node execution. |
+| `mermaid parse` | Parse Mermaid into an inert Flow View. |
+| `mermaid render` | Render a safe Mermaid view. |
+| `mermaid compare` | Compare Mermaid topology with a flow definition. |
+| `mermaid skeleton` | Create a non-executable flow skeleton from Mermaid topology. |
+| `inspect` | Inspect a durable task-backed flow run. |
+| `trace` | Export a sanitized durable flow trace. |
+| `cancel` | Request cancellation for a durable flow run. |
+| `resume` | Resume a paused human-review flow from durable state. |
 
-options:
-  -h, --help            show this help message and exit
-  --cache-dir CACHE_DIR
-                        Path to huggingface cache hub (defaults to /root/.cache/huggingface/hub, can also be specified with
-                        $HF_HUB_CACHE)
-  --subfolder SUBFOLDER
-                        Subfolder inside model repository to load the model from
-  --tokenizer-subfolder TOKENIZER_SUBFOLDER
-                        Subfolder inside model repository to load the tokenizer from
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
-  --parallel 
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
-plicate}
-                        Tensor parallelism strategy to use
-  --parallel-count PARALLEL_COUNT
-                        Number of processes to launch when --parallel is used (defaults to the number of available GPUs)
-  --disable-loading-progress-bar
-                        If specified, the shard loading progress bar will not be shown
-  --hf-token HF_TOKEN   Your Huggingface access token
-  --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,gpt-oss,mistral3}
-                        Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm,ds4}
-                        Backend to use (defaults to "transformers")
-  --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
-  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
-  --login               Login to main hub (huggingface)
-  --no-repl             Don't echo input coming from stdin
-  --quiet, -q           If specified, no welcome screen and only model output is displayed in model run (sets --disable-
-                        loading-progress-bar, --skip-hub-access-check, --skip-special-tokens automatically)
-  --tty TTY             TTY stream to use for interactive prompts
-  --record              If specified, the current console output will be regularly saved to SVG files.
-  --revision REVISION   Model revision to use
-  --skip-hub-access-check
-                        If specified, skip hub model access check
-  --verbose, -v         Set verbosity
-  --version             Display this program's version, and exit
-  --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
-                        Weight type to use (defaults to best available)
-```
+See [Flow authoring](FLOW_AUTHORING.md) for definition shape, Mermaid modes,
+task-backed execution, and human review details.
 
 ### avalan flow run
 
+Run a flow from a TOML definition:
+
+```bash
+avalan flow run flow.toml --input "hello"
+avalan flow run flow.toml --input-json @payload.json --json --output output.json
+avalan flow run flow.toml --file document=invoice.pdf --file-mime document=application/pdf
+avalan flow run flow.toml --pdf invoice.pdf --json
 ```
-usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
-                       [--device DEVICE]
-                       [--parallel 
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
-plicate}]
-                       [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                       [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
-                       [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
-                       [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
-                       [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
-                       [--input TASK_INPUT] [--input-json TASK_INPUT_JSON] [--file TASK_FILES]
-                       [--file-mime TASK_FILE_MIME_TYPES] [--pdf TASK_PDF] [--json] [--output TASK_OUTPUT_PATH]
-                       flow
 
-Run a given flow
+Input and output flags:
 
-positional arguments:
-  flow                  Flow to run
+| Flag | Shape |
+| --- | --- |
+| `--input VALUE` | Single scalar or JSON-shaped value for the flow input contract. |
+| `--input-json JSON_OR_@FILE` | JSON input value, or `@path` to read JSON from a file. |
+| `--file FIELD=PATH` | Local file descriptor for a file field. |
+| `--file-mime FIELD=TYPE` | MIME hint, for example `document=application/pdf`. |
+| `--pdf PATH` | Shorthand for one top-level PDF file input. |
+| `--json` | Print successful structured output as compact JSON. |
+| `--output PATH` | Write successful structured output as compact JSON. |
+| `--tool NAME` | Enable one tool for strict flow tool nodes. |
+| `--tools NAMESPACE` | Enable tools matching a namespace for strict flow tool nodes. |
 
-options:
-  -h, --help            show this help message and exit
-  --cache-dir CACHE_DIR
-                        Path to huggingface cache hub (defaults to /root/.cache/huggingface/hub, can also be specified with
-                        $HF_HUB_CACHE)
-  --subfolder SUBFOLDER
-                        Subfolder inside model repository to load the model from
-  --tokenizer-subfolder TOKENIZER_SUBFOLDER
-                        Subfolder inside model repository to load the tokenizer from
-  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
-  --parallel 
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
-plicate}
-                        Tensor parallelism strategy to use
-  --parallel-count PARALLEL_COUNT
-                        Number of processes to launch when --parallel is used (defaults to the number of available GPUs)
-  --disable-loading-progress-bar
-                        If specified, the shard loading progress bar will not be shown
-  --hf-token HF_TOKEN   Your Huggingface access token
-  --locale LOCALE       Language to use (defaults to en_US)
-  --loader-class {auto,gemma3,gpt-oss,mistral3}
-                        Loader class to use (defaults to "auto")
-  --backend {transformers,mlx,vllm,ds4}
-                        Backend to use (defaults to "transformers")
-  --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
-  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
-  --login               Login to main hub (huggingface)
-  --no-repl             Don't echo input coming from stdin
-  --quiet, -q           If specified, no welcome screen and only model output is displayed in model run (sets --disable-
-                        loading-progress-bar, --skip-hub-access-check, --skip-special-tokens automatically)
-  --tty TTY             TTY stream to use for interactive prompts
-  --record              If specified, the current console output will be regularly saved to SVG files.
-  --revision REVISION   Model revision to use
-  --skip-hub-access-check
-                        If specified, skip hub model access check
-  --verbose, -v         Set verbosity
-  --version             Display this program's version, and exit
-  --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
-                        Weight type to use (defaults to best available)
-  --input TASK_INPUT   Flow input value.
-  --input-json TASK_INPUT_JSON
-                        Flow input JSON value or @file.
-  --file TASK_FILES    Attach a local flow input file as field=path.
-  --file-mime TASK_FILE_MIME_TYPES
-                        Set a flow file MIME hint as field=mime/type.
-  --pdf TASK_PDF       Attach one top-level PDF file input.
-  --json               Print successful flow output as compact JSON.
-  --output TASK_OUTPUT_PATH
-                        Write successful flow output to a JSON file.
+Tool node execution uses the enabled `ToolManager`. Disabled, unknown,
+ambiguous, path-like, URI-like, or provider-originated tool refs fail before
+execution.
+
+Direct `flow run` uses local task execution context for strict flows. Durable
+inspection and resume use task-backed flow runs stored in PostgreSQL.
+
+### avalan flow validate
+
+Validate without node execution:
+
+```bash
+avalan flow validate flow.toml
+avalan flow validate flow.toml --json
 ```
+
+JSON output contains `ok` and public `diagnostics` fields. Diagnostics avoid
+printing private file paths, prompt text, file bytes, provider bodies, token
+text, and raw model output.
+
+### avalan flow mermaid
+
+Mermaid commands require an explicit import mode:
+
+```bash
+avalan flow mermaid parse topology.mmd --mode presentation --json
+avalan flow mermaid render topology.mmd --mode presentation
+avalan flow mermaid compare topology.mmd flow.toml --mode executable
+avalan flow mermaid skeleton topology.mmd \
+  --mode presentation \
+  --name generated_flow \
+  --flow-version 1
+```
+
+`presentation` mode preserves safe inert topology and presentation metadata.
+`executable` mode rejects unsafe or unsupported executable-import constructs.
+Skeleton output is intentionally non-executable until contracts, mappings,
+entry behavior, and output behavior are added.
+
+### avalan flow inspect
+
+Inspect a durable task-backed flow run:
+
+```bash
+avalan flow inspect RUN_ID \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --store-schema public \
+  --after-sequence 0 \
+  --json
+```
+
+The snapshot includes safe flow, node, edge, retry, loop, artifact, and review
+state. It does not print raw prompts, raw files, private paths, provider
+handles, token text, exception messages, or stack traces.
+
+### avalan flow trace
+
+Export a sanitized trace:
+
+```bash
+avalan flow trace RUN_ID \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --after-sequence 0 \
+  --json
+```
+
+Trace export is designed for operational inspection and omits raw sensitive
+payloads by default.
+
+### avalan flow cancel
+
+Request cancellation for a durable flow run:
+
+```bash
+avalan flow cancel RUN_ID --store-dsn "$AVALAN_TASK_STORE_DSN" --json
+```
+
+The result includes the run id and updated task run state.
+
+### avalan flow resume
+
+Resume a paused human-review flow:
+
+```bash
+avalan flow resume review.flow.toml RUN_ID \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --decision-json '{"review":{"decision":"approved","comment":"ok"}}' \
+  --json
+```
+
+`--decision-json` may also be `@path` to read the decision object from a local
+JSON file. The object is keyed by review node name and each value must match
+that node's declared decision schema.
 
 ## avalan task
 
