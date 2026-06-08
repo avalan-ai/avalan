@@ -17,6 +17,7 @@ from avalan.flow import (
     FlowDefinition,
     FlowEdgeDefinition,
     FlowEdgeKind,
+    FlowEdgePlan,
     FlowEntryBehavior,
     FlowExecutionPlan,
     FlowExecutionTrace,
@@ -2569,6 +2570,96 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertNotIn("private flow", str(inspection.as_dict()))
         self.assertNotIn("private prompt", str(inspection.as_dict()))
 
+    async def test_queued_strict_flow_rejects_review_without_state_store(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_human_review_flow_plan(),
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/review.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=1),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="private prompt",
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNone(processed.completion)
+        self.assertIsNone(processed.retry)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(inspection.attempts[0].state, TaskAttemptState.FAILED)
+        inspection_value = str(inspection.as_dict())
+        self.assertIn("runnable.failed", inspection_value)
+        self.assertNotIn("private prompt", inspection_value)
+
+    async def test_queued_strict_flow_rejects_nested_review_without_store(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        calls = 0
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_human_review_flow_plan(),
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/review.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=1),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="private nested prompt",
+        )
+
+        async def fail_execute_flow_plan(
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            nonlocal calls
+            calls += 1
+            raise AssertionError("flow runtime should not execute")
+
+        with patch.object(
+            flow_target_module,
+            "execute_flow_plan",
+            fail_execute_flow_plan,
+        ):
+            processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNone(processed.completion)
+        self.assertIsNone(processed.retry)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(inspection.attempts[0].state, TaskAttemptState.FAILED)
+        self.assertEqual(calls, 0)
+        inspection_value = str(inspection.as_dict())
+        self.assertIn("runnable.failed", inspection_value)
+        self.assertNotIn("private nested prompt", inspection_value)
+
     async def test_queued_strict_flow_resumes_complete_state(self) -> None:
         clock = Clock()
         store = InMemoryTaskStore(clock=lambda: clock.now)
@@ -2784,6 +2875,374 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(
             dict(record.selected_outputs), {"answer": "queued seed"}
         )
+
+    async def test_queued_strict_flow_resumes_human_review_matrix(
+        self,
+    ) -> None:
+        decisions = {
+            "approved": "approved_sink",
+            "rejected": "rejected_sink",
+            "needs-correction": "correction_sink",
+            "expired": "expired_sink",
+            "escalated": "escalated_sink",
+        }
+
+        for decision, target_node in decisions.items():
+            with self.subTest(decision=decision):
+                clock = Clock()
+                store = InMemoryTaskStore(clock=lambda: clock.now)
+                queue = InMemoryTaskQueue(store, clock=clock)
+                flow_store = InMemoryFlowStateStore()
+                plan = _strict_human_review_flow_plan()
+                target = FlowTaskTargetRunner(
+                    strict_resolver=lambda _: plan,
+                    flow_state_store=flow_store,
+                )
+                client = _client(store, queue, target=target, clock=clock)
+                worker = _worker(store, queue, target=target, clock=clock)
+                definition = _definition(
+                    execution=TaskExecutionTarget.flow("flows/review.toml"),
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=2),
+                )
+
+                submission = await self._enqueue_raw_input(
+                    store,
+                    queue,
+                    definition,
+                    input_value="private prompt",
+                )
+                paused = await worker.process_once()
+                paused_record = await flow_store.get_flow_execution(
+                    submission.run.run_id,
+                )
+                await _requeue_run_with_metadata(
+                    store,
+                    queue,
+                    submission.run.run_id,
+                    {
+                        (
+                            flow_target_module.FLOW_RESUME_DECISIONS_METADATA_KEY
+                        ): {
+                            "review": {
+                                "decision": decision,
+                                "comment": "private-token",
+                            },
+                        },
+                    },
+                    clock=clock,
+                )
+
+                resumed = await worker.process_once()
+                output = await client.output(submission.run.run_id)
+                inspection = await client.inspect(submission.run.run_id)
+                record = await flow_store.get_flow_execution(
+                    submission.run.run_id,
+                )
+
+                self.assertTrue(paused.processed)
+                self.assertIsNone(paused.retry)
+                self.assertEqual(
+                    {
+                        node.node: node.state
+                        for node in paused_record.trace.nodes
+                    }["review"],
+                    FlowNodeState.PAUSED,
+                )
+                self.assertTrue(resumed.processed)
+                self.assertIsNotNone(resumed.completion)
+                self.assertEqual(resumed.output, decision)
+                self.assertTrue(output.ready)
+                self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+                self.assertEqual(
+                    output.output_summary,
+                    {"privacy": REDACTED_MARKER},
+                )
+                self.assertEqual(dict(record.pause_tokens), {})
+                self.assertEqual(
+                    dict(record.selected_outputs), {"answer": decision}
+                )
+                self.assertEqual(
+                    {node.node: node.state for node in record.trace.nodes}[
+                        target_node
+                    ],
+                    FlowNodeState.SUCCEEDED,
+                )
+                audit = cast(
+                    Mapping[str, object],
+                    record.metadata["human_review_audit"],
+                )
+                review = cast(Mapping[str, object], audit["review"])
+                self.assertEqual(review["state"], "resumed")
+                self.assertEqual(review["decision"], decision)
+                inspection_value = str(inspection.as_dict())
+                self.assertNotIn("private prompt", str(audit))
+                self.assertNotIn("private-token", str(audit))
+                self.assertNotIn("private prompt", inspection_value)
+                self.assertNotIn("private-token", inspection_value)
+
+    async def test_queued_strict_flow_without_review_decision_stays_paused(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        plan = _strict_human_review_flow_plan()
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/review.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=2),
+        )
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="private prompt",
+        )
+        first = await worker.process_once()
+        first_record = await flow_store.get_flow_execution(
+            submission.run.run_id,
+        )
+        await _requeue_run_with_metadata(
+            store,
+            queue,
+            submission.run.run_id,
+            {},
+            clock=clock,
+        )
+
+        second = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        record = await flow_store.get_flow_execution(submission.run.run_id)
+
+        self.assertTrue(first.processed)
+        self.assertIsNone(first.retry)
+        self.assertTrue(second.processed)
+        self.assertIsNone(second.retry)
+        self.assertIsNone(second.completion)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(record.revision, first_record.revision + 1)
+        self.assertEqual(set(record.pause_tokens), {"review"})
+        self.assertEqual(
+            {node.node: node.state for node in record.trace.nodes}["review"],
+            FlowNodeState.PAUSED,
+        )
+        self.assertEqual(
+            [
+                attempt
+                for attempt in record.node_attempts
+                if attempt.node == "start"
+            ],
+            [
+                attempt
+                for attempt in first_record.node_attempts
+                if attempt.node == "start"
+            ],
+        )
+        inspection_value = str(inspection.as_dict())
+        audit = record.metadata["human_review_audit"]
+        self.assertIn("runnable.failed", inspection_value)
+        self.assertNotIn("private prompt", inspection_value)
+        self.assertNotIn("private prompt", str(audit))
+
+    async def test_queued_strict_flow_rejects_invalid_review_resume_cases(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "unknown_decision",
+                {
+                    "review": {
+                        "decision": "unknown",
+                        "comment": "private-token",
+                    },
+                },
+            ),
+            (
+                "schema",
+                {
+                    "review": {
+                        "decision": "approved",
+                        "comment": 7,
+                    },
+                },
+            ),
+            (
+                "unknown_node",
+                {
+                    "missing": {
+                        "decision": "approved",
+                        "comment": "private-token",
+                    },
+                },
+            ),
+            (
+                "non_review_node",
+                {
+                    "start": {
+                        "decision": "approved",
+                        "comment": "private-token",
+                    },
+                },
+            ),
+            ("metadata_shape", "private-token"),
+        )
+
+        for name, resume_value in cases:
+            with self.subTest(name=name):
+                clock = Clock()
+                store = InMemoryTaskStore(clock=lambda: clock.now)
+                queue = InMemoryTaskQueue(store, clock=clock)
+                flow_store = InMemoryFlowStateStore()
+                plan = _strict_human_review_flow_plan()
+                target = FlowTaskTargetRunner(
+                    strict_resolver=lambda _: plan,
+                    flow_state_store=flow_store,
+                )
+                client = _client(store, queue, target=target, clock=clock)
+                worker = _worker(store, queue, target=target, clock=clock)
+                definition = _definition(
+                    execution=TaskExecutionTarget.flow("flows/review.toml"),
+                    observability=TaskObservabilityPolicy.noop(),
+                    retry=TaskRetryPolicy(max_attempts=2),
+                )
+                submission = await self._enqueue_raw_input(
+                    store,
+                    queue,
+                    definition,
+                    input_value="private prompt",
+                )
+                paused = await worker.process_once()
+                paused_record = await flow_store.get_flow_execution(
+                    submission.run.run_id,
+                )
+                await _requeue_run_with_metadata(
+                    store,
+                    queue,
+                    submission.run.run_id,
+                    {
+                        (
+                            flow_target_module.FLOW_RESUME_DECISIONS_METADATA_KEY
+                        ): resume_value,
+                    },
+                    clock=clock,
+                )
+
+                processed = await worker.process_once()
+                output = await client.output(submission.run.run_id)
+                inspection = await client.inspect(submission.run.run_id)
+                record = await flow_store.get_flow_execution(
+                    submission.run.run_id
+                )
+
+                self.assertTrue(paused.processed)
+                self.assertIsNone(paused.retry)
+                self.assertTrue(processed.processed)
+                self.assertIsNone(processed.retry)
+                self.assertIsNone(processed.completion)
+                self.assertFalse(output.ready)
+                self.assertEqual(output.state, TaskRunState.FAILED)
+                self.assertEqual(record.revision, paused_record.revision)
+                self.assertEqual(
+                    dict(record.pause_tokens),
+                    dict(paused_record.pause_tokens),
+                )
+                self.assertEqual(
+                    {node.node: node.state for node in record.trace.nodes}[
+                        "review"
+                    ],
+                    FlowNodeState.PAUSED,
+                )
+                inspection_value = str(inspection.as_dict())
+                audit = record.metadata["human_review_audit"]
+                self.assertIn("runnable.failed", inspection_value)
+                self.assertNotIn("private prompt", inspection_value)
+                self.assertNotIn("private-token", inspection_value)
+                self.assertNotIn("private prompt", str(audit))
+                self.assertNotIn("private-token", str(audit))
+
+    async def test_queued_strict_flow_cancelled_review_resume_stays_paused(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        plan = _strict_human_review_flow_plan()
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/review.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=2),
+        )
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="private prompt",
+        )
+        paused = await worker.process_once()
+        paused_record = await flow_store.get_flow_execution(
+            submission.run.run_id,
+        )
+        metadata = {
+            flow_target_module.FLOW_RESUME_DECISIONS_METADATA_KEY: {
+                "review": {
+                    "decision": "approved",
+                    "comment": "private-token",
+                },
+            },
+        }
+        await _requeue_run_with_metadata(
+            store,
+            queue,
+            submission.run.run_id,
+            metadata,
+            clock=clock,
+        )
+        cancelled = await client.cancel(submission.run.run_id)
+
+        idle = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+        record = await flow_store.get_flow_execution(submission.run.run_id)
+        depth = await queue.depth("default")
+
+        self.assertTrue(paused.processed)
+        self.assertIsNone(paused.retry)
+        self.assertEqual(cancelled.state, TaskRunState.CANCEL_REQUESTED)
+        self.assertFalse(idle.processed)
+        self.assertFalse(output.ready)
+        self.assertEqual(output.state, TaskRunState.CANCEL_REQUESTED)
+        self.assertEqual(inspection.run.state, TaskRunState.CANCEL_REQUESTED)
+        self.assertEqual(record.revision, paused_record.revision)
+        self.assertEqual(
+            dict(record.pause_tokens), dict(paused_record.pause_tokens)
+        )
+        self.assertEqual(
+            {node.node: node.state for node in record.trace.nodes}["review"],
+            FlowNodeState.PAUSED,
+        )
+        self.assertEqual(depth.cancel_requested, 1)
+        self.assertEqual(depth.available, 1)
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("private prompt", inspection_value)
+        self.assertNotIn("private-token", inspection_value)
+        self.assertNotIn("private-token", str(record.as_snapshot()))
 
     async def test_queued_strict_flow_rejects_mismatched_state_safely(
         self,
@@ -3399,6 +3858,38 @@ def _worker(
     )
 
 
+async def _requeue_run_with_metadata(
+    store: InMemoryTaskStore,
+    queue: InMemoryTaskQueue,
+    run_id: str,
+    metadata: Mapping[str, object],
+    *,
+    clock: Clock,
+) -> None:
+    run = await store.get_run(run_id)
+    store._runs[run_id] = replace(
+        run,
+        state=TaskRunState.QUEUED,
+        request=replace(run.request, metadata=metadata),
+        claim=None,
+        updated_at=clock.now,
+    )
+    queue_item_id = queue.items_by_run_id[run_id]
+    item = queue.items[queue_item_id]
+    queue.items[queue_item_id] = replace(
+        item,
+        state=TaskQueueItemState.AVAILABLE,
+        run_state=TaskRunState.QUEUED,
+        available_at=clock.now,
+        updated_at=clock.now,
+        claimed_at=None,
+        lease_expires_at=None,
+        worker_id=None,
+        claim_token=None,
+        heartbeat_at=None,
+    )
+
+
 async def _target_done_wait(
     tasks: set[AsyncTask[object]],
     *,
@@ -3505,6 +3996,166 @@ def _strict_two_step_flow_definition() -> FlowDefinition:
                 source="start",
                 target="answer",
                 kind=FlowEdgeKind.SUCCESS,
+            ),
+        ),
+    )
+
+
+def _strict_human_review_flow_plan() -> FlowExecutionPlan:
+    decisions = {
+        "approved": "approved_sink",
+        "rejected": "rejected_sink",
+        "needs-correction": "correction_sink",
+        "expired": "expired_sink",
+        "escalated": "escalated_sink",
+    }
+    return FlowExecutionPlan(
+        name="queued-review",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_node="start",
+        output_selectors={
+            "answer": parse_flow_selector("review.result.decision")
+        },
+        nodes=(
+            FlowNodePlan(
+                name="start",
+                type="pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("inputs.prompt"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(name="value", type=FlowOutputType.JSON),
+                ),
+            ),
+            FlowNodePlan(
+                name="review",
+                type="human_review",
+                kind=FlowNodeKind.HUMAN_REVIEW,
+                config={
+                    "allowed_decisions": tuple(decisions),
+                    "audit_metadata": {"risk": "medium", "queue": "ops"},
+                    "decision_schema": {
+                        "type": "object",
+                        "required": ("decision",),
+                        "properties": {
+                            "decision": {"enum": tuple(decisions)},
+                            "comment": {"type": "string"},
+                        },
+                    },
+                    "timeout_seconds": 300,
+                },
+                mappings=(
+                    FlowMappingPlan(
+                        target="payload",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("start.value"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+            ),
+        )
+        + tuple(
+            FlowNodePlan(
+                name=node_name,
+                type="pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("review.result.decision"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(name="value", type=FlowOutputType.JSON),
+                ),
+            )
+            for node_name in decisions.values()
+        ),
+        edges=(
+            FlowEdgePlan(
+                index=0,
+                source="start",
+                target="review",
+                kind=FlowEdgeKind.SUCCESS,
+            ),
+        )
+        + tuple(
+            FlowEdgePlan(
+                index=index,
+                source="review",
+                target=node_name,
+                kind=FlowEdgeKind.RESUME,
+                label=decision,
+            )
+            for index, (decision, node_name) in enumerate(
+                decisions.items(),
+                start=1,
+            )
+        ),
+    )
+
+
+def _strict_nested_human_review_flow_plan() -> FlowExecutionPlan:
+    return FlowExecutionPlan(
+        name="queued-nested-review",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_node="child",
+        output_selectors={"answer": parse_flow_selector("child.result")},
+        nodes=(
+            FlowNodePlan(
+                name="child",
+                type="subflow",
+                kind=FlowNodeKind.SUBFLOW,
+                input_contracts=(
+                    FlowNodeContract(
+                        name="prompt",
+                        type=FlowInputType.STRING,
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.TEXT,
+                    ),
+                ),
+                mappings=(
+                    FlowMappingPlan(
+                        target="prompt",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("inputs.prompt"),
+                    ),
+                ),
+                metadata={
+                    "subflow": {
+                        "plan": _strict_human_review_flow_plan(),
+                        "output_mapping": {"result": "answer"},
+                    }
+                },
             ),
         ),
     )
