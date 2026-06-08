@@ -271,6 +271,11 @@ class FlowDefinitionLoader:
         source = source_path.read_text(encoding="utf-8")
         return self.loads_result(source, source_path=source_path)
 
+    def load_validation_result(self, path: str | Path) -> FlowLoadResult:
+        source_path = Path(path)
+        source = source_path.read_text(encoding="utf-8")
+        return self.loads_validation_result(source, source_path=source_path)
+
     def loads(
         self,
         source: str,
@@ -308,6 +313,36 @@ class FlowDefinitionLoader:
             raw,
             registry=self._registry,
             source_path=source_path,
+            build_runtime=True,
+        )
+
+    def loads_validation_result(
+        self,
+        source: str,
+        *,
+        source_path: str | Path | None = None,
+    ) -> FlowLoadResult:
+        assert isinstance(source, str), "source must be a string"
+        try:
+            raw = loads(source)
+        except TOMLDecodeError:
+            return FlowLoadResult(
+                definition=None,
+                issues=(
+                    _issue(
+                        code="flow.malformed_toml",
+                        path="toml",
+                        message="Flow definition TOML is malformed.",
+                        hint="Fix the TOML syntax and retry loading.",
+                        category=FlowLoadIssueCategory.PARSE,
+                    ),
+                ),
+            )
+        return _build_result(
+            raw,
+            registry=self._registry,
+            source_path=source_path,
+            build_runtime=False,
         )
 
 
@@ -406,6 +441,7 @@ def _build_result(
     *,
     registry: FlowNodeRegistry,
     source_path: str | Path | None,
+    build_runtime: bool,
 ) -> FlowLoadResult:
     issues: list[FlowLoadIssue] = []
     _validate_top_level_sections(raw, issues)
@@ -530,6 +566,8 @@ def _build_result(
     )
     if issues:
         return FlowLoadResult(definition=None, issues=tuple(issues))
+    if not build_runtime:
+        return FlowLoadResult(definition=definition)
     try:
         flow = build_flow(definition, registry)
     except FlowNodeConfigurationError as error:

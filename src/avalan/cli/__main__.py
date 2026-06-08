@@ -160,10 +160,15 @@ def _task_run_json_stdout(args: Namespace) -> bool:
         and getattr(args, "task_command", None) == "run"
         and bool(getattr(args, "task_run_json", False))
     )
-    flow_json = (
-        getattr(args, "command", None) == "flow"
-        and getattr(args, "flow_command", None) == "run"
-        and bool(getattr(args, "task_run_json", False))
+    flow_json = getattr(args, "command", None) == "flow" and (
+        (
+            getattr(args, "flow_command", None) == "run"
+            and bool(getattr(args, "task_run_json", False))
+        )
+        or (
+            getattr(args, "flow_command", None) in {"mermaid", "validate"}
+            and bool(getattr(args, "flow_json", False))
+        )
     )
     return task_json or flow_json
 
@@ -493,6 +498,18 @@ async def deploy_run(*args: Any, **kwargs: Any) -> Any:
 
 def flow_run(*args: Any, **kwargs: Any) -> Any:
     return _load_command("avalan.cli.commands.flow", "flow_run")(
+        *args, **kwargs
+    )
+
+
+def flow_validate(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_validate")(
+        *args, **kwargs
+    )
+
+
+def flow_mermaid(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_mermaid")(
         *args, **kwargs
     )
 
@@ -1548,6 +1565,141 @@ class CLI:
             type=str,
             default=None,
             help="Write successful flow output to a JSON file.",
+        )
+        flow_validate_parser = flow_command_parsers.add_parser(
+            name="validate",
+            description="Validate a flow definition",
+            parents=[global_parser],
+        )
+        flow_validate_parser.add_argument(
+            "flow",
+            type=str,
+            help="Flow definition TOML file to validate",
+        )
+        flow_validate_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print diagnostics as compact JSON.",
+        )
+        flow_mermaid_parser = flow_command_parsers.add_parser(
+            name="mermaid",
+            description="Inspect and render Mermaid flow views",
+            parents=[global_parser],
+        )
+        flow_mermaid_command_parsers = flow_mermaid_parser.add_subparsers(
+            dest="flow_mermaid_command",
+            required=True,
+        )
+        flow_mermaid_parse_parser = flow_mermaid_command_parsers.add_parser(
+            name="parse",
+            description="Parse a Mermaid flow view",
+            parents=[global_parser],
+        )
+        flow_mermaid_parse_parser.add_argument(
+            "diagram",
+            type=str,
+            help="Mermaid diagram file to parse",
+        )
+        flow_mermaid_parse_parser.add_argument(
+            "--mode",
+            choices=("presentation", "executable"),
+            required=True,
+            help="Mermaid import mode.",
+        )
+        flow_mermaid_parse_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print parsed view and diagnostics as compact JSON.",
+        )
+        flow_mermaid_render_parser = flow_mermaid_command_parsers.add_parser(
+            name="render",
+            description="Render a safe Mermaid flow view",
+            parents=[global_parser],
+        )
+        flow_mermaid_render_parser.add_argument(
+            "diagram",
+            type=str,
+            help="Mermaid diagram file to render",
+        )
+        flow_mermaid_render_parser.add_argument(
+            "--mode",
+            choices=("presentation", "executable"),
+            required=True,
+            help="Mermaid import mode.",
+        )
+        flow_mermaid_render_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print rendered source and diagnostics as compact JSON.",
+        )
+        flow_mermaid_compare_parser = flow_mermaid_command_parsers.add_parser(
+            name="compare",
+            description="Compare a Mermaid flow view with a flow definition",
+            parents=[global_parser],
+        )
+        flow_mermaid_compare_parser.add_argument(
+            "diagram",
+            type=str,
+            help="Mermaid diagram file to compare",
+        )
+        flow_mermaid_compare_parser.add_argument(
+            "flow",
+            type=str,
+            help="Flow definition TOML file to compare",
+        )
+        flow_mermaid_compare_parser.add_argument(
+            "--mode",
+            choices=("presentation", "executable"),
+            required=True,
+            help="Mermaid import mode.",
+        )
+        flow_mermaid_compare_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print comparison diagnostics as compact JSON.",
+        )
+        flow_mermaid_skeleton_parser = flow_mermaid_command_parsers.add_parser(
+            name="skeleton",
+            description="Create a non-executing flow skeleton",
+            parents=[global_parser],
+        )
+        flow_mermaid_skeleton_parser.add_argument(
+            "diagram",
+            type=str,
+            help="Mermaid diagram file to skeletonize",
+        )
+        flow_mermaid_skeleton_parser.add_argument(
+            "--mode",
+            choices=("presentation", "executable"),
+            required=True,
+            help="Mermaid import mode.",
+        )
+        flow_mermaid_skeleton_parser.add_argument(
+            "--name",
+            required=True,
+            help="Skeleton flow name.",
+        )
+        flow_mermaid_skeleton_parser.add_argument(
+            "--flow-version",
+            dest="version",
+            default=None,
+            help="Skeleton flow version.",
+        )
+        flow_mermaid_skeleton_parser.add_argument(
+            "--flow-revision",
+            dest="revision",
+            default=None,
+            help="Skeleton flow revision.",
+        )
+        flow_mermaid_skeleton_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print skeleton definition and diagnostics as compact JSON.",
         )
 
         # Task command
@@ -3625,6 +3777,9 @@ class CLI:
             case "flow":
                 subcommand = args.flow_command or "run"
                 match subcommand:
+                    case "mermaid":
+                        if not flow_mermaid(args, console, theme):
+                            raise SystemExit(1)
                     case "run":
                         if not flow_run(
                             args,
@@ -3633,6 +3788,9 @@ class CLI:
                             hub,
                             self._logger,
                         ):
+                            raise SystemExit(1)
+                    case "validate":
+                        if not flow_validate(args, console, theme):
                             raise SystemExit(1)
             case "task":
                 subcommand = args.task_command or "validate"

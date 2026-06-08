@@ -279,6 +279,94 @@ class CliTaskOptionTestCase(TestCase):
         self.assertTrue(args.task_run_json)
         self.assertEqual(args.task_output_path, "result.json")
 
+    def test_flow_non_executing_arguments(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        cases = [
+            (
+                [
+                    "flow",
+                    "validate",
+                    "flows/report.toml",
+                    "--json",
+                ],
+                {
+                    "flow_command": "validate",
+                    "flow": "flows/report.toml",
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
+                    "mermaid",
+                    "parse",
+                    "topology.mmd",
+                    "--mode",
+                    "executable",
+                    "--json",
+                ],
+                {
+                    "flow_command": "mermaid",
+                    "flow_mermaid_command": "parse",
+                    "diagram": "topology.mmd",
+                    "mode": "executable",
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
+                    "mermaid",
+                    "compare",
+                    "topology.mmd",
+                    "flow.toml",
+                    "--mode",
+                    "presentation",
+                ],
+                {
+                    "flow_command": "mermaid",
+                    "flow_mermaid_command": "compare",
+                    "diagram": "topology.mmd",
+                    "flow": "flow.toml",
+                    "mode": "presentation",
+                    "flow_json": False,
+                },
+            ),
+            (
+                [
+                    "flow",
+                    "mermaid",
+                    "skeleton",
+                    "topology.mmd",
+                    "--mode",
+                    "presentation",
+                    "--name",
+                    "topology",
+                    "--flow-version",
+                    "1",
+                ],
+                {
+                    "flow_command": "mermaid",
+                    "flow_mermaid_command": "skeleton",
+                    "diagram": "topology.mmd",
+                    "mode": "presentation",
+                    "name": "topology",
+                    "version": "1",
+                },
+            ),
+        ]
+
+        for argv, expected in cases:
+            with self.subTest(argv=argv):
+                args = cli._parser.parse_args(argv)
+
+            self.assertEqual(args.command, "flow")
+            for name, value in expected.items():
+                self.assertEqual(getattr(args, name), value)
+
     def test_flow_run_consumes_dynamic_input_fields(self) -> None:
         logger = MagicMock()
         with patch.object(sys, "argv", ["prog"]):
@@ -1032,6 +1120,16 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
             ("task_run", "avalan.cli.commands.task", "task_run"),
             ("task_worker", "avalan.cli.commands.task", "task_worker"),
             ("flow_run", "avalan.cli.commands.flow", "flow_run"),
+            (
+                "flow_validate",
+                "avalan.cli.commands.flow",
+                "flow_validate",
+            ),
+            (
+                "flow_mermaid",
+                "avalan.cli.commands.flow",
+                "flow_mermaid",
+            ),
         ]
         for wrapper_name, module_name, function_name in commands:
             command.reset_mock()
@@ -1133,6 +1231,12 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             flow_run_mock = stack.enter_context(
                 patch("avalan.cli.__main__.flow_run")
             )
+            flow_validate_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_validate")
+            )
+            flow_mermaid_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_mermaid")
+            )
             task_artifacts_mock = stack.enter_context(
                 patch("avalan.cli.__main__.task_artifacts")
             )
@@ -1200,6 +1304,8 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("model", "uninstall", model_uninstall),
                 ("deploy", "run", deploy_run_mock),
                 ("flow", "run", flow_run_mock),
+                ("flow", "validate", flow_validate_mock),
+                ("flow", "mermaid", flow_mermaid_mock),
                 ("task", "artifacts", task_artifacts_mock),
                 ("task", "enqueue", task_enqueue_mock),
                 ("task", "events", task_events_mock),
@@ -1354,6 +1460,47 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             self.cli._logger,
         )
 
+    async def test_flow_non_executing_failure_exits_nonzero(self):
+        cases = (
+            ("validate", "flow_validate"),
+            ("mermaid", "flow_mermaid"),
+        )
+        theme = MagicMock()
+        theme._ = lambda s: s
+        console = MagicMock()
+        hub = MagicMock(domain="hf")
+
+        for flow_command, function_name in cases:
+            with self.subTest(flow_command=flow_command):
+                args = Namespace(
+                    command="flow",
+                    flow_command=flow_command,
+                    verbose=None,
+                    quiet=True,
+                    login=False,
+                    hf_token=None,
+                    flow_json=False,
+                )
+                with (
+                    patch("avalan.cli.__main__.has_input", return_value=True),
+                    patch(
+                        "avalan.cli.__main__.Confirm.ask",
+                        return_value=False,
+                    ),
+                    patch("avalan.cli.__main__.find_spec", return_value=None),
+                    patch("avalan.cli.__main__.logger_replace"),
+                    patch("avalan.cli.__main__.filterwarnings"),
+                    patch(
+                        f"avalan.cli.__main__.{function_name}",
+                        return_value=False,
+                    ) as command_mock,
+                ):
+                    with self.assertRaises(SystemExit) as exit_context:
+                        await self.cli._main(args, theme, console, hub)
+
+                self.assertEqual(exit_context.exception.code, 1)
+                command_mock.assert_called_once_with(args, console, theme)
+
     def test_task_run_json_stdout_predicate(self):
         self.assertTrue(
             _task_run_json_stdout(
@@ -1388,6 +1535,33 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                     command="flow",
                     flow_command="run",
                     task_run_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="validate",
+                    flow_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="mermaid",
+                    flow_json=True,
+                )
+            )
+        )
+        self.assertFalse(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="validate",
+                    flow_json=False,
                 )
             )
         )
