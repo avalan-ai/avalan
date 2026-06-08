@@ -1710,6 +1710,23 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             {"start": {"value": "safe"}},
         )
         self.assertEqual(dict(record.selected_outputs), {})
+        audit = cast(
+            Mapping[str, object],
+            record.metadata["human_review_audit"],
+        )
+        review = cast(Mapping[str, object], audit["review"])
+        request = cast(Mapping[str, object], review["request"])
+        self.assertEqual(review["state"], "paused")
+        self.assertEqual(request["node"], "review")
+        self.assertEqual(
+            request["allowed_decisions"],
+            ("approved", "rejected"),
+        )
+        self.assertEqual(request["timeout_seconds"], 300)
+        self.assertEqual(
+            request["audit_metadata"],
+            {"risk": "medium", "queue": "ops"},
+        )
 
     async def test_run_resumes_strict_human_review_from_metadata(
         self,
@@ -1779,6 +1796,156 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(review_output["decision"], "approved")
+        audit = cast(
+            Mapping[str, object],
+            record.metadata["human_review_audit"],
+        )
+        review = cast(Mapping[str, object], audit["review"])
+        self.assertEqual(review["state"], "resumed")
+        self.assertEqual(review["decision"], "approved")
+        self.assertNotIn("comment", str(review))
+
+    async def test_run_resumes_pgsql_strict_human_review_after_restart(
+        self,
+    ) -> None:
+        database = FakePgsqlTaskDatabase()
+        clock = SequenceClock()
+        task_store = PgsqlTaskStore(
+            database,
+            clock=clock,
+            id_factory=SequenceIds(),
+        )
+        flow_store = PgsqlFlowStateStore(database, clock=clock)
+        definition = self._context_definition()
+        await task_store.register_definition(
+            definition,
+            definition_hash="flow-pgsql-review",
+        )
+        run = await task_store.create_run(
+            TaskExecutionRequest(definition_id="flow-pgsql-review")
+        )
+        attempt = await task_store.create_attempt(run.run_id)
+        plan = _strict_human_review_plan()
+        first_runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+        with self.assertRaises(TaskValidationError):
+            await first_runner.run(
+                self._context(
+                    definition=definition,
+                    execution=attempt.context,
+                    input_value="safe",
+                )
+            )
+        paused_record = await flow_store.get_flow_execution(run.run_id)
+        calls: list[str] = []
+        real_runner_factory = flow_target_module.flow_node_registry_runner
+
+        def counting_runner_factory(registry: Any) -> Any:
+            runner = real_runner_factory(registry)
+
+            async def run(
+                node: FlowNodePlan, inputs: Mapping[str, object]
+            ) -> object:
+                calls.append(node.name)
+                output = runner(node, inputs)
+                if isawaitable(output):
+                    return await output
+                return output
+
+            return run
+
+        resumed_store = PgsqlFlowStateStore(database, clock=clock)
+        resume_runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=resumed_store,
+        )
+        metadata_key = flow_target_module.FLOW_RESUME_DECISIONS_METADATA_KEY
+
+        with patch.object(
+            flow_target_module,
+            "flow_node_registry_runner",
+            counting_runner_factory,
+        ):
+            result = await resume_runner.run(
+                self._context(
+                    definition=definition,
+                    execution=attempt.context,
+                    input_value="fresh",
+                    metadata={
+                        metadata_key: {
+                            "review": {
+                                "decision": "approved",
+                                "comment": "safe",
+                            },
+                        },
+                    },
+                )
+            )
+        record = await resumed_store.get_flow_execution(run.run_id)
+
+        self.assertEqual(paused_record.revision, 2)
+        self.assertEqual(result, "approved")
+        self.assertEqual(calls, ["finish"])
+        self.assertEqual(record.revision, 3)
+        self.assertEqual(dict(record.pause_tokens), {})
+        self.assertEqual(dict(record.selected_outputs), {"answer": "approved"})
+        audit = cast(
+            Mapping[str, object],
+            record.metadata["human_review_audit"],
+        )
+        review = cast(Mapping[str, object], audit["review"])
+        self.assertEqual(review["state"], "resumed")
+        self.assertEqual(review["decision"], "approved")
+        self.assertNotIn("fresh", str(record.as_snapshot()))
+
+    async def test_run_rejects_unknown_strict_human_review_decision_safely(
+        self,
+    ) -> None:
+        plan = _strict_human_review_plan()
+        flow_store = InMemoryFlowStateStore()
+        first_runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+        with self.assertRaises(TaskValidationError):
+            await first_runner.run(self._context(input_value="safe"))
+
+        resume_runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: plan,
+            flow_state_store=flow_store,
+        )
+        with self.assertRaises(TaskValidationError) as error:
+            await resume_runner.run(
+                self._context(
+                    input_value="fresh",
+                    metadata={
+                        (
+                            flow_target_module.FLOW_RESUME_DECISIONS_METADATA_KEY
+                        ): {
+                            "review": {
+                                "decision": "escalated",
+                                "comment": "private-token",
+                            },
+                        },
+                    },
+                )
+            )
+        record = await flow_store.get_flow_execution("run-1")
+
+        self.assertEqual(
+            error.exception.issues[0].code,
+            "flow.execution.unknown_resume_decision",
+        )
+        self.assertEqual(record.revision, 2)
+        self.assertEqual(set(record.pause_tokens), {"review"})
+        self.assertEqual(
+            {node.node: node.state for node in record.trace.nodes}["review"],
+            FlowNodeState.PAUSED,
+        )
+        self.assertNotIn("private-token", str(error.exception))
+        self.assertNotIn("fresh", str(record.as_snapshot()))
 
     async def test_run_rejects_invalid_strict_human_review_resume_metadata(
         self,
@@ -2330,6 +2497,65 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                 compile_result.plan,
                 old_record,
             )
+        )
+        review_plan = _strict_human_review_plan()
+        record_metadata = getattr(
+            flow_target_module,
+            "_strict_flow_record_metadata",
+        )
+        failed_review_metadata = record_metadata(
+            review_plan,
+            trace=FlowExecutionTrace(
+                nodes=(
+                    FlowNodeTrace(
+                        node="review",
+                        state=FlowNodeState.FAILED,
+                        attempts=1,
+                    ),
+                ),
+            ),
+            resume_decisions={"review": {"decision": "approved"}},
+        )
+        blank_decision_metadata = record_metadata(
+            review_plan,
+            trace=FlowExecutionTrace(
+                nodes=(
+                    FlowNodeTrace(
+                        node="review",
+                        state=FlowNodeState.SUCCEEDED,
+                        attempts=1,
+                    ),
+                ),
+            ),
+            resume_decisions={"review": {"decision": ""}},
+        )
+        missing_node_metadata = record_metadata(
+            review_plan,
+            trace=FlowExecutionTrace(
+                nodes=(
+                    FlowNodeTrace(
+                        node="missing",
+                        state=FlowNodeState.SUCCEEDED,
+                        attempts=1,
+                    ),
+                ),
+            ),
+            resume_decisions={"missing": {"decision": "approved"}},
+        )
+        invalid_decision_node = FlowNodePlan(
+            name="review",
+            type="human_review",
+            kind=FlowNodeKind.HUMAN_REVIEW,
+            config={"allowed_decisions": "approved"},
+        )
+        self.assertNotIn("human_review_audit", failed_review_metadata)
+        self.assertNotIn("human_review_audit", blank_decision_metadata)
+        self.assertNotIn("human_review_audit", missing_node_metadata)
+        self.assertEqual(
+            flow_target_module._strict_human_review_decisions(  # type: ignore[attr-defined]
+                invalid_decision_node
+            ),
+            (),
         )
         object.__setattr__(old_record, "node_outputs", {"": {"value": "x"}})
         self.assertEqual(
@@ -5789,7 +6015,19 @@ def _strict_human_review_plan() -> FlowExecutionPlan:
                 name="review",
                 type="human_review",
                 kind=FlowNodeKind.HUMAN_REVIEW,
-                config={"allowed_decisions": ("approved", "rejected")},
+                config={
+                    "allowed_decisions": ("approved", "rejected"),
+                    "audit_metadata": {"risk": "medium", "queue": "ops"},
+                    "decision_schema": {
+                        "type": "object",
+                        "required": ("decision",),
+                        "properties": {
+                            "decision": {"enum": ("approved", "rejected")},
+                            "comment": {"type": "string"},
+                        },
+                    },
+                    "timeout_seconds": 300,
+                },
                 mappings=(
                     FlowMappingPlan(
                         target="payload",

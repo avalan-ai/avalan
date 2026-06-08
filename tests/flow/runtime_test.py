@@ -1,8 +1,10 @@
 from asyncio import CancelledError, sleep
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
+from types import ModuleType
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
+from unittest.mock import patch
 
 from avalan.entities import ToolManagerSettings
 from avalan.flow import (
@@ -56,7 +58,10 @@ from avalan.flow import (
     tool_flow_node_registry,
 )
 from avalan.flow.runtime import (
+    _exception_class,
     _join_ready,
+    _json_schema_adapter,
+    _json_schema_adapter_from_module,
     _node_trace_attempts,
     _resume_label_matches,
     _retry_delay_seconds,
@@ -1672,7 +1677,16 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         calls: list[str] = []
-        plan = self._human_review_plan()
+        plan = self._human_review_plan(
+            decision_schema={
+                "type": "object",
+                "required": ["decision", "comment"],
+                "properties": {
+                    "decision": {"enum": ["approved", "rejected"]},
+                    "comment": {"type": "string"},
+                },
+            }
+        )
         paused_trace = FlowExecutionTrace.from_plan(plan).with_node_state(
             "review",
             FlowNodeState.PAUSED,
@@ -1714,6 +1728,206 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                 0: FlowEdgeState.TAKEN,
                 1: FlowEdgeState.SUPPRESSED,
             },
+        )
+
+    async def test_execute_flow_plan_routes_human_review_decision_labels(
+        self,
+    ) -> None:
+        decisions = {
+            "approved": "approved_node",
+            "rejected": "rejected_node",
+            "needs-correction": "correction_node",
+            "expired": "expired_node",
+            "escalated": "escalated_node",
+        }
+
+        for decision, target in decisions.items():
+            with self.subTest(decision=decision):
+                calls: list[str] = []
+                plan = self._plan(
+                    entry_node="review",
+                    outputs={"answer": f"{target}.value"},
+                    nodes=(
+                        FlowNodePlan(
+                            name="review",
+                            type="human_review",
+                            kind=FlowNodeKind.HUMAN_REVIEW,
+                            config={
+                                "allowed_decisions": tuple(decisions),
+                            },
+                            output_contracts=(
+                                FlowNodeContract(
+                                    name="result",
+                                    type=FlowOutputType.OBJECT,
+                                ),
+                            ),
+                        ),
+                    )
+                    + tuple(
+                        self._node(node_name)
+                        for node_name in decisions.values()
+                    ),
+                    edges=tuple(
+                        FlowEdgePlan(
+                            index=index,
+                            source="review",
+                            target=node_name,
+                            kind=FlowEdgeKind.RESUME,
+                            label=label,
+                        )
+                        for index, (label, node_name) in enumerate(
+                            decisions.items()
+                        )
+                    ),
+                )
+                paused_trace = FlowExecutionTrace.from_plan(
+                    plan
+                ).with_node_state(
+                    "review",
+                    FlowNodeState.PAUSED,
+                    attempts=1,
+                )
+
+                def runner(
+                    node: FlowNodePlan,
+                    _: Mapping[str, object],
+                ) -> object:
+                    calls.append(node.name)
+                    return node.name
+
+                result = await execute_flow_plan(
+                    plan,
+                    runner,
+                    resume_trace=paused_trace,
+                    resume_decisions={"review": {"decision": decision}},
+                )
+
+                self.assertTrue(result.ok, result.public_diagnostics)
+                self.assertEqual(calls, [target])
+                self.assertEqual(result.outputs, {"answer": target})
+
+    async def test_execute_flow_plan_rejects_invalid_review_payload_schema(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        plan = self._human_review_plan(
+            decision_schema={
+                "type": "object",
+                "required": ["decision", "reviewer"],
+                "additionalProperties": False,
+                "properties": {
+                    "decision": {"enum": ["approved", "rejected"]},
+                    "reviewer": {"type": "string"},
+                },
+            }
+        )
+        paused_trace = FlowExecutionTrace.from_plan(plan).with_node_state(
+            "review",
+            FlowNodeState.PAUSED,
+            attempts=1,
+        )
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            return node.name
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            resume_trace=paused_trace,
+            resume_decisions={
+                "review": {
+                    "decision": "approved",
+                    "comment": "private-token",
+                }
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(calls, [])
+        self.assertIn(
+            "flow.execution.invalid_resume_payload",
+            [diagnostic.code for diagnostic in result.diagnostics],
+        )
+        self.assertNotIn("private-token", str(result.public_diagnostics))
+
+    async def test_execute_flow_plan_rejects_invalid_review_schema(
+        self,
+    ) -> None:
+        cases = (
+            "schema",
+            {"type": object()},
+        )
+
+        for decision_schema in cases:
+            with self.subTest(schema=type(decision_schema).__name__):
+                plan = self._human_review_plan(decision_schema=decision_schema)
+                paused_trace = FlowExecutionTrace.from_plan(
+                    plan
+                ).with_node_state(
+                    "review",
+                    FlowNodeState.PAUSED,
+                    attempts=1,
+                )
+
+                def runner(
+                    node: FlowNodePlan,
+                    _: Mapping[str, object],
+                ) -> object:
+                    return node.name
+
+                result = await execute_flow_plan(
+                    plan,
+                    runner,
+                    resume_trace=paused_trace,
+                    resume_decisions={
+                        "review": {
+                            "decision": "approved",
+                        }
+                    },
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    "flow.execution.invalid_resume_schema",
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+                self.assertNotIn("object at", str(result.public_diagnostics))
+
+    async def test_execute_flow_plan_rejects_missing_schema_support(
+        self,
+    ) -> None:
+        plan = self._human_review_plan(
+            decision_schema={
+                "type": "object",
+                "required": ["decision"],
+                "properties": {
+                    "decision": {"enum": ["approved", "rejected"]},
+                },
+            }
+        )
+        paused_trace = FlowExecutionTrace.from_plan(plan).with_node_state(
+            "review",
+            FlowNodeState.PAUSED,
+            attempts=1,
+        )
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            return node.name
+
+        with patch("avalan.flow.runtime._json_schema_adapter") as adapter:
+            adapter.return_value = None
+            result = await execute_flow_plan(
+                plan,
+                runner,
+                resume_trace=paused_trace,
+                resume_decisions={"review": {"decision": "approved"}},
+            )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            "flow.execution.invalid_resume_schema",
+            [diagnostic.code for diagnostic in result.diagnostics],
         )
 
     async def test_execute_flow_plan_rejects_invalid_human_review_resume(
@@ -2446,6 +2660,23 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             )
         )
 
+    def test_json_schema_adapter_helpers_cover_defensive_paths(self) -> None:
+        empty_module = ModuleType("empty")
+        partial_module = ModuleType("partial")
+        partial_module.SchemaError = ValueError
+
+        with patch(
+            "avalan.flow.runtime.import_module",
+            side_effect=ImportError,
+        ):
+            self.assertIsNone(_json_schema_adapter())
+        self.assertIsNone(_json_schema_adapter_from_module(empty_module))
+        self.assertIsNone(_exception_class(empty_module, "SchemaError"))
+        self.assertIs(
+            _exception_class(partial_module, "SchemaError"),
+            ValueError,
+        )
+
     def _plan(
         self,
         *,
@@ -2644,7 +2875,16 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             edges=edges,
         )
 
-    def _human_review_plan(self) -> FlowExecutionPlan:
+    def _human_review_plan(
+        self,
+        *,
+        decision_schema: object | None = None,
+    ) -> FlowExecutionPlan:
+        config: dict[str, object] = {
+            "allowed_decisions": ("approved", "rejected"),
+        }
+        if decision_schema is not None:
+            config["decision_schema"] = decision_schema
         return self._plan(
             entry_node="review",
             outputs={"answer": "finish.value"},
@@ -2653,9 +2893,7 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
                     name="review",
                     type="human_review",
                     kind=FlowNodeKind.HUMAN_REVIEW,
-                    config={
-                        "allowed_decisions": ("approved", "rejected"),
-                    },
+                    config=config,
                     mappings=(
                         FlowMappingPlan(
                             target="payload",

@@ -144,6 +144,18 @@ _UNAVAILABLE_PRIVACY_MARKERS = frozenset(
 )
 _NO_STRICT_RESUME = object()
 FLOW_RESUME_DECISIONS_METADATA_KEY = "flow_resume_decisions"
+_FLOW_REVIEW_AUDIT_METADATA_KEY = "human_review_audit"
+_INVALID_RESUME_DIAGNOSTIC_CODES = frozenset(
+    {
+        "flow.execution.invalid_resume_decision",
+        "flow.execution.invalid_resume_node",
+        "flow.execution.invalid_resume_payload",
+        "flow.execution.invalid_resume_schema",
+        "flow.execution.invalid_resume_state",
+        "flow.execution.unknown_resume_decision",
+        "flow.execution.unknown_resume_node",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -335,6 +347,12 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     resume_node_outputs=resume_node_outputs,
                     resume_decisions=resume_decisions,
                 )
+                if resume_decisions and _has_invalid_resume_diagnostics(
+                    result.diagnostics
+                ):
+                    raise TaskValidationError(
+                        _flow_diagnostics_to_issues(result.diagnostics)
+                    )
                 await self._record_strict_flow_state(
                     context,
                     plan=plan,
@@ -343,6 +361,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     node_outputs=result.node_outputs,
                     diagnostics=result.diagnostics,
                     pause_tokens=result.pause_tokens,
+                    resume_decisions=resume_decisions,
                 )
                 if result.pause_tokens:
                     raise TaskValidationError(
@@ -459,9 +478,23 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         node_outputs: Mapping[str, Mapping[str, object]],
         diagnostics: tuple[FlowDiagnostic, ...] = (),
         pause_tokens: Mapping[str, str] | None = None,
+        resume_decisions: Mapping[str, Mapping[str, object]] | None = None,
     ) -> None:
         if self._flow_state_store is None:
             return
+        try:
+            current = await self._flow_state_store.get_flow_execution(
+                context.execution.run_id
+            )
+        except TaskStoreNotFoundError:
+            current = None
+        metadata = _strict_flow_record_metadata(
+            plan,
+            record=current,
+            trace=trace,
+            pause_tokens=pause_tokens,
+            resume_decisions=resume_decisions,
+        )
         update = FlowExecutionUpdate(
             trace=trace,
             node_attempts=_node_attempt_records(trace),
@@ -471,13 +504,9 @@ class FlowTaskTargetRunner(TaskTargetRunner):
             pause_tokens=pause_tokens,
             diagnostics=diagnostics,
             artifact_refs=_artifact_refs(outputs),
-            metadata=_strict_flow_record_metadata(plan),
+            metadata=metadata,
         )
-        try:
-            current = await self._flow_state_store.get_flow_execution(
-                context.execution.run_id
-            )
-        except TaskStoreNotFoundError:
+        if current is None:
             await self._flow_state_store.create_flow_execution(
                 context.execution.run_id,
                 trace=trace,
@@ -488,7 +517,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                 pause_tokens=update.pause_tokens,
                 diagnostics=diagnostics,
                 artifact_refs=update.artifact_refs or (),
-                metadata=update.metadata,
+                metadata=metadata,
             )
             return
         await self._flow_state_store.update_flow_execution(
@@ -1898,6 +1927,15 @@ def _strict_resume_decisions(
     return MappingProxyType(decisions)
 
 
+def _has_invalid_resume_diagnostics(
+    diagnostics: tuple[FlowDiagnostic, ...],
+) -> bool:
+    return any(
+        diagnostic.code in _INVALID_RESUME_DIAGNOSTIC_CODES
+        for diagnostic in diagnostics
+    )
+
+
 def _strict_resumed_output(
     plan: FlowExecutionPlan,
     record: FlowExecutionRecord | None,
@@ -1981,9 +2019,121 @@ def _strict_flow_record_mismatches_plan(
 
 def _strict_flow_record_metadata(
     plan: FlowExecutionPlan,
+    *,
+    record: FlowExecutionRecord | None = None,
+    trace: FlowExecutionTrace | None = None,
+    pause_tokens: Mapping[str, str] | None = None,
+    resume_decisions: Mapping[str, Mapping[str, object]] | None = None,
 ) -> Mapping[str, object]:
     assert isinstance(plan, FlowExecutionPlan)
-    return {"strict_flow": _strict_flow_record_signature(plan)}
+    if record is not None:
+        assert isinstance(record, FlowExecutionRecord)
+    if trace is not None:
+        assert isinstance(trace, FlowExecutionTrace)
+    metadata: dict[str, object] = {
+        "strict_flow": _strict_flow_record_signature(plan)
+    }
+    review_audit = _strict_human_review_audit(
+        plan,
+        record=record,
+        trace=trace,
+        pause_tokens=pause_tokens,
+        resume_decisions=resume_decisions,
+    )
+    if review_audit:
+        metadata[_FLOW_REVIEW_AUDIT_METADATA_KEY] = review_audit
+    return metadata
+
+
+def _strict_human_review_audit(
+    plan: FlowExecutionPlan,
+    *,
+    record: FlowExecutionRecord | None,
+    trace: FlowExecutionTrace | None,
+    pause_tokens: Mapping[str, str] | None,
+    resume_decisions: Mapping[str, Mapping[str, object]] | None,
+) -> Mapping[str, object]:
+    audit = _strict_human_review_audit_from_record(record)
+    if trace is not None and pause_tokens:
+        for node_name in pause_tokens:
+            node = plan.node_map.get(node_name)
+            if node is not None and node.kind == FlowNodeKind.HUMAN_REVIEW:
+                entry = dict(audit.get(node_name, {}))
+                entry["state"] = FlowNodeState.PAUSED.value
+                entry["request"] = _strict_human_review_request_metadata(node)
+                audit[node_name] = _flow_snapshot_mapping(entry)
+    if trace is not None and resume_decisions:
+        node_states = {node.node: node.state for node in trace.nodes}
+        for node_name, payload in resume_decisions.items():
+            if node_states.get(node_name) != FlowNodeState.SUCCEEDED:
+                continue
+            decision = payload.get("decision")
+            if not isinstance(decision, str) or not decision.strip():
+                continue
+            node = plan.node_map.get(node_name)
+            if node is None or node.kind != FlowNodeKind.HUMAN_REVIEW:
+                continue
+            entry = dict(audit.get(node_name, {}))
+            entry.setdefault(
+                "request",
+                _strict_human_review_request_metadata(node),
+            )
+            entry["state"] = "resumed"
+            entry["decision"] = decision
+            audit[node_name] = _flow_snapshot_mapping(entry)
+    return MappingProxyType(audit)
+
+
+def _strict_human_review_audit_from_record(
+    record: FlowExecutionRecord | None,
+) -> dict[str, Mapping[str, object]]:
+    if record is None:
+        return {}
+    value = record.metadata.get(_FLOW_REVIEW_AUDIT_METADATA_KEY)
+    if not isinstance(value, Mapping):
+        return {}
+    audit: dict[str, Mapping[str, object]] = {}
+    for node_name, entry in value.items():
+        if (
+            isinstance(node_name, str)
+            and node_name.strip()
+            and isinstance(entry, Mapping)
+        ):
+            audit[node_name] = _flow_snapshot_mapping(entry)
+    return audit
+
+
+def _strict_human_review_request_metadata(
+    node: FlowNodePlan,
+) -> Mapping[str, object]:
+    assert isinstance(node, FlowNodePlan)
+    value: dict[str, object] = {
+        "node": node.name,
+        "allowed_decisions": _strict_human_review_decisions(node),
+    }
+    timeout_seconds = node.config.get("timeout_seconds")
+    if isinstance(timeout_seconds, int | float) and not isinstance(
+        timeout_seconds,
+        bool,
+    ):
+        value["timeout_seconds"] = timeout_seconds
+    audit_metadata = node.config.get("audit_metadata")
+    if isinstance(audit_metadata, Mapping):
+        value["audit_metadata"] = _flow_snapshot_mapping(audit_metadata)
+    return _flow_snapshot_mapping(value)
+
+
+def _strict_human_review_decisions(
+    node: FlowNodePlan,
+) -> tuple[str, ...]:
+    value = node.config.get("allowed_decisions")
+    if not isinstance(value, list | tuple) or isinstance(value, str | bytes):
+        return ()
+    return tuple(
+        decision
+        for decision in value
+        if isinstance(decision, str) and decision.strip()
+    )
 
 
 def _strict_flow_record_signature(
