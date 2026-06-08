@@ -92,6 +92,7 @@ from avalan.task import (
     TaskRetryPolicy,
     TaskRunPolicy,
     TaskRunState,
+    TaskStoreNotFoundError,
     TaskTargetContext,
     TaskTargetRunner,
     TaskValidationContext,
@@ -2481,6 +2482,93 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
         self.assertTrue(output.ready)
         self.assertEqual(output.state, TaskRunState.SUCCEEDED)
 
+    async def test_queued_strict_flow_uses_declared_output_state(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        flow_definition = _strict_declared_output_flow_definition()
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: flow_definition,
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="queued declared",
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        record = await flow_store.get_flow_execution(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(processed.output, "queued declared")
+        self.assertTrue(output.ready)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(record.revision, 2)
+        self.assertEqual(
+            dict(record.selected_outputs),
+            {"answer": "queued declared"},
+        )
+        self.assertEqual(
+            dict(record.node_outputs),
+            {
+                "start": {"value": "queued declared"},
+                "terminal": {"value": "terminal output"},
+            },
+        )
+        self.assertNotIn("terminal output", str(output.output_summary))
+
+    async def test_queued_strict_flow_rejects_invalid_resolver_result_safely(
+        self,
+    ) -> None:
+        clock = Clock()
+        store = InMemoryTaskStore(clock=lambda: clock.now)
+        queue = InMemoryTaskQueue(store, clock=clock)
+        flow_store = InMemoryFlowStateStore()
+        target = FlowTaskTargetRunner(
+            strict_resolver=lambda _: cast(FlowDefinition, "private flow"),
+            flow_state_store=flow_store,
+        )
+        client = _client(store, queue, target=target, clock=clock)
+        worker = _worker(store, queue, target=target, clock=clock)
+        definition = _definition(
+            execution=TaskExecutionTarget.flow("flows/report.toml"),
+            observability=TaskObservabilityPolicy.noop(),
+            retry=TaskRetryPolicy(max_attempts=1),
+        )
+
+        submission = await self._enqueue_raw_input(
+            store,
+            queue,
+            definition,
+            input_value="private prompt",
+        )
+        processed = await worker.process_once()
+        output = await client.output(submission.run.run_id)
+        inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNone(processed.completion)
+        self.assertIsNone(processed.retry)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(inspection.attempts[0].state, TaskAttemptState.FAILED)
+        with self.assertRaises(TaskStoreNotFoundError):
+            await flow_store.get_flow_execution(submission.run.run_id)
+        self.assertNotIn("private flow", str(inspection.as_dict()))
+        self.assertNotIn("private prompt", str(inspection.as_dict()))
+
     async def test_queued_strict_flow_resumes_complete_state(self) -> None:
         clock = Clock()
         store = InMemoryTaskStore(clock=lambda: clock.now)
@@ -3416,6 +3504,42 @@ def _strict_two_step_flow_definition() -> FlowDefinition:
             FlowEdgeDefinition(
                 source="start",
                 target="answer",
+                kind=FlowEdgeKind.SUCCESS,
+            ),
+        ),
+    )
+
+
+def _strict_declared_output_flow_definition() -> FlowDefinition:
+    return FlowDefinition(
+        name="queued-declared-output",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_behavior=FlowEntryBehavior(node="start"),
+        output_behavior=FlowOutputBehavior(outputs={"answer": "start.value"}),
+        nodes=(
+            FlowNodeDefinition(
+                name="start",
+                type="pass-through",
+                mappings=(
+                    FlowInputMapping(target="value", source="input.prompt"),
+                ),
+            ),
+            FlowNodeDefinition(
+                name="terminal",
+                type="constant",
+                config={"value": "terminal output"},
+            ),
+        ),
+        edges=(
+            FlowEdgeDefinition(
+                source="start",
+                target="terminal",
                 kind=FlowEdgeKind.SUCCESS,
             ),
         ),

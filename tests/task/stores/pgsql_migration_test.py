@@ -138,8 +138,11 @@ class PgsqlMigrationSchemaTest(TestCase):
             "ck_task_flow_executions_node_attempts_shape",
             "ck_task_flow_executions_node_outputs_shape",
             "ck_task_flow_executions_selected_outputs_shape",
+            "ck_task_flow_executions_loop_counters_shape",
+            "ck_task_flow_executions_pause_tokens_shape",
             "ck_task_flow_executions_diagnostics_shape",
             "ck_task_flow_executions_artifact_refs_shape",
+            "ck_task_flow_executions_metadata_shape",
             "ck_task_artifacts_ref_shape",
             "ck_task_artifacts_retention_shape",
             "ck_task_idempotency_keys_owner_scope_shape",
@@ -150,6 +153,28 @@ class PgsqlMigrationSchemaTest(TestCase):
             self.assertIn(f'"{constraint_name}"', schema)
 
         self.assertNotIn("raw_payload", schema)
+
+    def test_schema_constrains_flow_execution_integrity(self) -> None:
+        schema = "\n".join(task_pgsql_schema_statements())
+
+        for constraint_name in (
+            "ck_task_flow_executions_revision_positive",
+            "ck_task_flow_executions_updated_at_not_before_created_at",
+        ):
+            self.assertIn(f'"{constraint_name}"', schema)
+        for column_name in (
+            "node_attempts",
+            "node_outputs",
+            "selected_outputs",
+            "loop_counters",
+            "pause_tokens",
+            "diagnostics",
+            "artifact_refs",
+            "metadata",
+        ):
+            self.assertIn(f'"{column_name}" JSONB NOT NULL', schema)
+        self.assertIn('PRIMARY KEY ("task_run_id")', schema)
+        self.assertIn('REFERENCES "task_runs" ("run_id")', schema)
 
     def test_schema_enforces_attempts_belong_to_event_runs(self) -> None:
         schema = "\n".join(task_pgsql_schema_statements())
