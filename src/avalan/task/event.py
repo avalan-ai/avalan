@@ -217,7 +217,11 @@ def task_event_category(event_type: str) -> TaskEventCategory:
         return TaskEventCategory.MEMORY
     if event_type in _USAGE_EVENT_TYPES:
         return TaskEventCategory.USAGE
-    if event_type in _ENGINE_EVENT_TYPES or event_type.startswith("engine_"):
+    if (
+        event_type in _ENGINE_EVENT_TYPES
+        or event_type.startswith("engine_")
+        or event_type.startswith("flow_")
+    ):
         return TaskEventCategory.ENGINE
     return TaskEventCategory.UNKNOWN
 

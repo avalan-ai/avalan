@@ -1546,8 +1546,21 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             [
                 cast(Mapping[str, object], event.payload)["status"]
                 for event in events
+                if event.type
+                in (
+                    EventType.FLOW_MANAGER_CALL_BEFORE,
+                    EventType.FLOW_MANAGER_CALL_AFTER,
+                )
             ],
             ["started", "succeeded", "started", "succeeded"],
+        )
+        self.assertEqual(
+            [
+                event.type
+                for event in events
+                if event.type == EventType.FLOW_NODE_COMPLETED
+            ],
+            [EventType.FLOW_NODE_COMPLETED],
         )
 
     async def test_run_executes_incomplete_strict_state(
@@ -2653,6 +2666,11 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             [
                 cast(Mapping[str, object], event.payload)["status"]
                 for event in events
+                if event.type
+                in (
+                    EventType.FLOW_MANAGER_CALL_BEFORE,
+                    EventType.FLOW_MANAGER_CALL_AFTER,
+                )
             ],
             ["started", "failed"],
         )
@@ -3081,6 +3099,11 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             [
                 cast(Mapping[str, object], event.payload)["status"]
                 for event in events
+                if event.type
+                in (
+                    EventType.FLOW_MANAGER_CALL_BEFORE,
+                    EventType.FLOW_MANAGER_CALL_AFTER,
+                )
             ],
             ["started", "failed"],
         )
@@ -3111,6 +3134,11 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             [
                 cast(Mapping[str, object], event.payload)["status"]
                 for event in events
+                if event.type
+                in (
+                    EventType.FLOW_MANAGER_CALL_BEFORE,
+                    EventType.FLOW_MANAGER_CALL_AFTER,
+                )
             ],
             ["started", "failed"],
         )
@@ -5053,6 +5081,12 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
             [event.event_type for event in events],
             [
                 "flow_manager_call_before",
+                "flow_validation",
+                "flow_started",
+                "flow_node_started",
+                "flow_node_completed",
+                "flow_output_selected",
+                "flow_completed",
                 "flow_manager_call_after",
             ],
         )

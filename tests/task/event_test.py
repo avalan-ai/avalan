@@ -5,6 +5,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 
 from avalan.event import Event, EventType
 from avalan.task import (
+    PrivacyAction,
     PrivacySanitizer,
     RawTaskEventListener,
     SanitizedTaskEvent,
@@ -16,12 +17,14 @@ from avalan.task import (
     TaskInputContract,
     TaskMetadata,
     TaskOutputContract,
+    TaskPrivacyPolicy,
     TaskStoreNotFoundError,
     UsageProviderFamily,
     UsageSource,
     UsageTotals,
     freeze_task_event_value,
     sanitize_raw_task_event,
+    sanitize_raw_task_event_closed,
     task_event_category,
 )
 from avalan.task.stores import InMemoryTaskStore
@@ -136,6 +139,58 @@ class SanitizedTaskEventTest(TestCase):
         self.assertEqual(payload["duration_ms"], 500.0)
         self.assertNotIn("flow", payload)
         self.assertNotIn("private output", str(payload))
+
+    def test_flow_runtime_events_keep_safe_metadata(self) -> None:
+        draft = sanitize_raw_task_event(
+            Event(
+                type=EventType.FLOW_NODE_FAILED,
+                payload={
+                    "flow_name": "onboarding",
+                    "node": "classify",
+                    "status": "failed",
+                    "attempts": 2,
+                    "route_kind": "error",
+                    "diagnostic_codes": ("flow.execution.node_failed",),
+                    "prompt": "private prompt",
+                    "result": "private result",
+                },
+            ),
+            PrivacySanitizer(),
+        )
+
+        payload = cast(dict[str, object], draft.payload)
+        self.assertEqual(draft.category, TaskEventCategory.ENGINE)
+        self.assertEqual(payload["event_type"], "flow_node_failed")
+        self.assertEqual(payload["flow_name"], "onboarding")
+        self.assertEqual(payload["node"], "classify")
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["attempts"], 2)
+        self.assertEqual(payload["route_kind"], "error")
+        self.assertEqual(
+            payload["diagnostic_codes"],
+            ("flow.execution.node_failed",),
+        )
+        self.assertNotIn("prompt", payload)
+        self.assertNotIn("result", payload)
+        self.assertNotIn("private", str(payload))
+
+    def test_closed_sanitizer_reduces_event_sanitization_errors(
+        self,
+    ) -> None:
+        draft = sanitize_raw_task_event_closed(
+            Event(
+                type=EventType.FLOW_STARTED,
+                payload={"status": "started"},
+            ),
+            PrivacySanitizer(
+                TaskPrivacyPolicy(events=PrivacyAction.HASH),
+            ),
+        )
+
+        payload = cast(dict[str, object], draft.payload)
+        self.assertEqual(draft.event_type, "event_sanitization_failed")
+        self.assertEqual(draft.category, TaskEventCategory.UNKNOWN)
+        self.assertEqual(payload["privacy"], "<redacted>")
 
     def test_unknown_events_reduce_to_safe_metadata_only(self) -> None:
         draft = sanitize_raw_task_event(
