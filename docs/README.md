@@ -24,9 +24,11 @@ tailored specifically to each use case.
 - [Task file delivery](task_file_delivery.md) - Understand direct and queued
   file descriptors, provider references, conversion, local backends, and the
   file-delivery capability matrix.
+- [Flow authoring](FLOW_AUTHORING.md) - Author strict flow definitions, bind
+  Mermaid Flow Views, run task-backed flows, and handle human review safely.
 - [Native flow compatibility](FLOW_COMPATIBILITY.md) - Inventory current flow
-  runtime and CLI support, the minimal TOML subset, and unsupported flow
-  behaviors.
+  runtime boundaries, strict CLI support, and remaining native compatibility
+  behavior.
 - [Flow fixture inventory](FLOW_FIXTURE_INVENTORY.md) - Track fixture
   categories, acceptance ownership, and permanent security buckets for strict
   flow behavior.

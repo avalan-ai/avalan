@@ -12,6 +12,7 @@ from avalan.model import (
 DOC_ROOT = Path(__file__).parents[2] / "docs"
 CLI_DOC = DOC_ROOT / "CLI.md"
 FILE_DELIVERY_DOC = DOC_ROOT / "task_file_delivery.md"
+FLOW_AUTHORING_DOC = DOC_ROOT / "FLOW_AUTHORING.md"
 FLOW_COMPATIBILITY_DOC = DOC_ROOT / "FLOW_COMPATIBILITY.md"
 OPERATIONS_DOC = DOC_ROOT / "TASK_OPERATIONS.md"
 
@@ -34,6 +35,23 @@ TASK_RUN_FLAGS = (
     "--json",
     "--output",
     "--pdf",
+)
+FLOW_RUN_FLAGS = (
+    "--input",
+    "--input-json",
+    "--file",
+    "--file-mime",
+    "--pdf",
+    "--json",
+    "--output",
+    "--tool",
+    "--tools",
+)
+FLOW_DURABLE_FLAGS = (
+    "--store-dsn",
+    "--store-schema",
+    "--after-sequence",
+    "--decision-json",
 )
 DELIVERY_MODE_PHRASES = {
     FileDeliveryMode.PROVIDER_FILE_ID: "provider file id",
@@ -86,6 +104,56 @@ class TaskDocsTest(TestCase):
             with self.subTest(flag=flag):
                 self.assertIn(flag, docs)
                 self.assertIn(flag, run_help)
+
+    def test_cli_docs_cover_flow_subcommands_and_flags(self) -> None:
+        docs = CLI_DOC.read_text(encoding="utf-8")
+        parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
+        flow_parser = _find_parser(parser, " flow")
+        mermaid_parser = _find_parser(parser, " flow mermaid")
+
+        subcommands = _subcommands(flow_parser)
+        self.assertEqual(
+            subcommands,
+            {
+                "cancel",
+                "inspect",
+                "mermaid",
+                "resume",
+                "run",
+                "trace",
+                "validate",
+            },
+        )
+        for command in sorted(subcommands):
+            with self.subTest(command=command):
+                self.assertIn(f"avalan flow {command}", docs)
+
+        self.assertEqual(
+            _subcommands(mermaid_parser),
+            {"compare", "parse", "render", "skeleton"},
+        )
+        for command in sorted(_subcommands(mermaid_parser)):
+            with self.subTest(command=command):
+                self.assertIn(f"mermaid {command}", docs)
+
+        run_help = _find_parser(parser, " flow run").format_help()
+        for flag in FLOW_RUN_FLAGS:
+            with self.subTest(flag=flag):
+                self.assertIn(flag, docs)
+                self.assertIn(flag, run_help)
+
+        for command in ("inspect", "trace"):
+            help_text = _find_parser(parser, f" flow {command}").format_help()
+            for flag in FLOW_DURABLE_FLAGS[:3]:
+                with self.subTest(command=command, flag=flag):
+                    self.assertIn(flag, docs)
+                    self.assertIn(flag, help_text)
+
+        resume_help = _find_parser(parser, " flow resume").format_help()
+        for flag in ("--store-dsn", "--store-schema", "--decision-json"):
+            with self.subTest(command="resume", flag=flag):
+                self.assertIn(flag, docs)
+                self.assertIn(flag, resume_help)
 
     def test_file_delivery_matrix_matches_profile_vocabulary(self) -> None:
         docs = FILE_DELIVERY_DOC.read_text(encoding="utf-8")
@@ -146,29 +214,26 @@ class TaskDocsTest(TestCase):
         index = (DOC_ROOT / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("[Native flow compatibility]", index)
-        self.assertIn("The required hosted extraction path remains", docs)
+        self.assertIn("[Flow authoring]", index)
+        self.assertIn("## Strict Runtime Surface", docs)
+        self.assertIn("Strict execution is async-only", docs)
         self.assertIn("`avalan task run`", docs)
-        self.assertIn("registered built-in nodes", docs)
-        self.assertIn("field-addressed `--input-name`", docs)
-        self.assertIn(
-            "File and file-array task inputs are passed through", docs
-        )
-        self.assertIn("Agent nodes reuse the task agent runner", docs)
+        self.assertIn("`avalan flow validate FLOW.toml`", docs)
+        self.assertIn("`avalan flow mermaid parse", docs)
+        self.assertIn("Tool nodes are available only", docs)
+        self.assertIn("Task-backed flow state is", docs)
+        self.assertIn("review requires durable pause support", docs)
         self.assertIn("Dynamic Python callable imports.", docs)
-        self.assertIn("support is available for compatible definitions", docs)
-        self.assertIn("## Target Boundary", docs)
+        self.assertIn("## Mermaid Boundary", docs)
         self.assertIn(
-            "`Flow.parse_mermaid(...)` is a legacy topology importer only",
+            "`Flow.parse_mermaid(...)` remains a legacy topology importer",
             docs,
         )
         self.assertIn(
-            "declarative routing and must not import callables",
+            "must not import callables",
             docs,
         )
-        self.assertIn(
-            "explicitly named and documented as compatibility",
-            docs,
-        )
+        self.assertIn("Tool refs that are disabled", docs)
 
     def test_flow_compatibility_matrix_covers_poc_fields(self) -> None:
         docs = FLOW_COMPATIBILITY_DOC.read_text(encoding="utf-8")
@@ -176,16 +241,29 @@ class TaskDocsTest(TestCase):
         expected_fields = {
             "`flow.entrypoint`",
             "`flow.output_node`",
+            "`flow.input` / `[input]`",
             "`flow.input.type`",
             "`flow.input.delivery`",
             "`flow.input.memory`",
+            "`flow.output` / `[output]`",
             "`flow.output.schema_ref`",
+            "`[[inputs]]`",
+            "`[[outputs]]`",
+            "`[entry]`",
+            "`[output_behavior]`",
             "`nodes.<name>.type`",
             "`nodes.<name>.ref`",
             "`nodes.<name>.input`",
             "`nodes.<name>.output`",
+            "`nodes.<name>.mapping`",
+            "`nodes.<name>.join_policy`",
+            "`nodes.<name>.retry_policy`",
+            "`nodes.<name>.timeout_policy`",
+            "`nodes.<name>.loop_policy`",
             "`nodes.<name>.user_prompt_ref`",
             "`nodes.<name>.response_format_ref`",
+            "`[[edges]]`",
+            "`edges.condition`",
             "`cli.runner`",
             "`cli.example_pdf`",
         }
@@ -202,6 +280,33 @@ class TaskDocsTest(TestCase):
         for field in rejected_fields:
             with self.subTest(field=field):
                 self.assertIn("Rejected", rows[field])
+
+    def test_flow_authoring_doc_covers_strict_flow_surfaces(self) -> None:
+        docs = FLOW_AUTHORING_DOC.read_text(encoding="utf-8")
+
+        required_phrases = (
+            "## Minimal Strict Definition",
+            "avalan flow validate profile.flow.toml",
+            "Tool nodes require explicit enablement",
+            "Supported mapping kinds",
+            "When more than one outgoing route can match",
+            "Unbounded graph cycles",
+            "avalan flow mermaid compare",
+            "Skeletons need explicit node contracts",
+            "Use task-backed flow execution",
+            "Human review is a durable pause node",
+            "--decision-json",
+            "Public diagnostics and trace export do not include raw prompts",
+            "That surface is compatibility inventory.",
+        )
+
+        for phrase in required_phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, docs)
+
+        self.assertNotIn("specs/FLOWS", docs)
+        self.assertNotIn("Phase ", docs)
+        self.assertNotIn("garnishments", docs)
 
 
 def _find_parser(parser: ArgumentParser, prog_suffix: str) -> ArgumentParser:
