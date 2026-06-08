@@ -17,6 +17,7 @@ class TestParseServeProtocols:
             [
                 " openai: responses,Chat ",
                 "MCP",
+                "flow",
                 "a2a",
             ]
         )
@@ -24,6 +25,7 @@ class TestParseServeProtocols:
         assert protocols is not None
         assert protocols["openai"] == {"responses", "completions"}
         assert protocols["mcp"] == set()
+        assert protocols["flow"] == set()
         assert protocols["a2a"] == set()
 
     def test_openai_without_endpoints_defaults_to_all(self) -> None:

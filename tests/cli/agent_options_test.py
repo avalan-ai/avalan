@@ -210,8 +210,12 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
                 {"openai": {"completions"}, "mcp": set()},
             ),
             (
-                ["openai:responses,completion", "a2a"],
-                {"openai": {"completions", "responses"}, "a2a": set()},
+                ["openai:responses,completion", "a2a", "flow"],
+                {
+                    "openai": {"completions", "responses"},
+                    "a2a": set(),
+                    "flow": set(),
+                },
             ),
         ]
 
@@ -250,7 +254,10 @@ class AgentServeForwardOptionsTestCase(IsolatedAsyncioTestCase):
                 ["openai:responses", "openai:completion", "mcp"],
                 {"openai": {"completions", "responses"}, "mcp": set()},
             ),
-            (["mcp", "a2a"], {"mcp": set(), "a2a": set()}),
+            (
+                ["mcp", "a2a", "flow"],
+                {"mcp": set(), "a2a": set(), "flow": set()},
+            ),
         ]
 
         base_config = "[agent]\nname='a'\n[engine]\nuri='m'\n"

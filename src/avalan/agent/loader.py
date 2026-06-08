@@ -60,7 +60,7 @@ class OrchestratorLoader:
     DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE = 125
     DEFAULT_SENTENCE_MODEL_WINDOW_SIZE = 250
 
-    _ALLOWED_PROTOCOLS = frozenset({"a2a", "mcp", "openai"})
+    _ALLOWED_PROTOCOLS = frozenset({"a2a", "flow", "mcp", "openai"})
     _OPENAI_COMPLETION_ALIASES = frozenset(
         {
             "chat",

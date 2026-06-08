@@ -138,7 +138,7 @@ def test_register_agent_endpoints_normalizes_protocols() -> None:
             mcp_prefix="/mcp",
             openai_prefix="/openai",
             mcp_name="run",
-            protocols={"openai": {"RESPONSES"}, "mcp": set()},
+            protocols={"openai": {"RESPONSES"}, "mcp": set(), "flow": set()},
         )
 
         called_module_names = [
@@ -146,6 +146,7 @@ def test_register_agent_endpoints_normalizes_protocols() -> None:
         ]
         assert "avalan.server.routers.responses" in called_module_names
         assert "avalan.server.routers.engine" in called_module_names
+        assert "avalan.server.routers.flow" in called_module_names
         assert "avalan.server.routers.chat" not in called_module_names
         create_router.assert_called_once_with()
         app.include_router.assert_any_call(
@@ -153,4 +154,7 @@ def test_register_agent_endpoints_normalizes_protocols() -> None:
         )
         app.include_router.assert_any_call(
             modules["avalan.server.routers.responses"].router, prefix="/openai"
+        )
+        app.include_router.assert_any_call(
+            modules["avalan.server.routers.flow"].router, prefix="/flows"
         )

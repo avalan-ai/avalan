@@ -55,9 +55,15 @@ class TestNormalizeProtocols:
             _normalize_protocols({"mcp": {"anything"}})
 
     def test_non_openai_protocol_defaults_to_empty_selection(self) -> None:
-        result = _normalize_protocols({"MCP": set(), "a2a": set()})
+        result = _normalize_protocols(
+            {
+                "MCP": set(),
+                "a2a": set(),
+                "flow": set(),
+            }
+        )
 
-        assert result == {"mcp": set(), "a2a": set()}
+        assert result == {"mcp": set(), "a2a": set(), "flow": set()}
 
     def test_unknown_protocol_rejected(self) -> None:
         with pytest.raises(AssertionError):

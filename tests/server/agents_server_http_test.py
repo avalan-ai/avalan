@@ -28,6 +28,8 @@ class AgentsServerHttpTestCase(TestCase):
         engine_mod.router = MagicMock(name="engine_router")
         responses_mod = ModuleType("avalan.server.routers.responses")
         responses_mod.router = MagicMock(name="responses_router")
+        flow_mod = ModuleType("avalan.server.routers.flow")
+        flow_mod.router = MagicMock(name="flow_router")
 
         modules = {
             "fastapi": fastapi_mod,
@@ -35,6 +37,7 @@ class AgentsServerHttpTestCase(TestCase):
             "avalan.server.routers.chat": chat_mod,
             "avalan.server.routers.engine": engine_mod,
             "avalan.server.routers.responses": responses_mod,
+            "avalan.server.routers.flow": flow_mod,
         }
 
         self.FastAPI = FastAPI
@@ -43,6 +46,7 @@ class AgentsServerHttpTestCase(TestCase):
         self.chat_router = chat_mod.router
         self.engine_router = engine_mod.router
         self.responses_router = responses_mod.router
+        self.flow_router = flow_mod.router
 
         return modules
 
@@ -228,13 +232,14 @@ class AgentsServerHttpTestCase(TestCase):
                     tool_settings=None,
                     mcp_prefix="/m",
                     openai_prefix="/o",
-                    protocols={"openai": {"responses"}},
+                    protocols={"openai": {"responses"}, "flow": set()},
                     mcp_name="run",
                     mcp_description=None,
                     logger=logger,
                 )
 
         app.include_router.assert_any_call(self.responses_router, prefix="/o")
+        app.include_router.assert_any_call(self.flow_router, prefix="/flows")
         app.include_router.assert_any_call(self.engine_router)
         for args, _ in app.include_router.call_args_list:
             self.assertNotEqual(args[0], self.chat_router)
