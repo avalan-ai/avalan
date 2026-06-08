@@ -38,6 +38,7 @@ from inspect import isawaitable
 from time import monotonic
 from types import MappingProxyType
 from typing import TypeAlias
+from uuid import uuid4
 
 _MISSING = object()
 
@@ -58,6 +59,7 @@ class _NodeRunOutcome:
     failure_category: str | None = None
     exhausted_route: str | None = None
     exhausted_route_kind: FlowEdgeKind | None = None
+    pause_token: str | None = None
     output: object = None
 
 
@@ -246,6 +248,7 @@ class FlowPlanExecutionResult:
     node_outputs: Mapping[str, Mapping[str, object]] = field(
         default_factory=_empty_node_outputs
     )
+    pause_tokens: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "outputs", _freeze_mapping(self.outputs))
@@ -262,6 +265,16 @@ class FlowPlanExecutionResult:
             self,
             "node_outputs",
             MappingProxyType(frozen_outputs),
+        )
+        frozen_tokens: dict[str, str] = {}
+        for node_name, token in self.pause_tokens.items():
+            assert isinstance(node_name, str) and node_name.strip()
+            assert isinstance(token, str) and token.strip()
+            frozen_tokens[node_name] = token
+        object.__setattr__(
+            self,
+            "pause_tokens",
+            MappingProxyType(frozen_tokens),
         )
 
     @property
@@ -284,6 +297,7 @@ async def execute_flow_plan(
     concurrency_limit: int = 1,
     resume_trace: FlowExecutionTrace | None = None,
     resume_node_outputs: Mapping[str, Mapping[str, object]] | None = None,
+    resume_decisions: Mapping[str, Mapping[str, object]] | None = None,
 ) -> FlowPlanExecutionResult:
     assert isinstance(plan, FlowExecutionPlan)
     assert callable(runner)
@@ -293,6 +307,8 @@ async def execute_flow_plan(
         assert isinstance(resume_trace, FlowExecutionTrace)
     if resume_node_outputs is not None:
         assert isinstance(resume_node_outputs, Mapping)
+    if resume_decisions is not None:
+        assert isinstance(resume_decisions, Mapping)
     assert isinstance(concurrency_limit, int) and not isinstance(
         concurrency_limit,
         bool,
@@ -303,6 +319,11 @@ async def execute_flow_plan(
         node: _freeze_mapping(outputs)
         for node, outputs in (resume_node_outputs or {}).items()
     }
+    resume_payloads: dict[str, Mapping[str, object]] = {
+        node: _freeze_mapping(payload)
+        for node, payload in (resume_decisions or {}).items()
+    }
+    pause_tokens: dict[str, str] = {}
     diagnostics: list[FlowDiagnostic] = []
     trace = resume_trace or FlowExecutionTrace.from_plan(plan)
     node_map = plan.node_map
@@ -311,10 +332,12 @@ async def execute_flow_plan(
             plan,
             input_values,
             node_outputs,
+            resume_payloads,
             trace,
         )
     )
     diagnostics.extend(resume_diagnostics)
+    paused = False
 
     while ready:
         await _check_cancelled(cancellation_checker)
@@ -345,6 +368,13 @@ async def execute_flow_plan(
                         duration_ms=_elapsed_ms(started_at),
                     )
                 )
+                continue
+            pause_outcome = _human_review_pause_outcome(
+                node,
+                started_at,
+            )
+            if pause_outcome is not None:
+                batch_outcomes.append(pause_outcome)
                 continue
             trace = trace.with_node_state(
                 node.name,
@@ -381,8 +411,13 @@ async def execute_flow_plan(
                     outcome.node,
                     outcome.output,
                 )
+            if outcome.pause_token is not None:
+                pause_tokens[outcome.node.name] = outcome.pause_token
+                paused = True
             processed.add(outcome.node.name)
         for outcome in batch_outcomes:
+            if outcome.state == FlowNodeState.PAUSED:
+                continue
             route_context = _route_context(
                 input_values,
                 batch_context.node_outputs,
@@ -408,7 +443,17 @@ async def execute_flow_plan(
                     trace=trace,
                 )
                 diagnostics.extend(join_diagnostics)
+        if paused:
+            break
 
+    if paused:
+        return FlowPlanExecutionResult(
+            outputs={},
+            trace=trace,
+            diagnostics=tuple(diagnostics),
+            node_outputs=node_outputs,
+            pause_tokens=pause_tokens,
+        )
     trace = _mark_unscheduled_nodes_skipped(trace)
     outputs, output_diagnostics = _select_flow_outputs(
         plan,
@@ -426,7 +471,8 @@ async def execute_flow_plan(
 def _initial_runtime_queue(
     plan: FlowExecutionPlan,
     inputs: Mapping[str, object],
-    node_outputs: Mapping[str, Mapping[str, object]],
+    node_outputs: dict[str, Mapping[str, object]],
+    resume_decisions: Mapping[str, Mapping[str, object]],
     trace: FlowExecutionTrace,
 ) -> tuple[
     deque[str],
@@ -436,25 +482,57 @@ def _initial_runtime_queue(
     tuple[FlowDiagnostic, ...],
 ]:
     node_states = {node.node: node.state for node in trace.nodes}
+    diagnostics: list[FlowDiagnostic] = []
+    resume_routes: dict[str, FlowEdgeKind] = {}
+    for node_name, payload in resume_decisions.items():
+        node = plan.node_map.get(node_name)
+        if node is None:
+            diagnostics.append(
+                _execution_diagnostic(
+                    code="flow.execution.unknown_resume_node",
+                    path="resume_decisions",
+                    message="Flow resume decision references an unknown node.",
+                    hint="Resume a paused human review node from this plan.",
+                )
+            )
+            continue
+        diagnostic = _validate_resume_decision(node, payload, node_states)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+            trace = trace.with_node_state(
+                node.name,
+                FlowNodeState.FAILED,
+                diagnostics=(diagnostic,),
+            )
+            continue
+        node_outputs[node.name] = _node_output_mapping(node, payload)
+        trace = trace.with_node_state(
+            node.name,
+            FlowNodeState.SUCCEEDED,
+            attempts=max(1, _node_trace_attempts(trace, node.name)),
+        )
+        resume_routes[node.name] = FlowEdgeKind.RESUME
     processed = {
         node.name
         for node in plan.nodes
         if node_states.get(node.name) == FlowNodeState.SUCCEEDED
         and node.name in node_outputs
     }
+    processed.update(resume_routes)
     if not processed:
+        if resume_decisions:
+            return deque(), set(), set(), trace, tuple(diagnostics)
         ready: deque[str] = deque((plan.entry_node,))
-        return ready, {plan.entry_node}, set(), trace, ()
+        return ready, {plan.entry_node}, set(), trace, tuple(diagnostics)
 
     ready = deque[str]()
     queued: set[str] = set()
-    diagnostics: list[FlowDiagnostic] = []
     context = FlowRuntimeContext(inputs=inputs, node_outputs=node_outputs)
     for source in sorted(processed, key=_plan_node_order(plan)):
         routed, trace, route_diagnostics = _route_from_node(
             plan,
             source,
-            FlowEdgeKind.SUCCESS,
+            resume_routes.get(source, FlowEdgeKind.SUCCESS),
             context,
             trace,
         )
@@ -470,6 +548,71 @@ def _initial_runtime_queue(
             )
             diagnostics.extend(join_diagnostics)
     return ready, queued, processed, trace, tuple(diagnostics)
+
+
+def _node_trace_attempts(trace: FlowExecutionTrace, node_name: str) -> int:
+    for node in trace.nodes:
+        if node.node == node_name:
+            return node.attempts
+    return 0
+
+
+def _validate_resume_decision(
+    node: FlowNodePlan,
+    payload: Mapping[str, object],
+    node_states: Mapping[str, FlowNodeState],
+) -> FlowDiagnostic | None:
+    if node.kind != FlowNodeKind.HUMAN_REVIEW:
+        return _execution_diagnostic(
+            code="flow.execution.invalid_resume_node",
+            path=f"nodes.{node.name}",
+            message="Flow resume decision targets a non-review node.",
+            hint="Resume only a paused human review node.",
+        )
+    if node_states.get(node.name) != FlowNodeState.PAUSED:
+        return _execution_diagnostic(
+            code="flow.execution.invalid_resume_state",
+            path=f"nodes.{node.name}",
+            message="Flow resume decision targets a node that is not paused.",
+            hint="Resume a currently paused human review node.",
+        )
+    decision = payload.get("decision")
+    if not isinstance(decision, str) or not decision.strip():
+        return _execution_diagnostic(
+            code="flow.execution.invalid_resume_decision",
+            path=f"nodes.{node.name}.decision",
+            message="Flow resume decision is invalid.",
+            hint="Provide a safe decision string from the review schema.",
+        )
+    allowed_decisions = node.config.get("allowed_decisions")
+    if (
+        isinstance(allowed_decisions, tuple | list)
+        and decision not in allowed_decisions
+    ):
+        return _execution_diagnostic(
+            code="flow.execution.unknown_resume_decision",
+            path=f"nodes.{node.name}.decision",
+            message="Flow resume decision is not allowed.",
+            hint="Use one of the configured human review decisions.",
+        )
+    return None
+
+
+def _human_review_pause_outcome(
+    node: FlowNodePlan,
+    started_at: float,
+) -> _NodeRunOutcome | None:
+    if node.kind != FlowNodeKind.HUMAN_REVIEW:
+        return None
+    return _NodeRunOutcome(
+        node=node,
+        state=FlowNodeState.PAUSED,
+        route_kind=FlowEdgeKind.PAUSE,
+        attempts=1,
+        diagnostics=(),
+        duration_ms=_elapsed_ms(started_at),
+        pause_token=uuid4().hex,
+    )
 
 
 def _plan_node_order(plan: FlowExecutionPlan) -> Callable[[str], int]:
@@ -1154,9 +1297,30 @@ def _edge_condition_matches(
     edge: FlowEdgePlan,
     context: FlowRuntimeContext,
 ) -> bool:
+    if (
+        edge.kind == FlowEdgeKind.RESUME
+        and edge.label is not None
+        and not _resume_label_matches(edge, context)
+    ):
+        return False
     if edge.condition is None:
         return True
     return evaluate_flow_condition_plan(edge.condition, context)
+
+
+def _resume_label_matches(
+    edge: FlowEdgePlan,
+    context: FlowRuntimeContext,
+) -> bool:
+    source_output = context.node_outputs.get(edge.source)
+    if not isinstance(source_output, Mapping):
+        return False
+    result = source_output.get("result")
+    if isinstance(result, Mapping):
+        decision = result.get("decision")
+    else:
+        decision = source_output.get("decision")
+    return decision == edge.label
 
 
 def _mark_unscheduled_nodes_skipped(
