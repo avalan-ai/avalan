@@ -56,6 +56,22 @@ from .diagnostics import (
     flow_diagnostic_code_prefixes as flow_diagnostic_code_prefixes,
 )
 from .flow import Flow as Flow
+from .inspection import FlowArtifactInspection as FlowArtifactInspection
+from .inspection import FlowEdgeInspection as FlowEdgeInspection
+from .inspection import FlowInspection as FlowInspection
+from .inspection import (
+    FlowInspectionRunState as FlowInspectionRunState,
+)
+from .inspection import FlowLoopInspection as FlowLoopInspection
+from .inspection import FlowNodeInspection as FlowNodeInspection
+from .inspection import FlowRetryInspection as FlowRetryInspection
+from .inspection import FlowReviewInspection as FlowReviewInspection
+from .inspection import FlowReviewState as FlowReviewState
+from .inspection import (
+    export_sanitized_flow_trace as export_sanitized_flow_trace,
+)
+from .inspection import inspect_flow_record as inspect_flow_record
+from .inspection import inspect_flow_result as inspect_flow_result
 from .loader import FlowDefinitionLoader as FlowDefinitionLoader
 from .loader import FlowLoadError as FlowLoadError
 from .loader import FlowLoadIssue as FlowLoadIssue
