@@ -311,8 +311,9 @@ class MCPUtilityTestCase(TestCase):
         error_item = mcp_router._tool_call_event_item(error_event)
         self.assertEqual(
             error_item["error"],
-            {"type": "Exception", "message": "boom"},
+            {"type": "Exception", "message": "Tool call failed."},
         )
+        self.assertNotIn("boom", str(error_item))
 
         result_event = Event(
             type=EventType.TOOL_RESULT,

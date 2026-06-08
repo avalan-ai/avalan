@@ -23,6 +23,19 @@ type = "map"
 [output_behavior.outputs]
 extraction = "extract.result"
 
+[privacy]
+input = "drop"
+prompt = "drop"
+output = "drop"
+files = "drop"
+file_bytes = "drop"
+token_text = "drop"
+tool_arguments = "drop"
+tool_results = "drop"
+events = "drop"
+errors = "drop"
+raw_retention_days = 0
+
 [[edges]]
 source = "render_pages"
 target = "extract"

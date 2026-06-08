@@ -25,9 +25,11 @@ from avalan.flow import (
     FlowLoadError,
     FlowLoadIssueCategory,
     FlowLoopPolicy,
+    FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeMetadata,
     FlowNodeRegistry,
+    FlowOutputType,
     FlowRetryBackoffStrategy,
     FlowRouteMatchPolicy,
     FlowTimeoutPolicy,
@@ -1182,6 +1184,54 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertIn("flow.unsupported_node_type", codes)
         self.assertNotIn("private", str(result.issues))
 
+    def test_rejects_private_schema_refs(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "invalid"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+            schema_ref = "../private/input.json"
+
+            [[inputs]]
+            name = "details"
+            type = "object"
+            schema_ref = "schema.json#/secret"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+            schema_ref = "https://example.invalid/secret.json"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "start.value"
+
+            [nodes.start]
+            type = "echo"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in result.issues],
+            [
+                ("flow.path_escape", "flow.inputs.payload.schema_ref"),
+                ("flow.invalid_schema_ref", "flow.inputs.details.schema_ref"),
+                ("flow.path_escape", "flow.outputs.answer.schema_ref"),
+            ],
+        )
+        self.assertNotIn("private", str(result.public_diagnostics))
+        self.assertNotIn("secret", str(result.public_diagnostics))
+        self.assertNotIn("example.invalid", str(result.public_diagnostics))
+
     def test_rejects_invalid_input_and_output_shapes(self) -> None:
         cases = (
             (
@@ -1656,6 +1706,51 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             result.definition.nodes[1].mappings[0].source,
             "input.payload",
         )
+
+    def test_loads_coalesce_node_mapping(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "strict"
+            version = "2026-06-07"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.value"
+
+            [nodes.start]
+            type = "input"
+
+            [nodes.finish]
+            type = "select"
+
+            [nodes.finish.mapping.value]
+            type = "coalesce"
+            sources = ["start.missing", "input.payload"]
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        mapping = result.definition.nodes[1].mappings[0]
+        self.assertEqual(mapping.target, "value")
+        self.assertEqual(mapping.sources, ("start.missing", "input.payload"))
 
     def test_loader_rejects_invalid_declarative_node_mappings(self) -> None:
         cases = (
@@ -2879,6 +2974,38 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             "fields",
             issues,
         )
+        duplicated_invalid_section = flow_loader._section(  # type: ignore[attr-defined]
+            {"bad": "value"},
+            "bad",
+            issues,
+            required=False,
+        )
+        repeated_invalid_section = flow_loader._section(  # type: ignore[attr-defined]
+            {"bad": "value"},
+            "bad",
+            issues,
+            required=False,
+        )
+        duplicated_invalid_child = flow_loader._child_section(  # type: ignore[attr-defined]
+            {"child": "bad"},
+            {},
+            "child",
+            issues,
+        )
+        repeated_invalid_child = flow_loader._child_section(  # type: ignore[attr-defined]
+            {"child": "bad"},
+            {},
+            "child",
+            issues,
+        )
+        input_definitions = flow_loader._input_definitions(  # type: ignore[attr-defined]
+            [{"name": "payload", "type": "object"}, {"name": "missing"}],
+            issues,
+        )
+        output_definitions = flow_loader._output_definitions(  # type: ignore[attr-defined]
+            [{"name": "answer", "type": "text"}, {"type": "text"}],
+            issues,
+        )
 
         self.assertFalse(result.ok)
         self.assertEqual(tuple_value, ())
@@ -2887,14 +3014,38 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(string_mapping)
         self.assertEqual(node_mappings, ())
         self.assertIsNone(optional_mapping)
+        self.assertIsNone(duplicated_invalid_section)
+        self.assertIsNone(repeated_invalid_section)
+        self.assertIsNone(duplicated_invalid_child)
+        self.assertIsNone(repeated_invalid_child)
+        self.assertEqual(len(input_definitions), 1)
+        self.assertEqual(len(output_definitions), 1)
+        self.assertEqual(
+            flow_loader._condition_output_names(  # type: ignore[attr-defined]
+                FlowNodeRegistry(),
+                "missing",
+            ),
+            ("value", "result"),
+        )
         self.assertEqual(
             flow_loader._condition_output_names(  # type: ignore[attr-defined]
                 FlowNodeRegistry(
-                    {"custom": lambda definition: Node("custom")}
+                    {"custom": lambda definition: Node("custom")},
+                    {
+                        "custom": FlowNodeMetadata(
+                            output_contracts=(
+                                FlowNodeContract(
+                                    name="answer",
+                                    type=FlowOutputType.TEXT,
+                                ),
+                                FlowNodeContract(name=None),
+                            ),
+                        )
+                    },
                 ),
                 "custom",
             ),
-            ("value", "result"),
+            ("answer",),
         )
         self.assertFalse(
             flow_loader._nodes_use_strict_definition(  # type: ignore[attr-defined]

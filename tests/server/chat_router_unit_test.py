@@ -447,9 +447,10 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(error_payload["type"], "tool_error")
         self.assertEqual(
             error_payload["error"],
-            {"type": "RuntimeError", "message": "Tool failed."},
+            {"type": "RuntimeError", "message": "Tool call failed."},
         )
         self.assertNotIn("secret", chunks[0])
+        self.assertNotIn("Tool failed.", chunks[0])
         orch.assert_awaited_once()
 
     async def test_streaming_includes_reasoning_tokens(self) -> None:

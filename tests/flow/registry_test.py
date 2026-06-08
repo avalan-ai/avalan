@@ -10,6 +10,7 @@ from avalan.entities import (
     ToolCallDiagnosticStage,
     ToolCallDiagnosticStatus,
     ToolCallOutcome,
+    ToolCallRecoveryFormat,
     ToolCallResult,
     ToolDescriptor,
     ToolFilterResult,
@@ -78,6 +79,10 @@ async def flow_status() -> str:
 
 
 async def flow_fails(value: int) -> None:
+    raise ValueError(f"bad {value}")
+
+
+async def flow_private_fails(value: str) -> None:
     raise ValueError(f"bad {value}")
 
 
@@ -261,6 +266,7 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
             "ready",
         )
         no_definition = flow_input_binding(None, "ready")
+        no_definition_empty = flow_input_binding(None, None)
         mapping = flow_input_binding(
             FlowInputDefinition(name="payload", type=FlowInputType.OBJECT),
             {"name": "Ada"},
@@ -270,6 +276,7 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(scalar["text"], "ready")
         self.assertEqual(scalar["value"], "ready")
         self.assertEqual(no_definition["value"], "ready")
+        self.assertEqual(no_definition_empty, {FLOW_INPUT_KEY: None})
         self.assertEqual(mapping["payload"], {"name": "Ada"})
         self.assertNotIn("value", mapping)
 
@@ -464,40 +471,60 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
 
     async def test_native_strict_nodes_reject_invalid_config(self) -> None:
         cases = (
-            FlowNodeDefinition(
-                name="project",
-                type="select",
-                config={"path": ""},
+            (
+                FlowNodeDefinition(
+                    name="project",
+                    type="select",
+                    config={"path": ""},
+                ),
+                "nodes.project.config.path",
             ),
-            FlowNodeDefinition(
-                name="check",
-                type="validation",
-                config={"required_fields": "name"},
+            (
+                FlowNodeDefinition(
+                    name="check",
+                    type="validation",
+                    config={"required_fields": "name"},
+                ),
+                "nodes.check.config.required_fields",
             ),
-            FlowNodeDefinition(
-                name="check",
-                type="validation",
-                config={"required_fields": ("",)},
+            (
+                FlowNodeDefinition(
+                    name="check",
+                    type="validation",
+                    config={"required_fields": ("",)},
+                ),
+                "nodes.check.config.required_fields",
             ),
-            FlowNodeDefinition(
-                name="check",
-                type="validation",
-                config={"value_type": "unsupported"},
+            (
+                FlowNodeDefinition(
+                    name="check",
+                    type="validation",
+                    config={"value_type": "unsupported"},
+                ),
+                "nodes.check.config.value_type",
             ),
-            FlowNodeDefinition(
-                name="notice",
-                type="notification",
-                config={"channel": ""},
+            (
+                FlowNodeDefinition(
+                    name="notice",
+                    type="notification",
+                    config={"channel": ""},
+                ),
+                "nodes.notice.config.channel",
             ),
         )
         registry = default_flow_node_registry()
 
-        for definition in cases:
+        for definition, path in cases:
             with self.subTest(node=definition.name, type=definition.type):
-                with self.assertRaises(FlowNodeConfigurationError):
+                with self.assertRaises(FlowNodeConfigurationError) as context:
                     await registry.build(definition).execute_async(
                         {"value": {"name": "Ada"}}
                     )
+                self.assertEqual(
+                    context.exception.code,
+                    "flow.invalid_node_config",
+                )
+                self.assertEqual(context.exception.path, path)
 
     async def test_native_validation_node_rejects_invalid_values(
         self,
@@ -519,6 +546,14 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
                 ),
                 {"value": "not-object"},
             ),
+            (
+                FlowNodeDefinition(
+                    name="check",
+                    type="validation",
+                    config={"required_fields": ("name",)},
+                ),
+                {"value": {"age": 37}},
+            ),
         )
         registry = default_flow_node_registry()
 
@@ -526,6 +561,83 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
             with self.subTest(config=definition.config):
                 with self.assertRaises(FlowNodeConfigurationError):
                     await registry.build(definition).execute_async(inputs)
+
+    def test_registry_tracks_subflow_resolver_metadata(self) -> None:
+        class Resolver:
+            def compile_subflow(
+                self,
+                ref: str,
+                *,
+                parent_definition: FlowDefinition,
+                node: FlowNodeDefinition,
+                registry: FlowNodeRegistry,
+            ) -> Mapping[str, object]:
+                return {
+                    "ref": ref,
+                    "parent": parent_definition.name,
+                    "node": node.name,
+                    "registered": registry.supports_subflow_resolution(
+                        node.type
+                    ),
+                }
+
+        registry = FlowNodeRegistry()
+        resolver = Resolver()
+
+        self.assertIs(
+            registry.register_subflow_resolver("subflow", resolver),
+            registry,
+        )
+        self.assertTrue(registry.supports_subflow_resolution("subflow"))
+        self.assertEqual(
+            registry.subflow_metadata(
+                FlowDefinition(
+                    name="parent",
+                    entrypoint="child",
+                    output_node="child",
+                    nodes=(
+                        FlowNodeDefinition(
+                            name="child",
+                            type="subflow",
+                            ref="flows/child.toml",
+                        ),
+                    ),
+                ),
+                FlowNodeDefinition(
+                    name="child",
+                    type="subflow",
+                    ref="flows/child.toml",
+                ),
+            ),
+            {
+                "ref": "flows/child.toml",
+                "parent": "parent",
+                "node": "child",
+                "registered": True,
+            },
+        )
+        with self.assertRaises(AssertionError):
+            registry.register_subflow_resolver("", resolver)
+        with self.assertRaises(AssertionError):
+            registry.register_subflow_resolver(
+                "bad",
+                object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            registry.subflow_metadata(
+                object(),  # type: ignore[arg-type]
+                FlowNodeDefinition(name="child", type="subflow"),
+            )
+        with self.assertRaises(AssertionError):
+            registry.subflow_metadata(
+                FlowDefinition(
+                    name="parent",
+                    entrypoint="child",
+                    output_node="child",
+                    nodes=(FlowNodeDefinition(name="child", type="subflow"),),
+                ),
+                object(),  # type: ignore[arg-type]
+            )
 
     def test_registry_exposes_node_metadata(self) -> None:
         registry = default_flow_node_registry()
@@ -722,6 +834,39 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(resolver.calls[0].arguments, {"b": 3, "a": 2})
         self.assertTrue(resolver.contexts[0].flow_tool_node)
 
+    async def test_tool_node_binds_and_rejects_array_argument_selectors(
+        self,
+    ) -> None:
+        resolver = RecordingToolResolver(_tool_manager())
+        registry = tool_flow_node_registry(resolver)
+        node = registry.build(
+            FlowNodeDefinition(
+                name="calculate",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_adder",
+                input="payload",
+                config={"arguments": {"a": "items.0", "b": "items.1"}},
+            )
+        )
+
+        self.assertEqual(
+            await node.execute_async({"payload": {"items": [8, 5]}}),
+            13,
+        )
+        self.assertEqual(resolver.calls[0].arguments, {"a": 8, "b": 5})
+
+        with self.assertRaises(FlowNodeConfigurationError) as context:
+            await node.execute_async({"payload": {"items": [8]}})
+
+        self.assertEqual(
+            context.exception.code,
+            "flow.unresolved_argument_selector",
+        )
+        self.assertEqual(
+            context.exception.path,
+            "nodes.calculate.config.arguments.b",
+        )
+
     async def test_tool_node_binds_implicit_object_by_parameter_name(
         self,
     ) -> None:
@@ -779,6 +924,38 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(await node.execute_async({}), "ready")
 
         self.assertEqual(resolver.calls[0].arguments, {})
+
+    async def test_tool_node_ignores_manager_recovery_formats(self) -> None:
+        async def echo_text(value: str) -> str:
+            return value
+
+        payload = (
+            "```tool_call\n"
+            '{"name": "flow_adder", "arguments": {"a": 2, "b": 3}}\n'
+            "```"
+        )
+        manager = ToolManager.create_instance(
+            enable_tools=["echo_text", "flow_adder"],
+            available_toolsets=[ToolSet(tools=[echo_text, flow_adder])],
+            settings=ToolManagerSettings(
+                recovery_formats=[ToolCallRecoveryFormat.FENCED],
+            ),
+        )
+        resolver = RecordingToolResolver(manager)
+        node = tool_flow_node_registry(resolver).build(
+            FlowNodeDefinition(
+                name="echo",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="echo_text",
+            )
+        )
+
+        self.assertEqual(
+            await node.execute_async({"payload": payload}), payload
+        )
+        self.assertEqual(len(resolver.calls), 1)
+        self.assertEqual(resolver.calls[0].name, "echo_text")
+        self.assertEqual(resolver.calls[0].arguments, {"value": payload})
 
     async def test_tool_node_passes_flow_cancellation_checker(self) -> None:
         resolver = RecordingToolResolver(_tool_manager())
@@ -1026,8 +1203,9 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(error_envelope["canonical_name"], "flow_fails")
         self.assertEqual(
             error_envelope["error"],
-            {"type": "ValueError", "message": "bad 5"},
+            {"type": "ValueError", "message": "Tool call failed."},
         )
+        self.assertNotIn("bad 5", str(error_envelope))
 
     async def test_tool_node_raw_mode_preserves_null_result(self) -> None:
         registry = tool_flow_node_registry(
@@ -1055,8 +1233,49 @@ class FlowToolNodeRegistryTestCase(IsolatedAsyncioTestCase):
             )
         )
 
-        with self.assertRaisesRegex(RuntimeError, "ValueError: bad 3"):
+        with self.assertRaisesRegex(RuntimeError, "ValueError") as context:
             await node.execute_async({"payload": 3})
+        self.assertNotIn("bad 3", str(context.exception))
+
+    async def test_tool_node_error_projection_omits_private_values(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=["flow_private_fails"],
+            available_toolsets=[ToolSet(tools=[flow_private_fails])],
+            settings=ToolManagerSettings(),
+        )
+        registry = tool_flow_node_registry(manager)
+        envelope_node = registry.build(
+            FlowNodeDefinition(
+                name="fail",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_private_fails",
+                config={"output_mode": "envelope"},
+            )
+        )
+        raw_node = registry.build(
+            FlowNodeDefinition(
+                name="fail_raw",
+                type=FLOW_TOOL_NODE_TYPE,
+                ref="flow_private_fails",
+            )
+        )
+
+        envelope = await envelope_node.execute_async(
+            {"payload": "private-call-argument"}
+        )
+        with self.assertRaises(RuntimeError) as context:
+            await raw_node.execute_async({"payload": "private-call-argument"})
+
+        assert isinstance(envelope, dict)
+        self.assertEqual(envelope["status"], "error")
+        self.assertEqual(
+            envelope["error"],
+            {"type": "ValueError", "message": "Tool call failed."},
+        )
+        self.assertNotIn("private-call-argument", str(envelope))
+        self.assertNotIn("private-call-argument", str(context.exception))
 
     async def test_tool_node_raw_mode_raises_on_diagnostic(self) -> None:
         def suppress(

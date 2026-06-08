@@ -135,7 +135,8 @@ score = "risk.value.score"
 ```
 
 Supported mapping kinds are `select`, `rename`, `object`, `array`, `merge`,
-`file`, and `file[]`.
+`coalesce`, `file`, and `file[]`. A `coalesce` mapping uses `sources` and
+returns the first selector that exists at runtime.
 
 ## Conditions And Routing
 

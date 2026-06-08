@@ -3,8 +3,12 @@ TEST_ARGS := $(filter-out test tests test-pgsql tests-pgsql,$(MAKECMDGOALS))
 PYTEST_ARGS := --verbose
 TASK_PGSQL_TEST_DEPS := "alembic>=1.17.2,<2.0.0"
 
-ifneq ($(filter coverage,$(TEST_ARGS)),)
+ifneq ($(filter coverage coverage-report,$(TEST_ARGS)),)
 PYTEST_ARGS += --cov=src/ --cov-report=xml
+endif
+
+ifneq ($(filter coverage,$(TEST_ARGS)),)
+PYTEST_ARGS += --cov-fail-under=100
 endif
 
 ifneq ($(filter-out $(REAL_TARGETS),$(MAKECMDGOALS)),)

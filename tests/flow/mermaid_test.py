@@ -188,6 +188,10 @@ class MermaidTokenizerTestCase(TestCase):
                 "graph TD\nA -->|unterminated\nB",
                 "flow.mermaid.parser.unclosed_edge_label",
             ),
+            (
+                "graph TD\nA -->|unterminated",
+                "flow.mermaid.parser.unclosed_edge_label",
+            ),
         )
 
         for text, code in cases:
@@ -552,12 +556,18 @@ class MermaidParserTestCase(TestCase):
             diagnostics=(diagnostic,),
         )
         node = MermaidAstNode(id="A", source_span=span)
+        node_without_span = MermaidAstNode(id="C")
         node_statement = MermaidAstNodeStatement(node=node, source_span=span)
         edge = MermaidAstEdge(
             source="A",
             target="B",
             arrow="-->",
             source_span=span,
+        )
+        edge_without_span = MermaidAstEdge(
+            source="B",
+            target="C",
+            arrow="-->",
         )
         edge_statement = MermaidAstEdgeStatement(
             nodes=(node, MermaidAstNode(id="B", source_span=span)),
@@ -594,6 +604,8 @@ class MermaidParserTestCase(TestCase):
         self.assertEqual(cst.public_diagnostics[0]["code"], diagnostic.code)
         self.assertEqual(ast.public_diagnostics[0]["code"], diagnostic.code)
         self.assertEqual(result.public_diagnostics[0]["code"], diagnostic.code)
+        self.assertIsNone(node_without_span.source_span)
+        self.assertIsNone(edge_without_span.source_span)
         with self.assertRaises(FrozenInstanceError):
             node.id = "B"  # type: ignore[misc]
 

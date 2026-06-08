@@ -61,6 +61,10 @@ NEGATIVE_FIXTURES = {
     ),
     "unsafe_directives.mmd": (
         "flow.mermaid.security.unsafe_link_directive",
+        "flow.mermaid.security.unsafe_callback_directive",
+        "flow.mermaid.security.unsafe_link_directive",
+        "flow.mermaid.security.unsafe_external_link",
+        "flow.mermaid.security.unsafe_link_directive",
         "flow.mermaid.security.unsafe_external_link",
         "flow.mermaid.security.unsafe_callback_directive",
     ),
@@ -70,23 +74,38 @@ NEGATIVE_FIXTURES = {
 }
 
 SECURITY_FIXTURES = {
-    "ambiguous_shorthand.mmd": "flow.mermaid.security.ambiguous_shorthand",
+    "ambiguous_shorthand.mmd": ("flow.mermaid.security.ambiguous_shorthand",),
     "callback_directive.mmd": (
-        "flow.mermaid.security.unsafe_callback_directive"
+        "flow.mermaid.security.unsafe_callback_directive",
     ),
-    "click_directive.mmd": "flow.mermaid.security.unsafe_link_directive",
-    "frontmatter.mmd": "flow.mermaid.security.frontmatter",
-    "href_directive.mmd": "flow.mermaid.security.unsafe_link_directive",
-    "html_label.mmd": "flow.mermaid.security.html_label",
-    "init_directive.mmd": "flow.mermaid.security.init_directive",
-    "link_directive.mmd": "flow.mermaid.security.unsafe_link_directive",
-    "malformed_directive.mmd": "flow.mermaid.security.malformed_directive",
-    "malformed_subgraph.mmd": "flow.mermaid.parser.unclosed_subgraph",
-    "script_like_label.mmd": "flow.mermaid.security.script_like_label",
-    "unknown_directive.mmd": "flow.mermaid.security.unknown_directive",
-    "unsafe_external_link.mmd": "flow.mermaid.security.unsafe_external_link",
+    "click_directive.mmd": (
+        "flow.mermaid.security.unsafe_link_directive",
+        "flow.mermaid.security.unsafe_callback_directive",
+    ),
+    "frontmatter.mmd": (
+        "flow.mermaid.security.frontmatter",
+        "flow.mermaid.security.frontmatter",
+    ),
+    "href_directive.mmd": (
+        "flow.mermaid.security.unsafe_link_directive",
+        "flow.mermaid.security.unsafe_external_link",
+    ),
+    "html_label.mmd": ("flow.mermaid.security.html_label",),
+    "init_directive.mmd": ("flow.mermaid.security.init_directive",),
+    "link_directive.mmd": (
+        "flow.mermaid.security.unsafe_link_directive",
+        "flow.mermaid.security.unsafe_external_link",
+    ),
+    "malformed_directive.mmd": ("flow.mermaid.security.malformed_directive",),
+    "malformed_subgraph.mmd": (),
+    "script_like_label.mmd": ("flow.mermaid.security.script_like_label",),
+    "unknown_directive.mmd": ("flow.mermaid.security.unknown_directive",),
+    "unsafe_external_link.mmd": (
+        "flow.mermaid.security.unsafe_link_directive",
+        "flow.mermaid.security.unsafe_external_link",
+    ),
     "unsupported_diagram_type.mmd": (
-        "flow.mermaid.security.unsupported_diagram_type"
+        "flow.mermaid.security.unsupported_diagram_type",
     ),
 }
 
@@ -172,7 +191,7 @@ class MermaidConformanceTestCase(TestCase):
                 )
 
                 self.assertFalse(result.ok)
-                self.assertTrue(set(expected_codes).issubset(_codes(result)))
+                self.assertEqual(_codes(result), expected_codes)
                 self.assertTrue(
                     all(
                         diagnostic.severity == FlowDiagnosticSeverity.ERROR
@@ -191,7 +210,7 @@ class MermaidConformanceTestCase(TestCase):
     ) -> None:
         self.assertEqual(set(SECURITY_FIXTURES), _fixture_names(SECURITY_ROOT))
 
-        for filename, expected_code in SECURITY_FIXTURES.items():
+        for filename, expected_codes in SECURITY_FIXTURES.items():
             with self.subTest(filename=filename):
                 path = SECURITY_ROOT / filename
                 result = parse_mermaid_import(
@@ -201,12 +220,12 @@ class MermaidConformanceTestCase(TestCase):
                 )
 
                 self.assertFalse(result.ok)
-                self.assertIn(expected_code, _codes(result))
+                self.assertEqual(_security_codes(result), expected_codes)
                 self.assertTrue(
-                    any(
-                        diagnostic.code == expected_code
-                        and diagnostic.severity == FlowDiagnosticSeverity.ERROR
+                    all(
+                        diagnostic.severity == FlowDiagnosticSeverity.ERROR
                         for diagnostic in result.diagnostics
+                        if diagnostic.code.startswith("flow.mermaid.security.")
                     )
                 )
                 self.assertNotIn(
@@ -344,6 +363,15 @@ def _fixture_names(root: Path) -> set[str]:
 def _codes(result: object) -> tuple[str, ...]:
     diagnostics = getattr(result, "diagnostics")
     return tuple(diagnostic.code for diagnostic in diagnostics)
+
+
+def _security_codes(result: object) -> tuple[str, ...]:
+    diagnostics = getattr(result, "diagnostics")
+    return tuple(
+        diagnostic.code
+        for diagnostic in diagnostics
+        if diagnostic.code.startswith("flow.mermaid.security.")
+    )
 
 
 def _has_unquoted_mermaid_label(parsed: MermaidParseResult) -> bool:

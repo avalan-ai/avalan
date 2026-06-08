@@ -10,6 +10,18 @@ from uuid import UUID
 
 T = TypeVar("T")
 
+_SAFE_TOOL_DIAGNOSTIC_DETAIL_KEYS = frozenset(
+    {
+        "candidates",
+        "depth",
+        "filtered_name",
+        "limit",
+        "size",
+        "source_format",
+        "stream_status",
+    }
+)
+
 
 def _lf(items: Sequence[T | None]) -> list[T]:
     return [item for item in items if item]
@@ -62,14 +74,39 @@ def tool_call_diagnostic_payload(
         payload["requested_name"] = diagnostic.requested_name
     if diagnostic.canonical_name is not None:
         payload["canonical_name"] = diagnostic.canonical_name
-    if diagnostic.details:
-        payload["details"] = diagnostic.details
+    details = _tool_call_diagnostic_details(diagnostic.details)
+    if details:
+        payload["details"] = details
     return payload
+
+
+def _tool_call_diagnostic_details(
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    public: dict[str, Any] = {}
+    for key, value in details.items():
+        if key not in _SAFE_TOOL_DIAGNOSTIC_DETAIL_KEYS:
+            continue
+        projected = _tool_call_diagnostic_detail_value(value)
+        if projected is not None:
+            public[key] = projected
+    return public
+
+
+def _tool_call_diagnostic_detail_value(value: Any) -> Any:
+    if value is None or isinstance(value, bool | str | int | float):
+        return value
+    if isinstance(value, list | tuple):
+        projected = [
+            _tool_call_diagnostic_detail_value(item) for item in value
+        ]
+        return [item for item in projected if item is not None]
+    return None
 
 
 def tool_call_error_payload(error: ToolCallError) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "type": error.error_type,
-        "message": error.message,
+        "message": "Tool call failed.",
     }
     return payload

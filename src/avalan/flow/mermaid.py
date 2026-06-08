@@ -1420,7 +1420,8 @@ class _MermaidFlowViewNormalizer:
                 self._record_group(statement, parent=group)
             elif isinstance(statement, MermaidAstDirective):
                 self._record_directive(statement)
-            elif isinstance(statement, MermaidAstComment):
+            else:
+                assert isinstance(statement, MermaidAstComment)
                 self.comments.append(
                     FlowViewComment(
                         text=statement.text,

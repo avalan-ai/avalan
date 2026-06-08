@@ -104,6 +104,39 @@ class UtilsToolCallErrorPayloadTestCase(TestCase):
 
         self.assertEqual(payload["canonical_name"], "lookup_weather")
 
+    def test_tool_call_diagnostic_payload_filters_details(self) -> None:
+        diagnostic = ToolCallDiagnostic(
+            id="diag-details",
+            requested_name="lookup",
+            canonical_name="lookup_weather",
+            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+            stage=ToolCallDiagnosticStage.RESOLVE,
+            message="Unknown tool.",
+            details={
+                "arguments": {"token": "sk-live-secret-token"},
+                "candidates": ["lookup_weather"],
+                "filtered_name": "lookup_weather",
+                "limit": 8,
+                "stream_status": {"state": "private"},
+                "unsafe_path": "/private/customer/source.toml",
+            },
+        )
+
+        payload = tool_call_diagnostic_payload(diagnostic)
+
+        self.assertEqual(
+            payload["details"],
+            {
+                "candidates": ["lookup_weather"],
+                "filtered_name": "lookup_weather",
+                "limit": 8,
+            },
+        )
+        rendered = to_json(payload)
+        self.assertNotIn("arguments", rendered)
+        self.assertNotIn("sk-live-secret-token", rendered)
+        self.assertNotIn("/private/customer/source.toml", rendered)
+
     def test_tool_call_error_payload_projects_exception_safely(self) -> None:
         call = ToolCall(id="call-1", name="tool", arguments={})
         error = ToolCallError(
@@ -118,9 +151,10 @@ class UtilsToolCallErrorPayloadTestCase(TestCase):
         payload = tool_call_error_payload(error)
 
         self.assertEqual(
-            payload, {"type": "RuntimeError", "message": "Tool failed."}
+            payload, {"type": "RuntimeError", "message": "Tool call failed."}
         )
         self.assertNotIn("secret-path", to_json(payload))
+        self.assertNotIn("Tool failed.", to_json(payload))
 
     def test_tool_call_error_payload_uses_projected_error_type(self) -> None:
         call = ToolCall(id="call-2", name="tool", arguments={})
@@ -137,9 +171,41 @@ class UtilsToolCallErrorPayloadTestCase(TestCase):
 
         self.assertEqual(
             payload,
-            {"type": "ValidationError", "message": "Arguments are invalid."},
+            {
+                "type": "ValidationError",
+                "message": "Tool call failed.",
+            },
         )
         self.assertNotIn("raw value", to_json(payload))
+        self.assertNotIn("Arguments are invalid.", to_json(payload))
+
+    def test_tool_call_error_payload_omits_arguments_and_raw_message(
+        self,
+    ) -> None:
+        call = ToolCall(
+            id="call-3",
+            name="tool",
+            arguments={"path": "/private/customer/source.toml"},
+        )
+        error = ToolCallError(
+            id="err-3",
+            call=call,
+            name="tool",
+            arguments=call.arguments,
+            error=RuntimeError("failed for sk-live-secret-token"),
+            message="failed for sk-live-secret-token",
+        )
+
+        payload = tool_call_error_payload(error)
+
+        rendered = to_json(payload)
+        self.assertEqual(
+            payload,
+            {"type": "RuntimeError", "message": "Tool call failed."},
+        )
+        self.assertNotIn("arguments", rendered)
+        self.assertNotIn("/private/customer/source.toml", rendered)
+        self.assertNotIn("sk-live-secret-token", rendered)
 
 
 class CompatOverrideTestCase(TestCase):

@@ -405,6 +405,7 @@ class FlowDefinitionTestCase(TestCase):
         self.assertEqual(FlowEntryBehaviorType.NODE.value, "node")
         self.assertEqual(FlowOutputBehaviorType.MAP.value, "map")
         self.assertEqual(FlowConditionOperator.CONTAINS.value, "contains")
+        self.assertEqual(FlowMappingKind.COALESCE.value, "coalesce")
         self.assertEqual(FlowMappingKind.FILE_ARRAY.value, "file[]")
         self.assertEqual(FlowEdgeKind.CANCELLATION.value, "cancellation")
         self.assertEqual(FlowEdgeKind.ERROR.value, "error")
@@ -499,6 +500,13 @@ class FlowDefinitionTestCase(TestCase):
         self.assertEqual(
             node_metadata.input_contracts,
             (FlowNodeContract(name="extra", type=FlowInputType.STRING),),
+        )
+        self.assertEqual(
+            FlowNodeContract(
+                name="enum_type",
+                type=FlowInputType.STRING,
+            ).type,
+            FlowInputType.STRING,
         )
         self.assertEqual(
             node_metadata.output_contracts,

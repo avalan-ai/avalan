@@ -61,6 +61,25 @@ class NodeAsyncTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(TypeError):
             await bad_node.execute_async({"x": 1})
 
+    async def test_schema_validation_accepts_matching_direct_values(
+        self,
+    ) -> None:
+        node = Node("n", func=lambda inputs: inputs, input_schema=dict)
+        compatibility_node = Node(
+            "compat",
+            func=lambda inputs: inputs,
+            input_schema=(dict,),  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(
+            await node.execute_async({"x": 1, "y": 2}),
+            {"x": 1, "y": 2},
+        )
+        self.assertEqual(
+            await compatibility_node.execute_async({"x": 1}),
+            {"x": 1},
+        )
+
     async def test_execute_async_subgraph(self) -> None:
         sub = Flow()
         sub.add_node(Node("A", func=lambda inp: inp["__init__"] * 2))

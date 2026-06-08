@@ -99,6 +99,15 @@ class FlowManagerCallTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TimeoutError):
             await manager(flow, timeout_seconds=0.001)
 
+    async def test_call_succeeds_without_event_manager(self) -> None:
+        flow = Flow()
+        flow.add_node(Node("A", func=lambda _: "done"))
+        loader = MagicMock(spec=OrchestratorLoader)
+        loader.event_manager = None
+        manager = FlowManager(loader, logger=MagicMock())
+
+        self.assertEqual(await manager(flow), "done")
+
     async def test_call_triggers_failed_event_on_timeout(self) -> None:
         async def slow(_: dict[str, object]) -> str:
             await sleep(0.05)

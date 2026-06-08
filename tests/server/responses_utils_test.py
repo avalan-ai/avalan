@@ -80,12 +80,15 @@ class ResponsesUtilsTestCase(TestCase):
         data = loads(events[0].split("data: ")[1])
         self.assertEqual(data["id"], "c2")
         self.assertEqual(
-            data["error"], {"type": "RuntimeError", "message": "boom"}
+            data["error"],
+            {"type": "RuntimeError", "message": "Tool call failed."},
         )
         delta = loads(data["delta"])
         self.assertEqual(
-            delta["error"], {"type": "RuntimeError", "message": "boom"}
+            delta["error"],
+            {"type": "RuntimeError", "message": "Tool call failed."},
         )
+        self.assertNotIn("boom", events[0])
 
     def test_token_to_sse_handles_tool_diagnostic(self) -> None:
         call = ToolCall(id="c-diagnostic", name="missing", arguments={})

@@ -4,8 +4,12 @@ from ..task.definition import TaskDefinition
 from ..task.runner import TaskRunResult
 from ..task.store import TaskSnapshotMetadata, TaskStoreNotFoundError
 from ..task.targets.flow import FLOW_RESUME_DECISIONS_METADATA_KEY
-from .definition import FlowDefinition
-from .diagnostics import FlowDiagnostic
+from .definition import FlowDefinition, FlowNodeCapability
+from .diagnostics import (
+    FlowDiagnostic,
+    FlowDiagnosticCategory,
+    FlowDiagnosticSeverity,
+)
 from .inspection import (
     FlowInspection,
     export_sanitized_flow_trace,
@@ -177,6 +181,12 @@ class FlowExecutor:
                 diagnostics=plan_result.diagnostics,
             )
         assert plan_result.plan is not None
+        direct_diagnostics = _direct_execution_diagnostics(plan_result.plan)
+        if direct_diagnostics:
+            return FlowExecutorRunResult(
+                plan=plan_result.plan,
+                diagnostics=direct_diagnostics,
+            )
         result = await execute_flow_plan(
             plan_result.plan,
             runner or self._node_runner(),
@@ -219,6 +229,12 @@ class FlowExecutor:
                 diagnostics=plan_result.diagnostics,
             )
         assert plan_result.plan is not None
+        direct_diagnostics = _direct_execution_diagnostics(plan_result.plan)
+        if direct_diagnostics:
+            return FlowExecutorRunResult(
+                plan=plan_result.plan,
+                diagnostics=direct_diagnostics,
+            )
         resume_trace, resume_node_outputs = _resume_state(previous)
         result = await execute_flow_plan(
             plan_result.plan,
@@ -401,6 +417,27 @@ def _resume_state(
     if isinstance(previous, FlowExecutionRecord):
         return previous.trace, _nested_node_outputs(previous.node_outputs)
     raise AssertionError("previous must be a flow result or execution record")
+
+
+def _direct_execution_diagnostics(
+    plan: FlowExecutionPlan,
+) -> tuple[FlowDiagnostic, ...]:
+    assert isinstance(plan, FlowExecutionPlan)
+    for node in plan.nodes:
+        if FlowNodeCapability.TASK_BACKED in node.capabilities:
+            return (
+                FlowDiagnostic(
+                    code=(
+                        "flow.execution.task_backed_node_requires_task_runner"
+                    ),
+                    category=FlowDiagnosticCategory.EXECUTION,
+                    severity=FlowDiagnosticSeverity.ERROR,
+                    path=f"nodes.{node.name}.type",
+                    message="Task-backed flow nodes require task execution.",
+                    hint="Run this flow through a task-backed flow executor.",
+                ),
+            )
+    return ()
 
 
 def _nested_node_outputs(

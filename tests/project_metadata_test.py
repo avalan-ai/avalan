@@ -1,3 +1,4 @@
+import re
 import tomllib
 from pathlib import Path
 from typing import Any, cast
@@ -9,13 +10,21 @@ from packaging.utils import canonicalize_name
 
 
 def _pyproject() -> dict[str, object]:
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    pyproject = _repository_root() / "pyproject.toml"
     return tomllib.loads(pyproject.read_text(encoding="utf-8"))
 
 
 def _poetry_lock() -> dict[str, Any]:
-    lockfile = Path(__file__).resolve().parents[1] / "poetry.lock"
+    lockfile = _repository_root() / "poetry.lock"
     return tomllib.loads(lockfile.read_text(encoding="utf-8"))
+
+
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _read_repository_text(path: str) -> str:
+    return (_repository_root() / path).read_text(encoding="utf-8")
 
 
 def _lock_packages_by_name() -> dict[str, dict[str, Any]]:
@@ -31,6 +40,41 @@ def _optional_dependencies() -> dict[str, list[str]]:
 def _test_group_dependencies() -> dict[str, object]:
     data = _pyproject()
     return data["tool"]["poetry"]["group"]["test"]["dependencies"]
+
+
+def _supported_python_versions() -> set[str]:
+    data = _pyproject()
+    project = cast(dict[str, object], data["project"])
+    classifiers = cast(list[str], project["classifiers"])
+    prefix = "Programming Language :: Python :: "
+    return {
+        classifier.removeprefix(prefix)
+        for classifier in classifiers
+        if classifier.startswith(prefix)
+    }
+
+
+def _workflow_python_versions(workflow: str) -> list[set[str]]:
+    matrices: list[set[str]] = []
+    for match in re.finditer(r"python:\s*\[([^\]]+)\]", workflow):
+        versions = {
+            version.strip().strip("'\"")
+            for version in match.group(1).split(",")
+            if version.strip()
+        }
+        matrices.append(versions)
+    return matrices
+
+
+def _workflow_declares_event(workflow: str, event: str) -> bool:
+    return re.search(rf"(?m)^  {re.escape(event)}:\s*$", workflow) is not None
+
+
+def _makefile_enforces_coverage_fail_under(makefile: str) -> bool:
+    return (
+        "PYTEST_ARGS += --cov=src/ --cov-report=xml" in makefile
+        and "PYTEST_ARGS += --cov-fail-under=100" in makefile
+    )
 
 
 def _requirements(extra: str) -> list[Requirement]:
@@ -67,6 +111,67 @@ def test_project_metadata_advertises_python_314_support() -> None:
     assert "3.14.1" in specifier
     assert "3.15" not in specifier
     assert "Programming Language :: Python :: 3.14" in project["classifiers"]
+
+
+def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
+    workflow = _read_repository_text(".github/workflows/test.yml")
+    matrix_versions = _workflow_python_versions(workflow)
+
+    assert _workflow_declares_event(workflow, "push")
+    assert _workflow_declares_event(workflow, "pull_request")
+    assert _workflow_declares_event(workflow, "workflow_dispatch")
+    assert matrix_versions == [
+        _supported_python_versions(),
+        _supported_python_versions(),
+    ]
+    assert (
+        "if: matrix.target.os == 'ubuntu-latest' && matrix.python != '3.14'"
+        in workflow
+    )
+    assert "run: make test-pgsql coverage no-install" in workflow
+    assert (
+        "if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.14'"
+        in workflow
+    )
+    assert "run: make test-pgsql coverage-report no-install" in workflow
+    assert (
+        "if: matrix.target.os != 'ubuntu-latest' && matrix.python != '3.14'"
+        in workflow
+    )
+    assert "run: make test coverage no-install" in workflow
+    assert (
+        "if: matrix.target.os != 'ubuntu-latest' && matrix.python == '3.14'"
+        in workflow
+    )
+    assert "run: make test coverage-report no-install" in workflow
+    assert "run: poetry build --format wheel --clean" in workflow
+    assert "path: dist/*.whl" in workflow
+
+
+def test_workflow_matrix_detection_rejects_partial_python_support() -> None:
+    workflow = "matrix:\n  python: ['3.11', '3.12']\n"
+
+    assert _workflow_python_versions(workflow) != [
+        _supported_python_versions()
+    ]
+
+
+def test_workflow_event_detection_rejects_missing_pull_request() -> None:
+    workflow = "on:\n  push:\n  workflow_dispatch:\n"
+
+    assert not _workflow_declares_event(workflow, "pull_request")
+
+
+def test_make_coverage_command_enforces_fail_under_gate() -> None:
+    makefile = _read_repository_text("Makefile")
+
+    assert _makefile_enforces_coverage_fail_under(makefile)
+
+
+def test_make_coverage_gate_detection_rejects_upload_only_coverage() -> None:
+    makefile = "PYTEST_ARGS += --cov=src/ --cov-report=xml\n"
+
+    assert not _makefile_enforces_coverage_fail_under(makefile)
 
 
 def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:

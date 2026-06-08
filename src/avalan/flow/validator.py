@@ -44,6 +44,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import cast
+from urllib.parse import urlsplit
 
 _KNOWN_DEFERRED_NODE_TYPES = frozenset(
     {
@@ -146,19 +147,36 @@ _UNSAFE_CONDITION_VALUE_FRAGMENTS = frozenset(
 _UNSAFE_CONDITION_VALUE_PREFIXES = frozenset(
     {
         "__",
+        "callable.",
         "env.",
         "environment.",
         "eval(",
         "file.",
         "files.",
+        "function.",
+        "functions.",
         "fs.",
         "import ",
+        "lambda ",
         "network.",
         "runtime.",
         "secret.",
         "secrets.",
         "shell.",
         "task.",
+    }
+)
+_NONDETERMINISTIC_CONDITION_VALUE_PREFIXES = frozenset(
+    {
+        "datetime.",
+        "datetime(",
+        "now(",
+        "random.",
+        "random(",
+        "time.",
+        "time(",
+        "uuid.",
+        "uuid(",
     }
 )
 _HUMAN_REVIEW_REQUIRED_CONFIG_KEYS = frozenset(
@@ -731,6 +749,7 @@ def _validate_graph_contract(
     registry: FlowNodeRegistry,
 ) -> tuple[FlowDiagnostic, ...]:
     diagnostics: list[FlowDiagnostic] = []
+    diagnostics.extend(_validate_schema_refs(definition))
     node_names = {node.name for node in definition.nodes}
     for edge in definition.edges:
         if edge.source not in node_names:
@@ -759,6 +778,55 @@ def _validate_graph_contract(
                 hint="Remove the cyclic edge before running the flow.",
             )
         )
+    return tuple(diagnostics)
+
+
+def _validate_schema_refs(
+    definition: FlowDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    if (
+        definition.input is not None
+        and definition.input.schema_ref is not None
+        and _is_untrusted_schema_ref(definition.input.schema_ref)
+    ):
+        diagnostics.append(
+            _schema_ref_diagnostic(
+                "flow.input.schema_ref",
+                definition.input.schema_ref,
+            )
+        )
+    if (
+        definition.output is not None
+        and definition.output.schema_ref is not None
+        and _is_untrusted_schema_ref(definition.output.schema_ref)
+    ):
+        diagnostics.append(
+            _schema_ref_diagnostic(
+                "flow.output.schema_ref",
+                definition.output.schema_ref,
+            )
+        )
+    for input_definition in definition.inputs:
+        if input_definition.schema_ref is None:
+            continue
+        if _is_untrusted_schema_ref(input_definition.schema_ref):
+            diagnostics.append(
+                _schema_ref_diagnostic(
+                    f"flow.inputs.{input_definition.name}.schema_ref",
+                    input_definition.schema_ref,
+                )
+            )
+    for output_definition in definition.outputs:
+        if output_definition.schema_ref is None:
+            continue
+        if _is_untrusted_schema_ref(output_definition.schema_ref):
+            diagnostics.append(
+                _schema_ref_diagnostic(
+                    f"flow.outputs.{output_definition.name}.schema_ref",
+                    output_definition.schema_ref,
+                )
+            )
     return tuple(diagnostics)
 
 
@@ -875,6 +943,24 @@ def _validate_strict_contract(
                 path="flow.output",
                 message="Flow output alias is not supported.",
                 hint="Use declared flow outputs and output behavior.",
+            )
+        )
+    if definition.entrypoint is not None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.entrypoint_alias",
+                path="flow.entrypoint",
+                message="Flow entrypoint alias is not supported.",
+                hint="Use declared flow entry behavior.",
+            )
+        )
+    if definition.output_node is not None:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.output_node_alias",
+                path="flow.output_node",
+                message="Flow output node alias is not supported.",
+                hint="Use declared flow output behavior.",
             )
         )
     diagnostics.extend(
@@ -1706,7 +1792,8 @@ def _validate_output_behavior(
             ),
         )
     diagnostics: list[FlowDiagnostic] = []
-    declared = {output.name for output in definition.outputs}
+    declared_outputs = {output.name: output for output in definition.outputs}
+    declared = set(declared_outputs)
     selected = set(definition.output_behavior.outputs)
     for name in sorted(selected - declared):
         diagnostics.append(
@@ -1765,6 +1852,33 @@ def _validate_output_behavior(
                     path=path,
                     message="Flow output behavior selector path is unknown.",
                     hint="Reference fields declared by the selected output.",
+                )
+            )
+            continue
+        output_definition = declared_outputs.get(name)
+        source_type = _node_output_type(registry, node.type, parsed.output)
+        if (
+            output_definition is None
+            or source_type is None
+            or type(source_type) is str
+        ):
+            continue
+        source_enum = cast(FlowOutputType, source_type)
+        if not _contract_types_compatible(
+            source_enum,
+            output_definition.type,
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.incompatible_output_selection",
+                    path=path,
+                    message=(
+                        "Flow output behavior selector is incompatible with"
+                        " the declared output."
+                    ),
+                    hint=(
+                        "Map a node output with the declared flow output type."
+                    ),
                 )
             )
     return tuple(diagnostics)
@@ -1922,6 +2036,17 @@ def _validate_condition(
                 definition,
                 condition.selector,
                 path=f"{path}.selector",
+                edge_source=edge_source,
+                input_names=input_names,
+                node_names=node_names,
+                registry=registry,
+            )
+        )
+        diagnostics.extend(
+            _validate_condition_type_compatibility(
+                definition,
+                condition,
+                path=path,
                 edge_source=edge_source,
                 input_names=input_names,
                 node_names=node_names,
@@ -2086,6 +2211,7 @@ def _validate_condition_shape(
         ("selector", condition.selector),
         ("value", condition.value),
         ("value_selector", condition.value_selector),
+        ("values", condition.values if condition.values else None),
         ("value_type", condition.value_type),
     ):
         if value is not None:
@@ -2178,6 +2304,16 @@ def _validate_condition_literal_values(
                     category=FlowDiagnosticCategory.PRIVACY,
                 )
             )
+        if _condition_value_is_nondeterministic(value):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.nondeterministic_condition_value",
+                    path=value_path,
+                    message="Flow condition literal is nondeterministic.",
+                    hint="Use inert literal values only.",
+                    category=FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+                )
+            )
     return tuple(diagnostics)
 
 
@@ -2213,6 +2349,258 @@ def _condition_value_is_unsafe(value: object) -> bool:
     ) or any(
         normalized.startswith(prefix)
         for prefix in _UNSAFE_CONDITION_VALUE_PREFIXES
+    )
+
+
+def _condition_value_is_nondeterministic(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            _condition_value_is_nondeterministic(key)
+            or _condition_value_is_nondeterministic(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(
+            _condition_value_is_nondeterministic(item) for item in value
+        )
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().lower()
+    return any(
+        normalized.startswith(prefix)
+        for prefix in _NONDETERMINISTIC_CONDITION_VALUE_PREFIXES
+    )
+
+
+def _validate_condition_type_compatibility(
+    definition: FlowDefinition,
+    condition: FlowCondition,
+    *,
+    path: str,
+    edge_source: str,
+    input_names: set[str],
+    node_names: set[str],
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    selector = condition.selector
+    assert selector is not None
+    source_type = _condition_selector_type(
+        definition,
+        selector,
+        edge_source=edge_source,
+        input_names=input_names,
+        node_names=node_names,
+        registry=registry,
+    )
+    if source_type is None:
+        return ()
+    diagnostics: list[FlowDiagnostic] = []
+    operator = condition.operator
+    if operator in _NUMERIC_CONDITION_OPERATORS and source_type not in {
+        "integer",
+        "number",
+    }:
+        diagnostics.append(_incompatible_condition_type(path, "selector"))
+    if operator in _STRING_CONDITION_OPERATORS and source_type != "string":
+        diagnostics.append(_incompatible_condition_type(path, "selector"))
+    if operator in _COMPARISON_CONDITION_OPERATORS:
+        value_type = _condition_literal_type(condition.value)
+        if value_type is not None and not _condition_types_compatible(
+            source_type,
+            value_type,
+        ):
+            diagnostics.append(_incompatible_condition_type(path, "value"))
+    if condition.value_selector is not None:
+        value_selector_type = _condition_selector_type(
+            definition,
+            condition.value_selector,
+            edge_source=edge_source,
+            input_names=input_names,
+            node_names=node_names,
+            registry=registry,
+        )
+        if (
+            value_selector_type is not None
+            and not _condition_types_compatible(
+                source_type, value_selector_type
+            )
+        ):
+            diagnostics.append(
+                _incompatible_condition_type(path, "value_selector")
+            )
+    if operator in {FlowConditionOperator.IN, FlowConditionOperator.NOT_IN}:
+        for index, value in enumerate(
+            _condition_membership_literals(condition)
+        ):
+            value_type = _condition_literal_type(value)
+            if value_type is None:
+                continue
+            if not _condition_types_compatible(source_type, value_type):
+                diagnostics.append(
+                    _incompatible_condition_type(path, f"values[{index}]")
+                )
+    return tuple(diagnostics)
+
+
+def _condition_selector_type(
+    definition: FlowDefinition,
+    selector: str,
+    *,
+    edge_source: str,
+    input_names: set[str],
+    node_names: set[str],
+    registry: FlowNodeRegistry,
+) -> str | None:
+    try:
+        parsed = parse_flow_selector(selector)
+    except FlowSelectorError:
+        return None
+    if parsed.root == FlowSelectorRoot.FLOW_INPUT:
+        if parsed.source not in input_names:
+            return None
+        return _flow_input_selector_type(definition, parsed)
+    if parsed.source not in node_names or parsed.source != edge_source:
+        return None
+    node = definition.node_map[parsed.source]
+    assert parsed.output is not None
+    if not _supports_output_name(registry, node.type, parsed.output):
+        return None
+    if not _supports_output_path(registry, node.type, parsed):
+        return None
+    return _node_output_selector_type(registry, node.type, parsed)
+
+
+def _flow_input_selector_type(
+    definition: FlowDefinition,
+    selector: FlowSelector,
+) -> str | None:
+    for input_definition in definition.inputs:
+        if input_definition.name != selector.source:
+            continue
+        if input_definition.schema is not None:
+            schema_type = _schema_selector_type(
+                input_definition.schema,
+                selector.path,
+            )
+            if schema_type is not None:
+                return schema_type
+        if selector.path:
+            return None
+        return _semantic_type(input_definition.type)
+    return None
+
+
+def _node_output_selector_type(
+    registry: FlowNodeRegistry,
+    node_type: str,
+    selector: FlowSelector,
+) -> str | None:
+    assert selector.output is not None
+    metadata = registry.metadata(node_type)
+    if metadata is None or not metadata.output_contracts:
+        return None
+    for contract in metadata.output_contracts:
+        if contract.name == selector.output or contract.metadata.get(
+            "dynamic"
+        ):
+            if contract.schema is not None:
+                schema_type = _schema_selector_type(
+                    contract.schema,
+                    selector.path,
+                )
+                if schema_type is not None:
+                    return schema_type
+            if selector.path:
+                return None
+            return _contract_semantic_type(contract.type)
+    return None
+
+
+def _schema_selector_type(
+    schema: Mapping[str, object],
+    path: tuple[FlowSelectorStep, ...],
+) -> str | None:
+    current = schema
+    for step in path:
+        if step.kind == FlowSelectorStepKind.FIELD:
+            properties = current.get("properties")
+            if not isinstance(properties, Mapping):
+                return None
+            field_schema = properties.get(step.value)
+            if not isinstance(field_schema, Mapping):
+                return None
+            current = field_schema
+            continue
+        items = current.get("items")
+        if not isinstance(items, Mapping):
+            return None
+        current = items
+    return _schema_type_name(current.get("type"))
+
+
+def _schema_type_name(schema_type: object) -> str | None:
+    if isinstance(schema_type, str):
+        return schema_type
+    if isinstance(schema_type, list | tuple) and len(schema_type) == 1:
+        only_type = schema_type[0]
+        if isinstance(only_type, str):
+            return only_type
+    return None
+
+
+def _contract_semantic_type(
+    value: FlowInputType | FlowOutputType | str | None,
+) -> str | None:
+    if value is None:
+        return None
+    if type(value) is str:
+        return value
+    return _semantic_type(cast(FlowInputType | FlowOutputType, value))
+
+
+def _condition_literal_type(value: object) -> str | None:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, list | tuple):
+        return "array"
+    return None
+
+
+def _condition_membership_literals(
+    condition: FlowCondition,
+) -> tuple[object, ...]:
+    if condition.values:
+        return condition.values
+    if isinstance(condition.value, list | tuple):
+        return tuple(condition.value)
+    return ()
+
+
+def _condition_types_compatible(left: str, right: str) -> bool:
+    if left == right or right == "null":
+        return True
+    return left in {"integer", "number"} and right in {"integer", "number"}
+
+
+def _incompatible_condition_type(
+    path: str,
+    field_name: str,
+) -> FlowDiagnostic:
+    return _condition_diagnostic(
+        code="flow.incompatible_condition_type",
+        path=f"{path}.{field_name}",
+        message="Flow condition value has an incompatible type.",
+        hint="Use condition values compatible with the selected output.",
     )
 
 
@@ -2306,6 +2694,17 @@ def _validate_mapping(
                     code="flow.empty_mapping",
                     path=f"{path}.sources",
                     message="Flow merge mapping has no sources.",
+                    hint="Add at least one mapped source.",
+                )
+            )
+    else:
+        assert mapping.kind == FlowMappingKind.COALESCE
+        if not mapping.sources:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.empty_mapping",
+                    path=f"{path}.sources",
+                    message="Flow coalesce mapping has no sources.",
                     hint="Add at least one mapped source.",
                 )
             )
@@ -2515,6 +2914,10 @@ def _mapping_type_compatibility(
             return None
         return "flow.incompatible_mapping"
     if mapping.kind in {FlowMappingKind.SELECT, FlowMappingKind.RENAME}:
+        if _contract_types_compatible(source_enum, target_type):
+            return None
+        return "flow.incompatible_mapping"
+    if mapping.kind == FlowMappingKind.COALESCE:
         if _contract_types_compatible(source_enum, target_type):
             return None
         return "flow.incompatible_mapping"
@@ -2794,7 +3197,7 @@ def _selector_diagnostic(
 
 
 def _is_path_escape(ref: str) -> bool:
-    if "://" in ref or "\\" in ref:
+    if urlsplit(ref).scheme or "://" in ref or "\\" in ref:
         return True
     posix_path = PurePosixPath(ref)
     windows_path = PureWindowsPath(ref)
@@ -2803,12 +3206,34 @@ def _is_path_escape(ref: str) -> bool:
     return ".." in posix_path.parts or ".." in windows_path.parts
 
 
+def _is_untrusted_schema_ref(ref: str) -> bool:
+    return "#" in ref or _is_path_escape(ref)
+
+
 def _path_escape_diagnostic(path: str) -> FlowDiagnostic:
     return _diagnostic(
         code="flow.path_escape",
         path=path,
         message="Flow reference escapes the flow directory.",
         hint="Use a safe relative reference inside the flow directory.",
+        category=FlowDiagnosticCategory.PRIVACY,
+    )
+
+
+def _schema_ref_diagnostic(path: str, ref: str) -> FlowDiagnostic:
+    if "#" in ref:
+        return _diagnostic(
+            code="flow.invalid_schema_ref",
+            path=path,
+            message="Flow schema reference is invalid.",
+            hint="Use a portable relative schema file reference.",
+            category=FlowDiagnosticCategory.PRIVACY,
+        )
+    return _diagnostic(
+        code="flow.path_escape",
+        path=path,
+        message="Flow schema reference escapes the flow directory.",
+        hint="Use a portable relative schema reference.",
         category=FlowDiagnosticCategory.PRIVACY,
     )
 

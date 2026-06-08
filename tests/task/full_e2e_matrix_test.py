@@ -14,23 +14,41 @@ from avalan.entities import (
     MessageContentFile,
     MessageContentImage,
     MessageContentText,
+    ToolCall,
+    ToolCallContext,
+    ToolCallDiagnostic,
+    ToolCallOutcome,
+    ToolCallResult,
+    ToolDescriptor,
+    ToolNameResolution,
+    ToolNameResolutionStatus,
 )
 from avalan.event import Event, EventType
 from avalan.flow import (
+    FlowConditionOperator,
+    FlowConditionPlan,
     FlowDefinition,
+    FlowEdgeKind,
+    FlowEdgePlan,
     FlowEntryBehavior,
     FlowExecutionPlan,
     FlowInputDefinition,
     FlowInputType,
+    FlowJoinPlan,
+    FlowJoinPolicyType,
     FlowMappingKind,
     FlowMappingPlan,
+    FlowNodeCapability,
     FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeKind,
     FlowNodePlan,
+    FlowNodeState,
     FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowRouteMatchPolicy,
+    InMemoryFlowStateStore,
     compile_flow_definition,
     parse_flow_selector,
 )
@@ -377,6 +395,108 @@ class MatrixReadingTarget(TaskTargetRunner):
             )
         )
         return "public target output"
+
+
+class MatrixVendorToolResolver:
+    def __init__(self) -> None:
+        self.calls: list[ToolCall] = []
+        self.contexts: list[ToolCallContext] = []
+        self._descriptors = [
+            ToolDescriptor(
+                name="vendor_sanctions_check",
+                parameter_schema={
+                    "type": "object",
+                    "required": ["vendor_id", "risk_hint"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "vendor_id": {"type": "string"},
+                        "risk_hint": {"type": "string"},
+                    },
+                },
+                return_schema={
+                    "type": "object",
+                    "required": ["status", "risk_score", "vendor_id"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "status": {"type": "string"},
+                        "risk_score": {"type": "integer"},
+                        "vendor_id": {"type": "string"},
+                    },
+                },
+            ),
+            ToolDescriptor(
+                name="vendor_bank_check",
+                parameter_schema={
+                    "type": "object",
+                    "required": ["vendor_id"],
+                    "additionalProperties": False,
+                    "properties": {"vendor_id": {"type": "string"}},
+                },
+                return_schema={
+                    "type": "object",
+                    "required": ["status", "risk_score"],
+                    "additionalProperties": False,
+                    "properties": {
+                        "status": {"type": "string"},
+                        "risk_score": {"type": "integer"},
+                    },
+                },
+            ),
+        ]
+
+    def list_tools(self) -> list[ToolDescriptor]:
+        return list(self._descriptors)
+
+    def resolve_tool_name(
+        self,
+        name: str,
+        *,
+        provider_originated: bool = False,
+    ) -> ToolNameResolution:
+        _ = provider_originated
+        names = {descriptor.name for descriptor in self._descriptors}
+        if name in names:
+            return ToolNameResolution(
+                requested_name=name,
+                status=ToolNameResolutionStatus.EXACT,
+                canonical_name=name,
+                candidates=[name],
+            )
+        return ToolNameResolution(
+            requested_name=name,
+            status=ToolNameResolutionStatus.UNKNOWN,
+        )
+
+    def validate_tool_call(
+        self,
+        call: ToolCall,
+    ) -> ToolCallDiagnostic | None:
+        _ = call
+        return None
+
+    async def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> ToolCallOutcome:
+        self.calls.append(call)
+        self.contexts.append(context)
+        arguments = call.arguments or {}
+        if call.name == "vendor_sanctions_check":
+            result = {
+                "status": "clear",
+                "risk_score": 1,
+                "vendor_id": arguments["vendor_id"],
+            }
+        else:
+            result = {"status": "verified", "risk_score": 0}
+        return ToolCallResult(
+            id=f"{call.name}-result",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=result,
+        )
 
 
 class MatrixQueue:
@@ -1585,6 +1705,195 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertNotIn("matrix-private-no-store-window", rendered)
         self.assertNotIn("matrix-private-no-store-owner", rendered)
 
+    async def test_direct_strict_vendor_onboarding_happy_path(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            _write_vendor_agent(workspace)
+            converter = MatrixPdfImageConverter(
+                (
+                    TaskFileConversionPageResult(
+                        page_index=1,
+                        page_count=1,
+                        content=b"matrix private vendor image",
+                        media_type="image/png",
+                        width_pixels=40,
+                        height_pixels=20,
+                        metadata={
+                            "filename": "matrix-private-vendor-page.png"
+                        },
+                    ),
+                )
+            )
+            loader = MatrixAgentLoader(
+                responses=(
+                    MatrixResponse(
+                        '{"vendor_name":"Acme Vendor",'
+                        '"vendor_id":"vendor-123",'
+                        '"risk_hint":"low","document_pages":1}'
+                    ),
+                )
+            )
+            tool_resolver = MatrixVendorToolResolver()
+            flow_store = InMemoryFlowStateStore()
+            flow_target = FlowTaskTargetRunner(
+                strict_resolver=lambda _: _strict_vendor_onboarding_plan(),
+                flow_state_store=flow_store,
+                agent_runner=workspace.agent_target(loader),
+                execution_roots=(workspace.root,),
+                tool_resolver=tool_resolver,
+                concurrency_limit=2,
+            )
+            client = workspace.direct_client(
+                flow_target,
+                file_converters={"pdf_image": converter},
+            )
+
+            result = await client.run(
+                _direct_vendor_definition("direct_vendor_onboarding_matrix"),
+                input_value=TaskClient.local_file(
+                    "uploads/document.pdf",
+                    mime_type="application/pdf",
+                    metadata={"filename": "matrix-private-vendor.pdf"},
+                ),
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+            record = await flow_store.get_flow_execution(result.run.run_id)
+            artifacts = await workspace.store.list_artifacts(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(output.output_summary, {"privacy": REDACTED_MARKER})
+        summary = cast(
+            Mapping[str, object],
+            record.selected_outputs["summary"],
+        )
+        vendor = cast(Mapping[str, object], summary["vendor"])
+        sanctions = cast(Mapping[str, object], summary["sanctions"])
+        banking = cast(Mapping[str, object], summary["banking"])
+        self.assertEqual(vendor["vendor_id"], "vendor-123")
+        self.assertEqual(sanctions["status"], "clear")
+        self.assertEqual(sanctions["risk_score"], 1)
+        self.assertEqual(banking["status"], "verified")
+        self.assertEqual(converter.calls[0][0], b"matrix private pdf body")
+        self.assertEqual(len(loader.inputs), 1)
+        image_blocks = _image_blocks(loader.inputs[0])
+        self.assertEqual(len(image_blocks), 1)
+        self.assertEqual(
+            b64decode(cast(str, image_blocks[0].image_url["data"])),
+            b"matrix private vendor image",
+        )
+        self.assertEqual(
+            sorted(call.name for call in tool_resolver.calls),
+            ["vendor_bank_check", "vendor_sanctions_check"],
+        )
+        self.assertTrue(
+            all(context.flow_tool_node for context in tool_resolver.contexts)
+        )
+        node_states = {node.node: node.state for node in record.trace.nodes}
+        self.assertEqual(node_states["approved"], FlowNodeState.SUCCEEDED)
+        self.assertEqual(node_states["review"], FlowNodeState.SKIPPED)
+        self.assertEqual(dict(record.pause_tokens), {})
+        self.assertEqual(
+            {artifact.purpose for artifact in artifacts},
+            {TaskArtifactPurpose.INPUT, TaskArtifactPurpose.CONVERTED},
+        )
+        _assert_no_sentinels(
+            (
+                inspection.as_dict(),
+                output.as_dict(),
+                record.metadata,
+                record.selected_outputs,
+                tuple(artifact.summary() for artifact in artifacts),
+                _cli_snapshot(inspection.as_dict()),
+            ),
+            (
+                "matrix private pdf body",
+                "matrix private vendor image",
+                "matrix-private-vendor-page.png",
+                "matrix-private-vendor.pdf",
+            ),
+        )
+
+    async def test_direct_strict_vendor_onboarding_invalid_input_stops(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            _write_vendor_agent(workspace)
+            converter = MatrixPdfImageConverter(
+                (
+                    TaskFileConversionPageResult(
+                        page_index=1,
+                        page_count=1,
+                        content=b"matrix private invalid vendor image",
+                        media_type="image/png",
+                        width_pixels=40,
+                        height_pixels=20,
+                    ),
+                )
+            )
+            loader = MatrixAgentLoader()
+            tool_resolver = MatrixVendorToolResolver()
+            flow_store = InMemoryFlowStateStore()
+            flow_target = FlowTaskTargetRunner(
+                strict_resolver=lambda _: _strict_vendor_onboarding_plan(
+                    vendor_id=None
+                ),
+                flow_state_store=flow_store,
+                agent_runner=workspace.agent_target(loader),
+                execution_roots=(workspace.root,),
+                tool_resolver=tool_resolver,
+                concurrency_limit=2,
+            )
+            client = workspace.direct_client(
+                flow_target,
+                file_converters={"pdf_image": converter},
+            )
+
+            result = await client.run(
+                _direct_vendor_definition(
+                    "direct_vendor_onboarding_invalid_matrix"
+                ),
+                input_value=TaskClient.local_file(
+                    "uploads/document.pdf",
+                    mime_type="application/pdf",
+                    metadata={"filename": "matrix-private-invalid-vendor.pdf"},
+                ),
+            )
+            output = await client.output(result.run.run_id)
+            inspection = await client.inspect(result.run.run_id)
+            record = await flow_store.get_flow_execution(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(output.state, TaskRunState.FAILED)
+        self.assertEqual(converter.calls, [])
+        self.assertEqual(loader.inputs, [])
+        self.assertEqual(tool_resolver.calls, [])
+        node_states = {node.node: node.state for node in record.trace.nodes}
+        self.assertEqual(
+            node_states["validate_metadata"],
+            FlowNodeState.FAILED,
+        )
+        self.assertEqual(node_states["render"], FlowNodeState.SKIPPED)
+        self.assertIn(
+            "flow.execution.validation_failed",
+            {diagnostic.code for diagnostic in record.diagnostics},
+        )
+        _assert_no_sentinels(
+            (
+                inspection.as_dict(),
+                output.as_dict(),
+                record.metadata,
+                _cli_snapshot(inspection.as_dict()),
+            ),
+            (
+                "matrix private pdf body",
+                "matrix private invalid vendor image",
+                "matrix-private-invalid-vendor.pdf",
+            ),
+        )
+
     async def test_strict_subflow_matrix_matches_direct_and_queue(
         self,
     ) -> None:
@@ -1889,6 +2198,542 @@ def _queued_definition(
             capture_events=True,
         ),
         retry=TaskRetryPolicy(max_attempts=1),
+    )
+
+
+def _direct_vendor_definition(name: str) -> TaskDefinition:
+    return TaskDefinition(
+        task=TaskMetadata(name=name, version="1"),
+        input=TaskInputContract.file(mime_types=("application/pdf",)),
+        output=TaskOutputContract.object(_vendor_output_schema()),
+        execution=TaskExecutionTarget.flow("flows/vendor_onboarding.toml"),
+        run=TaskRunPolicy.direct(timeout_seconds=60),
+        privacy=TaskPrivacyPolicy(raw_retention_days=1),
+        artifact=TaskArtifactPolicy.references_only(retention_days=3),
+        observability=TaskObservabilityPolicy(
+            metrics=True,
+            trace=False,
+            capture_events=True,
+        ),
+        retry=TaskRetryPolicy(max_attempts=1),
+    )
+
+
+def _write_vendor_agent(workspace: MatrixWorkspace) -> None:
+    (workspace.root / "agents" / "vendor_provider.toml").write_text(
+        """
+[agent]
+name = "Vendor provider"
+task = "Extract vendor metadata."
+
+[engine]
+uri = "ai://env:KEY@openai/gpt-4o-mini"
+""",
+        encoding="utf-8",
+    )
+
+
+def _vendor_output_schema() -> Mapping[str, object]:
+    return {
+        "type": "object",
+        "additionalProperties": True,
+        "properties": {
+            "vendor": {"type": "object"},
+            "sanctions": {"type": "object"},
+            "banking": {"type": "object"},
+        },
+    }
+
+
+def _strict_vendor_onboarding_plan(
+    *,
+    vendor_id: str | None = "vendor-123",
+) -> FlowExecutionPlan:
+    dynamic_object = FlowNodeContract(
+        name="value",
+        type=FlowOutputType.OBJECT,
+        metadata={"dynamic": True},
+    )
+    dynamic_result = FlowNodeContract(
+        name="result",
+        type=FlowOutputType.JSON,
+        metadata={"dynamic": True},
+    )
+    return FlowExecutionPlan(
+        name="vendor-onboarding",
+        version="1",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(
+                name="documents",
+                type=FlowInputType.FILE_ARRAY,
+                mime_types=("application/pdf",),
+            ),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="summary", type=FlowOutputType.OBJECT),
+        ),
+        entry_node="metadata",
+        output_selectors={
+            "summary": parse_flow_selector("approved.value"),
+        },
+        nodes=(
+            FlowNodePlan(
+                name="metadata",
+                type="constant",
+                kind=FlowNodeKind.CONSTANT,
+                output_contracts=(dynamic_object,),
+                config={"value": _vendor_metadata(vendor_id=vendor_id)},
+            ),
+            FlowNodePlan(
+                name="validate_metadata",
+                type="validation",
+                kind=FlowNodeKind.VALIDATION,
+                input_contracts=(
+                    FlowNodeContract(
+                        name="value",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                output_contracts=(dynamic_object,),
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("metadata.value"),
+                    ),
+                ),
+                config={
+                    "value_type": "object",
+                    "required_fields": ("vendor_name", "vendor_id"),
+                },
+            ),
+            FlowNodePlan(
+                name="render",
+                type="pdf_to_images",
+                kind=FlowNodeKind.FILE_CONVERSION,
+                input_contracts=(
+                    FlowNodeContract(
+                        name="files",
+                        type=FlowInputType.FILE_ARRAY,
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(
+                        name="files",
+                        type=FlowOutputType.FILE_ARRAY,
+                    ),
+                ),
+                capabilities=(
+                    FlowNodeCapability.ASYNC_ONLY,
+                    FlowNodeCapability.TASK_BACKED,
+                ),
+                mappings=(
+                    FlowMappingPlan(
+                        target="files",
+                        kind=FlowMappingKind.FILE_ARRAY,
+                        source=parse_flow_selector("input.documents"),
+                    ),
+                ),
+                config={"format": "png", "max_pages": 1, "pages": "1"},
+            ),
+            FlowNodePlan(
+                name="extract",
+                type="agent",
+                kind=FlowNodeKind.AGENT,
+                ref="agents/vendor_provider.toml",
+                input_contracts=(
+                    FlowNodeContract(name="input", type="any"),
+                    FlowNodeContract(
+                        name=None,
+                        type="object",
+                        metadata={"dynamic": True},
+                    ),
+                ),
+                output_contracts=(dynamic_result,),
+                capabilities=(
+                    FlowNodeCapability.ASYNC_ONLY,
+                    FlowNodeCapability.TASK_BACKED,
+                ),
+                mappings=(
+                    FlowMappingPlan(
+                        target="input",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("validate_metadata.value"),
+                    ),
+                    FlowMappingPlan(
+                        target="render",
+                        kind=FlowMappingKind.OBJECT,
+                        fields={
+                            "files": parse_flow_selector("render.files"),
+                        },
+                    ),
+                ),
+                join=FlowJoinPlan(type=FlowJoinPolicyType.ALL_SUCCESS),
+                config={
+                    "files_input": "render.files",
+                    "file_policy": "replace",
+                },
+            ),
+            _strict_vendor_tool_node(
+                name="sanctions",
+                ref="vendor_sanctions_check",
+                mappings=(
+                    FlowMappingPlan(
+                        target="arguments",
+                        kind=FlowMappingKind.OBJECT,
+                        fields={
+                            "vendor_id": parse_flow_selector(
+                                "extract.result.vendor_id"
+                            ),
+                            "risk_hint": parse_flow_selector(
+                                "extract.result.risk_hint"
+                            ),
+                        },
+                    ),
+                ),
+                argument_bindings={
+                    "vendor_id": "vendor_id",
+                    "risk_hint": "risk_hint",
+                },
+            ),
+            _strict_vendor_tool_node(
+                name="banking",
+                ref="vendor_bank_check",
+                mappings=(
+                    FlowMappingPlan(
+                        target="arguments",
+                        kind=FlowMappingKind.OBJECT,
+                        fields={
+                            "vendor_id": parse_flow_selector(
+                                "extract.result.vendor_id"
+                            ),
+                        },
+                    ),
+                ),
+                argument_bindings={"vendor_id": "vendor_id"},
+            ),
+            FlowNodePlan(
+                name="checks",
+                type="join",
+                kind=FlowNodeKind.JOIN,
+                output_contracts=(dynamic_object,),
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.OBJECT,
+                        fields={
+                            "vendor": parse_flow_selector("extract.result"),
+                            "sanctions": parse_flow_selector(
+                                "sanctions.result"
+                            ),
+                            "banking": parse_flow_selector("banking.result"),
+                        },
+                    ),
+                ),
+                join=FlowJoinPlan(type=FlowJoinPolicyType.ALL_SUCCESS),
+            ),
+            FlowNodePlan(
+                name="risk",
+                type="decision",
+                kind=FlowNodeKind.DECISION,
+                input_contracts=(
+                    FlowNodeContract(
+                        name="value",
+                        type=FlowInputType.OBJECT,
+                        metadata={"dynamic": True},
+                    ),
+                ),
+                output_contracts=(dynamic_object,),
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("checks.value"),
+                    ),
+                ),
+            ),
+            FlowNodePlan(
+                name="approved",
+                type="pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+                input_contracts=(
+                    FlowNodeContract(
+                        name="value",
+                        type=FlowInputType.OBJECT,
+                        metadata={"dynamic": True},
+                    ),
+                ),
+                output_contracts=(dynamic_object,),
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("risk.value"),
+                    ),
+                ),
+            ),
+            FlowNodePlan(
+                name="review",
+                type="human_review",
+                kind=FlowNodeKind.HUMAN_REVIEW,
+                input_contracts=(
+                    FlowNodeContract(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                output_contracts=(dynamic_result,),
+                capabilities=(
+                    FlowNodeCapability.ASYNC_ONLY,
+                    FlowNodeCapability.DURABLE_PAUSE,
+                ),
+                mappings=(
+                    FlowMappingPlan(
+                        target="payload",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("risk.value"),
+                    ),
+                ),
+                config=_review_node_config(),
+            ),
+            _review_sink("review_approved"),
+            _review_sink("review_rejected"),
+            _review_sink("review_correction"),
+            _review_sink("review_expired"),
+        ),
+        edges=_strict_vendor_edges(),
+    )
+
+
+def _vendor_metadata(*, vendor_id: str | None) -> Mapping[str, object]:
+    metadata: dict[str, object] = {"vendor_name": "Acme Vendor"}
+    if vendor_id is not None:
+        metadata["vendor_id"] = vendor_id
+    return metadata
+
+
+def _strict_vendor_tool_node(
+    *,
+    name: str,
+    ref: str,
+    mappings: tuple[FlowMappingPlan, ...],
+    argument_bindings: Mapping[str, str],
+) -> FlowNodePlan:
+    return FlowNodePlan(
+        name=name,
+        type="tool",
+        kind=FlowNodeKind.TOOL,
+        ref=ref,
+        input_contracts=(
+            FlowNodeContract(
+                name="arguments",
+                type=FlowInputType.OBJECT,
+                metadata={"dynamic": True},
+            ),
+        ),
+        output_contracts=(
+            FlowNodeContract(
+                name="result",
+                type=FlowOutputType.JSON,
+                metadata={"dynamic": True},
+            ),
+        ),
+        capabilities=(FlowNodeCapability.ASYNC_ONLY,),
+        mappings=mappings,
+        config={"arguments": argument_bindings},
+    )
+
+
+def _review_sink(name: str) -> FlowNodePlan:
+    return FlowNodePlan(
+        name=name,
+        type="pass-through",
+        kind=FlowNodeKind.PASS_THROUGH,
+        input_contracts=(
+            FlowNodeContract(
+                name="value",
+                type=FlowInputType.OBJECT,
+                metadata={"dynamic": True},
+            ),
+        ),
+        output_contracts=(
+            FlowNodeContract(
+                name="value",
+                type=FlowOutputType.OBJECT,
+                metadata={"dynamic": True},
+            ),
+        ),
+        mappings=(
+            FlowMappingPlan(
+                target="value",
+                kind=FlowMappingKind.SELECT,
+                source=parse_flow_selector("review.result"),
+            ),
+        ),
+    )
+
+
+def _review_node_config() -> Mapping[str, object]:
+    decision_schema = {
+        "type": "object",
+        "required": ["decision"],
+        "additionalProperties": False,
+        "properties": {
+            "decision": {
+                "type": "string",
+                "enum": [
+                    "approved",
+                    "rejected",
+                    "needs-correction",
+                    "expired",
+                ],
+            },
+        },
+    }
+    return {
+        "allowed_decisions": (
+            "approved",
+            "rejected",
+            "needs-correction",
+            "expired",
+        ),
+        "decision_schema": decision_schema,
+        "payload_schema": {"type": "object", "additionalProperties": True},
+        "timeout_seconds": 3600,
+        "audit_metadata": {"queue": "vendor"},
+    }
+
+
+def _strict_vendor_edges() -> tuple[FlowEdgePlan, ...]:
+    return (
+        FlowEdgePlan(
+            index=0,
+            source="metadata",
+            target="validate_metadata",
+            kind=FlowEdgeKind.SUCCESS,
+        ),
+        FlowEdgePlan(
+            index=1,
+            source="validate_metadata",
+            target="render",
+            kind=FlowEdgeKind.SUCCESS,
+            routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+        ),
+        FlowEdgePlan(
+            index=2,
+            source="validate_metadata",
+            target="extract",
+            kind=FlowEdgeKind.SUCCESS,
+            routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+        ),
+        FlowEdgePlan(
+            index=3,
+            source="render",
+            target="extract",
+            kind=FlowEdgeKind.SUCCESS,
+        ),
+        FlowEdgePlan(
+            index=4,
+            source="extract",
+            target="sanctions",
+            kind=FlowEdgeKind.SUCCESS,
+            routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+        ),
+        FlowEdgePlan(
+            index=5,
+            source="extract",
+            target="banking",
+            kind=FlowEdgeKind.SUCCESS,
+            routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+        ),
+        FlowEdgePlan(
+            index=6,
+            source="extract",
+            target="checks",
+            kind=FlowEdgeKind.SUCCESS,
+            routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+        ),
+        FlowEdgePlan(
+            index=7,
+            source="sanctions",
+            target="checks",
+            kind=FlowEdgeKind.SUCCESS,
+        ),
+        FlowEdgePlan(
+            index=8,
+            source="banking",
+            target="checks",
+            kind=FlowEdgeKind.SUCCESS,
+        ),
+        FlowEdgePlan(
+            index=9,
+            source="checks",
+            target="risk",
+            kind=FlowEdgeKind.SUCCESS,
+        ),
+        FlowEdgePlan(
+            index=10,
+            source="risk",
+            target="approved",
+            kind=FlowEdgeKind.SUCCESS,
+            condition=FlowConditionPlan(
+                operator=FlowConditionOperator.LT,
+                selector=parse_flow_selector(
+                    "risk.value.sanctions.risk_score"
+                ),
+                value=3,
+            ),
+            priority=0,
+        ),
+        FlowEdgePlan(
+            index=11,
+            source="risk",
+            target="review",
+            kind=FlowEdgeKind.SUCCESS,
+            condition=FlowConditionPlan(
+                operator=FlowConditionOperator.GTE,
+                selector=parse_flow_selector(
+                    "risk.value.sanctions.risk_score"
+                ),
+                value=3,
+            ),
+            priority=1,
+        ),
+        FlowEdgePlan(
+            index=12,
+            source="review",
+            target="review_approved",
+            kind=FlowEdgeKind.RESUME,
+            label="approved",
+        ),
+        FlowEdgePlan(
+            index=13,
+            source="review",
+            target="review_rejected",
+            kind=FlowEdgeKind.RESUME,
+            label="rejected",
+        ),
+        FlowEdgePlan(
+            index=14,
+            source="review",
+            target="review_correction",
+            kind=FlowEdgeKind.RESUME,
+            label="needs-correction",
+        ),
+        FlowEdgePlan(
+            index=15,
+            source="review",
+            target="review_expired",
+            kind=FlowEdgeKind.RESUME,
+            label="expired",
+        ),
+        FlowEdgePlan(
+            index=16,
+            source="review",
+            target="review_expired",
+            kind=FlowEdgeKind.TIMEOUT,
+        ),
     )
 
 

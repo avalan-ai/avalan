@@ -2406,6 +2406,30 @@ class CliTaskCommandShellTestCase(TestCase):
                         console,
                     )
                 )
+            with patch.object(
+                task_cmds.Path,
+                "replace",
+                side_effect=OSError("private replace failure"),
+            ):
+                self.assertFalse(
+                    task_cmds._write_task_run_output_file(
+                        str(root / "cleanup.json"),
+                        "{}\n",
+                        console,
+                    )
+                )
+            with patch.object(
+                task_cmds,
+                "NamedTemporaryFile",
+                side_effect=OSError("private create failure"),
+            ):
+                self.assertFalse(
+                    task_cmds._write_task_run_output_file(
+                        str(root / "create.json"),
+                        "{}\n",
+                        console,
+                    )
+                )
 
         output = console.export_text()
         self.assertIn("output.write", output)
@@ -3003,6 +3027,57 @@ class CliTaskCommandShellTestCase(TestCase):
         self.assertNotIn("private heartbeat outage", output)
         self.assertIn("Task worker processed 1 run.", output)
 
+    def test_worker_reports_claim_loss_without_claim(self) -> None:
+        console = Console(record=True, width=160)
+        database = _FakeResource()
+        _FakeTaskWorker.instances = []
+        _FakeTaskWorker.results = [
+            SimpleNamespace(
+                processed=True,
+                completion=None,
+                retry=None,
+                abandonment=None,
+                shutdown_requested=False,
+                lease_lost=True,
+                claimed=None,
+                private_detail="private missing claim",
+            )
+        ]
+
+        with (
+            patch.object(
+                task_cmds, "_task_pgsql_database", return_value=database
+            ),
+            patch.object(task_cmds, "require_feature", return_value=()),
+            patch.object(task_cmds, "PgsqlTaskStore", return_value=object()),
+            patch.object(task_cmds, "PgsqlTaskQueue", return_value=object()),
+            patch.object(
+                task_cmds, "_agent_task_target", return_value=object()
+            ),
+            patch.object(task_cmds, "TaskWorker", _FakeTaskWorker),
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            result = task_cmds.task_worker(
+                Namespace(
+                    queue="documents",
+                    store_dsn="postgresql://db/tasks",
+                    store_schema="tasks",
+                    worker_id="worker-a",
+                    once=True,
+                    limit=2,
+                    lease_seconds=30,
+                    heartbeat_seconds=0.25,
+                    ephemeral=False,
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task claim lost.", output)
+        self.assertNotIn("private missing claim", output)
+
     def test_worker_reports_retry_and_counts_missing_run_results(
         self,
     ) -> None:
@@ -3315,6 +3390,45 @@ class CliTaskCommandShellTestCase(TestCase):
             )
 
         self.assertEqual(interrupted, [True])
+
+    def test_run_awaitable_reraises_interrupt_without_callback(self) -> None:
+        class _Future:
+            def __init__(self, target: Callable[[], None]) -> None:
+                self.target = target
+
+            def result(self) -> None:
+                raise KeyboardInterrupt()
+
+        class _Executor:
+            def __init__(self, max_workers: int) -> None:
+                self.max_workers = max_workers
+
+            def __enter__(self) -> "_Executor":
+                return self
+
+            def __exit__(
+                self,
+                exc_type: object,
+                exc: object,
+                traceback: object,
+            ) -> None:
+                return None
+
+            def submit(self, target: Callable[[], None]) -> _Future:
+                return _Future(target)
+
+        async def complete() -> bool:
+            return True
+
+        coroutine = complete()
+        try:
+            with (
+                patch.object(task_cmds, "ThreadPoolExecutor", _Executor),
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                task_cmds._run_awaitable(coroutine)
+        finally:
+            coroutine.close()
 
     def test_client_context_enters_database_and_stack(self) -> None:
         database = _FakeResource()
@@ -3668,12 +3782,23 @@ class CliTaskCommandShellTestCase(TestCase):
             flow = resolver(
                 _flow_task_context(TaskExecutionTarget.flow("flow.toml"))
             )
+            absolute_flow = resolver(
+                _flow_task_context(TaskExecutionTarget.flow(str(flow_path)))
+            )
+            absolute_issues = task_cmds._validate_task_flow_reference(
+                root / "task.toml",
+                _flow_task_context(
+                    TaskExecutionTarget.flow(str(flow_path))
+                ).definition,
+            )
             with self.assertRaises(TaskValidationError) as context:
                 resolver(
                     _flow_task_context(TaskExecutionTarget.flow("broken.toml"))
                 )
 
         self.assertIsNotNone(flow)
+        self.assertIsNotNone(absolute_flow)
+        self.assertEqual(absolute_issues, ())
         self.assertEqual(
             context.exception.issues[0].category,
             TaskValidationCategory.UNSUPPORTED,
@@ -3726,12 +3851,16 @@ class CliTaskCommandShellTestCase(TestCase):
             definition = resolver(
                 _flow_task_context(TaskExecutionTarget.flow("strict.toml"))
             )
+            absolute_definition = resolver(
+                _flow_task_context(TaskExecutionTarget.flow(str(flow_path)))
+            )
             with self.assertRaises(TaskValidationError) as context:
                 resolver(
                     _flow_task_context(TaskExecutionTarget.flow("broken.toml"))
                 )
 
         self.assertEqual(definition.name, "constant")
+        self.assertEqual(absolute_definition.name, "constant")
         self.assertIsNone(definition.entrypoint)
         self.assertIsNone(definition.output_node)
         self.assertEqual(definition.outputs[0].name, "answer")

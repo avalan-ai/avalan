@@ -45,9 +45,11 @@ class MermaidFlowViewNormalizerTestCase(TestCase):
                     "flowchart LR",
                     'A(["Start"]) -->|yes| B{Check}',
                     "B -.-> C --> D",
-                    "classDef active fill:#fff,stroke:#333",
+                    "classDef active fill:#fff,stroke:#333,badpair,color:",
                     "class A active",
+                    "class Missing active",
                     "style B fill:#eee,stroke:#111",
+                    "style Missing fill:#abc",
                     "linkStyle 1 stroke:#f00",
                     "%% note",
                 )
@@ -172,12 +174,16 @@ class MermaidFlowViewNormalizerTestCase(TestCase):
                     "subgraph lane[First]",
                     "A",
                     "end",
+                    "%% duplicate group note",
                     "subgraph outer[Outer]",
                     "subgraph lane[Second]",
                     "S[[Sub]] --> Db[(Data)]",
                     "Db --> Circle((Circle))",
                     "Circle --> Hex{{Hex}}",
                     "Hex --> Round(Round)",
+                    "end",
+                    "subgraph lane",
+                    "Extra",
                     "end",
                     "end",
                 )
@@ -192,6 +198,8 @@ class MermaidFlowViewNormalizerTestCase(TestCase):
         self.assertEqual(lane.label, "Second")
         self.assertEqual(lane.parent, "outer")
         self.assertEqual(result.view.group_map["outer"].groups, ("lane",))
+        self.assertEqual(result.view.comments[0].text, "duplicate group note")
+        self.assertEqual(result.view.node_map["Extra"].group, "lane")
         self.assertEqual(
             result.view.node_map["S"].shape, FlowViewNodeShape.SUBROUTINE
         )
@@ -709,6 +717,64 @@ class MermaidFlowViewRendererTestCase(TestCase):
                 "flow.mermaid.parser.renderer_invalid_style_target",
                 "flow.mermaid.parser.renderer_unsafe_style_property",
                 "flow.mermaid.parser.renderer_invalid_link_style_target",
+            ],
+        )
+
+    def test_render_mermaid_view_skips_missing_refs_and_empty_properties(
+        self,
+    ) -> None:
+        view = FlowView(
+            import_mode=FlowViewImportMode.EXECUTABLE,
+            nodes=(
+                FlowViewNode(id="A", label="Alpha", classes=("bad class",)),
+            ),
+            groups=(
+                FlowViewGroup(
+                    id="root",
+                    nodes=("missing_node", "A"),
+                    groups=("missing_group",),
+                ),
+            ),
+            class_definitions=(
+                FlowViewClassDefinition(name="empty"),
+                FlowViewClassDefinition(
+                    name="unsafe",
+                    properties={"background": "url(https://private.test/a)"},
+                ),
+            ),
+            styles=(
+                FlowViewStyle(
+                    target="A",
+                    properties={"fill": "red;blue"},
+                ),
+            ),
+            link_styles=(
+                FlowViewLinkStyle(
+                    edge_index=0,
+                    properties={"stroke": "url(https://private.test/a)"},
+                ),
+            ),
+        )
+
+        rendered = render_mermaid_view(view)
+
+        self.assertFalse(rendered.ok)
+        self.assertIn('A["Alpha"]', rendered.source)
+        self.assertNotIn("missing_node", rendered.source)
+        self.assertNotIn("missing_group", rendered.source)
+        self.assertNotIn("class A", rendered.source)
+        self.assertNotIn("classDef empty", rendered.source)
+        self.assertNotIn("classDef unsafe", rendered.source)
+        self.assertNotIn("style A", rendered.source)
+        self.assertNotIn("linkStyle 0", rendered.source)
+        self.assertNotIn("private.test", rendered.source)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in rendered.diagnostics],
+            [
+                "flow.mermaid.parser.renderer_unsafe_style_property",
+                "flow.mermaid.parser.renderer_invalid_class_identifier",
+                "flow.mermaid.parser.renderer_unsafe_style_property",
+                "flow.mermaid.parser.renderer_unsafe_style_property",
             ],
         )
 

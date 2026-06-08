@@ -19,6 +19,7 @@ from avalan.flow import (
     FlowInspectionRunState,
     FlowMappingKind,
     FlowMappingPlan,
+    FlowNodeCapability,
     FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeKind,
@@ -56,6 +57,100 @@ from avalan.task.targets.flow import FLOW_RESUME_DECISIONS_METADATA_KEY
 
 
 class FlowExecutorTestCase(IsolatedAsyncioTestCase):
+    async def test_direct_runtime_surface_is_async_only(self) -> None:
+        calls: list[str] = []
+
+        async def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            return dict(inputs)
+
+        executor = FlowExecutor(runner=runner)
+
+        result = await executor.run(
+            _async_only_plan(),
+            inputs={"payload": "safe"},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(calls, ["echo"])
+        self.assertEqual(result.outputs, {"answer": "safe"})
+        self.assertFalse(hasattr(FlowExecutor, "execute"))
+        self.assertFalse(hasattr(executor, "execute"))
+
+    async def test_run_rejects_task_backed_nodes_before_execution(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        async def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            return {"secret": inputs}
+
+        result = await FlowExecutor(runner=runner).run(
+            _task_backed_plan(),
+            inputs={"payload": "private prompt"},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.result)
+        self.assertEqual(calls, [])
+        self.assertEqual(result.outputs, {})
+        self.assertEqual(
+            result.public_diagnostics,
+            (
+                {
+                    "code": (
+                        "flow.execution.task_backed_node_requires_task_runner"
+                    ),
+                    "category": FlowDiagnosticCategory.EXECUTION.value,
+                    "severity": "error",
+                    "message": (
+                        "Task-backed flow nodes require task execution."
+                    ),
+                    "path": "nodes.agent.type",
+                    "hint": (
+                        "Run this flow through a task-backed flow executor."
+                    ),
+                },
+            ),
+        )
+        self.assertNotIn("private prompt", str(result.public_diagnostics))
+
+    async def test_resume_rejects_task_backed_nodes_before_execution(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        plan = _task_backed_plan()
+
+        async def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            return dict(inputs)
+
+        result = await FlowExecutor(runner=runner).resume(
+            plan,
+            FlowPlanExecutionResult(trace=FlowExecutionTrace.from_plan(plan)),
+            decisions={"agent": {"decision": "approved"}},
+            inputs={"payload": "private resume"},
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.result)
+        self.assertEqual(calls, [])
+        self.assertEqual(
+            result.public_diagnostics[0]["code"],
+            "flow.execution.task_backed_node_requires_task_runner",
+        )
+        self.assertNotIn("private resume", str(result.public_diagnostics))
+
     async def test_run_executes_definition_and_exports_sanitized_trace(
         self,
     ) -> None:
@@ -282,6 +377,11 @@ class FlowExecutorTestCase(IsolatedAsyncioTestCase):
             "run-1"
         )
         self.assertIsNone(no_store_inspection.flow)
+        self.assertNotIn("flow", no_store_inspection.as_public_dict())
+        self.assertNotIn(
+            "flow",
+            no_store_inspection.export_sanitized_trace(),
+        )
 
     async def test_task_executor_validates_inputs(self) -> None:
         task_client = _FakeTaskClient()
@@ -495,6 +595,77 @@ def _plan() -> FlowExecutionPlan:
                 ),
                 output_contracts=(
                     FlowNodeContract(name="value", type=FlowOutputType.JSON),
+                ),
+            ),
+        ),
+    )
+
+
+def _async_only_plan() -> FlowExecutionPlan:
+    return FlowExecutionPlan(
+        name="async-runtime",
+        version="2026-06-08",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="payload", type=FlowInputType.OBJECT),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
+        ),
+        entry_node="echo",
+        output_selectors={"answer": parse_flow_selector("echo.value")},
+        nodes=(
+            FlowNodePlan(
+                name="echo",
+                type="async-pass-through",
+                kind=FlowNodeKind.PASS_THROUGH,
+                capabilities=(FlowNodeCapability.ASYNC_ONLY,),
+                mappings=(
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("inputs.payload"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(name="value", type=FlowOutputType.JSON),
+                ),
+            ),
+        ),
+    )
+
+
+def _task_backed_plan() -> FlowExecutionPlan:
+    return FlowExecutionPlan(
+        name="task-runtime",
+        version="2026-06-08",
+        revision=None,
+        inputs=(
+            FlowInputDefinition(name="payload", type=FlowInputType.OBJECT),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
+        ),
+        entry_node="agent",
+        output_selectors={"answer": parse_flow_selector("agent.result")},
+        nodes=(
+            FlowNodePlan(
+                name="agent",
+                type="agent",
+                kind=FlowNodeKind.AGENT,
+                capabilities=(
+                    FlowNodeCapability.ASYNC_ONLY,
+                    FlowNodeCapability.TASK_BACKED,
+                ),
+                mappings=(
+                    FlowMappingPlan(
+                        target="prompt",
+                        kind=FlowMappingKind.SELECT,
+                        source=parse_flow_selector("inputs.payload"),
+                    ),
+                ),
+                output_contracts=(
+                    FlowNodeContract(name="result", type=FlowOutputType.JSON),
                 ),
             ),
         ),

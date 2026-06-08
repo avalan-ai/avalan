@@ -79,6 +79,7 @@ def bind_flow_view_definition(
         elif _node_lacks_semantics(matching_definition_node):
             diagnostics.append(_missing_node_semantics(view_node))
 
+    _validate_view_edge_endpoints(view, diagnostics)
     _compare_edges(view, definition, diagnostics)
 
     return FlowViewBindingResult(
@@ -122,6 +123,32 @@ def create_flow_definition_skeleton(
             "source": "flow_view",
         },
     )
+
+
+def _validate_view_edge_endpoints(
+    view: FlowView,
+    diagnostics: list[FlowDiagnostic],
+) -> None:
+    node_ids = set(view.node_map)
+    for edge in view.edges:
+        if edge.source not in node_ids:
+            diagnostics.append(
+                _diagnostic(
+                    "flow.view.binding.unknown_edge_source",
+                    "Flow View edge source is not present in the view.",
+                    f"view.edges.{edge.id}.source",
+                    source_span=edge.source_span,
+                )
+            )
+        if edge.target not in node_ids:
+            diagnostics.append(
+                _diagnostic(
+                    "flow.view.binding.unknown_edge_target",
+                    "Flow View edge target is not present in the view.",
+                    f"view.edges.{edge.id}.target",
+                    source_span=edge.source_span,
+                )
+            )
 
 
 def _compare_edges(

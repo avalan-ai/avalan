@@ -489,6 +489,158 @@ class FlowValidatorTestCase(TestCase):
             ],
         )
 
+    def test_validate_flow_definition_rejects_strict_aliases(self) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                entrypoint="start",
+                output_node="start",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "start.value"},
+                ),
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.entrypoint_alias", "flow.output_node_alias"],
+        )
+
+    def test_validate_flow_definition_rejects_output_contract_mismatch(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {"typed": lambda definition: Node(definition.name)},
+            {
+                "typed": FlowNodeMetadata(
+                    kind=FlowNodeKind.PASS_THROUGH,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.TEXT,
+                    ),
+                ),
+            },
+        )
+
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "start.result"},
+                ),
+                nodes=(FlowNodeDefinition(name="start", type="typed"),),
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.incompatible_output_selection"],
+        )
+        self.assertEqual(
+            result.diagnostics[0].path,
+            "flow.output_behavior.outputs.answer",
+        )
+
+    def test_validate_flow_definition_requires_explicit_output_map(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                    FlowOutputDefinition(
+                        name="audit",
+                        type=FlowOutputType.JSON,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.missing_output_behavior"],
+        )
+
+    def test_validate_flow_definition_accepts_non_terminal_output_selection(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="strict",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "start.value"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="start", type="echo"),
+                    FlowNodeDefinition(name="finish", type="echo"),
+                ),
+                edges=(FlowEdgeDefinition(source="start", target="finish"),),
+            )
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
+
     def test_validate_flow_definition_rejects_invalid_output_selector(
         self,
     ) -> None:
@@ -919,7 +1071,7 @@ class FlowValidatorTestCase(TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(
             [diagnostic.code for diagnostic in result.diagnostics],
-            ["flow.missing_output_behavior"],
+            ["flow.output_node_alias", "flow.missing_output_behavior"],
         )
 
     def test_validation_result_requires_diagnostic_tuple(self) -> None:
@@ -1619,6 +1771,18 @@ class FlowValidatorTestCase(TestCase):
                             name="merge_bad",
                             type=FlowInputType.STRING,
                         ),
+                        FlowNodeContract(
+                            name="coalesce_bad",
+                            type=FlowInputType.STRING,
+                        ),
+                        FlowNodeContract(
+                            name="coalesce_good",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="coalesce_type_bad",
+                            type=FlowInputType.STRING,
+                        ),
                     ),
                 ),
             },
@@ -1681,6 +1845,20 @@ class FlowValidatorTestCase(TestCase):
                                 sources=("input.payload",),
                             ),
                             FlowInputMapping(
+                                target="coalesce_bad",
+                                kind=FlowMappingKind.COALESCE,
+                            ),
+                            FlowInputMapping(
+                                target="coalesce_good",
+                                kind=FlowMappingKind.COALESCE,
+                                sources=("input.payload",),
+                            ),
+                            FlowInputMapping(
+                                target="coalesce_type_bad",
+                                kind=FlowMappingKind.COALESCE,
+                                sources=("input.payload",),
+                            ),
+                            FlowInputMapping(
                                 target="arguments",
                                 kind=FlowMappingKind.OBJECT,
                                 fields={
@@ -1708,6 +1886,8 @@ class FlowValidatorTestCase(TestCase):
                 "flow.bad_reference",
                 "flow.incompatible_mapping",
                 "flow.incompatible_mapping",
+                "flow.incompatible_mapping",
+                "flow.empty_mapping",
                 "flow.incompatible_mapping",
                 "flow.duplicate_mapping_target",
                 "flow.unknown_mapping_source",
@@ -1778,6 +1958,213 @@ class FlowValidatorTestCase(TestCase):
         )
         self.assertNotIn("secret", str(result.public_diagnostics))
 
+    def test_validate_flow_definition_rejects_final_mapping_matrix(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {
+                "source": lambda definition: Node(definition.name),
+                "target": lambda definition: Node(definition.name),
+            },
+            {
+                "source": FlowNodeMetadata(
+                    kind=FlowNodeKind.SELECT,
+                    output_contract=FlowNodeContract(
+                        name="value",
+                        type=FlowOutputType.OBJECT,
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "customer": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                    },
+                                },
+                                "tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                        },
+                    ),
+                ),
+                "target": FlowNodeMetadata(
+                    kind=FlowNodeKind.TOOL,
+                    input_contracts=(
+                        FlowNodeContract(
+                            name="required",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="payload",
+                            type=FlowInputType.OBJECT,
+                        ),
+                        FlowNodeContract(
+                            name="count",
+                            type=FlowInputType.INTEGER,
+                        ),
+                        FlowNodeContract(
+                            name="document",
+                            type=FlowInputType.FILE,
+                        ),
+                    ),
+                ),
+            },
+        )
+        valid_required = FlowInputMapping(
+            target="required",
+            source="input.payload",
+        )
+        valid_payload = FlowInputMapping(
+            target="payload",
+            source="input.payload",
+        )
+        valid_count = FlowInputMapping(target="count", source="input.count")
+        valid_document = FlowInputMapping(
+            target="document",
+            kind=FlowMappingKind.FILE,
+            source="input.document",
+        )
+        cases = (
+            (
+                "missing required input",
+                (valid_required, valid_count, valid_document),
+                ("flow.missing_input_mapping",),
+                ("nodes.target.mapping.payload",),
+            ),
+            (
+                "invalid object path",
+                (
+                    valid_required,
+                    FlowInputMapping(
+                        target="payload",
+                        kind=FlowMappingKind.OBJECT,
+                        fields={"bad": "source.value.tags.name"},
+                    ),
+                    valid_count,
+                    valid_document,
+                ),
+                ("flow.unknown_selector_path",),
+                ("nodes.target.mapping.payload.fields.bad",),
+            ),
+            (
+                "invalid array path",
+                (
+                    valid_required,
+                    FlowInputMapping(
+                        target="payload",
+                        kind=FlowMappingKind.ARRAY,
+                        items=("source.value.customer[0]",),
+                    ),
+                    valid_count,
+                    valid_document,
+                ),
+                (
+                    "flow.unknown_selector_path",
+                    "flow.incompatible_mapping",
+                ),
+                (
+                    "nodes.target.mapping.payload.items[0]",
+                    "nodes.target.mapping.payload",
+                ),
+            ),
+            (
+                "incompatible target type",
+                (
+                    valid_required,
+                    valid_payload,
+                    FlowInputMapping(
+                        target="count",
+                        source="input.payload",
+                    ),
+                    valid_document,
+                ),
+                ("flow.incompatible_mapping",),
+                ("nodes.target.mapping.count.source",),
+            ),
+            (
+                "file mapping violation",
+                (
+                    valid_required,
+                    valid_payload,
+                    valid_count,
+                    FlowInputMapping(
+                        target="document",
+                        kind=FlowMappingKind.FILE,
+                        source="input.payload",
+                    ),
+                ),
+                ("flow.incompatible_mapping",),
+                ("nodes.target.mapping.document.source",),
+            ),
+        )
+
+        for name, mappings, codes, paths in cases:
+            with self.subTest(name=name):
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="mapped",
+                        version="2026-06-07",
+                        inputs=(
+                            FlowInputDefinition(
+                                name="payload",
+                                type=FlowInputType.OBJECT,
+                            ),
+                            FlowInputDefinition(
+                                name="count",
+                                type=FlowInputType.INTEGER,
+                            ),
+                            FlowInputDefinition(
+                                name="document",
+                                type=FlowInputType.FILE,
+                            ),
+                        ),
+                        outputs=(
+                            FlowOutputDefinition(
+                                name="answer",
+                                type=FlowOutputType.OBJECT,
+                            ),
+                        ),
+                        entry_behavior=FlowEntryBehavior(node="source"),
+                        output_behavior=FlowOutputBehavior(
+                            outputs={"answer": "target.result"},
+                        ),
+                        nodes=(
+                            FlowNodeDefinition(
+                                name="source",
+                                type="source",
+                            ),
+                            FlowNodeDefinition(
+                                name="target",
+                                type="target",
+                                mappings=mappings,
+                            ),
+                        ),
+                        edges=(
+                            FlowEdgeDefinition(
+                                source="source",
+                                target="target",
+                            ),
+                        ),
+                    ),
+                    registry,
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    tuple(
+                        diagnostic.code for diagnostic in result.diagnostics
+                    ),
+                    codes,
+                )
+                self.assertEqual(
+                    tuple(
+                        diagnostic.path for diagnostic in result.diagnostics
+                    ),
+                    paths,
+                )
+
     def test_validate_flow_definition_accepts_declarative_conditions(
         self,
     ) -> None:
@@ -1837,6 +2224,78 @@ class FlowValidatorTestCase(TestCase):
         )
 
         self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_accepts_compatible_value_selector(
+        self,
+    ) -> None:
+        registry = FlowNodeRegistry(
+            {
+                "typed": lambda definition: Node(definition.name),
+                "echo": lambda definition: Node(definition.name),
+            },
+            {
+                "typed": FlowNodeMetadata(
+                    kind=FlowNodeKind.PASS_THROUGH,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "status": {"type": "string"},
+                            },
+                        },
+                    ),
+                ),
+                "echo": FlowNodeMetadata(kind=FlowNodeKind.PASS_THROUGH),
+            },
+        )
+
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="conditioned",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                        schema={
+                            "type": "object",
+                            "properties": {
+                                "expected": {"type": "string"},
+                            },
+                        },
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "finish.value"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(name="start", type="typed"),
+                    FlowNodeDefinition(name="finish", type="echo"),
+                ),
+                edges=(
+                    FlowEdgeDefinition(
+                        source="start",
+                        target="finish",
+                        condition=FlowCondition(
+                            operator=FlowConditionOperator.EQ,
+                            selector="start.result.status",
+                            value_selector="input.payload.expected",
+                        ),
+                    ),
+                ),
+            ),
+            registry,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
 
     def test_validate_flow_definition_rejects_declarative_conditions(
         self,
@@ -1964,6 +2423,32 @@ class FlowValidatorTestCase(TestCase):
                             selector="start.value.status",
                         ),
                     ),
+                    values=("ready",),
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.ANY,
+                    conditions=(
+                        FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value.status",
+                        ),
+                    ),
+                    values=("ready",),
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.ALL,
+                    conditions=(
+                        FlowCondition(
+                            operator=FlowConditionOperator.EXISTS,
+                            selector="start.value.status",
+                        ),
+                    ),
                     condition=FlowCondition(
                         operator=FlowConditionOperator.EXISTS,
                         selector="start.value.other",
@@ -1980,6 +2465,17 @@ class FlowValidatorTestCase(TestCase):
                             selector="start.value.status",
                         ),
                     ),
+                    condition=FlowCondition(
+                        operator=FlowConditionOperator.EXISTS,
+                        selector="start.value.other",
+                    ),
+                ),
+                "flow.unsupported_condition_field",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.NOT,
+                    values=("ready",),
                     condition=FlowCondition(
                         operator=FlowConditionOperator.EXISTS,
                         selector="start.value.other",
@@ -2141,6 +2637,77 @@ class FlowValidatorTestCase(TestCase):
                 )
                 self.assertNotIn("secret", str(result.public_diagnostics))
 
+    def test_validate_flow_definition_rejects_nondeterministic_conditions(
+        self,
+    ) -> None:
+        cases = (
+            FlowCondition(
+                operator=FlowConditionOperator.EQ,
+                selector="start.value.status",
+                value="random()",
+            ),
+            FlowCondition(
+                operator=FlowConditionOperator.IN,
+                selector="start.value.status",
+                values=({"clock": "datetime.now()"},),
+            ),
+        )
+
+        for condition in cases:
+            with self.subTest(condition=condition):
+                result = validate_flow_definition(
+                    FlowDefinition(
+                        name="conditioned",
+                        version="2026-06-07",
+                        inputs=(
+                            FlowInputDefinition(
+                                name="payload",
+                                type=FlowInputType.OBJECT,
+                            ),
+                        ),
+                        outputs=(
+                            FlowOutputDefinition(
+                                name="answer",
+                                type=FlowOutputType.OBJECT,
+                            ),
+                        ),
+                        entry_behavior=FlowEntryBehavior(node="start"),
+                        output_behavior=FlowOutputBehavior(
+                            outputs={"answer": "finish.value"},
+                        ),
+                        nodes=(
+                            FlowNodeDefinition(name="start", type="echo"),
+                            FlowNodeDefinition(name="finish", type="echo"),
+                        ),
+                        edges=(
+                            FlowEdgeDefinition(
+                                source="start",
+                                target="finish",
+                                condition=condition,
+                            ),
+                        ),
+                    )
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    "flow.nondeterministic_condition_value",
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+                self.assertIn(
+                    FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+                    {
+                        diagnostic.category
+                        for diagnostic in result.diagnostics
+                        if diagnostic.code
+                        == "flow.nondeterministic_condition_value"
+                    },
+                )
+                self.assertNotIn("random()", str(result.public_diagnostics))
+                self.assertNotIn(
+                    "datetime.now()", str(result.public_diagnostics)
+                )
+
     def test_validate_flow_definition_rejects_condition_contract_mismatches(
         self,
     ) -> None:
@@ -2153,26 +2720,124 @@ class FlowValidatorTestCase(TestCase):
                         name="result",
                         schema={
                             "type": "object",
-                            "properties": {"known": {"type": "string"}},
+                            "properties": {
+                                "known": {"type": "string"},
+                                "score": {"type": "number"},
+                            },
                         },
                     ),
                 ),
             },
         )
         cases = (
-            ("start.missing", "flow.unknown_node_output"),
-            ("start.result.missing", "flow.unknown_selector_path"),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="start.missing",
+                ),
+                "flow.unknown_node_output",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="start.result.missing",
+                ),
+                "flow.unknown_selector_path",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.GT,
+                    selector="start.result.known",
+                    value=3,
+                ),
+                "flow.incompatible_condition_type",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.CONTAINS,
+                    selector="start.result.score",
+                    value="3",
+                ),
+                "flow.incompatible_condition_type",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    selector="start.result.known",
+                    value=3,
+                ),
+                "flow.incompatible_condition_type",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.EQ,
+                    selector="start.result.score",
+                    value_selector="start.result.known",
+                ),
+                "flow.incompatible_condition_type",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.IN,
+                    selector="start.result.known",
+                    values=("ready", 3),
+                ),
+                "flow.incompatible_condition_type",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.IN,
+                    selector="start.result.known",
+                    value=("ready", 3),
+                ),
+                "flow.incompatible_condition_type",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.GT,
+                    selector="input.payload.status",
+                    value=3,
+                ),
+                "flow.incompatible_condition_type",
+            ),
+            (
+                FlowCondition(
+                    operator=FlowConditionOperator.CONTAINS,
+                    selector="input.flag",
+                    value="true",
+                ),
+                "flow.incompatible_condition_type",
+            ),
         )
 
-        for selector, code in cases:
-            with self.subTest(selector=selector):
+        for condition, code in cases:
+            with self.subTest(code=code):
                 result = validate_flow_definition(
                     FlowDefinition(
                         name="conditioned",
                         version="2026-06-07",
                         inputs=(
                             FlowInputDefinition(
+                                name="other",
+                                type=FlowInputType.STRING,
+                            ),
+                            FlowInputDefinition(
                                 name="payload",
+                                type=FlowInputType.OBJECT,
+                                schema={
+                                    "type": "object",
+                                    "properties": {
+                                        "status": {"type": ("string",)},
+                                        "score": {"type": "number"},
+                                    },
+                                },
+                            ),
+                            FlowInputDefinition(
+                                name="flag",
+                                type=FlowInputType.BOOLEAN,
+                            ),
+                            FlowInputDefinition(
+                                name="opaque",
                                 type=FlowInputType.OBJECT,
                             ),
                         ),
@@ -2194,10 +2859,7 @@ class FlowValidatorTestCase(TestCase):
                             FlowEdgeDefinition(
                                 source="start",
                                 target="finish",
-                                condition=FlowCondition(
-                                    operator=FlowConditionOperator.EXISTS,
-                                    selector=selector,
-                                ),
+                                condition=condition,
                             ),
                         ),
                     ),
@@ -2208,6 +2870,172 @@ class FlowValidatorTestCase(TestCase):
                 self.assertIn(
                     code,
                     [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_condition_private_helpers_cover_type_edges(self) -> None:
+        definition = FlowDefinition(
+            name="conditioned",
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                ),
+                FlowInputDefinition(
+                    name="opaque",
+                    type=FlowInputType.OBJECT,
+                ),
+            ),
+            nodes=(FlowNodeDefinition(name="start", type="schema"),),
+        )
+        schema_definition = FlowDefinition(
+            name="conditioned",
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                    schema={
+                        "type": "object",
+                        "properties": {"status": {"type": "string"}},
+                    },
+                ),
+            ),
+            nodes=(FlowNodeDefinition(name="start", type="schema"),),
+        )
+        field_path = parse_flow_selector("start.result.status").path
+        index_path = parse_flow_selector("start.result[0]").path
+
+        self.assertIsNone(
+            flow_validator._flow_input_selector_type(  # type: ignore[attr-defined]
+                definition,
+                parse_flow_selector("input.missing"),
+            )
+        )
+        self.assertIsNone(
+            flow_validator._flow_input_selector_type(  # type: ignore[attr-defined]
+                definition,
+                parse_flow_selector("input.opaque.status"),
+            )
+        )
+        self.assertIsNone(
+            flow_validator._node_output_selector_type(  # type: ignore[attr-defined]
+                FlowNodeRegistry(
+                    {"plain": lambda node: Node(node.name)},
+                ),
+                "plain",
+                parse_flow_selector("plain.result"),
+            )
+        )
+        self.assertIsNone(
+            flow_validator._node_output_selector_type(  # type: ignore[attr-defined]
+                FlowNodeRegistry(
+                    {"plain": lambda node: Node(node.name)},
+                    {
+                        "plain": FlowNodeMetadata(
+                            output_contract=FlowNodeContract(name="other"),
+                        ),
+                    },
+                ),
+                "plain",
+                parse_flow_selector("plain.result"),
+            )
+        )
+        self.assertIsNone(
+            flow_validator._schema_selector_type(  # type: ignore[attr-defined]
+                {"type": "object"},
+                field_path,
+            )
+        )
+        self.assertIsNone(
+            flow_validator._schema_selector_type(  # type: ignore[attr-defined]
+                {
+                    "type": "object",
+                    "properties": {"status": "bad"},
+                },
+                field_path,
+            )
+        )
+        self.assertIsNone(
+            flow_validator._schema_selector_type(  # type: ignore[attr-defined]
+                {"type": "array"},
+                index_path,
+            )
+        )
+        self.assertEqual(
+            flow_validator._schema_selector_type(  # type: ignore[attr-defined]
+                {"type": "array", "items": {"type": "string"}},
+                index_path,
+            ),
+            "string",
+        )
+        self.assertIsNone(
+            flow_validator._schema_type_name(  # type: ignore[attr-defined]
+                ("string", "null")
+            )
+        )
+        self.assertIsNone(
+            flow_validator._schema_type_name(  # type: ignore[attr-defined]
+                (1,)
+            )
+        )
+        self.assertIsNone(
+            flow_validator._contract_semantic_type(  # type: ignore[attr-defined]
+                None
+            )
+        )
+        self.assertEqual(
+            flow_validator._contract_semantic_type(  # type: ignore[attr-defined]
+                "custom"
+            ),
+            "custom",
+        )
+        self.assertEqual(
+            flow_validator._contract_semantic_type(  # type: ignore[attr-defined]
+                FlowInputType.STRING
+            ),
+            "string",
+        )
+        self.assertEqual(
+            flow_validator._condition_membership_literals(  # type: ignore[attr-defined]
+                FlowCondition(
+                    operator=FlowConditionOperator.EXISTS,
+                    selector="start.value",
+                )
+            ),
+            (),
+        )
+        self.assertEqual(
+            flow_validator._validate_condition_type_compatibility(  # type: ignore[attr-defined]
+                schema_definition,
+                FlowCondition(
+                    operator=FlowConditionOperator.IN,
+                    selector="input.payload.status",
+                    values=(object(),),
+                ),
+                path="edges[0].condition",
+                edge_source="start",
+                input_names={"payload"},
+                node_names={"start"},
+                registry=FlowNodeRegistry(
+                    {"schema": lambda node: Node(node.name)}
+                ),
+            ),
+            (),
+        )
+        literal_cases = (
+            (True, "boolean"),
+            (3.5, "number"),
+            ({"status": "ready"}, "object"),
+            (["ready"], "array"),
+            (object(), None),
+        )
+
+        for value, expected_type in literal_cases:
+            with self.subTest(value_type=expected_type):
+                self.assertEqual(
+                    flow_validator._condition_literal_type(  # type: ignore[attr-defined]
+                        value
+                    ),
+                    expected_type,
                 )
 
     def test_validate_flow_definition_accepts_edge_routing_policy(
@@ -3342,6 +4170,46 @@ class FlowValidatorTestCase(TestCase):
 
     def test_mapping_private_helpers_cover_type_edges(self) -> None:
         registry = FlowNodeRegistry({"open": lambda definition: Node("open")})
+        schema_definition = FlowDefinition(
+            name="schema",
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                    schema={
+                        "type": "object",
+                        "properties": {"known": {"type": "string"}},
+                    },
+                ),
+            ),
+            nodes=(FlowNodeDefinition(name="start", type="schema_node"),),
+        )
+        schema_registry = FlowNodeRegistry(
+            {"schema_node": lambda definition: Node(definition.name)},
+            {
+                "schema_node": FlowNodeMetadata(
+                    output_contracts=(
+                        FlowNodeContract(
+                            name="result",
+                            schema={
+                                "type": "object",
+                                "properties": {
+                                    "known": {"type": "string"},
+                                },
+                            },
+                        ),
+                    ),
+                )
+            },
+        )
+        unnamed_output_registry = FlowNodeRegistry(
+            {"schema_node": lambda definition: Node(definition.name)},
+            {
+                "schema_node": FlowNodeMetadata(
+                    output_contracts=(FlowNodeContract(name=None),),
+                )
+            },
+        )
 
         self.assertIsNone(
             flow_validator._flow_input_type(  # type: ignore[attr-defined]
@@ -3362,6 +4230,62 @@ class FlowValidatorTestCase(TestCase):
                 "open",
                 "result",
             )
+        )
+        self.assertEqual(
+            flow_validator._flow_input_selector_type(  # type: ignore[attr-defined]
+                schema_definition,
+                parse_flow_selector("inputs.payload.known"),
+            ),
+            "string",
+        )
+        self.assertIsNone(
+            flow_validator._flow_input_selector_type(  # type: ignore[attr-defined]
+                schema_definition,
+                parse_flow_selector("inputs.payload.missing"),
+            )
+        )
+        self.assertEqual(
+            flow_validator._node_output_selector_type(  # type: ignore[attr-defined]
+                schema_registry,
+                "schema_node",
+                parse_flow_selector("start.result.known"),
+            ),
+            "string",
+        )
+        self.assertIsNone(
+            flow_validator._node_output_selector_type(  # type: ignore[attr-defined]
+                schema_registry,
+                "schema_node",
+                parse_flow_selector("start.result.missing"),
+            )
+        )
+        self.assertFalse(
+            flow_validator._supports_output_name(  # type: ignore[attr-defined]
+                unnamed_output_registry,
+                "schema_node",
+                "result",
+            )
+        )
+        self.assertEqual(
+            flow_validator._validate_mapping(  # type: ignore[attr-defined]
+                schema_definition,
+                FlowNodeDefinition(name="target", type="schema_node"),
+                FlowInputMapping(
+                    target="value",
+                    kind=FlowMappingKind.COALESCE,
+                    sources=("input.payload",),
+                ),
+                path="nodes.target.mappings[0]",
+                input_names={"payload"},
+                incoming_sources=set(),
+                node_names={"target"},
+                registry=schema_registry,
+                target_contract=FlowNodeContract(
+                    name="value",
+                    type=FlowInputType.OBJECT,
+                ),
+            ),
+            (),
         )
         self.assertIsNone(
             flow_validator._mapping_type_compatibility(  # type: ignore[attr-defined]
@@ -3429,6 +4353,11 @@ class FlowValidatorTestCase(TestCase):
                     ),
                     expected,
                 )
+        self.assertIsNone(
+            flow_validator._semantic_type(  # type: ignore[attr-defined]
+                "custom",
+            )
+        )
 
     def test_validate_flow_definition_rejects_metadata_gaps(
         self,
@@ -3578,6 +4507,141 @@ class FlowValidatorTestCase(TestCase):
                     FlowDiagnosticCategory.PRIVACY,
                 )
                 self.assertNotIn("secret", str(result.public_diagnostics))
+
+    def test_validate_flow_definition_rejects_private_schema_refs(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FlowDefinition(
+                    name="private_schema_ref",
+                    entrypoint="start",
+                    output_node="start",
+                    input=FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                        schema_ref="../private/input.json",
+                    ),
+                    nodes=(FlowNodeDefinition(name="start", type="echo"),),
+                ),
+                "flow.input.schema_ref",
+                "flow.path_escape",
+            ),
+            (
+                FlowDefinition(
+                    name="private_schema_ref",
+                    entrypoint="start",
+                    output_node="start",
+                    output=FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                        schema_ref="https://host/secret.json",
+                    ),
+                    nodes=(FlowNodeDefinition(name="start", type="echo"),),
+                ),
+                "flow.output.schema_ref",
+                "flow.path_escape",
+            ),
+            (
+                FlowDefinition(
+                    name="private_schema_ref",
+                    version="2026-06-07",
+                    inputs=(
+                        FlowInputDefinition(
+                            name="payload",
+                            type=FlowInputType.OBJECT,
+                            schema_ref="schema.json#/secret",
+                        ),
+                    ),
+                    outputs=(
+                        FlowOutputDefinition(
+                            name="answer",
+                            type=FlowOutputType.OBJECT,
+                        ),
+                    ),
+                    entry_behavior=FlowEntryBehavior(node="start"),
+                    output_behavior=FlowOutputBehavior(
+                        outputs={"answer": "start.value"},
+                    ),
+                    nodes=(FlowNodeDefinition(name="start", type="echo"),),
+                ),
+                "flow.inputs.payload.schema_ref",
+                "flow.invalid_schema_ref",
+            ),
+            (
+                FlowDefinition(
+                    name="private_schema_ref",
+                    version="2026-06-07",
+                    inputs=(
+                        FlowInputDefinition(
+                            name="payload",
+                            type=FlowInputType.OBJECT,
+                        ),
+                    ),
+                    outputs=(
+                        FlowOutputDefinition(
+                            name="answer",
+                            type=FlowOutputType.OBJECT,
+                            schema_ref="C:/secret/schema.json",
+                        ),
+                    ),
+                    entry_behavior=FlowEntryBehavior(node="start"),
+                    output_behavior=FlowOutputBehavior(
+                        outputs={"answer": "start.value"},
+                    ),
+                    nodes=(FlowNodeDefinition(name="start", type="echo"),),
+                ),
+                "flow.outputs.answer.schema_ref",
+                "flow.path_escape",
+            ),
+        )
+
+        for definition, path, code in cases:
+            with self.subTest(path=path):
+                result = validate_flow_definition(definition)
+
+                self.assertFalse(result.ok)
+                matching = [
+                    diagnostic
+                    for diagnostic in result.diagnostics
+                    if diagnostic.path == path
+                ]
+                self.assertEqual(matching[0].code, code)
+                self.assertEqual(
+                    matching[0].category,
+                    FlowDiagnosticCategory.PRIVACY,
+                )
+                self.assertNotIn("secret", str(result.public_diagnostics))
+                self.assertNotIn("private", str(result.public_diagnostics))
+
+    def test_validate_flow_definition_accepts_safe_schema_refs(self) -> None:
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="safe_schema_ref",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                        schema_ref="schemas/input.json",
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.OBJECT,
+                        schema_ref="schemas/output.json",
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="start"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "start.value"},
+                ),
+                nodes=(FlowNodeDefinition(name="start", type="echo"),),
+            )
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
 
     def test_loader_validates_semantics_before_node_factories(self) -> None:
         calls: list[str] = []

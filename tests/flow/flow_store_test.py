@@ -99,6 +99,18 @@ class UnknownSqlStateError(RuntimeError):
 
 
 class FlowStoreSnapshotTest(TestCase):
+    def test_minimal_node_attempt_snapshot_omits_optional_fields(self) -> None:
+        snapshot = FlowNodeAttemptRecord(
+            node="start",
+            attempt=1,
+            state=FlowNodeState.SUCCEEDED,
+        ).as_snapshot()
+
+        self.assertEqual(
+            snapshot,
+            {"node": "start", "attempt": 1, "state": "succeeded"},
+        )
+
     def test_record_snapshot_round_trips_without_private_source_text(
         self,
     ) -> None:
