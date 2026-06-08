@@ -12,6 +12,7 @@ from .definition import (
     FlowJoinPolicyType,
     FlowLoopPolicy,
     FlowMappingKind,
+    FlowNodeCapability,
     FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeKind,
@@ -273,6 +274,10 @@ def _validate_node_type(
     if node_type == FlowNodeKind.HUMAN_REVIEW.value:
         diagnostics.extend(_validate_human_review_node(node))
     if registry.supports(node_type):
+        if node_type == FlowNodeKind.HUMAN_REVIEW.value:
+            diagnostics.extend(
+                _validate_human_review_runtime_support(node, registry)
+            )
         if node.ref is not None and not registry.supports_ref(node_type):
             diagnostics.append(
                 _diagnostic(
@@ -412,6 +417,26 @@ def _validate_human_review_node(
     diagnostics.extend(_validate_human_review_timeout(node))
     diagnostics.extend(_validate_human_review_audit_metadata(node))
     return tuple(diagnostics)
+
+
+def _validate_human_review_runtime_support(
+    node: FlowNodeDefinition,
+    registry: FlowNodeRegistry,
+) -> tuple[FlowDiagnostic, ...]:
+    metadata = registry.metadata(node.type)
+    if (
+        metadata is not None
+        and FlowNodeCapability.DURABLE_PAUSE in metadata.capabilities
+    ):
+        return ()
+    return (
+        _diagnostic(
+            code="flow.unsupported_human_review_direct_mode",
+            path=f"nodes.{node.name}.type",
+            message="Human review node requires durable pause support.",
+            hint="Use a durable human review registry and state store.",
+        ),
+    )
 
 
 def _validate_human_review_schema(
@@ -909,7 +934,54 @@ def _validate_strict_contract(
     diagnostics.extend(
         _validate_node_policies(definition, node_names, registry)
     )
+    diagnostics.extend(_validate_human_review_routes(definition))
     diagnostics.extend(_validate_edge_routing(definition))
+    return tuple(diagnostics)
+
+
+def _validate_human_review_routes(
+    definition: FlowDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    for node in definition.nodes:
+        if node.type != FlowNodeKind.HUMAN_REVIEW.value:
+            continue
+        outgoing = tuple(
+            edge for edge in definition.edges if edge.source == node.name
+        )
+        if not any(edge.kind == FlowEdgeKind.TIMEOUT for edge in outgoing):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.missing_human_review_timeout_route",
+                    path=f"nodes.{node.name}.config.timeout_seconds",
+                    message="Human review node is missing a timeout route.",
+                    hint="Add a timeout edge from the human review node.",
+                )
+            )
+        decisions = node.config.get("allowed_decisions")
+        if not isinstance(decisions, list | tuple) or isinstance(
+            decisions, str | bytes
+        ):
+            continue
+        for index, decision in enumerate(decisions):
+            if not _is_human_review_decision_name(decision):
+                continue
+            assert isinstance(decision, str)
+            if any(
+                edge.kind == FlowEdgeKind.RESUME and edge.label == decision
+                for edge in outgoing
+            ):
+                continue
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.missing_human_review_resume_route",
+                    path=(
+                        f"nodes.{node.name}.config.allowed_decisions[{index}]"
+                    ),
+                    message="Human review decision is missing a resume route.",
+                    hint="Add a resume edge labelled with this decision.",
+                )
+            )
     return tuple(diagnostics)
 
 

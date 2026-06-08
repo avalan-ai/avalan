@@ -2697,6 +2697,104 @@ class FlowValidatorTestCase(TestCase):
                     "private-token", str(result.public_diagnostics)
                 )
 
+    def test_validate_flow_definition_rejects_human_review_routes(
+        self,
+    ) -> None:
+        review = FlowNodeDefinition(
+            name="review",
+            type="human_review",
+            mappings=(
+                FlowInputMapping(
+                    target="payload",
+                    source="inputs.payload",
+                ),
+            ),
+            config=self._human_review_config(),
+        )
+        cases = (
+            (
+                (
+                    FlowEdgeDefinition(
+                        source="review",
+                        target="finish",
+                        label="approved",
+                        kind=FlowEdgeKind.RESUME,
+                    ),
+                    FlowEdgeDefinition(
+                        source="review",
+                        target="rejected",
+                        label="rejected",
+                        kind=FlowEdgeKind.RESUME,
+                        priority=1,
+                    ),
+                    FlowEdgeDefinition(
+                        source="review",
+                        target="correction",
+                        label="needs_correction",
+                        kind=FlowEdgeKind.RESUME,
+                        priority=2,
+                    ),
+                ),
+                "flow.missing_human_review_timeout_route",
+            ),
+            (
+                (
+                    FlowEdgeDefinition(
+                        source="review",
+                        target="finish",
+                        label="approved",
+                        kind=FlowEdgeKind.RESUME,
+                    ),
+                    FlowEdgeDefinition(
+                        source="review",
+                        target="expired",
+                        label="expired",
+                        kind=FlowEdgeKind.TIMEOUT,
+                    ),
+                ),
+                "flow.missing_human_review_resume_route",
+            ),
+        )
+
+        for edges, code in cases:
+            with self.subTest(code=code):
+                result = validate_flow_definition(
+                    self._human_review_definition(review, edges=edges),
+                    self._human_review_registry(),
+                )
+
+                self.assertFalse(result.ok)
+                self.assertIn(
+                    code,
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+
+    def test_validate_flow_definition_rejects_human_review_no_durable_support(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            self._human_review_definition(
+                FlowNodeDefinition(
+                    name="review",
+                    type="human_review",
+                    mappings=(
+                        FlowInputMapping(
+                            target="payload",
+                            source="inputs.payload",
+                        ),
+                    ),
+                    config=self._human_review_config(),
+                ),
+            ),
+            self._human_review_registry(durable=False),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIn(
+            "flow.unsupported_human_review_direct_mode",
+            [diagnostic.code for diagnostic in result.diagnostics],
+        )
+
     def test_validate_flow_definition_rejects_loop_policy_details(
         self,
     ) -> None:
@@ -3389,7 +3487,12 @@ class FlowValidatorTestCase(TestCase):
             config["audit_metadata"] = audit_metadata
         return config
 
-    def _human_review_registry(self) -> FlowNodeRegistry:
+    def _human_review_registry(
+        self, *, durable: bool = True
+    ) -> FlowNodeRegistry:
+        capabilities: tuple[FlowNodeCapability, ...] = ()
+        if durable:
+            capabilities = (FlowNodeCapability.DURABLE_PAUSE,)
         return FlowNodeRegistry(
             {
                 "human_review": lambda definition: Node(definition.name),
@@ -3399,7 +3502,7 @@ class FlowValidatorTestCase(TestCase):
                 "human_review": FlowNodeMetadata(
                     kind=FlowNodeKind.HUMAN_REVIEW,
                     async_only=True,
-                    capabilities=(FlowNodeCapability.DURABLE_PAUSE,),
+                    capabilities=capabilities,
                     input_contract=FlowNodeContract(
                         name="payload",
                         type=FlowInputType.OBJECT,
@@ -3422,7 +3525,38 @@ class FlowValidatorTestCase(TestCase):
     def _human_review_definition(
         self,
         review: FlowNodeDefinition,
+        *,
+        edges: tuple[FlowEdgeDefinition, ...] | None = None,
     ) -> FlowDefinition:
+        if edges is None:
+            edges = (
+                FlowEdgeDefinition(
+                    source="review",
+                    target="finish",
+                    label="approved",
+                    kind=FlowEdgeKind.RESUME,
+                ),
+                FlowEdgeDefinition(
+                    source="review",
+                    target="rejected",
+                    label="rejected",
+                    kind=FlowEdgeKind.RESUME,
+                    priority=1,
+                ),
+                FlowEdgeDefinition(
+                    source="review",
+                    target="correction",
+                    label="needs_correction",
+                    kind=FlowEdgeKind.RESUME,
+                    priority=2,
+                ),
+                FlowEdgeDefinition(
+                    source="review",
+                    target="expired",
+                    label="expired",
+                    kind=FlowEdgeKind.TIMEOUT,
+                ),
+            )
         return FlowDefinition(
             name="review-flow",
             version="2026-06-08",
@@ -3445,8 +3579,11 @@ class FlowValidatorTestCase(TestCase):
             nodes=(
                 review,
                 FlowNodeDefinition(name="finish", type="review_sink"),
+                FlowNodeDefinition(name="rejected", type="review_sink"),
+                FlowNodeDefinition(name="correction", type="review_sink"),
+                FlowNodeDefinition(name="expired", type="review_sink"),
             ),
-            edges=(FlowEdgeDefinition(source="review", target="finish"),),
+            edges=edges,
         )
 
 
