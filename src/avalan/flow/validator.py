@@ -159,6 +159,25 @@ _UNSAFE_CONDITION_VALUE_PREFIXES = frozenset(
         "task.",
     }
 )
+_HUMAN_REVIEW_REQUIRED_CONFIG_KEYS = frozenset(
+    {
+        "allowed_decisions",
+        "decision_schema",
+        "payload_schema",
+        "timeout_seconds",
+    }
+)
+_HUMAN_REVIEW_ALLOWED_SCHEMA_TYPES = frozenset({"object"})
+_UNSAFE_AUDIT_KEY_FRAGMENTS = frozenset(
+    {
+        "password",
+        "private",
+        "prompt",
+        "raw",
+        "secret",
+        "token",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -251,6 +270,8 @@ def _validate_node_type(
         and not registry.supports_tool_resolution(node_type)
     ):
         diagnostics.append(_path_escape_diagnostic(f"nodes.{name}.ref"))
+    if node_type == FlowNodeKind.HUMAN_REVIEW.value:
+        diagnostics.extend(_validate_human_review_node(node))
     if registry.supports(node_type):
         if node.ref is not None and not registry.supports_ref(node_type):
             diagnostics.append(
@@ -364,6 +385,319 @@ def _validate_node_kind(
             ),
         )
     return ()
+
+
+def _validate_human_review_node(
+    node: FlowNodeDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    for key in sorted(_HUMAN_REVIEW_REQUIRED_CONFIG_KEYS - set(node.config)):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_human_review_config",
+                path=f"nodes.{node.name}.config.{key}",
+                message="Human review node configuration is missing.",
+                hint="Set the required human review configuration field.",
+            )
+        )
+    diagnostics.extend(
+        _validate_human_review_schema(
+            node,
+            key="payload_schema",
+            missing_code="flow.missing_human_review_payload_schema",
+            invalid_code="flow.invalid_human_review_payload_schema",
+        )
+    )
+    diagnostics.extend(_validate_human_review_decisions(node))
+    diagnostics.extend(_validate_human_review_timeout(node))
+    diagnostics.extend(_validate_human_review_audit_metadata(node))
+    return tuple(diagnostics)
+
+
+def _validate_human_review_schema(
+    node: FlowNodeDefinition,
+    *,
+    key: str,
+    missing_code: str,
+    invalid_code: str,
+) -> tuple[FlowDiagnostic, ...]:
+    path = f"nodes.{node.name}.config.{key}"
+    value = node.config.get(key)
+    if value is None:
+        return (
+            _diagnostic(
+                code=missing_code,
+                path=path,
+                message="Human review schema is missing.",
+                hint="Set a JSON-schema object for this field.",
+            ),
+        )
+    if not isinstance(value, Mapping):
+        return (
+            _diagnostic(
+                code=invalid_code,
+                path=path,
+                message="Human review schema is invalid.",
+                hint="Use a JSON-schema object.",
+            ),
+        )
+    schema_type = value.get("type")
+    if schema_type not in _HUMAN_REVIEW_ALLOWED_SCHEMA_TYPES:
+        return (
+            _diagnostic(
+                code=invalid_code,
+                path=f"{path}.type",
+                message="Human review schema is invalid.",
+                hint="Use an object schema for human review payloads.",
+            ),
+        )
+    return ()
+
+
+def _validate_human_review_decisions(
+    node: FlowNodeDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    path = f"nodes.{node.name}.config.allowed_decisions"
+    value = node.config.get("allowed_decisions")
+    if value is None:
+        return (
+            _diagnostic(
+                code="flow.missing_human_review_decisions",
+                path=path,
+                message="Human review decisions are missing.",
+                hint="List every allowed decision explicitly.",
+            ),
+        ) + _validate_human_review_decision_schema(
+            node,
+            allowed_decisions=set(),
+        )
+    if not isinstance(value, list | tuple) or isinstance(value, str | bytes):
+        return (
+            _diagnostic(
+                code="flow.invalid_human_review_decisions",
+                path=path,
+                message="Human review decisions are invalid.",
+                hint="Use a non-empty list of decision names.",
+            ),
+        )
+    decisions = tuple(value)
+    if not decisions:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.missing_human_review_decisions",
+                path=path,
+                message="Human review decisions are missing.",
+                hint="List every allowed decision explicitly.",
+            )
+        )
+    seen: set[str] = set()
+    for index, decision in enumerate(decisions):
+        decision_path = f"{path}[{index}]"
+        if not _is_human_review_decision_name(decision):
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.invalid_human_review_decision",
+                    path=decision_path,
+                    message="Human review decision is invalid.",
+                    hint=(
+                        "Use lowercase letters, numbers, underscores, or"
+                        " hyphens."
+                    ),
+                )
+            )
+            continue
+        assert isinstance(decision, str)
+        if decision in seen:
+            diagnostics.append(
+                _diagnostic(
+                    code="flow.duplicate_human_review_decision",
+                    path=decision_path,
+                    message="Human review decision is duplicated.",
+                    hint="List each allowed decision once.",
+                )
+            )
+        seen.add(decision)
+    diagnostics.extend(
+        _validate_human_review_decision_schema(
+            node,
+            allowed_decisions=seen,
+        )
+    )
+    return tuple(diagnostics)
+
+
+def _validate_human_review_decision_schema(
+    node: FlowNodeDefinition,
+    *,
+    allowed_decisions: set[str],
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics = list(
+        _validate_human_review_schema(
+            node,
+            key="decision_schema",
+            missing_code="flow.missing_human_review_decision_schema",
+            invalid_code="flow.invalid_human_review_decision_schema",
+        )
+    )
+    if diagnostics:
+        return tuple(diagnostics)
+    schema = cast(Mapping[str, object], node.config["decision_schema"])
+    decision_property = _schema_property(schema, "decision")
+    path = f"nodes.{node.name}.config.decision_schema.properties.decision"
+    if decision_property is None:
+        return (
+            _diagnostic(
+                code="flow.invalid_human_review_decision_schema",
+                path=path,
+                message="Human review decision schema is invalid.",
+                hint="Declare a decision property with an enum.",
+            ),
+        )
+    enum_value = decision_property.get("enum")
+    if (
+        not isinstance(enum_value, list | tuple)
+        or isinstance(enum_value, str | bytes)
+        or not enum_value
+    ):
+        return (
+            _diagnostic(
+                code="flow.invalid_human_review_decision_schema",
+                path=f"{path}.enum",
+                message="Human review decision schema is invalid.",
+                hint="Set decision enum to the allowed decisions.",
+            ),
+        )
+    enum_decisions = {item for item in enum_value if isinstance(item, str)}
+    if len(enum_decisions) != len(enum_value):
+        diagnostics.append(
+            _diagnostic(
+                code="flow.invalid_human_review_decision_schema",
+                path=f"{path}.enum",
+                message="Human review decision schema is invalid.",
+                hint="Use string enum values only.",
+            )
+        )
+    if allowed_decisions and enum_decisions != allowed_decisions:
+        diagnostics.append(
+            _diagnostic(
+                code="flow.human_review_decision_schema_mismatch",
+                path=f"{path}.enum",
+                message=(
+                    "Human review decision schema does not match allowed"
+                    " decisions."
+                ),
+                hint=(
+                    "Keep decision enum values aligned with allowed decisions."
+                ),
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _validate_human_review_timeout(
+    node: FlowNodeDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    path = f"nodes.{node.name}.config.timeout_seconds"
+    value = node.config.get("timeout_seconds")
+    if value is None:
+        return (
+            _diagnostic(
+                code="flow.missing_human_review_timeout",
+                path=path,
+                message="Human review timeout is missing.",
+                hint="Set a positive timeout_seconds value.",
+            ),
+        )
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or value <= 0
+    ):
+        return (
+            _diagnostic(
+                code="flow.invalid_human_review_timeout",
+                path=path,
+                message="Human review timeout is invalid.",
+                hint="Use a positive timeout_seconds value.",
+            ),
+        )
+    return ()
+
+
+def _validate_human_review_audit_metadata(
+    node: FlowNodeDefinition,
+) -> tuple[FlowDiagnostic, ...]:
+    path = f"nodes.{node.name}.config.audit_metadata"
+    value = node.config.get("audit_metadata")
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping):
+        return (
+            _diagnostic(
+                code="flow.invalid_human_review_audit_metadata",
+                path=path,
+                message="Human review audit metadata is invalid.",
+                hint="Use a safe object of audit labels.",
+            ),
+        )
+    unsafe_path = _unsafe_audit_metadata_path(value, path=path)
+    if unsafe_path is not None:
+        return (
+            _diagnostic(
+                code="flow.unsafe_human_review_audit_metadata",
+                path=unsafe_path,
+                category=FlowDiagnosticCategory.PRIVACY,
+                message="Human review audit metadata is not public-safe.",
+                hint="Remove secret, token, raw, prompt, or private fields.",
+            ),
+        )
+    return ()
+
+
+def _is_human_review_decision_name(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    return all(
+        character.islower() or character.isdigit() or character in {"_", "-"}
+        for character in value
+    )
+
+
+def _schema_property(
+    schema: Mapping[str, object],
+    name: str,
+) -> Mapping[str, object] | None:
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return None
+    property_value = properties.get(name)
+    if not isinstance(property_value, Mapping):
+        return None
+    return property_value
+
+
+def _unsafe_audit_metadata_path(
+    value: Mapping[str, object],
+    *,
+    path: str,
+) -> str | None:
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            return path
+        lowered = key.lower()
+        if any(
+            fragment in lowered for fragment in _UNSAFE_AUDIT_KEY_FRAGMENTS
+        ):
+            return f"{path}.{key}"
+        if isinstance(item, Mapping):
+            unsafe_path = _unsafe_audit_metadata_path(
+                item,
+                path=f"{path}.{key}",
+            )
+            if unsafe_path is not None:
+                return unsafe_path
+    return None
 
 
 def _validate_graph_contract(

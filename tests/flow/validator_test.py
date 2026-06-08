@@ -2501,6 +2501,202 @@ class FlowValidatorTestCase(TestCase):
                     [diagnostic.code for diagnostic in result.diagnostics],
                 )
 
+    def test_validate_flow_definition_accepts_human_review_contract(
+        self,
+    ) -> None:
+        result = validate_flow_definition(
+            self._human_review_definition(
+                FlowNodeDefinition(
+                    name="review",
+                    type="human_review",
+                    mappings=(
+                        FlowInputMapping(
+                            target="payload",
+                            source="inputs.payload",
+                        ),
+                    ),
+                    config=self._human_review_config(
+                        audit_metadata={
+                            "queue": "risk",
+                            "labels": {"tier": "medium"},
+                        }
+                    ),
+                ),
+            ),
+            self._human_review_registry(),
+        )
+
+        self.assertTrue(result.ok)
+
+    def test_validate_flow_definition_rejects_human_review_gaps(
+        self,
+    ) -> None:
+        cases = (
+            (
+                {},
+                {
+                    "flow.missing_human_review_config",
+                    "flow.missing_human_review_decisions",
+                    "flow.missing_human_review_decision_schema",
+                    "flow.missing_human_review_payload_schema",
+                    "flow.missing_human_review_timeout",
+                },
+            ),
+            (
+                self._human_review_config(allowed_decisions="approved"),
+                {"flow.invalid_human_review_decisions"},
+            ),
+            (
+                self._human_review_config(
+                    allowed_decisions=(),
+                    decision_schema={
+                        "type": "object",
+                        "properties": {"decision": {"enum": ("approved",)}},
+                    },
+                ),
+                {"flow.missing_human_review_decisions"},
+            ),
+            (
+                self._human_review_config(
+                    allowed_decisions=("approved", "approved"),
+                ),
+                {"flow.duplicate_human_review_decision"},
+            ),
+            (
+                self._human_review_config(
+                    allowed_decisions=("",),
+                    decision_schema={
+                        "type": "object",
+                        "properties": {"decision": {"enum": ("",)}},
+                    },
+                ),
+                {"flow.invalid_human_review_decision"},
+            ),
+            (
+                self._human_review_config(
+                    allowed_decisions=("Approved",),
+                    decision_schema={
+                        "type": "object",
+                        "properties": {"decision": {"enum": ("Approved",)}},
+                    },
+                ),
+                {"flow.invalid_human_review_decision"},
+            ),
+            (
+                self._human_review_config(payload_schema="schema"),
+                {"flow.invalid_human_review_payload_schema"},
+            ),
+            (
+                self._human_review_config(payload_schema={"type": "string"}),
+                {"flow.invalid_human_review_payload_schema"},
+            ),
+            (
+                self._human_review_config(decision_schema="schema"),
+                {"flow.invalid_human_review_decision_schema"},
+            ),
+            (
+                self._human_review_config(decision_schema={"type": "string"}),
+                {"flow.invalid_human_review_decision_schema"},
+            ),
+            (
+                self._human_review_config(
+                    decision_schema={
+                        "type": "object",
+                        "properties": "schema",
+                    },
+                ),
+                {"flow.invalid_human_review_decision_schema"},
+            ),
+            (
+                self._human_review_config(
+                    decision_schema={
+                        "type": "object",
+                        "properties": {},
+                    },
+                ),
+                {"flow.invalid_human_review_decision_schema"},
+            ),
+            (
+                self._human_review_config(
+                    decision_schema={
+                        "type": "object",
+                        "properties": {"decision": {"enum": ()}},
+                    },
+                ),
+                {"flow.invalid_human_review_decision_schema"},
+            ),
+            (
+                self._human_review_config(
+                    decision_schema={
+                        "type": "object",
+                        "properties": {"decision": {"enum": ("approved", 1)}},
+                    },
+                ),
+                {"flow.invalid_human_review_decision_schema"},
+            ),
+            (
+                self._human_review_config(
+                    decision_schema={
+                        "type": "object",
+                        "properties": {"decision": {"enum": ("approved",)}},
+                    },
+                ),
+                {"flow.human_review_decision_schema_mismatch"},
+            ),
+            (
+                self._human_review_config(timeout_seconds=0),
+                {"flow.invalid_human_review_timeout"},
+            ),
+            (
+                self._human_review_config(
+                    audit_metadata={"raw_prompt": "private-token"}
+                ),
+                {"flow.unsafe_human_review_audit_metadata"},
+            ),
+            (
+                self._human_review_config(
+                    audit_metadata={"": "private-token"}
+                ),
+                {"flow.unsafe_human_review_audit_metadata"},
+            ),
+            (
+                self._human_review_config(
+                    audit_metadata={"queue": {"secret_label": "private-token"}}
+                ),
+                {"flow.unsafe_human_review_audit_metadata"},
+            ),
+            (
+                self._human_review_config(audit_metadata="audit"),
+                {"flow.invalid_human_review_audit_metadata"},
+            ),
+        )
+
+        for config, expected_codes in cases:
+            with self.subTest(expected_codes=expected_codes):
+                result = validate_flow_definition(
+                    self._human_review_definition(
+                        FlowNodeDefinition(
+                            name="review",
+                            type="human_review",
+                            mappings=(
+                                FlowInputMapping(
+                                    target="payload",
+                                    source="inputs.payload",
+                                ),
+                            ),
+                            config=config,
+                        ),
+                    ),
+                    self._human_review_registry(),
+                )
+
+                codes = {diagnostic.code for diagnostic in result.diagnostics}
+                self.assertFalse(result.ok)
+                self.assertTrue(expected_codes.issubset(codes))
+                self.assertNotIn(
+                    "private-token", str(result.public_diagnostics)
+                )
+
     def test_validate_flow_definition_rejects_loop_policy_details(
         self,
     ) -> None:
@@ -3151,6 +3347,106 @@ class FlowValidatorTestCase(TestCase):
                 FlowNodeDefinition(name="other", type="worker"),
             ),
             edges=edges,
+        )
+
+    def _human_review_config(
+        self,
+        *,
+        allowed_decisions: object = (
+            "approved",
+            "rejected",
+            "needs_correction",
+        ),
+        decision_schema: object | None = None,
+        payload_schema: object | None = None,
+        timeout_seconds: int | float = 3600,
+        audit_metadata: object | None = None,
+    ) -> dict[str, object]:
+        config: dict[str, object] = {
+            "allowed_decisions": allowed_decisions,
+            "decision_schema": (
+                decision_schema
+                or {
+                    "type": "object",
+                    "properties": {
+                        "decision": {"enum": allowed_decisions},
+                        "comment": {"type": "string"},
+                    },
+                    "required": ("decision",),
+                }
+            ),
+            "payload_schema": (
+                payload_schema
+                or {
+                    "type": "object",
+                    "properties": {"summary": {"type": "string"}},
+                    "required": ("summary",),
+                }
+            ),
+            "timeout_seconds": timeout_seconds,
+        }
+        if audit_metadata is not None:
+            config["audit_metadata"] = audit_metadata
+        return config
+
+    def _human_review_registry(self) -> FlowNodeRegistry:
+        return FlowNodeRegistry(
+            {
+                "human_review": lambda definition: Node(definition.name),
+                "review_sink": lambda definition: Node(definition.name),
+            },
+            {
+                "human_review": FlowNodeMetadata(
+                    kind=FlowNodeKind.HUMAN_REVIEW,
+                    async_only=True,
+                    capabilities=(FlowNodeCapability.DURABLE_PAUSE,),
+                    input_contract=FlowNodeContract(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+                "review_sink": FlowNodeMetadata(
+                    kind=FlowNodeKind.PASS_THROUGH,
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.OBJECT,
+                    ),
+                ),
+            },
+        )
+
+    def _human_review_definition(
+        self,
+        review: FlowNodeDefinition,
+    ) -> FlowDefinition:
+        return FlowDefinition(
+            name="review-flow",
+            version="2026-06-08",
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="answer",
+                    type=FlowOutputType.OBJECT,
+                ),
+            ),
+            entry_behavior=FlowEntryBehavior(node="review"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "finish.result"},
+            ),
+            nodes=(
+                review,
+                FlowNodeDefinition(name="finish", type="review_sink"),
+            ),
+            edges=(FlowEdgeDefinition(source="review", target="finish"),),
         )
 
 
