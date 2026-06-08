@@ -34,10 +34,11 @@ from asyncio import CancelledError, gather, sleep, wait_for
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from importlib import import_module
 from inspect import isawaitable
 from time import monotonic
-from types import MappingProxyType
-from typing import TypeAlias
+from types import MappingProxyType, ModuleType
+from typing import Protocol, TypeAlias, cast
 from uuid import uuid4
 
 _MISSING = object()
@@ -46,6 +47,24 @@ FlowPlanNodeRunner: TypeAlias = Callable[
     [FlowNodePlan, Mapping[str, object]],
     object | Awaitable[object],
 ]
+
+
+class _JsonSchemaValidator(Protocol):
+    def validate(self, instance: object) -> None: ...
+
+
+class _JsonSchemaValidatorClass(Protocol):
+    def __call__(
+        self, schema: Mapping[str, object]
+    ) -> _JsonSchemaValidator: ...
+    def check_schema(self, schema: Mapping[str, object]) -> None: ...
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _JsonSchemaAdapter:
+    validator_class: _JsonSchemaValidatorClass
+    schema_error: type[Exception]
+    validation_error: type[Exception]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -595,6 +614,55 @@ def _validate_resume_decision(
             message="Flow resume decision is not allowed.",
             hint="Use one of the configured human review decisions.",
         )
+    return _validate_resume_decision_schema(node, payload)
+
+
+def _validate_resume_decision_schema(
+    node: FlowNodePlan,
+    payload: Mapping[str, object],
+) -> FlowDiagnostic | None:
+    schema = node.config.get("decision_schema")
+    if schema is None:
+        return None
+    if not isinstance(schema, Mapping):
+        return _execution_diagnostic(
+            code="flow.execution.invalid_resume_schema",
+            path=f"nodes.{node.name}.config.decision_schema",
+            message="Flow resume decision schema is invalid.",
+            hint="Use a valid JSON Schema object for review decisions.",
+        )
+    adapter = _json_schema_adapter()
+    if adapter is None:
+        return _execution_diagnostic(
+            code="flow.execution.invalid_resume_schema",
+            path=f"nodes.{node.name}.config.decision_schema",
+            message="Flow resume decision schema is invalid.",
+            hint="Install JSON Schema validation support.",
+        )
+    schema_data = _json_compatible_mapping(
+        cast(Mapping[object, object], schema)
+    )
+    payload_data = _json_compatible_mapping(
+        cast(Mapping[object, object], payload)
+    )
+    try:
+        adapter.validator_class.check_schema(schema_data)
+        validator = adapter.validator_class(schema_data)
+        validator.validate(payload_data)
+    except adapter.schema_error:
+        return _execution_diagnostic(
+            code="flow.execution.invalid_resume_schema",
+            path=f"nodes.{node.name}.config.decision_schema",
+            message="Flow resume decision schema is invalid.",
+            hint="Use a valid JSON Schema object for review decisions.",
+        )
+    except adapter.validation_error:
+        return _execution_diagnostic(
+            code="flow.execution.invalid_resume_payload",
+            path=f"nodes.{node.name}.decision",
+            message="Flow resume decision payload is invalid.",
+            hint="Provide a decision payload matching the review schema.",
+        )
     return None
 
 
@@ -613,6 +681,63 @@ def _human_review_pause_outcome(
         duration_ms=_elapsed_ms(started_at),
         pause_token=uuid4().hex,
     )
+
+
+def _json_compatible_mapping(
+    value: Mapping[object, object],
+) -> dict[str, object]:
+    return {
+        key: _json_compatible_value(item)
+        for key, item in value.items()
+        if isinstance(key, str) and key.strip()
+    }
+
+
+def _json_compatible_value(value: object) -> object:
+    if value is None or isinstance(value, bool | str | int | float):
+        return value
+    if isinstance(value, Mapping):
+        return _json_compatible_mapping(value)
+    if isinstance(value, list | tuple):
+        return [_json_compatible_value(item) for item in value]
+    return {"type": type(value).__name__}
+
+
+def _json_schema_adapter() -> _JsonSchemaAdapter | None:
+    try:
+        module = import_module("jsonschema")
+    except (ImportError, ValueError):
+        return None
+    return _json_schema_adapter_from_module(module)
+
+
+def _json_schema_adapter_from_module(
+    module: ModuleType,
+) -> _JsonSchemaAdapter | None:
+    validator_class = getattr(module, "Draft202012Validator", None)
+    schema_error = _exception_class(module, "SchemaError")
+    validation_error = _exception_class(module, "ValidationError")
+    if (
+        validator_class is None
+        or schema_error is None
+        or validation_error is None
+    ):
+        return None
+    return _JsonSchemaAdapter(
+        validator_class=cast(_JsonSchemaValidatorClass, validator_class),
+        schema_error=schema_error,
+        validation_error=validation_error,
+    )
+
+
+def _exception_class(
+    module: ModuleType,
+    name: str,
+) -> type[Exception] | None:
+    value = getattr(module, name, None)
+    if isinstance(value, type) and issubclass(value, Exception):
+        return value
+    return None
 
 
 def _plan_node_order(plan: FlowExecutionPlan) -> Callable[[str], int]:
