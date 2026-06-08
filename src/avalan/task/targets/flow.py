@@ -294,6 +294,12 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         await context.check_cancelled()
         plan = await self._strict_plan(context)
         await context.check_cancelled()
+        if self._flow_state_store is None and _strict_plan_has_human_review(
+            plan
+        ):
+            raise TaskValidationError(
+                (_unsupported_human_review_state_issue(),)
+            )
         task_input = _task_input_value(context)
         input_issues = validate_task_input(context.definition, task_input)
         if input_issues:
@@ -1903,6 +1909,37 @@ def _invalid_flow_resume_decisions_issue() -> TaskValidationIssue:
         hint="Provide a mapping of paused review nodes to decision payloads.",
         category=TaskValidationCategory.STRUCTURE,
     )
+
+
+def _unsupported_human_review_state_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="flow.unsupported_human_review_direct_mode",
+        path="execution.ref",
+        message="Human review flow execution requires durable state.",
+        hint="Configure a flow state store before running review nodes.",
+        category=TaskValidationCategory.DEPENDENCY,
+    )
+
+
+def _strict_plan_has_human_review(plan: FlowExecutionPlan) -> bool:
+    assert isinstance(plan, FlowExecutionPlan)
+    return any(
+        node.kind == FlowNodeKind.HUMAN_REVIEW
+        or _strict_subflow_has_human_review(node)
+        for node in plan.nodes
+    )
+
+
+def _strict_subflow_has_human_review(node: FlowNodePlan) -> bool:
+    assert isinstance(node, FlowNodePlan)
+    metadata = node.metadata.get("subflow")
+    subflow_plan = (
+        metadata.get("plan") if isinstance(metadata, Mapping) else None
+    )
+    return isinstance(
+        subflow_plan,
+        FlowExecutionPlan,
+    ) and _strict_plan_has_human_review(subflow_plan)
 
 
 def _strict_resume_decisions(
