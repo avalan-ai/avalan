@@ -166,7 +166,15 @@ def _task_run_json_stdout(args: Namespace) -> bool:
             and bool(getattr(args, "task_run_json", False))
         )
         or (
-            getattr(args, "flow_command", None) in {"mermaid", "validate"}
+            getattr(args, "flow_command", None)
+            in {
+                "cancel",
+                "inspect",
+                "mermaid",
+                "resume",
+                "trace",
+                "validate",
+            }
             and bool(getattr(args, "flow_json", False))
         )
     )
@@ -498,6 +506,30 @@ async def deploy_run(*args: Any, **kwargs: Any) -> Any:
 
 def flow_run(*args: Any, **kwargs: Any) -> Any:
     return _load_command("avalan.cli.commands.flow", "flow_run")(
+        *args, **kwargs
+    )
+
+
+def flow_inspect(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_inspect")(
+        *args, **kwargs
+    )
+
+
+def flow_trace(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_trace")(
+        *args, **kwargs
+    )
+
+
+def flow_cancel(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_cancel")(
+        *args, **kwargs
+    )
+
+
+def flow_resume(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_resume")(
         *args, **kwargs
     )
 
@@ -1594,6 +1626,140 @@ class CLI:
             flow_run_parser,
             prefix="graph",
             settings_cls=GraphToolSettings,
+        )
+        flow_inspect_parser = flow_command_parsers.add_parser(
+            name="inspect",
+            description="Inspect a durable flow run",
+            parents=[global_parser],
+        )
+        flow_inspect_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to inspect",
+        )
+        flow_inspect_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        flow_inspect_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        flow_inspect_parser.add_argument(
+            "--after-sequence",
+            type=int,
+            default=None,
+            help="Only include task events after this sequence.",
+        )
+        flow_inspect_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print flow inspection as compact JSON.",
+        )
+        flow_trace_parser = flow_command_parsers.add_parser(
+            name="trace",
+            description="Export a sanitized flow trace",
+            parents=[global_parser],
+        )
+        flow_trace_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to export",
+        )
+        flow_trace_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        flow_trace_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        flow_trace_parser.add_argument(
+            "--after-sequence",
+            type=int,
+            default=None,
+            help="Only include task events after this sequence.",
+        )
+        flow_trace_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print sanitized flow trace as compact JSON.",
+        )
+        flow_cancel_parser = flow_command_parsers.add_parser(
+            name="cancel",
+            description="Request cancellation for a durable flow run",
+            parents=[global_parser],
+        )
+        flow_cancel_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to cancel",
+        )
+        flow_cancel_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        flow_cancel_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        flow_cancel_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print cancellation result as compact JSON.",
+        )
+        flow_resume_parser = flow_command_parsers.add_parser(
+            name="resume",
+            description="Resume a paused strict flow",
+            parents=[global_parser],
+        )
+        flow_resume_parser.add_argument(
+            "flow",
+            type=str,
+            help="Flow definition TOML file to resume",
+        )
+        flow_resume_parser.add_argument(
+            "run_id",
+            type=str,
+            help="Task run id to resume",
+        )
+        flow_resume_parser.add_argument(
+            "--decision-json",
+            required=True,
+            help="JSON object mapping review nodes to decision payloads.",
+        )
+        flow_resume_parser.add_argument(
+            "--store-dsn",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL DSN.",
+        )
+        flow_resume_parser.add_argument(
+            "--store-schema",
+            type=str,
+            default=None,
+            help="Durable task store PostgreSQL schema.",
+        )
+        flow_resume_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print resumed flow output as compact JSON.",
         )
         flow_validate_parser = flow_command_parsers.add_parser(
             name="validate",
@@ -3806,8 +3972,17 @@ class CLI:
             case "flow":
                 subcommand = args.flow_command or "run"
                 match subcommand:
+                    case "cancel":
+                        if not flow_cancel(args, console, theme):
+                            raise SystemExit(1)
+                    case "inspect":
+                        if not flow_inspect(args, console, theme):
+                            raise SystemExit(1)
                     case "mermaid":
                         if not flow_mermaid(args, console, theme):
+                            raise SystemExit(1)
+                    case "resume":
+                        if not flow_resume(args, console, theme):
                             raise SystemExit(1)
                     case "run":
                         if not flow_run(
@@ -3817,6 +3992,9 @@ class CLI:
                             hub,
                             self._logger,
                         ):
+                            raise SystemExit(1)
+                    case "trace":
+                        if not flow_trace(args, console, theme):
                             raise SystemExit(1)
                     case "validate":
                         if not flow_validate(args, console, theme):

@@ -2,7 +2,7 @@ from argparse import Namespace
 from asyncio import run as asyncio_run
 from base64 import b64decode
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from enum import Enum
 from io import StringIO
 from json import dumps, loads
@@ -31,6 +31,7 @@ from avalan.flow import (
     FlowDiagnosticCategory,
     FlowEdgeDefinition,
     FlowEntryBehavior,
+    FlowExecutionTrace,
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
@@ -50,8 +51,10 @@ from avalan.flow import (
     MermaidRenderResult,
 )
 from avalan.task import (
+    TaskClientUnsupportedOperationError,
     TaskInputType,
     TaskOutputType,
+    TaskRunState,
     TaskValidationCategory,
 )
 from avalan.task import client as task_client_module
@@ -63,6 +66,7 @@ from avalan.task.converters import (
     TaskFileConverterCapability,
 )
 from avalan.task.converters.pdf_image import pdf_image_converter_capability
+from avalan.task.store import TaskStoreConflictError, TaskStoreNotFoundError
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
 
@@ -1128,7 +1132,7 @@ class FlowRunCommandTestCase(TestCase):
 
         output = console.export_text()
         self.assertTrue(result)
-        self.assertIn("Flow run completed.", output)
+        self.assertIn("Legacy native flow run completed.", output)
         self.assertIn('"ready"', output)
 
     def test_flow_run_reports_load_failure_without_private_toml(self) -> None:
@@ -1732,6 +1736,551 @@ class FlowRunCommandTestCase(TestCase):
         self.assertIn("output.write", output)
         self.assertNotIn("answer", output)
 
+    def test_flow_inspect_and_trace_use_sanitized_task_facade(self) -> None:
+        inspect_stream = StringIO()
+        trace_console = Console(record=True, width=160)
+        inspect_console = Console(file=inspect_stream, width=160)
+        client = object()
+
+        with (
+            patch.object(
+                flow_cmds,
+                "_task_cli_inspection_client_context",
+                return_value=_FakeFlowClientContext(client),
+            ),
+            patch.object(
+                flow_cmds, "PgsqlFlowStateStore", return_value=object()
+            ),
+            patch.object(
+                flow_cmds,
+                "FlowTaskExecutor",
+                return_value=_FakeFlowTaskExecutor(),
+            ),
+        ):
+            inspect_result = flow_cmds.flow_inspect(
+                _args(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                    flow_json=True,
+                    after_sequence=4,
+                ),
+                inspect_console,
+                self.theme,
+            )
+            trace_result = flow_cmds.flow_trace(
+                _args(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                    flow_json=False,
+                ),
+                trace_console,
+                self.theme,
+            )
+
+        inspect_payload = loads(inspect_stream.getvalue())
+        trace_output = trace_console.export_text()
+        self.assertTrue(inspect_result)
+        self.assertTrue(trace_result)
+        self.assertEqual(inspect_payload["task"]["run_id"], "run-1")
+        self.assertEqual(inspect_payload["flow"]["state"], "paused")
+        self.assertIn('"flow_name":"safe-flow"', trace_output)
+        self.assertNotIn("private", inspect_stream.getvalue())
+        self.assertNotIn("private", trace_output)
+
+    def test_flow_inspect_reports_missing_store(self) -> None:
+        console = Console(record=True, width=160)
+
+        result = flow_cmds.flow_inspect(
+            _args(run_id="run-1"),
+            console,
+            self.theme,
+        )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("store.missing", output)
+
+    def test_flow_cancel_delegates_to_task_client(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        client = _FakeFlowCancelClient()
+
+        with patch.object(
+            flow_cmds,
+            "_task_cli_inspection_client_context",
+            return_value=_FakeFlowClientContext(client),
+        ):
+            result = flow_cmds.flow_cancel(
+                _args(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                    flow_json=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertTrue(result)
+        self.assertEqual(client.cancelled, "run-1")
+        self.assertEqual(payload["state"], "cancel_requested")
+
+    def test_flow_resume_updates_state_store(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        store = _FakeFlowStateStore()
+        executor = _FakeFlowExecutor()
+
+        with (
+            patch.object(
+                flow_cmds,
+                "_flow_state_store_context",
+                return_value=_FakeFlowStateStoreContext(store),
+            ),
+            patch.object(flow_cmds, "FlowExecutor", return_value=executor),
+            patch.object(
+                flow_cmds,
+                "_flow_load_validation_result",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    definition=FlowDefinition(name="strict", nodes=()),
+                ),
+            ),
+        ):
+            result = flow_cmds.flow_resume(
+                _args(
+                    flow="private.flow.toml",
+                    run_id="run-1",
+                    decision_json=(
+                        '{"review":{"decision":"approved",'
+                        '"comment":"private"}}'
+                    ),
+                    store_dsn="postgresql://db/tasks",
+                    flow_json=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertTrue(result)
+        self.assertEqual(payload["answer"], "approved")
+        self.assertEqual(
+            executor.decisions,
+            {"review": {"decision": "approved", "comment": "private"}},
+        )
+        self.assertEqual(store.updated_revision, 7)
+        update = store.updated_update
+        self.assertIsNotNone(update)
+        assert update is not None
+        self.assertEqual(update.selected_outputs, {"answer": "approved"})
+
+    def test_flow_resume_rejects_invalid_decision_json_safely(self) -> None:
+        console = Console(record=True, width=160)
+
+        result = flow_cmds.flow_resume(
+            _args(
+                flow="flow.toml",
+                run_id="run-1",
+                decision_json='{"review":"private-token"}',
+            ),
+            console,
+            self.theme,
+        )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("flow.resume_decision_shape", output)
+        self.assertNotIn("private-token", output)
+
+    def test_flow_runtime_command_error_paths_are_sanitized(self) -> None:
+        cases = (
+            (
+                "inspect",
+                flow_cmds.flow_inspect,
+                _FailingFlowTaskExecutor(TaskStoreNotFoundError("private")),
+                "flow.not_found",
+            ),
+            (
+                "trace",
+                flow_cmds.flow_trace,
+                _FailingFlowTaskExecutor(ImportError("private")),
+                "dependency.missing",
+            ),
+        )
+        for name, command, executor, expected in cases:
+            with self.subTest(command=name):
+                console = Console(record=True, width=160)
+                with (
+                    patch.object(
+                        flow_cmds,
+                        "_task_cli_inspection_client_context",
+                        return_value=_FakeFlowClientContext(object()),
+                    ),
+                    patch.object(
+                        flow_cmds,
+                        "PgsqlFlowStateStore",
+                        return_value=object(),
+                    ),
+                    patch.object(
+                        flow_cmds,
+                        "FlowTaskExecutor",
+                        return_value=executor,
+                    ),
+                ):
+                    result = command(
+                        _args(
+                            run_id="run-1",
+                            store_dsn="postgresql://db/tasks",
+                        ),
+                        console,
+                        self.theme,
+                    )
+
+                output = console.export_text()
+                self.assertFalse(result)
+                self.assertIn(expected, output)
+                self.assertNotIn("private", output)
+
+        missing_store_console = Console(record=True, width=160)
+        self.assertFalse(
+            flow_cmds.flow_trace(
+                _args(run_id="run-1"),
+                missing_store_console,
+                self.theme,
+            )
+        )
+        self.assertIn("store.missing", missing_store_console.export_text())
+
+        unsupported_client = _FailingFlowCancelClient(
+            TaskClientUnsupportedOperationError(
+                code="task.cancel_unsupported",
+                operation="cancel",
+                message="private",
+            )
+        )
+        console = Console(record=True, width=160)
+        with patch.object(
+            flow_cmds,
+            "_task_cli_inspection_client_context",
+            return_value=_FakeFlowClientContext(unsupported_client),
+        ):
+            result = flow_cmds.flow_cancel(
+                _args(
+                    run_id="run-1",
+                    store_dsn="postgresql://db/tasks",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("task.cancel_unsupported", output)
+        self.assertNotIn("private", output)
+
+        missing_cancel_console = Console(record=True, width=160)
+        self.assertFalse(
+            flow_cmds.flow_cancel(
+                _args(run_id="run-1"),
+                missing_cancel_console,
+                self.theme,
+            )
+        )
+        self.assertIn("store.missing", missing_cancel_console.export_text())
+
+    def test_flow_resume_handles_failure_and_diagnostic_paths(self) -> None:
+        load_result = SimpleNamespace(
+            ok=True,
+            definition=FlowDefinition(name="strict", nodes=()),
+        )
+        cases = (
+            (
+                "missing_loader",
+                {"_flow_load_validation_result": None},
+                _args(
+                    flow="flow.toml",
+                    run_id="run-1",
+                    decision_json="{}",
+                ),
+                None,
+            ),
+            (
+                "invalid_loader",
+                {
+                    "_flow_load_validation_result": SimpleNamespace(
+                        ok=False,
+                        definition=None,
+                    )
+                },
+                _args(
+                    flow="flow.toml",
+                    run_id="run-1",
+                    decision_json="{}",
+                ),
+                None,
+            ),
+            (
+                "missing_store",
+                {
+                    "_flow_load_validation_result": load_result,
+                    "_flow_state_store_context": None,
+                },
+                _args(
+                    flow="flow.toml",
+                    run_id="run-1",
+                    decision_json="{}",
+                ),
+                None,
+            ),
+            (
+                "store_failure",
+                {
+                    "_flow_load_validation_result": load_result,
+                    "_flow_state_store_context": _FakeFlowStateStoreContext(
+                        _FailingFlowStateStore(
+                            TaskStoreConflictError("private")
+                        )
+                    ),
+                },
+                _args(
+                    flow="flow.toml",
+                    run_id="run-1",
+                    decision_json="{}",
+                ),
+                "flow.conflict",
+            ),
+        )
+
+        for name, patches, args, expected in cases:
+            with self.subTest(case=name):
+                console = Console(record=True, width=160)
+                with ExitStack() as stack:
+                    for patch_name, value in patches.items():
+                        stack.enter_context(
+                            patch.object(
+                                flow_cmds,
+                                patch_name,
+                                return_value=value,
+                            )
+                        )
+                    result = flow_cmds.flow_resume(
+                        args,
+                        console,
+                        self.theme,
+                    )
+
+                output = console.export_text()
+                self.assertFalse(result)
+                if expected is not None:
+                    self.assertIn(expected, output)
+                self.assertNotIn("private", output)
+
+        diagnostic = _flow_cli_diagnostic("flow.resume.blocked")
+        diagnostic_cases = (
+            (
+                True,
+                _FakeDiagnosticFlowExecutor(
+                    ok=False,
+                    diagnostics=(diagnostic,),
+                ),
+                '"flow.resume.blocked"',
+            ),
+            (
+                False,
+                _FakeDiagnosticFlowExecutor(
+                    ok=False,
+                    diagnostics=(diagnostic,),
+                ),
+                "Flow resume produced diagnostics.",
+            ),
+        )
+        for flow_json, executor, expected in diagnostic_cases:
+            with self.subTest(flow_json=flow_json):
+                stream = StringIO()
+                console = Console(file=stream, record=not flow_json, width=160)
+                with (
+                    patch.object(
+                        flow_cmds,
+                        "_flow_load_validation_result",
+                        return_value=load_result,
+                    ),
+                    patch.object(
+                        flow_cmds,
+                        "_flow_state_store_context",
+                        return_value=_FakeFlowStateStoreContext(
+                            _FakeFlowStateStore()
+                        ),
+                    ),
+                    patch.object(
+                        flow_cmds,
+                        "FlowExecutor",
+                        return_value=executor,
+                    ),
+                ):
+                    result = flow_cmds.flow_resume(
+                        _args(
+                            flow="flow.toml",
+                            run_id="run-1",
+                            decision_json="{}",
+                            flow_json=flow_json,
+                        ),
+                        console,
+                        self.theme,
+                    )
+
+                output = stream.getvalue()
+                self.assertFalse(result)
+                self.assertIn(expected, output)
+
+    def test_flow_state_store_context_helpers_cover_store_setup(self) -> None:
+        console = Console(record=True, width=160)
+
+        missing = flow_cmds._flow_state_store_context(_args(), console)
+
+        self.assertIsNone(missing)
+        self.assertIn("store.missing", console.export_text())
+
+        database = object()
+        store = object()
+        with (
+            patch.object(
+                flow_cmds,
+                "_task_pgsql_database",
+                return_value=database,
+            ) as database_factory,
+            patch.object(
+                flow_cmds,
+                "PgsqlFlowStateStore",
+                return_value=store,
+            ) as store_factory,
+        ):
+            context = flow_cmds._flow_state_store_context(
+                _args(
+                    store_dsn="postgresql://db/tasks",
+                    store_schema="workflow",
+                ),
+                Console(record=True, width=160),
+            )
+
+        self.assertIsNotNone(context)
+        assert context is not None
+        self.assertIs(context.store, store)
+        self.assertIs(context.database, database)
+        database_factory.assert_called_once_with(
+            "postgresql://db/tasks",
+            "workflow",
+        )
+        store_factory.assert_called_once_with(database)
+
+        async_database = _FakeFlowDatabase()
+        async_context = flow_cmds._FlowStateStoreContext(
+            store=store,
+            database=async_database,
+        )
+
+        async def exercise_context() -> object:
+            async with async_context as opened:
+                return opened
+
+        opened = asyncio_run(exercise_context())
+
+        self.assertIs(opened, store)
+        self.assertTrue(async_database.opened)
+        self.assertTrue(async_database.closed)
+
+    def test_flow_resume_decision_json_sources_and_errors(self) -> None:
+        invalid_cases = (
+            (
+                "missing",
+                _args(decision_json=" "),
+                "flow.resume_decision_missing",
+            ),
+            (
+                "missing_file",
+                _args(decision_json="@missing-private.json"),
+                "file.read",
+            ),
+            (
+                "invalid_json",
+                _args(decision_json='{"review":'),
+                "flow.resume_decision_json",
+            ),
+            (
+                "non_mapping",
+                _args(decision_json='["private-token"]'),
+                "flow.resume_decision_shape",
+            ),
+        )
+        for name, args, expected in invalid_cases:
+            with self.subTest(case=name):
+                console = Console(record=True, width=160)
+                decisions = flow_cmds._flow_resume_decisions(args, console)
+
+                output = console.export_text()
+                self.assertIsNone(decisions)
+                self.assertIn(expected, output)
+                self.assertNotIn("private-token", output)
+
+        with TemporaryDirectory() as temporary:
+            decision_path = Path(temporary) / "decision.json"
+            decision_path.write_text(
+                '{"review":{"decision":"approved","score":1}}',
+                encoding="utf-8",
+            )
+
+            decisions = flow_cmds._flow_resume_decisions(
+                _args(decision_json=f"@{decision_path}"),
+                Console(record=True, width=160),
+            )
+
+        self.assertEqual(
+            decisions,
+            {"review": {"decision": "approved", "score": 1}},
+        )
+
+    def test_flow_error_printers_cover_public_error_codes(self) -> None:
+        inspection_cases = (
+            (TaskStoreNotFoundError("private"), "flow.not_found"),
+            (ImportError("private"), "dependency.missing"),
+            (OSError("private"), "io.failure"),
+            (AssertionError("private"), "flow.inspection"),
+        )
+        for error, expected in inspection_cases:
+            with self.subTest(kind="inspection", expected=expected):
+                console = Console(record=True, width=160)
+
+                flow_cmds._print_flow_inspection_error(console, error)
+
+                output = console.export_text()
+                self.assertIn(expected, output)
+                self.assertNotIn("private", output)
+
+        command_cases = (
+            (TaskStoreNotFoundError("private"), "flow.not_found"),
+            (TaskStoreConflictError("private"), "flow.conflict"),
+            (
+                TaskClientUnsupportedOperationError(
+                    code="task.cancel_unsupported",
+                    operation="cancel",
+                    message="private",
+                ),
+                "task.cancel_unsupported",
+            ),
+            (ImportError("private"), "dependency.missing"),
+            (OSError("private"), "io.failure"),
+            (AssertionError("private"), "flow.command"),
+        )
+        for error, expected in command_cases:
+            with self.subTest(kind="command", expected=expected):
+                console = Console(record=True, width=160)
+
+                flow_cmds._print_flow_command_error(console, error)
+
+                output = console.export_text()
+                self.assertIn(expected, output)
+                self.assertNotIn("private", output)
+
     def test_flow_task_contract_helpers_cover_all_types(self) -> None:
         input_types = {
             None: TaskInputType.OBJECT,
@@ -1836,6 +2385,207 @@ class FlowRunCommandTestCase(TestCase):
             ],
         )
         self.assertEqual(len(descriptors), 2)
+
+
+class _FakeFlowClientContext:
+    database = object()
+
+    def __init__(self, client: object) -> None:
+        self.client = client
+
+    async def __aenter__(self) -> object:
+        return self.client
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> None:
+        _ = exc_type, exc, traceback
+
+
+class _FakeFlowTaskInspection:
+    def as_public_dict(self) -> Mapping[str, object]:
+        return {
+            "task": {"run_id": "run-1"},
+            "flow": {"flow_name": "safe-flow", "state": "paused"},
+        }
+
+
+class _FakeFlowTaskExecutor:
+    async def inspect(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int | None = None,
+    ) -> _FakeFlowTaskInspection:
+        self.run_id = run_id
+        self.after_sequence = after_sequence
+        return _FakeFlowTaskInspection()
+
+    async def export_trace(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int | None = None,
+    ) -> Mapping[str, object]:
+        self.run_id = run_id
+        self.after_sequence = after_sequence
+        return {"flow_name": "safe-flow", "state": "paused"}
+
+
+class _FailingFlowTaskExecutor:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    async def inspect(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int | None = None,
+    ) -> object:
+        _ = run_id, after_sequence
+        raise self.error
+
+    async def export_trace(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int | None = None,
+    ) -> object:
+        _ = run_id, after_sequence
+        raise self.error
+
+
+class _FakeFlowCancelClient:
+    cancelled: str | None = None
+
+    async def cancel(self, run_id: str) -> object:
+        self.cancelled = run_id
+        return SimpleNamespace(
+            run_id=run_id,
+            state=TaskRunState.CANCEL_REQUESTED,
+        )
+
+
+class _FailingFlowCancelClient:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    async def cancel(self, run_id: str) -> object:
+        _ = run_id
+        raise self.error
+
+
+class _FakeFlowStateStoreContext:
+    def __init__(self, store: object) -> None:
+        self.store = store
+
+    async def __aenter__(self) -> object:
+        return self.store
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object | None,
+    ) -> None:
+        _ = exc_type, exc, traceback
+
+
+class _FakeFlowStateStore:
+    updated_revision: int | None = None
+    updated_update: Any = None
+
+    async def get_flow_execution(self, run_id: str) -> object:
+        self.run_id = run_id
+        return SimpleNamespace(revision=7)
+
+    async def update_flow_execution(
+        self,
+        run_id: str,
+        update: object,
+        *,
+        expected_revision: int,
+    ) -> object:
+        self.updated_run_id = run_id
+        self.updated_update = update
+        self.updated_revision = expected_revision
+        return SimpleNamespace(revision=expected_revision + 1)
+
+
+class _FailingFlowStateStore:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    async def get_flow_execution(self, run_id: str) -> object:
+        _ = run_id
+        raise self.error
+
+
+class _FakeFlowExecutor:
+    decisions: object = None
+
+    async def resume(
+        self,
+        flow: object,
+        previous: object,
+        *,
+        decisions: Mapping[str, Mapping[str, object]],
+    ) -> object:
+        _ = flow, previous
+        self.decisions = decisions
+        result = SimpleNamespace(
+            trace=FlowExecutionTrace(nodes=()),
+            node_outputs={"review": {"result": "approved"}},
+            outputs={"answer": "approved"},
+            diagnostics=(),
+            pause_tokens={},
+        )
+        return SimpleNamespace(
+            ok=True,
+            outputs={"answer": "approved"},
+            diagnostics=(),
+            result=result,
+        )
+
+
+class _FakeDiagnosticFlowExecutor:
+    def __init__(
+        self,
+        *,
+        ok: bool,
+        diagnostics: tuple[FlowDiagnostic, ...],
+    ) -> None:
+        self.ok = ok
+        self.diagnostics = diagnostics
+
+    async def resume(
+        self,
+        flow: object,
+        previous: object,
+        *,
+        decisions: Mapping[str, Mapping[str, object]],
+    ) -> object:
+        _ = flow, previous, decisions
+        return SimpleNamespace(
+            ok=self.ok,
+            outputs={},
+            diagnostics=self.diagnostics,
+            result=None,
+        )
+
+
+class _FakeFlowDatabase:
+    opened = False
+    closed = False
+
+    async def open(self) -> None:
+        self.opened = True
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def _args(**overrides: object) -> Namespace:

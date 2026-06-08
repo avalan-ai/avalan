@@ -301,6 +301,87 @@ class CliTaskOptionTestCase(TestCase):
             (
                 [
                     "flow",
+                    "inspect",
+                    "run-123",
+                    "--store-dsn",
+                    "postgresql://localhost/tasks",
+                    "--store-schema",
+                    "workflow",
+                    "--after-sequence",
+                    "4",
+                    "--json",
+                ],
+                {
+                    "flow_command": "inspect",
+                    "run_id": "run-123",
+                    "store_dsn": "postgresql://localhost/tasks",
+                    "store_schema": "workflow",
+                    "after_sequence": 4,
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
+                    "trace",
+                    "run-123",
+                    "--store-dsn",
+                    "postgresql://localhost/tasks",
+                    "--after-sequence",
+                    "5",
+                    "--json",
+                ],
+                {
+                    "flow_command": "trace",
+                    "run_id": "run-123",
+                    "store_dsn": "postgresql://localhost/tasks",
+                    "after_sequence": 5,
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
+                    "cancel",
+                    "run-123",
+                    "--store-dsn",
+                    "postgresql://localhost/tasks",
+                    "--json",
+                ],
+                {
+                    "flow_command": "cancel",
+                    "run_id": "run-123",
+                    "store_dsn": "postgresql://localhost/tasks",
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
+                    "resume",
+                    "flows/report.toml",
+                    "run-123",
+                    "--decision-json",
+                    '{"review":{"decision":"approved"}}',
+                    "--store-dsn",
+                    "postgresql://localhost/tasks",
+                    "--store-schema",
+                    "workflow",
+                    "--json",
+                ],
+                {
+                    "flow_command": "resume",
+                    "flow": "flows/report.toml",
+                    "run_id": "run-123",
+                    "decision_json": '{"review":{"decision":"approved"}}',
+                    "store_dsn": "postgresql://localhost/tasks",
+                    "store_schema": "workflow",
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
                     "mermaid",
                     "parse",
                     "topology.mmd",
@@ -1119,7 +1200,11 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
             ),
             ("task_run", "avalan.cli.commands.task", "task_run"),
             ("task_worker", "avalan.cli.commands.task", "task_worker"),
+            ("flow_cancel", "avalan.cli.commands.flow", "flow_cancel"),
+            ("flow_inspect", "avalan.cli.commands.flow", "flow_inspect"),
             ("flow_run", "avalan.cli.commands.flow", "flow_run"),
+            ("flow_resume", "avalan.cli.commands.flow", "flow_resume"),
+            ("flow_trace", "avalan.cli.commands.flow", "flow_trace"),
             (
                 "flow_validate",
                 "avalan.cli.commands.flow",
@@ -1231,6 +1316,18 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             flow_run_mock = stack.enter_context(
                 patch("avalan.cli.__main__.flow_run")
             )
+            flow_cancel_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_cancel")
+            )
+            flow_inspect_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_inspect")
+            )
+            flow_resume_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_resume")
+            )
+            flow_trace_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_trace")
+            )
             flow_validate_mock = stack.enter_context(
                 patch("avalan.cli.__main__.flow_validate")
             )
@@ -1303,7 +1400,11 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("model", "search", model_search),
                 ("model", "uninstall", model_uninstall),
                 ("deploy", "run", deploy_run_mock),
+                ("flow", "cancel", flow_cancel_mock),
+                ("flow", "inspect", flow_inspect_mock),
+                ("flow", "resume", flow_resume_mock),
                 ("flow", "run", flow_run_mock),
+                ("flow", "trace", flow_trace_mock),
                 ("flow", "validate", flow_validate_mock),
                 ("flow", "mermaid", flow_mermaid_mock),
                 ("task", "artifacts", task_artifacts_mock),
@@ -1462,6 +1563,10 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
 
     async def test_flow_non_executing_failure_exits_nonzero(self):
         cases = (
+            ("cancel", "flow_cancel"),
+            ("inspect", "flow_inspect"),
+            ("resume", "flow_resume"),
+            ("trace", "flow_trace"),
             ("validate", "flow_validate"),
             ("mermaid", "flow_mermaid"),
         )
@@ -1542,7 +1647,43 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             _task_run_json_stdout(
                 Namespace(
                     command="flow",
+                    flow_command="cancel",
+                    flow_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="inspect",
+                    flow_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
                     flow_command="validate",
+                    flow_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="resume",
+                    flow_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="trace",
                     flow_json=True,
                 )
             )
