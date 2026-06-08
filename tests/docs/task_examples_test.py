@@ -10,7 +10,9 @@ from unittest import TestCase, main
 from avalan.flow import (
     FlowDefinitionLoader,
     FlowInputType,
+    FlowNodeContract,
     FlowNodeDefinition,
+    FlowNodeKind,
     FlowNodeMetadata,
     FlowNodeRegistry,
     FlowOutputType,
@@ -260,23 +262,34 @@ class TaskExamplesTest(TestCase):
             _issue_codes(validate_task_output(definition, invalid_output)),
             {"output.invalid_type"},
         )
-        self.assertEqual(native_flow.output.schema_ref, "invoice.schema.json")
-        assert image_flow.input is not None
-        self.assertEqual(image_flow.input.name, "input")
-        self.assertEqual(image_flow.input.type, FlowInputType.FILE)
-        self.assertEqual(image_flow.input.mime_types, ("application/pdf",))
-        assert image_flow.output is not None
-        self.assertEqual(image_flow.output.name, "extraction")
-        self.assertEqual(image_flow.output.type, FlowOutputType.OBJECT)
-        self.assertEqual(image_flow.output.schema_ref, "invoice.schema.json")
+        self.assertEqual(len(native_flow.outputs), 1)
+        self.assertEqual(
+            native_flow.outputs[0].schema_ref,
+            "invoice.schema.json",
+        )
+        self.assertEqual(len(image_flow.inputs), 1)
+        self.assertEqual(image_flow.inputs[0].name, "input")
+        self.assertEqual(image_flow.inputs[0].type, FlowInputType.FILE_ARRAY)
+        self.assertEqual(image_flow.inputs[0].mime_types, ("application/pdf",))
+        self.assertEqual(len(image_flow.outputs), 1)
+        self.assertEqual(image_flow.outputs[0].name, "extraction")
+        self.assertEqual(image_flow.outputs[0].type, FlowOutputType.OBJECT)
+        self.assertEqual(
+            image_flow.outputs[0].schema_ref,
+            "invoice.schema.json",
+        )
         self.assertEqual(
             [(edge.source, edge.target) for edge in image_flow.edges],
             [("render_pages", "extract")],
         )
         image_nodes = image_flow.node_map
         self.assertEqual(image_nodes["render_pages"].type, "file_convert")
-        self.assertEqual(image_nodes["render_pages"].input, "file")
+        self.assertIsNone(image_nodes["render_pages"].input)
         self.assertEqual(image_nodes["render_pages"].output, "files")
+        render_mapping = image_nodes["render_pages"].mappings[0]
+        self.assertEqual(render_mapping.target, "files")
+        self.assertEqual(render_mapping.kind.value, "file[]")
+        self.assertEqual(render_mapping.source, "input.input")
         self.assertEqual(
             dict(image_nodes["render_pages"].config),
             {
@@ -291,7 +304,18 @@ class TaskExamplesTest(TestCase):
         )
         self.assertEqual(image_nodes["extract"].type, "agent")
         self.assertEqual(image_nodes["extract"].ref, "agent.toml")
-        self.assertEqual(image_nodes["extract"].input, "render_pages.files")
+        self.assertEqual(image_nodes["extract"].input, "input")
+        self.assertEqual(image_nodes["extract"].output, "extraction")
+        extract_mappings = {
+            mapping.target: mapping
+            for mapping in image_nodes["extract"].mappings
+        }
+        self.assertEqual(extract_mappings["input"].source, "input.input")
+        self.assertEqual(extract_mappings["render_pages"].kind.value, "object")
+        self.assertEqual(
+            dict(extract_mappings["render_pages"].fields),
+            {"files": "render_pages.files"},
+        )
         self.assertEqual(
             dict(image_nodes["extract"].config),
             {
@@ -360,7 +384,34 @@ def _poc_flow_loader() -> FlowDefinitionLoader:
                 "file_convert": _poc_node_factory,
             },
             {
-                "agent": FlowNodeMetadata(supports_ref=True),
+                "agent": FlowNodeMetadata(
+                    kind=FlowNodeKind.AGENT,
+                    supports_ref=True,
+                    input_contracts=(
+                        FlowNodeContract(name="input", type="any"),
+                        FlowNodeContract(
+                            name=None,
+                            type="object",
+                            metadata={"dynamic": True},
+                        ),
+                    ),
+                    output_contract=FlowNodeContract(
+                        name="result",
+                        type=FlowOutputType.JSON,
+                        metadata={"dynamic": True},
+                    ),
+                ),
+                "file_convert": FlowNodeMetadata(
+                    kind=FlowNodeKind.FILE_CONVERSION,
+                    input_contract=FlowNodeContract(
+                        name="files",
+                        type=FlowInputType.FILE_ARRAY,
+                    ),
+                    output_contract=FlowNodeContract(
+                        name="files",
+                        type=FlowOutputType.FILE_ARRAY,
+                    ),
+                ),
             },
         )
     )

@@ -1103,6 +1103,77 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertTrue(result.ok, result.diagnostics)
 
+    def test_strict_agent_node_accepts_file_selector_mapping(self) -> None:
+        converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
+        context = self._context(
+            artifact_store=FailingArtifactStore(),
+            task_store=InMemoryTaskStore(),
+            file_converters={"pdf_image": converter},
+        )
+        definition = FlowDefinition(
+            name="review-pages",
+            version="1",
+            inputs=(
+                FlowInputDefinition(
+                    name="documents",
+                    type=FlowInputType.FILE_ARRAY,
+                    mime_types=("application/pdf",),
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(name="answer", type=FlowOutputType.JSON),
+            ),
+            entry_behavior=FlowEntryBehavior(node="render"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "review.result"},
+            ),
+            nodes=(
+                FlowNodeDefinition(
+                    name="render",
+                    type="file_convert",
+                    config={"converter": "pdf_image"},
+                    mappings=(
+                        FlowInputMapping(
+                            target="files",
+                            kind=FlowMappingKind.FILE_ARRAY,
+                            source="input.documents",
+                        ),
+                    ),
+                ),
+                FlowNodeDefinition(
+                    name="review",
+                    type="agent",
+                    ref="agents/review.toml",
+                    config={
+                        "files_input": "render.files",
+                        "file_policy": "replace",
+                    },
+                    mappings=(
+                        FlowInputMapping(
+                            target="input",
+                            source="input.documents",
+                        ),
+                        FlowInputMapping(
+                            target="render",
+                            kind=FlowMappingKind.OBJECT,
+                            fields={"files": "render.files"},
+                        ),
+                    ),
+                ),
+            ),
+            edges=(FlowEdgeDefinition(source="render", target="review"),),
+        )
+
+        result = validate_flow_definition(
+            definition,
+            task_flow_node_registry(
+                context,
+                agent_runner=CapturingTaskTargetRunner(),
+            ),
+        )
+
+        self.assertTrue(result.ok, result.diagnostics)
+
     def test_strict_agent_node_rejects_ref_escape_safely(self) -> None:
         context = self._context(task_store=InMemoryTaskStore())
         definition = FlowDefinition(

@@ -3454,6 +3454,7 @@ class CliTaskCommandShellTestCase(TestCase):
                     logger=None,
                 )
             database = _FakeResource()
+            durable_flow_store = object()
             with (
                 patch.object(
                     task_cmds, "_agent_task_target", return_value=object()
@@ -3466,6 +3467,11 @@ class CliTaskCommandShellTestCase(TestCase):
                 ),
                 patch.object(
                     task_cmds, "PgsqlTaskQueue", return_value=object()
+                ),
+                patch.object(
+                    task_cmds,
+                    "PgsqlFlowStateStore",
+                    return_value=durable_flow_store,
                 ),
                 patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
             ):
@@ -3501,8 +3507,23 @@ class CliTaskCommandShellTestCase(TestCase):
 
         self.assertIsNone(ephemeral_context.database)
         self.assertIsNotNone(ephemeral_context.client._hmac_provider)
+        ephemeral_target = cast(Any, ephemeral_context.client)._target
+        ephemeral_flow = ephemeral_target._runners[
+            task_cmds.TaskTargetType.FLOW
+        ]
+        self.assertIsNone(ephemeral_flow._flow_resolver)
+        self.assertIsNotNone(ephemeral_flow._strict_resolver)
+        self.assertIsInstance(
+            ephemeral_flow._flow_state_store,
+            task_cmds.InMemoryFlowStateStore,
+        )
         self.assertIs(database, durable_context.database)
         self.assertIsNotNone(durable_context.client._hmac_provider)
+        durable_target = cast(Any, durable_context.client)._target
+        durable_flow = durable_target._runners[task_cmds.TaskTargetType.FLOW]
+        self.assertIsNone(durable_flow._flow_resolver)
+        self.assertIsNotNone(durable_flow._strict_resolver)
+        self.assertIs(durable_flow._flow_state_store, durable_flow_store)
         self.assertIsNotNone(inspection_context)
         assert inspection_context is not None
         self.assertIs(inspection_database, inspection_context.database)
@@ -3653,6 +3674,67 @@ class CliTaskCommandShellTestCase(TestCase):
                 )
 
         self.assertIsNotNone(flow)
+        self.assertEqual(
+            context.exception.issues[0].category,
+            TaskValidationCategory.UNSUPPORTED,
+        )
+        self.assertEqual(
+            context.exception.issues[0].code,
+            "flow.missing_section",
+        )
+
+    def test_strict_flow_resolver_loads_definition_and_reports_issues(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "strict.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "constant"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "answer"
+                type = "text"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                answer = "start.value"
+
+                [nodes.start]
+                type = "constant"
+                value = "ok"
+                """,
+                encoding="utf-8",
+            )
+            broken_path = root / "broken.toml"
+            broken_path.write_text("[flow]\nname = 'broken'", encoding="utf-8")
+            resolver = task_cmds._task_strict_flow_resolver(root)
+
+            definition = resolver(
+                _flow_task_context(TaskExecutionTarget.flow("strict.toml"))
+            )
+            with self.assertRaises(TaskValidationError) as context:
+                resolver(
+                    _flow_task_context(TaskExecutionTarget.flow("broken.toml"))
+                )
+
+        self.assertEqual(definition.name, "constant")
+        self.assertIsNone(definition.entrypoint)
+        self.assertIsNone(definition.output_node)
+        self.assertEqual(definition.outputs[0].name, "answer")
         self.assertEqual(
             context.exception.issues[0].category,
             TaskValidationCategory.UNSUPPORTED,

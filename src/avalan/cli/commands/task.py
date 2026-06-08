@@ -1,6 +1,12 @@
 from ...agent.loader import OrchestratorLoader
 from ...cli.theme import Theme
-from ...flow import Flow
+from ...flow import (
+    Flow,
+    FlowDefinition,
+    FlowStateStore,
+    InMemoryFlowStateStore,
+    PgsqlFlowStateStore,
+)
 from ...flow.loader import FlowDefinitionLoader
 from ...pgsql import PsycopgAsyncDatabase, PsycopgPoolSettings
 from ...task import (
@@ -306,7 +312,7 @@ def _validate_task_flow_reference(
                 category=TaskValidationCategory.UNSUPPORTED,
             ),
         )
-    if result.flow is not None:
+    if result.definition is not None:
         return ()
     return tuple(
         TaskValidationIssue(
@@ -1029,24 +1035,6 @@ def _task_cli_client_context(
     input_value: object = None,
 ) -> _TaskCliClientContext:
     stack = AsyncExitStack()
-    agent_target = _agent_task_target(
-        definition_path.parent,
-        hub=hub,
-        logger=logger,
-        stack=stack,
-    )
-    target: TaskTargetRunner = TaskTargetRunnerRegistry(
-        agent_target,
-        {
-            TaskTargetType.FLOW: FlowTaskTargetRunner(
-                ref_base=definition_path.parent,
-                flow_resolver=_task_flow_resolver(
-                    definition_path.parent,
-                    agent_runner=agent_target,
-                ),
-            )
-        },
-    )
     artifact_store = _task_artifact_store()
     if (
         artifact_store is None
@@ -1059,10 +1047,22 @@ def _task_cli_client_context(
             raw_storage_allowed=True,
         )
     hmac_provider = _task_hmac_provider()
+    agent_target = _agent_task_target(
+        definition_path.parent,
+        hub=hub,
+        logger=logger,
+        stack=stack,
+    )
     if ephemeral:
+        memory_store = InMemoryTaskStore()
+        target = _task_cli_target_runner(
+            definition_path,
+            agent_target=agent_target,
+            flow_state_store=InMemoryFlowStateStore(task_store=memory_store),
+        )
         return _TaskCliClientContext(
             TaskClient(
-                InMemoryTaskStore(),
+                memory_store,
                 target=target,
                 artifact_store=artifact_store,
                 hmac_provider=hmac_provider,
@@ -1073,11 +1073,16 @@ def _task_cli_client_context(
         )
     assert dsn is not None
     database = _task_pgsql_database(dsn, schema)
-    store = PgsqlTaskStore(database)
+    pgsql_store = PgsqlTaskStore(database)
     task_queue = PgsqlTaskQueue(database) if queue else None
+    target = _task_cli_target_runner(
+        definition_path,
+        agent_target=agent_target,
+        flow_state_store=PgsqlFlowStateStore(database),
+    )
     return _TaskCliClientContext(
         TaskClient(
-            store,
+            pgsql_store,
             target=target,
             queue=task_queue,
             artifact_store=artifact_store,
@@ -1087,6 +1092,29 @@ def _task_cli_client_context(
         ),
         database=database,
         stack=stack,
+    )
+
+
+def _task_cli_target_runner(
+    definition_path: Path,
+    *,
+    agent_target: TaskTargetRunner,
+    flow_state_store: FlowStateStore,
+) -> TaskTargetRunner:
+    return TaskTargetRunnerRegistry(
+        agent_target,
+        {
+            TaskTargetType.FLOW: FlowTaskTargetRunner(
+                ref_base=definition_path.parent,
+                strict_resolver=_task_strict_flow_resolver(
+                    definition_path.parent,
+                    agent_runner=agent_target,
+                ),
+                flow_state_store=flow_state_store,
+                agent_runner=agent_target,
+                execution_roots=(definition_path.parent,),
+            )
+        },
     )
 
 
@@ -1171,6 +1199,41 @@ def _task_flow_resolver(
                 )
             )
         return result.flow
+
+    return resolve
+
+
+def _task_strict_flow_resolver(
+    ref_base: Path,
+    *,
+    agent_runner: TaskTargetRunner | None = None,
+) -> Callable[[TaskTargetContext], FlowDefinition]:
+    def resolve(context: TaskTargetContext) -> FlowDefinition:
+        flow_ref = context.definition.execution.ref
+        path = Path(flow_ref)
+        if not path.is_absolute():
+            path = ref_base / path
+        result = FlowDefinitionLoader(
+            registry=task_flow_node_registry(
+                context,
+                agent_runner=agent_runner,
+                execution_roots=(ref_base,),
+            )
+        ).load_result(path)
+        if result.definition is None:
+            raise TaskValidationError(
+                tuple(
+                    TaskValidationIssue(
+                        code=issue.code,
+                        path=issue.path,
+                        message=issue.message,
+                        hint=issue.hint,
+                        category=TaskValidationCategory.UNSUPPORTED,
+                    )
+                    for issue in result.issues
+                )
+            )
+        return result.definition
 
     return resolve
 
@@ -1680,18 +1743,20 @@ def task_cli_input(
             raise _task_cli_input_error(
                 "Pass --pdf by itself for single-file PDF input."
             )
-        if definition.input.type != TaskInputType.FILE:
+        descriptor = {
+            "source_kind": "local_path",
+            "reference": raw_pdf,
+            "mime_type": "application/pdf",
+        }
+        if definition.input.type == TaskInputType.FILE:
+            value: object = descriptor
+        elif definition.input.type == TaskInputType.FILE_ARRAY:
+            value = [descriptor]
+        else:
             raise _task_cli_input_error(
                 "--pdf requires a single top-level file input."
             )
-        return TaskCliInput(
-            value={
-                "source_kind": "local_path",
-                "reference": raw_pdf,
-                "mime_type": "application/pdf",
-            },
-            provided=True,
-        )
+        return TaskCliInput(value=value, provided=True)
     task_files = _task_cli_file_specs(args)
     provided = (
         raw_input is not None
