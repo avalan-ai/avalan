@@ -2165,6 +2165,55 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_execute_flow_plan_stops_resume_before_routed_node(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        events: list[Event] = []
+        plan = self._human_review_plan()
+        paused_trace = FlowExecutionTrace.from_plan(plan).with_node_state(
+            "review",
+            FlowNodeState.PAUSED,
+            attempts=1,
+        )
+
+        async def cancel() -> None:
+            raise CancelledError("private resume stop")
+
+        async def listener(event: Event) -> None:
+            events.append(event)
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            return node.name
+
+        with self.assertRaises(CancelledError) as raised:
+            await execute_flow_plan(
+                plan,
+                runner,
+                resume_trace=paused_trace,
+                resume_decisions={
+                    "review": {
+                        "decision": "approved",
+                        "comment": "private-token",
+                    }
+                },
+                cancellation_checker=cancel,
+                event_listener=listener,
+            )
+
+        self.assertEqual(str(raised.exception), "private resume stop")
+        self.assertEqual(calls, [])
+        self.assertIn(
+            EventType.FLOW_NODE_RESUMED,
+            [event.type for event in events],
+        )
+        self.assertIn(
+            EventType.FLOW_CANCELLED,
+            [event.type for event in events],
+        )
+        self.assertNotIn("private-token", str(events))
+
     async def test_execute_flow_plan_routes_human_review_decision_labels(
         self,
     ) -> None:
@@ -5713,6 +5762,14 @@ class FlowRuntimeEvaluationTestCase(TestCase):
                     ),
                 ),
                 FlowMappingPlan(
+                    target="fallback",
+                    kind=FlowMappingKind.COALESCE,
+                    sources=(
+                        parse_flow_selector("prepare.result.missing"),
+                        parse_flow_selector("input.payload.customer.name"),
+                    ),
+                ),
+                FlowMappingPlan(
                     target="document",
                     kind=FlowMappingKind.FILE,
                     source=parse_flow_selector("input.document"),
@@ -5734,6 +5791,7 @@ class FlowRuntimeEvaluationTestCase(TestCase):
 
         self.assertEqual(selected["name"], "Ada")
         self.assertEqual(result["renamed"], "ready")
+        self.assertEqual(result["fallback"], "Ada")
         self.assertEqual(constructed, {"name": "Ada", "status": "ready"})
         self.assertEqual(result["items"], ("Paris", 3))
         self.assertEqual(
@@ -5810,6 +5868,28 @@ class FlowRuntimeEvaluationTestCase(TestCase):
                     ),
                 ),
                 "flow.execution.merge_requires_object",
+            ),
+            (
+                (
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.COALESCE,
+                    ),
+                ),
+                "flow.execution.empty_mapping",
+            ),
+            (
+                (
+                    FlowMappingPlan(
+                        target="value",
+                        kind=FlowMappingKind.COALESCE,
+                        sources=(
+                            parse_flow_selector("prepare.result.missing"),
+                            parse_flow_selector("input.missing"),
+                        ),
+                    ),
+                ),
+                "flow.execution.missing_selector_value",
             ),
             (
                 (

@@ -340,6 +340,7 @@ def _validate_input_mapping_kind(
 ) -> None:
     compatible = (
         mapping.kind in {FlowMappingKind.SELECT, FlowMappingKind.RENAME}
+        or mapping.kind == FlowMappingKind.COALESCE
         or (
             mapping.kind == FlowMappingKind.OBJECT
             and input_type == FlowInputType.OBJECT

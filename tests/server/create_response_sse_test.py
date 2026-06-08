@@ -399,12 +399,15 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         third_data = loads(data_lines[function_indices[2]][6:])
         self.assertEqual(
-            third_data["error"], {"type": "RuntimeError", "message": "fail"}
+            third_data["error"],
+            {"type": "RuntimeError", "message": "Tool call failed."},
         )
         third_delta = loads(third_data["delta"])
         self.assertEqual(
-            third_delta["error"], {"type": "RuntimeError", "message": "fail"}
+            third_delta["error"],
+            {"type": "RuntimeError", "message": "Tool call failed."},
         )
+        self.assertNotIn('"message":"fail"', data_lines[function_indices[2]])
 
         output_index = events.index("response.output_text.delta")
         output_data = loads(data_lines[output_index][6:])

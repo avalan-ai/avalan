@@ -67,6 +67,7 @@ class FlowMappingKind(StrEnum):
     OBJECT = "object"
     ARRAY = "array"
     MERGE = "merge"
+    COALESCE = "coalesce"
     FILE = "file"
     FILE_ARRAY = "file[]"
 
@@ -254,8 +255,7 @@ class FlowNodeContract:
             _assert_non_empty_string(self.name, "name")
         if self.type is not None:
             assert isinstance(self.type, FlowInputType | FlowOutputType | str)
-            if isinstance(self.type, str):
-                _assert_non_empty_string(self.type, "type")
+            _assert_non_empty_string(str(self.type), "type")
         if self.schema is not None:
             object.__setattr__(self, "schema", _freeze_mapping(self.schema))
         if self.schema_ref is not None:

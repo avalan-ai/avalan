@@ -880,9 +880,7 @@ def _tool_node_output(
             hint="Use envelope output mode to compose diagnostic outcomes.",
         )
     assert isinstance(outcome, ToolCallError)
-    raise RuntimeError(
-        f"Tool node execution failed: {outcome.error_type}: {outcome.message}"
-    )
+    raise RuntimeError(f"Tool node execution failed: {outcome.error_type}")
 
 
 def _tool_node_envelope(outcome: ToolCallOutcome) -> dict[str, object]:

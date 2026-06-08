@@ -122,6 +122,11 @@ class _TaskCliFileSpec:
     descriptor: Mapping[str, object]
 
 
+_AVALAN_INPUT_TYPE_SCHEMA_KEY = "x-avalan-input-type"
+_AVALAN_MIME_TYPES_SCHEMA_KEY = "x-avalan-mime-types"
+_PDF_MIME_TYPE = "application/pdf"
+
+
 class TaskCliInputError(ValueError):
     code: str
     message: str
@@ -1744,25 +1749,51 @@ def task_cli_input(
             "Pass either --input or --input-json, not both."
         )
     if raw_pdf is not None:
-        if (
-            raw_input is not None
-            or raw_json is not None
-            or input_fields
-            or bool(getattr(args, "task_files", ()) or ())
-            or file_options_provided
-        ):
+        if raw_input is not None or raw_json is not None:
             raise _task_cli_input_error(
                 "Pass --pdf by itself for single-file PDF input."
             )
-        descriptor = {
-            "source_kind": "local_path",
-            "reference": raw_pdf,
-            "mime_type": "application/pdf",
-        }
+        descriptor = _task_cli_pdf_descriptor(raw_pdf)
         if definition.input.type == TaskInputType.FILE:
+            if input_fields or bool(getattr(args, "task_files", ()) or ()):
+                raise _task_cli_input_error(
+                    "Pass --pdf by itself for single-file PDF input."
+                )
+            if file_options_provided:
+                raise _task_cli_input_error(
+                    "Pass --pdf by itself for single-file PDF input."
+                )
             value: object = descriptor
         elif definition.input.type == TaskInputType.FILE_ARRAY:
+            if input_fields or bool(getattr(args, "task_files", ()) or ()):
+                raise _task_cli_input_error(
+                    "Pass --pdf by itself for single-file PDF input."
+                )
+            if file_options_provided:
+                raise _task_cli_input_error(
+                    "Pass --pdf by itself for single-file PDF input."
+                )
             value = [descriptor]
+        elif definition.input.type == TaskInputType.OBJECT:
+            field = _task_cli_pdf_object_field(definition)
+            if field is None:
+                raise _task_cli_input_error(
+                    "--pdf requires a single top-level file input."
+                )
+            mapped_value: dict[str, object] = {}
+            _merge_task_cli_fields(mapped_value, input_fields)
+            _merge_task_cli_files(
+                mapped_value,
+                (
+                    _TaskCliFileSpec(
+                        field=field,
+                        descriptor=descriptor,
+                    ),
+                    *_task_cli_file_specs(args),
+                ),
+                definition=definition,
+            )
+            value = mapped_value
         else:
             raise _task_cli_input_error(
                 "--pdf requires a single top-level file input."
@@ -1800,7 +1831,11 @@ def task_cli_input(
                 )
             object_value = _mutable_json_object(json_value)
             _merge_task_cli_fields(object_value, input_fields)
-            _merge_task_cli_files(object_value, task_files)
+            _merge_task_cli_files(
+                object_value,
+                task_files,
+                definition=definition,
+            )
             json_value = object_value
         return TaskCliInput(value=json_value, provided=True)
 
@@ -1820,10 +1855,10 @@ def task_cli_input(
             file_value = list(descriptors)
         return TaskCliInput(value=file_value, provided=True)
 
-    mapped_value: dict[str, object] = {}
-    _merge_task_cli_fields(mapped_value, input_fields)
-    _merge_task_cli_files(mapped_value, task_files)
-    return TaskCliInput(value=mapped_value, provided=True)
+    object_input: dict[str, object] = {}
+    _merge_task_cli_fields(object_input, input_fields)
+    _merge_task_cli_files(object_input, task_files, definition=definition)
+    return TaskCliInput(value=object_input, provided=True)
 
 
 def _validate_task_cli_input_for_command(
@@ -2146,6 +2181,8 @@ def _merge_task_cli_fields(
 def _merge_task_cli_files(
     value: dict[str, object],
     fields: tuple[_TaskCliFileSpec, ...],
+    *,
+    definition: TaskDefinition | None = None,
 ) -> None:
     for spec in fields:
         _set_task_cli_field(
@@ -2153,6 +2190,11 @@ def _merge_task_cli_files(
             spec.field,
             spec.descriptor,
             append=True,
+            array=_task_cli_schema_field_input_type(
+                definition,
+                spec.field,
+            )
+            == TaskInputType.FILE_ARRAY.value,
         )
 
 
@@ -2162,6 +2204,7 @@ def _set_task_cli_field(
     item: object,
     *,
     append: bool,
+    array: bool = False,
 ) -> None:
     target = value
     parts = field.split(".")
@@ -2179,7 +2222,7 @@ def _set_task_cli_field(
     existing = target.get(leaf)
     if append:
         if existing is None:
-            target[leaf] = item
+            target[leaf] = [item] if array else item
         elif isinstance(existing, list):
             existing.append(item)
         else:
@@ -2195,6 +2238,71 @@ def _task_cli_file_descriptor(reference: str) -> dict[str, object]:
         "source_kind": "local_path",
         "reference": reference,
     }
+
+
+def _task_cli_pdf_descriptor(reference: str) -> dict[str, object]:
+    descriptor = _task_cli_file_descriptor(reference)
+    descriptor["mime_type"] = _PDF_MIME_TYPE
+    return descriptor
+
+
+def _task_cli_pdf_object_field(definition: TaskDefinition) -> str | None:
+    schema = definition.input.schema
+    if not isinstance(schema, Mapping):
+        return None
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return None
+    fields = tuple(
+        key
+        for key, value in properties.items()
+        if isinstance(key, str) and _task_cli_schema_accepts_pdf(value)
+    )
+    if len(fields) != 1:
+        return None
+    return fields[0]
+
+
+def _task_cli_schema_field_input_type(
+    definition: TaskDefinition | None,
+    field: str,
+) -> str | None:
+    if definition is None or definition.input.type != TaskInputType.OBJECT:
+        return None
+    schema = definition.input.schema
+    if not isinstance(schema, Mapping):
+        return None
+    field_schema: object = schema
+    for part in field.split("."):
+        if not isinstance(field_schema, Mapping):
+            return None
+        properties = field_schema.get("properties")
+        if not isinstance(properties, Mapping):
+            return None
+        field_schema = properties.get(part)
+    if not isinstance(field_schema, Mapping):
+        return None
+    input_type = field_schema.get(_AVALAN_INPUT_TYPE_SCHEMA_KEY)
+    if not isinstance(input_type, str):
+        return None
+    return input_type
+
+
+def _task_cli_schema_accepts_pdf(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    input_type = value.get(_AVALAN_INPUT_TYPE_SCHEMA_KEY)
+    if input_type not in {
+        TaskInputType.FILE.value,
+        TaskInputType.FILE_ARRAY.value,
+    }:
+        return False
+    mime_types = value.get(_AVALAN_MIME_TYPES_SCHEMA_KEY)
+    if mime_types is None:
+        return True
+    if not isinstance(mime_types, list | tuple):
+        return False
+    return _PDF_MIME_TYPE in mime_types
 
 
 def _task_cli_provider_reference_descriptor(

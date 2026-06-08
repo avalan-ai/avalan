@@ -131,6 +131,49 @@ class FlowInspectionTestCase(TestCase):
         self.assertNotIn("private-file-name.pdf", rendered)
         self.assertNotIn("/private/report.pdf", rendered)
 
+    def test_inspection_omits_optional_review_and_artifact_fields(
+        self,
+    ) -> None:
+        plan = FlowExecutionPlan(
+            name="minimal",
+            version=None,
+            revision=None,
+            inputs=(),
+            outputs=(),
+            entry_node="review",
+            output_selectors={},
+            nodes=(
+                FlowNodePlan(
+                    name="review",
+                    type="human_review",
+                    kind=FlowNodeKind.HUMAN_REVIEW,
+                ),
+            ),
+        )
+        file = TaskInputFile(logical_path="/private/report.pdf")
+        result = FlowPlanExecutionResult(
+            trace=FlowExecutionTrace(
+                nodes=(
+                    FlowNodeTrace(
+                        node="review",
+                        state=FlowNodeState.PAUSED,
+                        attempts=1,
+                    ),
+                )
+            ),
+            outputs={"answer": {"file": file}},
+            pause_tokens={"review": "private-token"},
+        )
+
+        exported = export_sanitized_flow_trace(result, plan=plan)
+
+        self.assertNotIn("artifacts", exported)
+        reviews = cast(tuple[dict[str, object], ...], exported["reviews"])
+        self.assertNotIn("allowed_decisions", reviews[0])
+        self.assertNotIn("decision", reviews[0])
+        self.assertNotIn("timeout_seconds", reviews[0])
+        self.assertNotIn("private-token", str(exported))
+
     def test_record_inspection_exports_durable_state_without_values(
         self,
     ) -> None:
@@ -328,7 +371,8 @@ class FlowInspectionTestCase(TestCase):
                             "allowed_decisions": "approved",
                             "timeout_seconds": "private-timeout",
                         }
-                    }
+                    },
+                    "wrong": "private audit value",
                 }
             },
             created_at=datetime(2026, 6, 8, tzinfo=UTC),

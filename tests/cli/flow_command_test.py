@@ -27,11 +27,14 @@ from avalan.entities import (
 )
 from avalan.flow import (
     FlowDefinition,
+    FlowDefinitionLoader,
     FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowEdgeDefinition,
+    FlowEdgeKind,
     FlowEntryBehavior,
     FlowExecutionTrace,
+    FlowExecutor,
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
@@ -41,14 +44,26 @@ from avalan.flow import (
     FlowLoadIssueCategory,
     FlowLoopPolicy,
     FlowMappingKind,
+    FlowNodeCapability,
+    FlowNodeContract,
     FlowNodeDefinition,
+    FlowNodeKind,
+    FlowNodeMetadata,
+    FlowNodeRegistry,
     FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
     FlowRetryBackoffStrategy,
     FlowRetryPolicy,
     FlowTimeoutPolicy,
+    FlowViewImportMode,
     MermaidRenderResult,
+    Node,
+    compare_flow_topology,
+    default_flow_node_registry,
+    parse_mermaid_view,
+    render_flow_view,
+    skeleton_from_mermaid_view,
 )
 from avalan.task import (
     TaskClientUnsupportedOperationError,
@@ -162,6 +177,55 @@ class FlowRunCommandTestCase(TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["diagnostics"][0]["code"], "file.read")
         self.assertNotIn("private.flow.toml", stream.getvalue())
+
+    def test_flow_cli_sdk_validate_parity_positive_and_negative(self) -> None:
+        success_stream = StringIO()
+        success_console = Console(file=success_stream, width=160)
+        failure_stream = StringIO()
+        failure_console = Console(file=failure_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            valid_path = _write_strict_constant_flow(root)
+            invalid_path = root / "private.flow.toml"
+            invalid_path.write_text(
+                "[flow\nsecret = 'private customer prompt'",
+                encoding="utf-8",
+            )
+
+            sdk_valid = FlowDefinitionLoader().load_validation_result(
+                valid_path
+            )
+            cli_valid = flow_cmds.flow_validate(
+                _args(flow=valid_path, flow_json=True),
+                success_console,
+                self.theme,
+            )
+            sdk_invalid = FlowDefinitionLoader().load_validation_result(
+                invalid_path
+            )
+            cli_invalid = flow_cmds.flow_validate(
+                _args(flow=invalid_path, flow_json=True),
+                failure_console,
+                self.theme,
+            )
+
+        valid_payload = loads(success_stream.getvalue())
+        invalid_payload = loads(failure_stream.getvalue())
+        self.assertTrue(cli_valid)
+        self.assertEqual(valid_payload["ok"], sdk_valid.ok)
+        self.assertEqual(valid_payload["diagnostics"], [])
+        self.assertFalse(cli_invalid)
+        self.assertEqual(invalid_payload["ok"], sdk_invalid.ok)
+        self.assertEqual(
+            [item["code"] for item in invalid_payload["diagnostics"]],
+            [
+                diagnostic.as_public_dict()["code"]
+                for diagnostic in sdk_invalid.diagnostics
+            ],
+        )
+        self.assertNotIn("private customer prompt", failure_stream.getvalue())
+        self.assertNotIn("private.flow.toml", failure_stream.getvalue())
 
     def test_flow_mermaid_parse_json_success(self) -> None:
         stream = StringIO()
@@ -280,6 +344,181 @@ class FlowRunCommandTestCase(TestCase):
         self.assertNotIn("private customer prompt", output)
         self.assertNotIn("private-topology.mmd", output)
 
+    def test_flow_mermaid_parse_human_success_without_diagnostics(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            diagram = Path(temporary_directory) / "topology.mmd"
+            diagram.write_text("graph TD\nA --> B", "utf-8")
+            result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("Mermaid diagram parsed: 2 nodes, 1 edges.", output)
+        self.assertNotIn("Mermaid diagnostics.", output)
+
+    def test_flow_cli_sdk_mermaid_authoring_parity(self) -> None:
+        streams = {
+            "parse": StringIO(),
+            "render": StringIO(),
+            "compare": StringIO(),
+            "skeleton": StringIO(),
+            "negative": StringIO(),
+        }
+        consoles = {
+            name: Console(file=stream, width=160)
+            for name, stream in streams.items()
+        }
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            diagram = root / "topology.mmd"
+            diagram.write_text("graph TD\nA[Start] --> C[Done]", "utf-8")
+            negative = root / "private-topology.mmd"
+            negative.write_text(
+                "graph TD\nA & B --> C\n%% private customer prompt",
+                "utf-8",
+            )
+            flow_path = _write_strict_topology_flow(root)
+            load_result = FlowDefinitionLoader().load_validation_result(
+                flow_path
+            )
+            assert load_result.definition is not None
+            source = diagram.read_text(encoding="utf-8")
+            parsed = parse_mermaid_view(source)
+            rendered = render_flow_view(parsed.view)
+            comparison = compare_flow_topology(
+                parsed.view,
+                load_result.definition,
+            )
+            skeleton = skeleton_from_mermaid_view(
+                parsed.view,
+                name="topology",
+                version="1",
+            )
+            negative_sdk = parse_mermaid_view(
+                negative.read_text(encoding="utf-8"),
+                import_mode=FlowViewImportMode.EXECUTABLE,
+                source="/private/customer/topology.mmd",
+            )
+
+            parse_ok = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                    flow_json=True,
+                ),
+                consoles["parse"],
+                self.theme,
+            )
+            render_ok = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="render",
+                    flow_json=True,
+                ),
+                consoles["render"],
+                self.theme,
+            )
+            compare_ok = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    flow=flow_path,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="compare",
+                    flow_json=True,
+                ),
+                consoles["compare"],
+                self.theme,
+            )
+            skeleton_ok = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    mode="presentation",
+                    name="topology",
+                    version="1",
+                    revision=None,
+                    flow_command="mermaid",
+                    flow_mermaid_command="skeleton",
+                    flow_json=True,
+                ),
+                consoles["skeleton"],
+                self.theme,
+            )
+            negative_ok = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=negative,
+                    mode="executable",
+                    flow_command="mermaid",
+                    flow_mermaid_command="parse",
+                    flow_json=True,
+                ),
+                consoles["negative"],
+                self.theme,
+            )
+
+        parse_payload = loads(streams["parse"].getvalue())
+        render_payload = loads(streams["render"].getvalue())
+        compare_payload = loads(streams["compare"].getvalue())
+        skeleton_payload = loads(streams["skeleton"].getvalue())
+        negative_payload = loads(streams["negative"].getvalue())
+        self.assertTrue(parse_ok)
+        self.assertEqual(parse_payload["ok"], parsed.ok)
+        self.assertEqual(
+            parse_payload["view"],
+            flow_cmds._flow_public_value(
+                flow_cmds._flow_view_public_dict(parsed.view)
+            ),
+        )
+        self.assertTrue(render_ok)
+        self.assertEqual(render_payload["source"], rendered.source)
+        self.assertEqual(render_payload["ok"], rendered.ok)
+        self.assertTrue(compare_ok)
+        self.assertEqual(compare_payload["ok"], comparison.ok)
+        self.assertEqual(compare_payload["diagnostics"], [])
+        self.assertTrue(skeleton_ok)
+        self.assertEqual(skeleton_payload["ok"], skeleton.ok)
+        self.assertEqual(
+            skeleton_payload["definition"],
+            flow_cmds._flow_public_value(
+                flow_cmds._flow_definition_public_dict(skeleton.definition)
+            ),
+        )
+        self.assertFalse(negative_ok)
+        self.assertEqual(negative_payload["ok"], negative_sdk.ok)
+        self.assertNotIn("view", negative_payload)
+        self.assertEqual(
+            [item["code"] for item in negative_payload["diagnostics"]],
+            [
+                diagnostic.as_public_dict()["code"]
+                for diagnostic in negative_sdk.diagnostics
+            ],
+        )
+        self.assertNotIn(
+            "private customer prompt",
+            streams["negative"].getvalue(),
+        )
+        self.assertNotIn(
+            "private-topology.mmd",
+            streams["negative"].getvalue(),
+        )
+
     def test_flow_mermaid_render_outputs_safe_source(self) -> None:
         console = Console(record=True, width=160)
 
@@ -327,6 +566,33 @@ class FlowRunCommandTestCase(TestCase):
         self.assertIn("Flow topology does not match.", output)
         self.assertIn("flow.view.binding.extra_node", output)
         self.assertIn("flow.view.binding.missing_node", output)
+
+    def test_flow_mermaid_compare_human_success_without_diagnostics(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            diagram = root / "topology.mmd"
+            diagram.write_text("graph TD\nA --> C", "utf-8")
+            flow_path = _write_strict_topology_flow(root)
+            result = flow_cmds.flow_mermaid(
+                _args(
+                    diagram=diagram,
+                    flow=flow_path,
+                    mode="presentation",
+                    flow_command="mermaid",
+                    flow_mermaid_command="compare",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("Flow topology matches.", output)
+        self.assertNotIn("Flow topology diagnostics.", output)
 
     def test_flow_mermaid_skeleton_prints_toml(self) -> None:
         console = Console(record=True, width=160)
@@ -848,6 +1114,9 @@ class FlowRunCommandTestCase(TestCase):
 
         public = flow_cmds._flow_definition_public_dict(definition)
         toml = flow_cmds._flow_definition_toml(definition)
+        minimal_toml = flow_cmds._flow_definition_toml(
+            FlowDefinition(name="minimal", nodes=())
+        )
 
         self.assertEqual(
             public["inputs"][0]["schema_ref"], "schema/input.json"
@@ -864,6 +1133,8 @@ class FlowRunCommandTestCase(TestCase):
         self.assertEqual(public["nodes"][1]["mappings"][0]["type"], "object")
         self.assertIn('revision = "r2"', toml)
         self.assertIn('label = "ok"', toml)
+        self.assertNotIn("tags", minimal_toml)
+        self.assertNotIn("[variables]", minimal_toml)
         self.assertEqual(
             flow_cmds._flow_definition_identity(
                 FlowDefinition(name="revisioned", revision="r3", nodes=())
@@ -918,6 +1189,148 @@ class FlowRunCommandTestCase(TestCase):
 
         self.assertTrue(result)
         self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
+
+    def test_flow_cli_sdk_runtime_parity(self) -> None:
+        run_stream = StringIO()
+        inspect_stream = StringIO()
+        trace_stream = StringIO()
+        resume_stream = StringIO()
+        store = _FakeFlowStateStore()
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_constant_flow(root)
+            load_result = FlowDefinitionLoader().load_validation_result(
+                flow_path
+            )
+            assert load_result.definition is not None
+            sdk_executor = FlowExecutor()
+            sdk_run = asyncio_run(
+                sdk_executor.run(
+                    load_result.definition,
+                    inputs={"payload": {"private": "customer"}},
+                )
+            )
+            sdk_inspection = sdk_executor.inspect(sdk_run).as_public_dict()
+            sdk_trace = sdk_executor.export_trace(sdk_run)
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                cli_run = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"private":"customer"}',
+                        task_run_json=True,
+                    ),
+                    Console(file=run_stream, width=160),
+                    self.theme,
+                )
+
+            review_definition = _sdk_review_definition()
+            review_executor = FlowExecutor(
+                registry=_sdk_review_registry(),
+            )
+            sdk_paused = asyncio_run(
+                review_executor.run(
+                    review_definition,
+                    inputs={"payload": {"risk": "medium"}},
+                )
+            )
+            sdk_resumed = asyncio_run(
+                review_executor.resume(
+                    review_definition,
+                    sdk_paused,
+                    decisions={"review": {"decision": "approved"}},
+                )
+            )
+            with (
+                patch.object(
+                    flow_cmds,
+                    "_task_cli_inspection_client_context",
+                    return_value=_FakeFlowClientContext(object()),
+                ),
+                patch.object(
+                    flow_cmds,
+                    "PgsqlFlowStateStore",
+                    return_value=object(),
+                ),
+                patch.object(
+                    flow_cmds,
+                    "FlowTaskExecutor",
+                    return_value=_SdkParityFlowTaskExecutor(
+                        sdk_inspection,
+                        sdk_trace,
+                    ),
+                ),
+            ):
+                cli_inspect = flow_cmds.flow_inspect(
+                    _args(
+                        run_id="run-1",
+                        store_dsn="postgresql://db/tasks",
+                        flow_json=True,
+                    ),
+                    Console(file=inspect_stream, width=160),
+                    self.theme,
+                )
+                cli_trace = flow_cmds.flow_trace(
+                    _args(
+                        run_id="run-1",
+                        store_dsn="postgresql://db/tasks",
+                        flow_json=True,
+                    ),
+                    Console(file=trace_stream, width=160),
+                    self.theme,
+                )
+            with (
+                patch.object(
+                    flow_cmds,
+                    "_flow_state_store_context",
+                    return_value=_FakeFlowStateStoreContext(store),
+                ),
+                patch.object(
+                    flow_cmds,
+                    "_flow_load_validation_result",
+                    return_value=SimpleNamespace(
+                        ok=True,
+                        definition=review_definition,
+                    ),
+                ),
+                patch.object(
+                    flow_cmds,
+                    "FlowExecutor",
+                    return_value=_SdkParityResumeFlowExecutor(sdk_resumed),
+                ),
+            ):
+                cli_resume = flow_cmds.flow_resume(
+                    _args(
+                        flow=flow_path,
+                        run_id="run-1",
+                        decision_json='{"review":{"decision":"approved"}}',
+                        store_dsn="postgresql://db/tasks",
+                        flow_json=True,
+                    ),
+                    Console(file=resume_stream, width=160),
+                    self.theme,
+                )
+
+        self.assertTrue(cli_run)
+        self.assertEqual(
+            loads(run_stream.getvalue()), sdk_run.outputs["result"]
+        )
+        self.assertTrue(cli_inspect)
+        self.assertEqual(
+            loads(inspect_stream.getvalue())["flow"],
+            flow_cmds._flow_public_value(sdk_inspection),
+        )
+        self.assertTrue(cli_trace)
+        self.assertEqual(
+            loads(trace_stream.getvalue()),
+            flow_cmds._flow_public_value(sdk_trace),
+        )
+        self.assertTrue(cli_resume)
+        self.assertEqual(loads(resume_stream.getvalue()), sdk_resumed.outputs)
+        self.assertEqual(store.updated_revision, 7)
+        self.assertNotIn("customer", inspect_stream.getvalue())
+        self.assertNotIn("customer", trace_stream.getvalue())
+        self.assertNotIn("customer", resume_stream.getvalue())
 
     def test_flow_run_writes_output_file_and_quiet_suppresses_summary(
         self,
@@ -995,6 +1408,32 @@ class FlowRunCommandTestCase(TestCase):
                     _args(
                         flow=flow_path,
                         task_input_json="{}",
+                        task_run_json=True,
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
+
+    def test_flow_run_strict_file_flow_uses_flow_privacy(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            pdf_path = root / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4\n")
+            flow_path = _write_strict_file_privacy_flow(root)
+            with (
+                patch.dict(task_cmds.environ, {}, clear=True),
+                _working_directory(root),
+            ):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_pdf="sample.pdf",
                         task_run_json=True,
                     ),
                     console,
@@ -1096,6 +1535,23 @@ class FlowRunCommandTestCase(TestCase):
         self.assertIsNotNone(manager)
         assert manager is not None
         self.assertIsNotNone(manager.describe_tool("math.calculator"))
+
+    def test_flow_tool_manager_skips_unavailable_optional_toolsets(
+        self,
+    ) -> None:
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+        ):
+            manager = flow_cmds._flow_tool_manager(
+                _args(tool=["math.calculator"])
+            )
+
+        self.assertIsNotNone(manager)
+        assert manager is not None
+        self.assertIsNotNone(manager.describe_tool("math.calculator"))
+        self.assertIsNone(manager.describe_tool("code.python"))
 
     def test_flow_run_text_output_prints_human_summary(self) -> None:
         console = Console(record=True, width=160)
@@ -1493,7 +1949,7 @@ class FlowRunCommandTestCase(TestCase):
                 [flow.output]
                 name = "result"
                 type = "object"
-                schema_ref = "../private/schema.json"
+                schema_ref = "missing.json"
 
                 [nodes.start]
                 type = "echo"
@@ -1510,7 +1966,8 @@ class FlowRunCommandTestCase(TestCase):
         output = console.export_text()
         self.assertFalse(result)
         self.assertIn("output.invalid_schema", output)
-        self.assertNotIn("private/schema.json", output)
+        self.assertIn("flow.output.schema_ref", output)
+        self.assertNotIn("missing.json", output)
 
     def test_flow_run_agent_context_reports_failures_safely(self) -> None:
         cases = (
@@ -1523,6 +1980,12 @@ class FlowRunCommandTestCase(TestCase):
             (
                 "schema",
                 {"schema_ref": "../private/schema.json"},
+                _args(task_input_json='{"answer":"ok"}'),
+                "flow.path_escape",
+            ),
+            (
+                "missing_schema",
+                {"schema_ref": "missing.json"},
                 _args(task_input_json='{"answer":"ok"}'),
                 "output.invalid_schema",
             ),
@@ -1545,13 +2008,13 @@ class FlowRunCommandTestCase(TestCase):
                 "input.file_missing",
             ),
             (
-                "output_unsupported",
+                "output_contract_mismatch",
                 {"output_type": "text"},
                 _args(
                     task_input_json='{"answer":"ok"}',
                     task_output_path="result.json",
                 ),
-                "output.unsupported",
+                "flow.incompatible_output_selection",
             ),
             (
                 "output_path",
@@ -1581,6 +2044,55 @@ class FlowRunCommandTestCase(TestCase):
                 self.assertIn(expected, output)
                 self.assertNotIn("private/agent.toml", output)
                 self.assertNotIn("private/schema.json", output)
+
+    def test_flow_run_rejects_structured_output_for_text_flow(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "text.flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "text"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "string"
+
+                [[outputs]]
+                name = "result"
+                type = "text"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                result = "start.value"
+
+                [nodes.start]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+            result = flow_cmds.flow_run(
+                _args(
+                    flow=flow_path,
+                    task_input="ready",
+                    task_output_path="result.json",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("output.unsupported", output)
 
     def test_flow_run_agent_context_handles_client_failures(self) -> None:
         console = Console(record=True, width=160)
@@ -1799,6 +2311,27 @@ class FlowRunCommandTestCase(TestCase):
         output = console.export_text()
         self.assertFalse(result)
         self.assertIn("store.missing", output)
+
+    def test_flow_state_store_context_handles_optional_and_sync_database(
+        self,
+    ) -> None:
+        sync_database = _SyncFlowDatabase()
+
+        async def exercise() -> bool:
+            async with flow_cmds._FlowStateStoreContext(
+                store="memory-store",  # type: ignore[arg-type]
+            ) as store:
+                self.assertEqual(store, "memory-store")
+            async with flow_cmds._FlowStateStoreContext(
+                store="pgsql-store",  # type: ignore[arg-type]
+                database=sync_database,
+            ) as store:
+                self.assertEqual(store, "pgsql-store")
+            return True
+
+        self.assertTrue(task_cmds._run_awaitable(exercise()))
+        self.assertTrue(sync_database.opened)
+        self.assertTrue(sync_database.closed)
 
     def test_flow_cancel_delegates_to_task_client(self) -> None:
         stream = StringIO()
@@ -2337,6 +2870,89 @@ class FlowRunCommandTestCase(TestCase):
                     expected,
                 )
 
+    def test_flow_task_input_schema_preserves_multiple_inputs(self) -> None:
+        definition = FlowDefinition(
+            name="contract",
+            inputs=(
+                FlowInputDefinition(
+                    name="pdf",
+                    type=FlowInputType.FILE_ARRAY,
+                    mime_types=("application/pdf",),
+                ),
+                FlowInputDefinition(
+                    name="image",
+                    type=FlowInputType.BOOLEAN,
+                ),
+            ),
+            nodes=(FlowNodeDefinition(name="start", type="echo"),),
+        )
+
+        contract = flow_cmds._flow_task_input(definition)
+        schema = cast(Mapping[str, object], contract.schema)
+        properties = cast(Mapping[str, object], schema["properties"])
+        pdf = cast(Mapping[str, object], properties["pdf"])
+        image = cast(Mapping[str, object], properties["image"])
+
+        self.assertEqual(contract.type, TaskInputType.OBJECT)
+        self.assertEqual(pdf["x-avalan-input-type"], "file[]")
+        self.assertEqual(pdf["x-avalan-mime-types"], ("application/pdf",))
+        self.assertEqual(pdf["type"], "array")
+        self.assertEqual(image["type"], "boolean")
+
+    def test_flow_task_input_schema_covers_property_types(self) -> None:
+        definition = FlowDefinition(
+            name="contract",
+            inputs=(
+                FlowInputDefinition(
+                    name="text",
+                    type=FlowInputType.STRING,
+                ),
+                FlowInputDefinition(
+                    name="count",
+                    type=FlowInputType.INTEGER,
+                ),
+                FlowInputDefinition(
+                    name="ratio",
+                    type=FlowInputType.NUMBER,
+                ),
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                    schema={"type": "object", "required": ["answer"]},
+                ),
+                FlowInputDefinition(
+                    name="items",
+                    type=FlowInputType.ARRAY,
+                    schema={"type": "array", "minItems": 1},
+                ),
+                FlowInputDefinition(
+                    name="document",
+                    type=FlowInputType.FILE,
+                    mime_types=("application/pdf",),
+                ),
+            ),
+            nodes=(FlowNodeDefinition(name="start", type="echo"),),
+        )
+
+        contract = flow_cmds._flow_task_input(definition)
+        schema = cast(Mapping[str, object], contract.schema)
+        properties = cast(Mapping[str, object], schema["properties"])
+
+        self.assertEqual(properties["text"], {"type": "string"})
+        self.assertEqual(properties["count"], {"type": "integer"})
+        self.assertEqual(properties["ratio"], {"type": "number"})
+        self.assertEqual(
+            properties["payload"],
+            {"type": "object", "required": ("answer",)},
+        )
+        self.assertEqual(
+            properties["items"],
+            {"type": "array", "minItems": 1},
+        )
+        document = cast(Mapping[str, object], properties["document"])
+        self.assertEqual(document["x-avalan-input-type"], "file")
+        self.assertEqual(document["x-avalan-mime-types"], ("application/pdf",))
+
     def test_flow_metadata_helpers_cover_guard_paths(self) -> None:
         definition = _flow_definition(output_definition=None)
         node = flow_cmds._flow_task_context_metadata_node(
@@ -2435,6 +3051,44 @@ class _FakeFlowTaskExecutor:
         return {"flow_name": "safe-flow", "state": "paused"}
 
 
+class _SdkParityFlowTaskInspection:
+    def __init__(self, flow: Mapping[str, object]) -> None:
+        self.flow = flow
+
+    def as_public_dict(self) -> Mapping[str, object]:
+        return {"task": {"run_id": "run-1"}, "flow": self.flow}
+
+
+class _SdkParityFlowTaskExecutor:
+    def __init__(
+        self,
+        inspection: Mapping[str, object],
+        trace: Mapping[str, object],
+    ) -> None:
+        self.inspection = inspection
+        self.trace = trace
+
+    async def inspect(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int | None = None,
+    ) -> _SdkParityFlowTaskInspection:
+        self.run_id = run_id
+        self.after_sequence = after_sequence
+        return _SdkParityFlowTaskInspection(self.inspection)
+
+    async def export_trace(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int | None = None,
+    ) -> Mapping[str, object]:
+        self.run_id = run_id
+        self.after_sequence = after_sequence
+        return self.trace
+
+
 class _FailingFlowTaskExecutor:
     def __init__(self, error: BaseException) -> None:
         self.error = error
@@ -2492,6 +3146,17 @@ class _FakeFlowStateStoreContext:
         traceback: object | None,
     ) -> None:
         _ = exc_type, exc, traceback
+
+
+class _SyncFlowDatabase:
+    opened = False
+    closed = False
+
+    def open(self) -> None:
+        self.opened = True
+
+    def aclose(self) -> None:
+        self.closed = True
 
 
 class _FakeFlowStateStore:
@@ -2577,6 +3242,23 @@ class _FakeDiagnosticFlowExecutor:
         )
 
 
+class _SdkParityResumeFlowExecutor:
+    def __init__(self, result: object) -> None:
+        self.result = result
+
+    async def resume(
+        self,
+        flow: object,
+        previous: object,
+        *,
+        decisions: Mapping[str, Mapping[str, object]],
+    ) -> object:
+        self.flow = flow
+        self.previous = previous
+        self.decisions = decisions
+        return self.result
+
+
 class _FakeFlowDatabase:
     opened = False
     closed = False
@@ -2604,6 +3286,108 @@ def _flow_cli_diagnostic(code: str) -> FlowDiagnostic:
         path="flow",
         category=FlowDiagnosticCategory.EXECUTION,
         message="Flow command test diagnostic.",
+    )
+
+
+def _sdk_review_registry() -> FlowNodeRegistry:
+    registry = default_flow_node_registry()
+    registry.register(
+        "human_review",
+        lambda definition: Node(definition.name),
+        metadata=FlowNodeMetadata(
+            kind=FlowNodeKind.HUMAN_REVIEW,
+            async_only=True,
+            capabilities=(FlowNodeCapability.DURABLE_PAUSE,),
+            input_contract=FlowNodeContract(
+                name="payload",
+                type=FlowInputType.OBJECT,
+            ),
+            output_contract=FlowNodeContract(
+                name="result",
+                type=FlowOutputType.OBJECT,
+            ),
+        ),
+    )
+    return registry
+
+
+def _sdk_review_definition() -> FlowDefinition:
+    decisions = ("approved", "rejected")
+    return FlowDefinition(
+        name="review",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="payload", type=FlowInputType.OBJECT),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="decision", type=FlowOutputType.JSON),
+        ),
+        entry_behavior=FlowEntryBehavior(node="review"),
+        output_behavior=FlowOutputBehavior(
+            outputs={"decision": "review.result.decision"},
+        ),
+        nodes=(
+            FlowNodeDefinition(
+                name="review",
+                type="human_review",
+                mappings=(
+                    FlowInputMapping(
+                        target="payload",
+                        kind=FlowMappingKind.SELECT,
+                        source="inputs.payload",
+                    ),
+                ),
+                config={
+                    "allowed_decisions": decisions,
+                    "payload_schema": {"type": "object"},
+                    "decision_schema": {
+                        "type": "object",
+                        "properties": {
+                            "decision": {"enum": decisions},
+                        },
+                        "required": ("decision",),
+                    },
+                    "timeout_seconds": 60,
+                },
+            ),
+            FlowNodeDefinition(
+                name="approved_sink",
+                type="constant",
+                config={"value": "approved"},
+            ),
+            FlowNodeDefinition(
+                name="rejected_sink",
+                type="constant",
+                config={"value": "rejected"},
+            ),
+            FlowNodeDefinition(
+                name="timeout_sink",
+                type="constant",
+                config={"value": "expired"},
+            ),
+        ),
+        edges=(
+            FlowEdgeDefinition(
+                source="review",
+                target="approved_sink",
+                label="approved",
+                kind=FlowEdgeKind.RESUME,
+                priority=0,
+            ),
+            FlowEdgeDefinition(
+                source="review",
+                target="rejected_sink",
+                label="rejected",
+                kind=FlowEdgeKind.RESUME,
+                priority=1,
+            ),
+            FlowEdgeDefinition(
+                source="review",
+                target="timeout_sink",
+                label="expired",
+                kind=FlowEdgeKind.TIMEOUT,
+            ),
+        ),
     )
 
 
@@ -2661,6 +3445,62 @@ def _write_file_echo_flow(root: Path) -> Path:
         [nodes.start]
         type = "echo"
         input = "document"
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _write_strict_file_privacy_flow(root: Path) -> Path:
+    flow_path = root / "strict-file.flow.toml"
+    flow_path.write_text(
+        """
+        [flow]
+        name = "strict_file"
+        version = "1"
+
+        [[inputs]]
+        name = "input"
+        type = "file"
+        mime_types = ["application/pdf"]
+
+        [[outputs]]
+        name = "result"
+        type = "object"
+
+        [outputs.schema]
+        type = "object"
+        required = ["answer"]
+
+        [outputs.schema.properties.answer]
+        type = "string"
+
+        [entry]
+        type = "node"
+        node = "start"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        result = "start.value"
+
+        [privacy]
+        input = "drop"
+        prompt = "drop"
+        output = "drop"
+        files = "drop"
+        file_bytes = "drop"
+        token_text = "drop"
+        tool_arguments = "drop"
+        tool_results = "drop"
+        events = "drop"
+        errors = "drop"
+        raw_retention_days = 0
+
+        [nodes.start]
+        type = "constant"
+        value = {answer = "ok"}
         """,
         encoding="utf-8",
     )

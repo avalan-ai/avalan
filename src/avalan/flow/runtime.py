@@ -2191,6 +2191,12 @@ def _evaluate_mapping(
                     "flow.execution.empty_mapping"
                 )
             return _merge_mapping_sources(mapping, context)
+        case FlowMappingKind.COALESCE:
+            if not mapping.sources:
+                raise FlowRuntimeEvaluationError(
+                    "flow.execution.empty_mapping"
+                )
+            return _coalesce_mapping_sources(mapping, context)
     raise FlowRuntimeEvaluationError("flow.execution.unsupported_mapping_kind")
 
 
@@ -2220,6 +2226,17 @@ def _merge_mapping_sources(
             assert isinstance(key, str) and key.strip()
             merged[key] = item
     return _freeze_mapping(merged)
+
+
+def _coalesce_mapping_sources(
+    mapping: FlowMappingPlan,
+    context: FlowRuntimeContext,
+) -> object:
+    for selector in mapping.sources:
+        value = _selector_value(selector, context, missing_ok=True)
+        if value is not _MISSING:
+            return value
+    raise FlowRuntimeEvaluationError("flow.execution.missing_selector_value")
 
 
 def _required_selector_value(

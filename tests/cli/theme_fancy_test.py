@@ -582,8 +582,9 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
 
         assert log is not None
         self.assertIn("tool_call.arguments_invalid", log[0])
-        self.assertIn("Tool failed.", log[1])
+        self.assertIn("Tool call failed.", log[1])
         self.assertNotIn("secret", log[1])
+        self.assertNotIn("Tool failed.", log[1])
         self.assertIn("bad", log[2])
 
     def test_tool_diagnostic_from_payload_variants(self):

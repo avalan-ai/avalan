@@ -3,7 +3,16 @@ from dataclasses import FrozenInstanceError
 from typing import cast
 from unittest import TestCase, main
 
-from avalan.entities import ToolManagerSettings
+from avalan.entities import (
+    ToolCall,
+    ToolCallContext,
+    ToolCallOutcome,
+    ToolCallResult,
+    ToolDescriptor,
+    ToolManagerSettings,
+    ToolNameResolution,
+    ToolNameResolutionStatus,
+)
 from avalan.flow import (
     FlowCondition,
     FlowConditionOperator,
@@ -110,6 +119,7 @@ class FlowExecutionPlanTestCase(TestCase):
                 FlowMappingKind.OBJECT,
                 FlowMappingKind.ARRAY,
                 FlowMappingKind.MERGE,
+                FlowMappingKind.COALESCE,
                 FlowMappingKind.FILE,
                 FlowMappingKind.FILE_ARRAY,
             ],
@@ -131,7 +141,11 @@ class FlowExecutionPlanTestCase(TestCase):
             parse_flow_selector("input.payload"),
         )
         self.assertEqual(
-            mapper.mappings[4].source,
+            mapper.mappings[4].sources[0],
+            parse_flow_selector("source.missing"),
+        )
+        self.assertEqual(
+            mapper.mappings[5].source,
             parse_flow_selector("input.document"),
         )
         assert mapper.join is not None
@@ -304,6 +318,65 @@ class FlowExecutionPlanTestCase(TestCase):
         self.assertEqual(tool_metadata["aliases"], ("sum",))
         self.assertIn("parameter_schema", tool_metadata)
 
+    def test_compile_flow_definition_omits_absent_tool_schemas(self) -> None:
+        registry = default_flow_node_registry()
+        registry.register(
+            "tool",
+            lambda definition: Node(definition.name),
+            metadata=FlowNodeMetadata(
+                kind=FlowNodeKind.TOOL,
+                supports_ref=True,
+                output_contract=FlowNodeContract(
+                    name="result",
+                    type=FlowOutputType.JSON,
+                ),
+            ),
+        )
+        registry.register_tool_resolver(
+            "tool",
+            _SchemaFreeToolResolver(),
+            {"raw_tool": ToolDescriptor(name="raw_tool")},
+        )
+
+        result = compile_flow_definition(
+            FlowDefinition(
+                name="tool-plan",
+                version="2026-06-07",
+                inputs=(
+                    FlowInputDefinition(
+                        name="payload",
+                        type=FlowInputType.OBJECT,
+                    ),
+                ),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.JSON,
+                    ),
+                ),
+                entry_behavior=FlowEntryBehavior(node="raw"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "raw.result"},
+                ),
+                nodes=(
+                    FlowNodeDefinition(
+                        name="raw",
+                        type="tool",
+                        ref="raw_tool",
+                    ),
+                ),
+            ),
+            registry,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        assert result.plan is not None
+        tool_metadata = result.plan.node_map["raw"].metadata["tool"]
+        assert isinstance(tool_metadata, Mapping)
+        self.assertEqual(tool_metadata["canonical_name"], "raw_tool")
+        self.assertNotIn("parameter_schema", tool_metadata)
+        self.assertNotIn("return_schema", tool_metadata)
+
     def test_compile_flow_definition_refuses_invalid_tool_node(
         self,
     ) -> None:
@@ -440,6 +513,11 @@ class FlowExecutionPlanTestCase(TestCase):
                         metadata={"dynamic": True},
                     ),
                     FlowNodeContract(
+                        name="fallback",
+                        type=FlowInputType.OBJECT,
+                        metadata={"dynamic": True},
+                    ),
+                    FlowNodeContract(
                         name="document",
                         type=FlowInputType.FILE,
                         metadata={"dynamic": True},
@@ -558,6 +636,11 @@ class FlowExecutionPlanTestCase(TestCase):
                             sources=("input.payload", "source.value"),
                         ),
                         FlowInputMapping(
+                            target="fallback",
+                            kind=FlowMappingKind.COALESCE,
+                            sources=("source.missing", "source.value"),
+                        ),
+                        FlowInputMapping(
                             target="document",
                             kind=FlowMappingKind.FILE,
                             source="input.document",
@@ -610,6 +693,43 @@ class FlowExecutionPlanTestCase(TestCase):
                     default=True,
                 ),
             ),
+        )
+
+
+class _SchemaFreeToolResolver:
+    def list_tools(self) -> list[ToolDescriptor]:
+        return [ToolDescriptor(name="raw_tool")]
+
+    def resolve_tool_name(
+        self,
+        name: str,
+        *,
+        provider_originated: bool = False,
+    ) -> ToolNameResolution:
+        _ = provider_originated
+        return ToolNameResolution(
+            requested_name=name,
+            status=ToolNameResolutionStatus.EXACT,
+            canonical_name="raw_tool",
+            candidates=["raw_tool"],
+        )
+
+    def validate_tool_call(self, call: ToolCall) -> None:
+        _ = call
+        return None
+
+    async def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> ToolCallOutcome:
+        _ = context
+        return ToolCallResult(
+            id=call.id,
+            name=call.name,
+            arguments=call.arguments,
+            call=call,
+            result=None,
         )
 
 

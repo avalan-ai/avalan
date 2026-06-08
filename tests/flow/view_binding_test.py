@@ -17,6 +17,7 @@ from avalan.flow import (
     FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowSourceSpan,
     FlowView,
     FlowViewBindingResult,
     FlowViewEdge,
@@ -279,6 +280,86 @@ class FlowViewBindingTestCase(TestCase):
                 ),
             ],
         )
+
+    def test_bind_flow_view_definition_reports_unknown_view_edge_endpoints(
+        self,
+    ) -> None:
+        span = FlowSourceSpan(
+            source="/private/customer/topology.mmd",
+            start_line=3,
+            start_column=5,
+            end_line=3,
+            end_column=36,
+        )
+        view = FlowView(
+            import_mode=FlowViewImportMode.PRESENTATION,
+            nodes=(FlowViewNode(id="start"), FlowViewNode(id="finish")),
+            edges=(
+                FlowViewEdge(
+                    id="private_target",
+                    source="start",
+                    target="/private/target",
+                    source_span=span,
+                ),
+                FlowViewEdge(
+                    id="private_source",
+                    source="/private/source",
+                    target="finish",
+                    source_span=span,
+                ),
+            ),
+        )
+        definition = FlowDefinition(
+            name="unknown_endpoints",
+            nodes=(
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="finish", type="pass-through"),
+            ),
+            edges=(FlowEdgeDefinition(source="start", target="finish"),),
+        )
+
+        binding = bind_flow_view_definition(view, definition)
+
+        self.assertFalse(binding.ok)
+        self.assertEqual(
+            [
+                (diagnostic.code, diagnostic.path)
+                for diagnostic in binding.diagnostics
+            ],
+            [
+                (
+                    "flow.view.binding.unknown_edge_target",
+                    "view.edges.private_target.target",
+                ),
+                (
+                    "flow.view.binding.unknown_edge_source",
+                    "view.edges.private_source.source",
+                ),
+                (
+                    "flow.view.binding.missing_edge",
+                    "definition.edges.start->finish",
+                ),
+                (
+                    "flow.view.binding.extra_edge",
+                    "view.edges.private_target",
+                ),
+                (
+                    "flow.view.binding.missing_edge_semantics",
+                    "view.edges.private_target",
+                ),
+                (
+                    "flow.view.binding.extra_edge",
+                    "view.edges.private_source",
+                ),
+                (
+                    "flow.view.binding.missing_edge_semantics",
+                    "view.edges.private_source",
+                ),
+            ],
+        )
+        public_diagnostics = str(binding.public_diagnostics)
+        self.assertNotIn("/private", public_diagnostics)
+        self.assertNotIn("customer", public_diagnostics)
 
     def test_bind_flow_view_definition_preserves_view_errors(self) -> None:
         normalized = normalize_mermaid_flow_view(

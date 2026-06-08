@@ -89,17 +89,41 @@ class FlowSelectorTestCase(TestCase):
                     raised.exception.code, "flow.invalid_selector"
                 )
 
+    def test_selector_step_validates_index_values(self) -> None:
+        self.assertEqual(
+            FlowSelectorStep(kind=FlowSelectorStepKind.INDEX, value=0).value,
+            0,
+        )
+        with self.assertRaises(AssertionError):
+            FlowSelectorStep(
+                kind=FlowSelectorStepKind.INDEX,
+                value=-1,
+            )
+
     def test_parse_flow_selector_rejects_private_or_unsafe_shapes(
         self,
     ) -> None:
         cases = (
             ("env.SECRET", "flow.reserved_selector"),
+            ("environment.SECRET", "flow.reserved_selector"),
+            ("fs.root", "flow.reserved_selector"),
             ("files.content", "flow.reserved_selector"),
+            ("file.content", "flow.reserved_selector"),
+            ("network.response", "flow.reserved_selector"),
+            ("runtime.node_state", "flow.reserved_selector"),
+            ("secret.key", "flow.reserved_selector"),
+            ("secrets.key", "flow.reserved_selector"),
+            ("task.run_id", "flow.reserved_selector"),
             ("__task_files__.files", "flow.reserved_selector"),
             ("start.__dict__", "flow.reserved_selector"),
+            ("start.__class__", "flow.reserved_selector"),
             ("start.result/{{secret}}", "flow.unsafe_selector"),
             ("start.result.${secret}", "flow.unsafe_selector"),
+            ("start.result.$(secret)", "flow.unsafe_selector"),
+            ("start.result.{% secret %}", "flow.unsafe_selector"),
             ("https://host/value", "flow.unsafe_selector"),
+            ("C:\\secret\\value", "flow.unsafe_selector"),
+            ("~/secret/value", "flow.unsafe_selector"),
             ("start.result../secret", "flow.unsafe_selector"),
         )
 

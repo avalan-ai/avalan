@@ -23,8 +23,8 @@ The strict surface includes:
 - `[output_behavior]` with selected output selectors.
 - Node kinds for native data movement, validation, decision, join, agent,
   tool, file conversion, human review, notification, and subflows.
-- Mapping objects for select, rename, object, array, merge, file, and file
-  array transfer.
+- Mapping objects for select, rename, object, array, merge, coalesce, file,
+  and file array transfer.
 - Edge kinds for success, error, timeout, finally, cancellation, pause, and
   resume.
 - Join, retry, timeout, loop, privacy, observability, ownership, and runtime

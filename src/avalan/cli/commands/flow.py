@@ -55,12 +55,14 @@ from ...task import (
     TaskInputContract,
     TaskMetadata,
     TaskOutputContract,
+    TaskPrivacyPolicy,
     TaskRunState,
     TaskSchemaResolutionError,
     TaskTargetType,
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
+    privacy_policy_with_defaults,
     resolve_schema_ref,
     validate_task_input,
     validate_task_output,
@@ -118,6 +120,9 @@ from os import strerror
 from pathlib import Path
 
 from rich.console import Console
+
+_AVALAN_INPUT_TYPE_SCHEMA_KEY = "x-avalan-input-type"
+_AVALAN_MIME_TYPES_SCHEMA_KEY = "x-avalan-mime-types"
 
 
 def flow_validate(
@@ -233,11 +238,12 @@ def _flow_mermaid_parse(args: Namespace, console: Console) -> bool:
     )
     ok = result.ok
     if _flow_json_output(args):
+        values = {"view": _flow_view_public_dict(result.view)} if ok else {}
         _print_flow_json_result(
             console,
             ok=ok,
             diagnostics=result.diagnostics,
-            view=_flow_view_public_dict(result.view),
+            **values,
         )
     elif ok:
         console.print(
@@ -1550,6 +1556,7 @@ def _flow_task_definition(
             type=TaskTargetType.FLOW,
             ref=flow_path.name,
         ),
+        privacy=_flow_task_privacy(definition),
         definition_base=flow_path,
     )
 
@@ -1573,7 +1580,7 @@ def _flow_task_definition_or_report(
 def _flow_task_input(definition: FlowDefinition) -> TaskInputContract:
     input_definition = _flow_primary_input(definition)
     if input_definition is None:
-        return TaskInputContract.object()
+        return TaskInputContract.object(_flow_task_inputs_schema(definition))
     match input_definition.type:
         case FlowInputType.STRING:
             return TaskInputContract.string()
@@ -1602,6 +1609,69 @@ def _flow_task_input(definition: FlowDefinition) -> TaskInputContract:
     raise AssertionError("unsupported flow input type")  # pragma: no cover
 
 
+def _flow_task_inputs_schema(
+    definition: FlowDefinition,
+) -> Mapping[str, object]:
+    properties: dict[str, object] = {
+        input_definition.name: _flow_task_input_property_schema(
+            input_definition
+        )
+        for input_definition in definition.inputs
+    }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+    }
+
+
+def _flow_task_input_property_schema(
+    input_definition: FlowInputDefinition,
+) -> Mapping[str, object]:
+    match input_definition.type:
+        case FlowInputType.STRING:
+            return {"type": "string"}
+        case FlowInputType.INTEGER:
+            return {"type": "integer"}
+        case FlowInputType.NUMBER:
+            return {"type": "number"}
+        case FlowInputType.BOOLEAN:
+            return {"type": "boolean"}
+        case FlowInputType.OBJECT:
+            return _plain_mapping(input_definition.schema) or {
+                "type": "object"
+            }
+        case FlowInputType.ARRAY:
+            return _plain_mapping(input_definition.schema) or {"type": "array"}
+        case FlowInputType.FILE:
+            return _flow_task_file_property_schema(input_definition)
+        case FlowInputType.FILE_ARRAY:
+            return {
+                "type": "array",
+                "items": _flow_task_file_property_schema(input_definition),
+                _AVALAN_INPUT_TYPE_SCHEMA_KEY: FlowInputType.FILE_ARRAY.value,
+                _AVALAN_MIME_TYPES_SCHEMA_KEY: input_definition.mime_types,
+            }
+    raise AssertionError("unsupported flow input type")  # pragma: no cover
+
+
+def _flow_task_file_property_schema(
+    input_definition: FlowInputDefinition,
+) -> Mapping[str, object]:
+    return {
+        "type": "object",
+        "required": ["source_kind", "reference"],
+        "additionalProperties": True,
+        "properties": {
+            "source_kind": {"type": "string"},
+            "reference": {"type": "string"},
+            "mime_type": {"type": "string"},
+        },
+        _AVALAN_INPUT_TYPE_SCHEMA_KEY: FlowInputType.FILE.value,
+        _AVALAN_MIME_TYPES_SCHEMA_KEY: input_definition.mime_types,
+    }
+
+
 def _flow_task_output(definition: FlowDefinition) -> TaskOutputContract:
     output_definition = _flow_primary_output(definition)
     if output_definition is None:
@@ -1621,6 +1691,18 @@ def _flow_task_output(definition: FlowDefinition) -> TaskOutputContract:
         case FlowOutputType.FILE_ARRAY:
             return TaskOutputContract.file_array()
     raise AssertionError("unsupported flow output type")  # pragma: no cover
+
+
+def _flow_task_privacy(definition: FlowDefinition) -> TaskPrivacyPolicy:
+    overrides: dict[str, str | int] = {}
+    for key, value in definition.privacy_policy.items():
+        if key == "raw_retention_days":
+            assert isinstance(value, int)
+            overrides[key] = value
+            continue
+        assert isinstance(value, str)
+        overrides[key] = value
+    return privacy_policy_with_defaults(overrides or None)
 
 
 def _flow_output_schema(

@@ -319,6 +319,82 @@ class CliTaskInputTestCase(TestCase):
         )
         self.assertEqual(validate_task_input(definition, parsed.value), ())
 
+    def test_pdf_and_file_input_build_file_array_object_fields(self) -> None:
+        definition = self._definition(
+            TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "pdf": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["source_kind", "reference"],
+                                "properties": {
+                                    "source_kind": {"type": "string"},
+                                    "reference": {"type": "string"},
+                                    "mime_type": {"type": "string"},
+                                },
+                            },
+                            "x-avalan-input-type": "file[]",
+                            "x-avalan-mime-types": ["application/pdf"],
+                        },
+                        "image": {"type": "boolean"},
+                    },
+                }
+            )
+        )
+
+        pdf_input = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_pdf="sample.pdf",
+                task_input_fields=("image=true",),
+                task_files=(),
+            ),
+            definition,
+        )
+        file_input = task_cmds.task_cli_input(
+            Namespace(
+                task_input=None,
+                task_input_json=None,
+                task_pdf=None,
+                task_input_fields=("image=true",),
+                task_files=("pdf=sample.pdf",),
+            ),
+            definition,
+        )
+
+        self.assertEqual(
+            pdf_input.value,
+            {
+                "image": True,
+                "pdf": [
+                    {
+                        "source_kind": "local_path",
+                        "reference": "sample.pdf",
+                        "mime_type": "application/pdf",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            file_input.value,
+            {
+                "image": True,
+                "pdf": [
+                    {
+                        "source_kind": "local_path",
+                        "reference": "sample.pdf",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(validate_task_input(definition, pdf_input.value), ())
+        self.assertEqual(validate_task_input(definition, file_input.value), ())
+
     def test_single_file_input_builds_valid_descriptor(self) -> None:
         definition = self._definition(TaskInputContract.file())
 
@@ -1203,8 +1279,23 @@ class CliTaskInputTestCase(TestCase):
         self,
     ) -> None:
         file_definition = self._definition(TaskInputContract.file())
+        file_array_definition = self._definition(
+            TaskInputContract.file_array()
+        )
+        string_definition = self._definition(TaskInputContract.string())
         object_definition = self._definition(self._object_contract())
         cases = (
+            (
+                file_definition,
+                Namespace(
+                    task_input="raw",
+                    task_input_json=None,
+                    task_pdf="sample.pdf",
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                "Pass --pdf by itself",
+            ),
             (
                 file_definition,
                 Namespace(
@@ -1229,7 +1320,41 @@ class CliTaskInputTestCase(TestCase):
                 "Pass --pdf by itself",
             ),
             (
+                file_array_definition,
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_pdf="sample.pdf",
+                    task_input_fields=("image=true",),
+                    task_files=(),
+                ),
+                "Pass --pdf by itself",
+            ),
+            (
+                file_array_definition,
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_pdf="sample.pdf",
+                    task_input_fields=(),
+                    task_files=(),
+                    task_file_mime_types=("input=text/plain",),
+                ),
+                "Pass --pdf by itself",
+            ),
+            (
                 object_definition,
+                Namespace(
+                    task_input=None,
+                    task_input_json=None,
+                    task_pdf="sample.pdf",
+                    task_input_fields=(),
+                    task_files=(),
+                ),
+                "single top-level file input",
+            ),
+            (
+                string_definition,
                 Namespace(
                     task_input=None,
                     task_input_json=None,
@@ -1247,6 +1372,92 @@ class CliTaskInputTestCase(TestCase):
                     task_cmds.task_cli_input(args, definition)
 
             self.assertIn(message, str(error.exception))
+
+    def test_pdf_input_schema_helpers_cover_guard_paths(self) -> None:
+        no_schema_definition = self._definition(TaskInputContract.object())
+        duplicate_pdf_definition = self._definition(
+            TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "properties": {
+                        "front": {
+                            "x-avalan-input-type": "file",
+                            "x-avalan-mime-types": ["application/pdf"],
+                        },
+                        "back": {
+                            "x-avalan-input-type": "file",
+                            "x-avalan-mime-types": ["application/pdf"],
+                        },
+                    },
+                }
+            )
+        )
+        nested_scalar_definition = self._definition(
+            TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "properties": {"pdf": "not an object"},
+                }
+            )
+        )
+        missing_field_definition = self._definition(
+            TaskInputContract.object(
+                schema={"type": "object", "properties": {}}
+            )
+        )
+        bad_extension_definition = self._definition(
+            TaskInputContract.object(
+                schema={
+                    "type": "object",
+                    "properties": {"pdf": {"x-avalan-input-type": 1}},
+                }
+            )
+        )
+
+        self.assertIsNone(
+            task_cmds._task_cli_pdf_object_field(no_schema_definition)
+        )
+        self.assertIsNone(
+            task_cmds._task_cli_pdf_object_field(duplicate_pdf_definition)
+        )
+        self.assertIsNone(
+            task_cmds._task_cli_schema_field_input_type(
+                no_schema_definition,
+                "pdf",
+            )
+        )
+        self.assertIsNone(
+            task_cmds._task_cli_schema_field_input_type(
+                nested_scalar_definition,
+                "pdf.child",
+            )
+        )
+        self.assertIsNone(
+            task_cmds._task_cli_schema_field_input_type(
+                missing_field_definition,
+                "pdf",
+            )
+        )
+        self.assertIsNone(
+            task_cmds._task_cli_schema_field_input_type(
+                bad_extension_definition,
+                "pdf",
+            )
+        )
+        self.assertFalse(task_cmds._task_cli_schema_accepts_pdf("pdf"))
+        self.assertTrue(
+            task_cmds._task_cli_schema_accepts_pdf(
+                {"x-avalan-input-type": "file"}
+            )
+        )
+        self.assertFalse(
+            task_cmds._task_cli_schema_accepts_pdf(
+                {
+                    "x-avalan-input-type": "file",
+                    "x-avalan-mime-types": "application/pdf",
+                }
+            )
+        )
 
     def test_unsupported_input_type_is_rejected(self) -> None:
         definition = self._definition(TaskInputContract.string())

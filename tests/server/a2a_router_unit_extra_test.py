@@ -425,8 +425,11 @@ async def _run_tool_handlers_cover_branches() -> None:
     )
     assert error_artifact["content"][0]["data"]["error"] == {
         "type": "RuntimeError",
-        "message": "fail",
+        "message": "Tool call failed.",
     }
+    assert "'message': 'fail'" not in str(
+        error_artifact["content"][0]["data"]["error"]
+    )
 
     translator_diagnostic = await prepare("tool-diagnostic")
     diagnostic_call = ToolCall(id="call-d", name="missing", arguments=None)

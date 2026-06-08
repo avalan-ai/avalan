@@ -2915,15 +2915,52 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             ),
             resume_decisions={"missing": {"decision": "approved"}},
         )
+        non_review_pause_metadata = record_metadata(
+            review_plan,
+            trace=FlowExecutionTrace(
+                nodes=(
+                    FlowNodeTrace(
+                        node="start",
+                        state=FlowNodeState.PAUSED,
+                        attempts=1,
+                    ),
+                ),
+            ),
+            pause_tokens={"start": "private-token"},
+        )
         invalid_decision_node = FlowNodePlan(
             name="review",
             type="human_review",
             kind=FlowNodeKind.HUMAN_REVIEW,
             config={"allowed_decisions": "approved"},
         )
+        request_metadata = getattr(
+            flow_target_module,
+            "_strict_human_review_request_metadata",
+        )
+        audit_metadata = getattr(
+            flow_target_module,
+            "_strict_human_review_audit_from_record",
+        )
+        invalid_request = request_metadata(invalid_decision_node)
+        object.__setattr__(
+            old_record,
+            "metadata",
+            {
+                "human_review_audit": {
+                    "bad": "private audit",
+                    "good": {"state": "paused"},
+                }
+            },
+        )
+        audit_from_record = audit_metadata(old_record)
         self.assertNotIn("human_review_audit", failed_review_metadata)
         self.assertNotIn("human_review_audit", blank_decision_metadata)
         self.assertNotIn("human_review_audit", missing_node_metadata)
+        self.assertNotIn("human_review_audit", non_review_pause_metadata)
+        self.assertNotIn("timeout_seconds", invalid_request)
+        self.assertNotIn("audit_metadata", invalid_request)
+        self.assertEqual(audit_from_record, {"good": {"state": "paused"}})
         self.assertEqual(
             flow_target_module._strict_human_review_decisions(  # type: ignore[attr-defined]
                 invalid_decision_node
@@ -2936,6 +2973,17 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                 old_record,
             ),
             {},
+        )
+        object.__setattr__(
+            old_record,
+            "node_outputs",
+            {"start": "bad", "ok": {"value": "x"}},
+        )
+        self.assertEqual(
+            flow_target_module._strict_record_node_outputs(  # type: ignore[attr-defined]
+                old_record,
+            ),
+            {"ok": {"value": "x"}},
         )
 
     def test_strict_signature_includes_optional_plan_metadata(self) -> None:

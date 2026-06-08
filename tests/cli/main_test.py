@@ -401,6 +401,24 @@ class CliTaskOptionTestCase(TestCase):
                 [
                     "flow",
                     "mermaid",
+                    "render",
+                    "topology.mmd",
+                    "--mode",
+                    "presentation",
+                    "--json",
+                ],
+                {
+                    "flow_command": "mermaid",
+                    "flow_mermaid_command": "render",
+                    "diagram": "topology.mmd",
+                    "mode": "presentation",
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
+                    "mermaid",
                     "compare",
                     "topology.mmd",
                     "flow.toml",

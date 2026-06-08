@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - '**'
+  pull_request:
+    branches:
+      - '**'
   workflow_dispatch:
     inputs:
       ignore_venv_cache:
@@ -120,12 +123,20 @@ jobs:
         run: poetry run pip install "mlx-lm[cpu]==0.31.3"
 
       - name: Run tests with PostgreSQL e2e coverage analysis
-        if: matrix.target.os == 'ubuntu-latest'
+        if: matrix.target.os == 'ubuntu-latest' && matrix.python != '3.14'
         run: make test-pgsql coverage no-install
 
+      - name: Run tests with PostgreSQL e2e coverage report
+        if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.14'
+        run: make test-pgsql coverage-report no-install
+
       - name: Run tests with coverage analysis
-        if: matrix.target.os != 'ubuntu-latest'
+        if: matrix.target.os != 'ubuntu-latest' && matrix.python != '3.14'
         run: make test coverage no-install
+
+      - name: Run tests with coverage report
+        if: matrix.target.os != 'ubuntu-latest' && matrix.python == '3.14'
+        run: make test coverage-report no-install
 
       - name: Upload coverage to Coveralls
         continue-on-error: true

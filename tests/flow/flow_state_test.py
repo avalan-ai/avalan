@@ -142,6 +142,46 @@ class FlowStateTestCase(TestCase):
             ],
         )
 
+    def test_execution_trace_records_every_runtime_state(self) -> None:
+        node_states = tuple(FlowNodeState)
+        edge_states = tuple(FlowEdgeState)
+        trace = FlowExecutionTrace(
+            nodes=tuple(
+                FlowNodeTrace(node=f"node_{state.value}")
+                for state in node_states
+            ),
+            edges=tuple(
+                FlowEdgeTrace(
+                    index=index,
+                    source="source",
+                    target=f"target_{state.value}",
+                )
+                for index, state in enumerate(edge_states)
+            ),
+        )
+
+        for state in node_states:
+            trace = trace.with_node_state(
+                f"node_{state.value}",
+                state,
+                attempts=1 if state != FlowNodeState.PENDING else 0,
+            )
+        for index, state in enumerate(edge_states):
+            trace = trace.with_edge_state(index, state)
+
+        public = trace.as_public_dict()
+        nodes = cast(tuple[dict[str, object], ...], public["nodes"])
+        edges = cast(tuple[dict[str, object], ...], public["edges"])
+
+        self.assertEqual(
+            {node["node"]: node["state"] for node in nodes},
+            {f"node_{state.value}": state.value for state in FlowNodeState},
+        )
+        self.assertEqual(
+            {edge["index"]: edge["state"] for edge in edges},
+            {index: state.value for index, state in enumerate(FlowEdgeState)},
+        )
+
     def test_public_projection_uses_safe_diagnostics(self) -> None:
         diagnostic = FlowDiagnostic(
             code="flow.execution.node_failed",
@@ -201,11 +241,31 @@ class FlowStateTestCase(TestCase):
         with self.assertRaises(AssertionError):
             FlowNodeTrace(node="start", attempts=-1)
         with self.assertRaises(AssertionError):
+            FlowNodeTrace(
+                node="start",
+                state=cast(FlowNodeState, "running"),
+            )
+        with self.assertRaises(AssertionError):
             FlowNodeTrace(node="start", duration_ms=-1)
+        with self.assertRaises(AssertionError):
+            FlowNodeTrace(node="start", attempts=cast(int, True))
         with self.assertRaises(AssertionError):
             FlowEdgeTrace(index=-1, source="start", target="finish")
         with self.assertRaises(AssertionError):
             FlowEdgeTrace(index=0, source="", target="finish")
+        with self.assertRaises(AssertionError):
+            FlowEdgeTrace(
+                index=0,
+                source="start",
+                target="finish",
+                state=cast(FlowEdgeState, "eligible"),
+            )
+        with self.assertRaises(AssertionError):
+            FlowEdgeTrace(
+                index=cast(int, True),
+                source="start",
+                target="finish",
+            )
         with self.assertRaises(AssertionError):
             FlowExecutionTrace(
                 nodes=(

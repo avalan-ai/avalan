@@ -57,11 +57,11 @@ class FlowSelectorStep:
 
     def __post_init__(self) -> None:
         assert isinstance(self.kind, FlowSelectorStepKind)
-        match self.kind:
-            case FlowSelectorStepKind.FIELD:
-                assert isinstance(self.value, str) and self.value.strip()
-            case FlowSelectorStepKind.INDEX:
-                assert isinstance(self.value, int) and self.value >= 0
+        if self.kind == FlowSelectorStepKind.FIELD:
+            assert isinstance(self.value, str) and self.value.strip()
+        else:
+            assert self.kind == FlowSelectorStepKind.INDEX
+            assert isinstance(self.value, int) and self.value >= 0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
