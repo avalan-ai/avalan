@@ -44,9 +44,22 @@ NEGATIVE_FIXTURES = {
     "ambiguous_shorthand_executable.mmd": (
         "flow.mermaid.security.ambiguous_shorthand",
     ),
+    "bidirectional_edge_executable.mmd": (
+        "flow.mermaid.security.bidirectional_edge",
+    ),
+    "duplicate_edge_id_executable.mmd": (
+        "flow.mermaid.security.duplicate_edge_id",
+    ),
     "frontmatter_executable.mmd": ("flow.mermaid.security.frontmatter",),
     "html_label.mmd": ("flow.mermaid.security.html_label",),
     "init_directive.mmd": ("flow.mermaid.security.init_directive",),
+    "invalid_edge_id_executable.mmd": (
+        "flow.mermaid.security.invalid_edge_id",
+    ),
+    "malformed_edge_id_executable.mmd": (
+        "flow.mermaid.parser.malformed_edge_id",
+        "flow.mermaid.parser.unsupported_statement",
+    ),
     "malformed_directive.mmd": ("flow.mermaid.security.malformed_directive",),
     "malformed_subgraph.mmd": ("flow.mermaid.parser.unclosed_subgraph",),
     "script_like_label.mmd": ("flow.mermaid.security.script_like_label",),
@@ -75,6 +88,7 @@ NEGATIVE_FIXTURES = {
 
 SECURITY_FIXTURES = {
     "ambiguous_shorthand.mmd": ("flow.mermaid.security.ambiguous_shorthand",),
+    "bidirectional_edge.mmd": ("flow.mermaid.security.bidirectional_edge",),
     "callback_directive.mmd": (
         "flow.mermaid.security.unsafe_callback_directive",
     ),
@@ -82,6 +96,7 @@ SECURITY_FIXTURES = {
         "flow.mermaid.security.unsafe_link_directive",
         "flow.mermaid.security.unsafe_callback_directive",
     ),
+    "duplicate_edge_id.mmd": ("flow.mermaid.security.duplicate_edge_id",),
     "frontmatter.mmd": (
         "flow.mermaid.security.frontmatter",
         "flow.mermaid.security.frontmatter",
@@ -92,10 +107,12 @@ SECURITY_FIXTURES = {
     ),
     "html_label.mmd": ("flow.mermaid.security.html_label",),
     "init_directive.mmd": ("flow.mermaid.security.init_directive",),
+    "invalid_edge_id.mmd": ("flow.mermaid.security.invalid_edge_id",),
     "link_directive.mmd": (
         "flow.mermaid.security.unsafe_link_directive",
         "flow.mermaid.security.unsafe_external_link",
     ),
+    "malformed_edge_id.mmd": (),
     "malformed_directive.mmd": ("flow.mermaid.security.malformed_directive",),
     "malformed_subgraph.mmd": (),
     "script_like_label.mmd": ("flow.mermaid.security.script_like_label",),
@@ -128,9 +145,16 @@ class MermaidConformanceTestCase(TestCase):
                     source=str(path),
                 )
                 rendered = render_mermaid_view(normalized.view)
+                reparse_mode = (
+                    FlowViewImportMode.PRESENTATION
+                    if any(
+                        edge.bidirectional for edge in normalized.view.edges
+                    )
+                    else FlowViewImportMode.EXECUTABLE
+                )
                 reparsed = normalize_mermaid_flow_view(
                     rendered.source,
-                    import_mode=FlowViewImportMode.EXECUTABLE,
+                    import_mode=reparse_mode,
                 )
 
                 self.assertTrue(parsed.ok, parsed.public_diagnostics)
