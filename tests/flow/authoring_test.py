@@ -1,4 +1,6 @@
 from dataclasses import FrozenInstanceError
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 from unittest.mock import patch
 
@@ -6,9 +8,11 @@ import avalan.flow as flow
 from avalan.flow import (
     FLOW_VIEW_SKELETON_TAG,
     FlowDefinition,
+    FlowDefinitionCompileResult,
     FlowDefinitionSkeletonResult,
     FlowEdgeDefinition,
     FlowEntryBehavior,
+    FlowGraphInspectionResult,
     FlowInputDefinition,
     FlowInputType,
     FlowNodeDefinition,
@@ -20,8 +24,13 @@ from avalan.flow import (
     MermaidRenderResult,
     bind_flow_view,
     compare_flow_topology,
+    compile_flow_file,
+    compile_flow_source,
+    inspect_flow_graph_file,
+    inspect_flow_graph_source,
     parse_mermaid_view,
     render_flow_view,
+    serialize_flow_definition,
     skeleton_from_mermaid_view,
     validate_flow_definition,
 )
@@ -160,6 +169,279 @@ class FlowAuthoringTestCase(TestCase):
 
         self.assertTrue(result.ok, result.public_diagnostics)
         self.assertEqual(result.public_diagnostics, ())
+
+    def test_compile_flow_source_returns_canonical_strict_output(self) -> None:
+        result = compile_flow_source(
+            """
+            [flow]
+            name = "graph_sdk"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@-->|Private customer route| finish
+            start -.-> note["Private customer note"]
+            '''
+
+            [graph.edges.route_1]
+            label = "approved"
+
+            [nodes.start]
+            type = "input"
+
+            [nodes.finish]
+            type = "echo"
+            """,
+            source_path="/private/customer/flow.toml",
+        )
+
+        self.assertIsInstance(result, FlowDefinitionCompileResult)
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertTrue(result.authoring_graph)
+        assert result.definition is not None
+        assert result.canonical_source is not None
+        self.assertEqual(result.definition.name, "graph_sdk")
+        self.assertEqual(
+            [
+                (edge.source, edge.target, edge.label)
+                for edge in result.definition.edges
+            ],
+            [("start", "finish", "approved")],
+        )
+        self.assertEqual(
+            result.canonical_source,
+            serialize_flow_definition(result.definition),
+        )
+        self.assertIn("[[edges]]", result.canonical_source)
+        self.assertNotIn("[graph]", result.canonical_source)
+        self.assertNotIn("flowchart", result.canonical_source)
+        self.assertNotIn("Private customer", result.canonical_source)
+        self.assertIsNotNone(result.graph_inspection)
+        public = result.as_public_dict()
+        self.assertEqual(
+            public["definition"],
+            {"name": "graph_sdk", "node_count": 2, "edge_count": 1},
+        )
+        self.assertEqual(
+            public["canonical_source"],
+            {"format": "toml", "strict": True},
+        )
+        self.assertNotIn("Private customer", str(public))
+        self.assertNotIn("/private/customer", str(public))
+
+    def test_compile_and_inspect_flow_file_share_graph_projection(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            graph_dir = root / "graphs"
+            graph_dir.mkdir()
+            (graph_dir / "private-route.mmd").write_text(
+                "\n".join(
+                    (
+                        "flowchart LR",
+                        "start route_1@-->|Private file route| finish",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            flow_path = root / "flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "graph_file_sdk"
+                entrypoint = "start"
+                output_node = "finish"
+
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                path = "graphs/private-route.mmd"
+
+                [nodes.start]
+                type = "input"
+
+                [nodes.finish]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+
+            compiled = compile_flow_file(flow_path)
+            inspected = inspect_flow_graph_file(flow_path)
+
+        self.assertTrue(compiled.ok, compiled.public_diagnostics)
+        self.assertTrue(inspected.ok, inspected.public_diagnostics)
+        assert compiled.graph_inspection is not None
+        assert inspected.inspection is not None
+        self.assertEqual(
+            compiled.graph_inspection.as_public_dict(),
+            inspected.inspection.as_public_dict(),
+        )
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in compiled.definition.edges],
+            [("start", "finish")],
+        )
+        public = str(inspected.as_public_dict())
+        self.assertNotIn("Private file route", public)
+        self.assertNotIn("private-route.mmd", public)
+        self.assertNotIn(str(flow_path), public)
+
+    def test_compile_flow_source_reports_malformed_toml_safely(self) -> None:
+        result = compile_flow_source(
+            '[flow]\nname = "private-token"\n[',
+            source_path="/private/customer/flow.toml",
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.definition)
+        self.assertIsNone(result.canonical_source)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.malformed_toml"],
+        )
+        public = str(result.as_public_dict())
+        self.assertNotIn("private-token", public)
+        self.assertNotIn("/private/customer", public)
+
+    def test_inspect_flow_graph_source_reports_missing_graph(self) -> None:
+        result = inspect_flow_graph_source("""
+            [flow]
+            name = "strict_sdk"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [nodes.start]
+            type = "input"
+
+            [nodes.finish]
+            type = "echo"
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+            """)
+
+        self.assertIsInstance(result, FlowGraphInspectionResult)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.authoring_graph)
+        self.assertIsNone(result.inspection)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.graph.missing_source"],
+        )
+
+    def test_inspect_flow_graph_source_reports_graph_failure_safely(
+        self,
+    ) -> None:
+        result = inspect_flow_graph_source(
+            """
+            [flow]
+            name = "invalid_graph_sdk"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start -->|Private customer route| finish
+            '''
+
+            [nodes.start]
+            type = "input"
+
+            [nodes.finish]
+            type = "echo"
+            """,
+            source_path="/private/customer/flow.toml",
+        )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.authoring_graph)
+        self.assertIsNotNone(result.inspection)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.graph.unsupported_executable_edge"],
+        )
+        public = str(result.as_public_dict())
+        self.assertNotIn("Private customer route", public)
+        self.assertNotIn("/private/customer", public)
+
+    def test_compile_and_inspect_sdk_results_reject_invalid_values(
+        self,
+    ) -> None:
+        with self.assertRaises(AssertionError):
+            FlowDefinitionCompileResult(
+                definition=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowDefinitionCompileResult(canonical_source=" ")
+        with self.assertRaises(AssertionError):
+            FlowDefinitionCompileResult(
+                diagnostics=(object(),),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowDefinitionCompileResult(
+                authoring_graph="yes",  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowDefinitionCompileResult(
+                graph_inspection=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowGraphInspectionResult(
+                inspection=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowGraphInspectionResult(
+                diagnostics=(object(),),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowGraphInspectionResult(
+                authoring_graph="yes",  # type: ignore[arg-type]
+            )
+
+    def test_compile_and_inspect_sdk_functions_reject_invalid_arguments(
+        self,
+    ) -> None:
+        with self.assertRaises(AssertionError):
+            compile_flow_source(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            compile_flow_source("", source_path=object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            compile_flow_source("", registry=object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            compile_flow_file(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            compile_flow_file(
+                Path("missing.toml"),
+                registry=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            inspect_flow_graph_source(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            inspect_flow_graph_source(
+                "",
+                source_path=object(),  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            inspect_flow_graph_source("", registry=object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            inspect_flow_graph_file(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            inspect_flow_graph_file(
+                Path("missing.toml"),
+                registry=object(),  # type: ignore[arg-type]
+            )
 
     def test_private_parser_internals_are_not_exported_from_package(
         self,

@@ -1,9 +1,19 @@
 from . import mermaid as _mermaid
 from .authoring import (
+    FlowDefinitionCompileResult as FlowDefinitionCompileResult,
+)
+from .authoring import (
     FlowDefinitionSkeletonResult as FlowDefinitionSkeletonResult,
 )
+from .authoring import FlowGraphInspectionResult as FlowGraphInspectionResult
 from .authoring import bind_flow_view as bind_flow_view
 from .authoring import compare_flow_topology as compare_flow_topology
+from .authoring import compile_flow_file as compile_flow_file
+from .authoring import compile_flow_source as compile_flow_source
+from .authoring import inspect_flow_graph_file as inspect_flow_graph_file
+from .authoring import (
+    inspect_flow_graph_source as inspect_flow_graph_source,
+)
 from .authoring import parse_mermaid_view as parse_mermaid_view
 from .authoring import render_flow_view as render_flow_view
 from .authoring import (

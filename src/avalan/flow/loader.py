@@ -36,9 +36,11 @@ from .diagnostics import (
 )
 from .flow import Flow
 from .graph import (
+    FlowGraphCompileResult,
     FlowGraphDiagnosticCode,
     FlowGraphEdgeBinding,
     FlowGraphFormat,
+    FlowGraphInspection,
     FlowGraphMode,
     FlowGraphSource,
     FlowGraphSourceKind,
@@ -267,6 +269,7 @@ class FlowLoadResult:
     flow: Flow | None = None
     issues: tuple[FlowLoadIssue, ...] = ()
     authoring_graph: bool = False
+    graph_inspection: FlowGraphInspection | None = None
 
     @property
     def ok(self) -> bool:
@@ -284,6 +287,8 @@ class FlowLoadResult:
 
     def __post_init__(self) -> None:
         assert isinstance(self.authoring_graph, bool)
+        if self.graph_inspection is not None:
+            assert isinstance(self.graph_inspection, FlowGraphInspection)
 
 
 class FlowLoadError(ValueError):
@@ -577,6 +582,7 @@ def _build_result(
         else {}
     )
     nodes = _node_definitions(nodes_raw, issues)
+    graph_inspection: FlowGraphInspection | None = None
     definition_base = (
         Path(source_path).parent if source_path is not None else None
     )
@@ -606,20 +612,29 @@ def _build_result(
             authoring_graph=authoring_graph,
         )
     if graph_raw is not None:
-        graph_edges = _compile_graph_edges(
+        graph_result = _compile_graph_edges(
             graph_raw,
             nodes,
             issues,
             definition_base=definition_base,
             source_path=source_path,
         )
-        if graph_edges is None:
+        if graph_result is None:
             return FlowLoadResult(
                 definition=None,
                 issues=tuple(issues),
                 authoring_graph=authoring_graph,
+                graph_inspection=graph_inspection,
             )
-        edges = graph_edges
+        graph_inspection = graph_result.inspection
+        if not graph_result.ok:
+            return FlowLoadResult(
+                definition=None,
+                issues=tuple(issues),
+                authoring_graph=authoring_graph,
+                graph_inspection=graph_inspection,
+            )
+        edges = graph_result.edges
     definition = FlowDefinition(
         name=name,
         version=version,
@@ -653,11 +668,13 @@ def _build_result(
             definition=None,
             issues=tuple(issues),
             authoring_graph=authoring_graph,
+            graph_inspection=graph_inspection,
         )
     if not build_runtime:
         return FlowLoadResult(
             definition=definition,
             authoring_graph=authoring_graph,
+            graph_inspection=graph_inspection,
         )
     try:
         flow = build_flow(definition, registry)
@@ -674,6 +691,7 @@ def _build_result(
                 ),
             ),
             authoring_graph=authoring_graph,
+            graph_inspection=graph_inspection,
         )
     except (AssertionError, KeyError, TypeError, ValueError):
         return FlowLoadResult(
@@ -688,11 +706,13 @@ def _build_result(
                 ),
             ),
             authoring_graph=authoring_graph,
+            graph_inspection=graph_inspection,
         )
     return FlowLoadResult(
         definition=definition,
         flow=flow,
         authoring_graph=authoring_graph,
+        graph_inspection=graph_inspection,
     )
 
 
@@ -867,7 +887,7 @@ def _compile_graph_edges(
     *,
     definition_base: Path | None,
     source_path: str | Path | None,
-) -> tuple[FlowEdgeDefinition, ...] | None:
+) -> FlowGraphCompileResult | None:
     if _has_graph_issue(issues):
         return None
     source = _graph_source(
@@ -887,9 +907,7 @@ def _compile_graph_edges(
     issues.extend(
         _issue_from_diagnostic(diagnostic) for diagnostic in result.diagnostics
     )
-    if not result.ok:
-        return None
-    return result.edges
+    return result
 
 
 def _graph_source(
