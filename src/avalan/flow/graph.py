@@ -31,6 +31,24 @@ class FlowGraphMode(StrEnum):
     EXECUTABLE = "executable"
 
 
+class FlowGraphNodeClassification(StrEnum):
+    ACTUAL = "actual"
+    DECORATIVE = "decorative"
+
+
+class FlowGraphEdgeClassification(StrEnum):
+    EXECUTABLE = "executable"
+    DECORATIVE = "decorative"
+
+
+class FlowGraphBindingState(StrEnum):
+    BOUND = "bound"
+    UNBOUND = "unbound"
+    MISSING = "missing"
+    DECORATIVE = "decorative"
+    REJECTED = "rejected"
+
+
 _FLOW_GRAPH_EDGE_BINDING_FIELDS = frozenset(
     {
         "condition",
@@ -51,6 +69,10 @@ def _empty_edge_bindings() -> Mapping[str, "FlowGraphEdgeBinding"]:
     return MappingProxyType({})
 
 
+def _empty_string_tuple() -> tuple[str, ...]:
+    return ()
+
+
 def _assert_non_empty_string(value: str, field_name: str) -> None:
     assert (
         isinstance(value, str) and value.strip()
@@ -61,6 +83,32 @@ def _assert_diagnostics(value: tuple[FlowDiagnostic, ...]) -> None:
     assert isinstance(value, tuple), "diagnostics must be a tuple"
     for diagnostic in value:
         assert isinstance(diagnostic, FlowDiagnostic)
+
+
+def _assert_source_span(
+    value: FlowSourceSpan | None,
+    field_name: str,
+) -> None:
+    if value is not None:
+        assert isinstance(
+            value, FlowSourceSpan
+        ), f"{field_name} must be a source span"
+
+
+def _assert_string_tuple(values: tuple[str, ...], field_name: str) -> None:
+    assert isinstance(values, tuple), f"{field_name} must be a tuple"
+    for value in values:
+        _assert_non_empty_string(value, field_name)
+
+
+def _assert_tuple_items(
+    values: tuple[object, ...],
+    field_name: str,
+    item_type: type[object],
+) -> None:
+    assert isinstance(values, tuple), f"{field_name} must be a tuple"
+    for value in values:
+        assert isinstance(value, item_type)
 
 
 def _freeze_mapping(value: FlowMetadata, *, field_name: str) -> FlowMetadata:
@@ -79,6 +127,26 @@ def _freeze_value(value: object, *, field_name: str) -> object:
         return tuple(
             _freeze_value(item, field_name=field_name) for item in value
         )
+    return value
+
+
+def _flow_edge_definition_as_public_dict(
+    index: int,
+    edge: FlowEdgeDefinition,
+) -> dict[str, object]:
+    value: dict[str, object] = {
+        "index": index,
+        "source": edge.source,
+        "target": edge.target,
+        "kind": edge.kind.value,
+        "priority": edge.priority,
+        "default": edge.default,
+        "routing_policy": edge.routing_policy.value,
+    }
+    if edge.label is not None:
+        value["has_label"] = True
+    if edge.condition is not None:
+        value["has_condition"] = True
     return value
 
 
@@ -106,7 +174,7 @@ class FlowGraphSource:
         if self.source_identity is not None:
             _assert_non_empty_string(self.source_identity, "source_identity")
         if self.source_span is not None:
-            assert isinstance(self.source_span, FlowSourceSpan)
+            _assert_source_span(self.source_span, "source_span")
         match self.source_kind:
             case FlowGraphSourceKind.INLINE:
                 assert (
@@ -170,8 +238,7 @@ class FlowGraphEdgeBinding:
             assert isinstance(self.default, bool)
         if self.routing_policy is not None:
             assert isinstance(self.routing_policy, FlowRouteMatchPolicy)
-        if self.source_span is not None:
-            assert isinstance(self.source_span, FlowSourceSpan)
+        _assert_source_span(self.source_span, "source_span")
 
     def as_public_dict(self) -> dict[str, object]:
         value: dict[str, object] = {"edge_id": self.edge_id}
@@ -180,6 +247,190 @@ class FlowGraphEdgeBinding:
         if self.source_span is not None:
             value["source_span"] = self.source_span.as_public_dict()
         return value
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowGraphNodeInspection:
+    id: str
+    classification: FlowGraphNodeClassification
+    strict_node: str | None = None
+    source_span: FlowSourceSpan | None = None
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.id, "id")
+        assert isinstance(self.classification, FlowGraphNodeClassification)
+        if self.strict_node is not None:
+            _assert_non_empty_string(self.strict_node, "strict_node")
+        if (
+            self.classification == FlowGraphNodeClassification.DECORATIVE
+            and self.strict_node is not None
+        ):
+            raise AssertionError(
+                "decorative node cannot reference strict node"
+            )
+        _assert_source_span(self.source_span, "source_span")
+
+    def as_public_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "id": self.id,
+            "classification": self.classification.value,
+        }
+        if self.strict_node is not None:
+            value["strict_node"] = self.strict_node
+        if self.source_span is not None:
+            value["source_span"] = self.source_span.as_public_dict()
+        return value
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowGraphEdgeInspection:
+    index: int
+    source: str
+    target: str
+    classification: FlowGraphEdgeClassification
+    edge_id: str | None = None
+    source_span: FlowSourceSpan | None = None
+    bidirectional: bool = False
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.index, int) and not isinstance(
+            self.index,
+            bool,
+        )
+        assert self.index >= 0, "index must be non-negative"
+        _assert_non_empty_string(self.source, "source")
+        _assert_non_empty_string(self.target, "target")
+        assert isinstance(self.classification, FlowGraphEdgeClassification)
+        if self.edge_id is not None:
+            _assert_non_empty_string(self.edge_id, "edge_id")
+        _assert_source_span(self.source_span, "source_span")
+        assert isinstance(self.bidirectional, bool)
+
+    def as_public_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "index": self.index,
+            "source": self.source,
+            "target": self.target,
+            "classification": self.classification.value,
+        }
+        if self.edge_id is not None:
+            value["edge_id"] = self.edge_id
+        if self.bidirectional:
+            value["bidirectional"] = True
+        if self.source_span is not None:
+            value["source_span"] = self.source_span.as_public_dict()
+        return value
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowGraphBindingInspection:
+    edge_id: str
+    state: FlowGraphBindingState
+    metadata_fields: tuple[str, ...] = field(
+        default_factory=_empty_string_tuple
+    )
+    diagnostic_codes: tuple[str, ...] = field(
+        default_factory=_empty_string_tuple
+    )
+    source_span: FlowSourceSpan | None = None
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.edge_id, "edge_id")
+        assert isinstance(self.state, FlowGraphBindingState)
+        _assert_string_tuple(self.metadata_fields, "metadata_fields")
+        fields = tuple(sorted(self.metadata_fields))
+        object.__setattr__(self, "metadata_fields", fields)
+        _assert_string_tuple(self.diagnostic_codes, "diagnostic_codes")
+        _assert_source_span(self.source_span, "source_span")
+
+    def as_public_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "edge_id": self.edge_id,
+            "state": self.state.value,
+        }
+        if self.metadata_fields:
+            value["metadata_fields"] = self.metadata_fields
+        if self.diagnostic_codes:
+            value["diagnostic_codes"] = self.diagnostic_codes
+        if self.source_span is not None:
+            value["source_span"] = self.source_span.as_public_dict()
+        return value
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowGraphInspection:
+    schema_version: str = "flow.graph.inspection.v1"
+    source: FlowGraphSource | None = None
+    diagnostics: tuple[FlowDiagnostic, ...] = ()
+    nodes: tuple[FlowGraphNodeInspection, ...] = ()
+    edges: tuple[FlowGraphEdgeInspection, ...] = ()
+    bindings: tuple[FlowGraphBindingInspection, ...] = ()
+    generated_edges: tuple[FlowEdgeDefinition, ...] = ()
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.schema_version, "schema_version")
+        if self.source is not None:
+            assert isinstance(self.source, FlowGraphSource)
+        _assert_diagnostics(self.diagnostics)
+        _assert_tuple_items(self.nodes, "nodes", FlowGraphNodeInspection)
+        _assert_tuple_items(self.edges, "edges", FlowGraphEdgeInspection)
+        _assert_tuple_items(
+            self.bindings,
+            "bindings",
+            FlowGraphBindingInspection,
+        )
+        _assert_tuple_items(
+            self.generated_edges,
+            "generated_edges",
+            FlowEdgeDefinition,
+        )
+        self._assert_unique_ids(tuple(node.id for node in self.nodes), "nodes")
+        self._assert_unique_indexes(
+            tuple(edge.index for edge in self.edges),
+            "edges",
+        )
+
+    @property
+    def public_diagnostics(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+        )
+
+    def as_public_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
+            "schema_version": self.schema_version,
+            "nodes": tuple(node.as_public_dict() for node in self.nodes),
+            "edges": tuple(edge.as_public_dict() for edge in self.edges),
+            "bindings": tuple(
+                binding.as_public_dict() for binding in self.bindings
+            ),
+            "generated_edges": tuple(
+                _flow_edge_definition_as_public_dict(index, edge)
+                for index, edge in enumerate(self.generated_edges)
+            ),
+        }
+        if self.source is not None:
+            value["source"] = self.source.as_public_dict()
+        if self.diagnostics:
+            value["diagnostics"] = self.public_diagnostics
+        return value
+
+    @staticmethod
+    def _assert_unique_ids(values: tuple[str, ...], field_name: str) -> None:
+        seen: set[str] = set()
+        for value in values:
+            assert value not in seen, f"{field_name} must have unique ids"
+            seen.add(value)
+
+    @staticmethod
+    def _assert_unique_indexes(
+        values: tuple[int, ...],
+        field_name: str,
+    ) -> None:
+        seen: set[int] = set()
+        for value in values:
+            assert value not in seen, f"{field_name} must have unique indexes"
+            seen.add(value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
