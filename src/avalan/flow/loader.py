@@ -32,8 +32,10 @@ from .diagnostics import (
     FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
+    FlowSourceSpan,
 )
 from .flow import Flow
+from .graph import flow_graph_diagnostic_load_category
 from .registry import (
     FlowNodeConfigurationError,
     FlowNodeRegistry,
@@ -197,10 +199,18 @@ class FlowLoadIssue:
     message: str
     hint: str
     category: FlowLoadIssueCategory
+    source_span: FlowSourceSpan | None = None
+    diagnostic_category: FlowDiagnosticCategory | None = None
     severity: FlowLoadSeverity = FlowLoadSeverity.ERROR
 
-    def as_dict(self) -> dict[str, str]:
-        return {
+    def __post_init__(self) -> None:
+        if self.source_span is not None:
+            assert isinstance(self.source_span, FlowSourceSpan)
+        if self.diagnostic_category is not None:
+            assert isinstance(self.diagnostic_category, FlowDiagnosticCategory)
+
+    def as_dict(self) -> dict[str, object]:
+        value: dict[str, object] = {
             "code": self.code,
             "path": self.path,
             "category": self.category.value,
@@ -208,15 +218,20 @@ class FlowLoadIssue:
             "message": self.message,
             "hint": self.hint,
         }
+        if self.source_span is not None:
+            value["source_span"] = self.source_span.as_dict()
+        return value
 
     def to_diagnostic(self) -> FlowDiagnostic:
         return FlowDiagnostic(
             code=self.code,
             path=self.path,
-            category=_diagnostic_category(self.category),
+            category=self.diagnostic_category
+            or _diagnostic_category(self.category),
             severity=FlowDiagnosticSeverity(self.severity.value),
             message=self.message,
             hint=self.hint,
+            source_span=self.source_span,
         )
 
     def as_public_diagnostic_dict(self) -> dict[str, object]:
@@ -1758,6 +1773,8 @@ def _issue(
     message: str,
     hint: str,
     category: FlowLoadIssueCategory,
+    source_span: FlowSourceSpan | None = None,
+    diagnostic_category: FlowDiagnosticCategory | None = None,
 ) -> FlowLoadIssue:
     return FlowLoadIssue(
         code=code,
@@ -1765,21 +1782,32 @@ def _issue(
         message=message,
         hint=hint,
         category=category,
+        source_span=source_span,
+        diagnostic_category=diagnostic_category,
     )
 
 
 def _issue_from_diagnostic(diagnostic: FlowDiagnostic) -> FlowLoadIssue:
     assert isinstance(diagnostic, FlowDiagnostic)
     assert diagnostic.path is not None
-    category = FlowLoadIssueCategory(
-        flow_validation_diagnostic_load_category(diagnostic)
-    )
+    if diagnostic.category == FlowDiagnosticCategory.GRAPH_COMPILER:
+        category = FlowLoadIssueCategory(
+            flow_graph_diagnostic_load_category(diagnostic)
+        )
+        diagnostic_category = diagnostic.category
+    else:
+        category = FlowLoadIssueCategory(
+            flow_validation_diagnostic_load_category(diagnostic)
+        )
+        diagnostic_category = None
     return _issue(
         code=diagnostic.code,
         path=diagnostic.path,
         message=diagnostic.message,
         hint=diagnostic.hint or "Fix the flow definition.",
         category=category,
+        source_span=diagnostic.source_span,
+        diagnostic_category=diagnostic_category,
     )
 
 

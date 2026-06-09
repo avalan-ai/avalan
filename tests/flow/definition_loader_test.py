@@ -18,8 +18,10 @@ from avalan.flow import (
     FlowConditionOperator,
     FlowDefinition,
     FlowDefinitionLoader,
+    FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowEdgeKind,
+    FlowGraphDiagnosticCode,
     FlowInputType,
     FlowJoinPolicyType,
     FlowLoadError,
@@ -32,8 +34,10 @@ from avalan.flow import (
     FlowOutputType,
     FlowRetryBackoffStrategy,
     FlowRouteMatchPolicy,
+    FlowSourceSpan,
     FlowTimeoutPolicy,
     build_flow,
+    flow_graph_diagnostic,
     flow_input_binding,
     load_flow_definition,
     load_flow_definition_result,
@@ -1035,6 +1039,83 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertNotIn("customer", str(result.issues[0].as_dict()))
         self.assertNotIn("private", str(result.public_diagnostics))
         self.assertNotIn("customer", str(result.public_diagnostics))
+
+    def test_malformed_toml_validation_result_uses_safe_generic_path(
+        self,
+    ) -> None:
+        result = FlowDefinitionLoader().loads_validation_result(
+            "[flow\nsecret = 'private'",
+            source_path="/private/customer.toml",
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.issues[0].code, "flow.malformed_toml")
+        self.assertEqual(result.issues[0].path, "toml")
+        self.assertEqual(
+            result.issues[0].category, FlowLoadIssueCategory.PARSE
+        )
+        self.assertIsNone(result.flow)
+        self.assertNotIn("private", str(result.public_diagnostics))
+        self.assertNotIn("customer", str(result.public_diagnostics))
+
+    def test_graph_diagnostic_maps_to_loader_issue_with_span(self) -> None:
+        diagnostic = flow_graph_diagnostic(
+            FlowGraphDiagnosticCode.MALFORMED_SOURCE,
+            "graph.source",
+            source_span=FlowSourceSpan(
+                source="/private/customer/flow.toml",
+                start_line=4,
+                start_column=9,
+            ),
+        )
+
+        issue = flow_loader._issue_from_diagnostic(diagnostic)
+
+        self.assertEqual(issue.code, "flow.graph.malformed_source")
+        self.assertEqual(issue.path, "graph.source")
+        self.assertEqual(issue.category, FlowLoadIssueCategory.PARSE)
+        self.assertEqual(
+            issue.diagnostic_category,
+            FlowDiagnosticCategory.GRAPH_COMPILER,
+        )
+        self.assertEqual(issue.source_span, diagnostic.source_span)
+        self.assertEqual(
+            issue.to_diagnostic().category,
+            FlowDiagnosticCategory.GRAPH_COMPILER,
+        )
+        self.assertEqual(
+            issue.as_public_diagnostic_dict()["source_span"],
+            {"start_line": 4, "start_column": 9},
+        )
+        self.assertEqual(
+            issue.as_dict()["source_span"],
+            {
+                "start_line": 4,
+                "start_column": 9,
+                "source": "/private/customer/flow.toml",
+            },
+        )
+        self.assertNotIn(
+            "/private/customer",
+            str(issue.as_public_diagnostic_dict()),
+        )
+
+    def test_graph_diagnostic_mapping_rejects_missing_path(self) -> None:
+        diagnostic = flow_graph_diagnostic(
+            FlowGraphDiagnosticCode.MISSING_SOURCE,
+            "graph",
+            source_span=FlowSourceSpan(start_line=1, start_column=1),
+        )
+        diagnostic = FlowDiagnostic(
+            code=diagnostic.code,
+            category=diagnostic.category,
+            source_span=diagnostic.source_span,
+            message=diagnostic.message,
+            hint=diagnostic.hint,
+        )
+
+        with self.assertRaises(AssertionError):
+            flow_loader._issue_from_diagnostic(diagnostic)
 
     def test_missing_sections_and_invalid_shapes_are_aggregated(self) -> None:
         result = loads_flow_definition_result("""
