@@ -14,6 +14,7 @@ from avalan.flow import (
     FlowGraphBindingInspection,
     FlowGraphBindingState,
     FlowGraphCompileResult,
+    FlowGraphDiagnosticCode,
     FlowGraphEdgeBinding,
     FlowGraphEdgeClassification,
     FlowGraphEdgeInspection,
@@ -26,6 +27,109 @@ from avalan.flow import (
     FlowGraphSourceKind,
     FlowRouteMatchPolicy,
     FlowSourceSpan,
+    flow_graph_diagnostic,
+    flow_graph_diagnostic_load_category,
+)
+
+_GRAPH_DIAGNOSTIC_CASES = (
+    (
+        FlowGraphDiagnosticCode.MALFORMED_SOURCE,
+        "flow.graph.malformed_source",
+        "Graph source is malformed.",
+        "Fix the graph source syntax.",
+        "parse",
+    ),
+    (
+        FlowGraphDiagnosticCode.UNSUPPORTED_FORMAT,
+        "flow.graph.unsupported_format",
+        "Graph format is not supported.",
+        "Use a supported graph format.",
+        "unsupported",
+    ),
+    (
+        FlowGraphDiagnosticCode.UNSUPPORTED_SOURCE,
+        "flow.graph.unsupported_source",
+        "Graph source type is not supported.",
+        "Use an inline diagram or local file path.",
+        "unsupported",
+    ),
+    (
+        FlowGraphDiagnosticCode.UNSUPPORTED_MODE,
+        "flow.graph.unsupported_mode",
+        "Graph mode is not supported.",
+        "Use executable graph mode.",
+        "unsupported",
+    ),
+    (
+        FlowGraphDiagnosticCode.MISSING_SOURCE,
+        "flow.graph.missing_source",
+        "Graph source is missing.",
+        "Provide exactly one graph source.",
+        "value",
+    ),
+    (
+        FlowGraphDiagnosticCode.READ_FAILURE,
+        "flow.graph.read_failure",
+        "Graph source could not be read.",
+        "Check that the graph file is available to the loader.",
+        "parse",
+    ),
+    (
+        FlowGraphDiagnosticCode.PATH_ESCAPE,
+        "flow.graph.path_escape",
+        "Graph source path is outside the allowed base.",
+        "Use a graph path inside the flow definition directory.",
+        "privacy",
+    ),
+    (
+        FlowGraphDiagnosticCode.SOURCE_CONFLICT,
+        "flow.graph.source_conflict",
+        "Graph source is ambiguous.",
+        "Provide exactly one graph source.",
+        "value",
+    ),
+    (
+        FlowGraphDiagnosticCode.EDGE_CONFLICT,
+        "flow.graph.edge_conflict",
+        "Graph edges conflict with strict edges.",
+        "Use either graph authoring or strict edge definitions.",
+        "value",
+    ),
+    (
+        FlowGraphDiagnosticCode.MISSING_EDGE_METADATA_TARGET,
+        "flow.graph.missing_edge_metadata",
+        "Graph edge metadata targets a missing edge.",
+        "Bind graph edge metadata to an explicit Mermaid edge ID.",
+        "value",
+    ),
+    (
+        FlowGraphDiagnosticCode.DECORATIVE_EDGE_METADATA_TARGET,
+        "flow.graph.decorative_edge_metadata",
+        "Graph edge metadata targets a decorative edge.",
+        "Bind graph edge metadata only to executable graph edges.",
+        "value",
+    ),
+    (
+        FlowGraphDiagnosticCode.DUPLICATE_EDGE_ID,
+        "flow.graph.duplicate_edge_id",
+        "Graph edge ID is duplicated.",
+        "Use unique explicit Mermaid edge IDs.",
+        "value",
+    ),
+    (
+        FlowGraphDiagnosticCode.INVALID_EDGE_ID,
+        "flow.graph.invalid_edge_id",
+        "Graph edge ID is invalid.",
+        "Use a TOML-key-safe Mermaid edge ID.",
+        "value",
+    ),
+    (
+        FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE,
+        "flow.graph.unsupported_executable_edge",
+        "Graph edge is not supported for execution.",
+        "Use explicit directed graph edges for executable routes.",
+        "unsupported",
+    ),
 )
 
 
@@ -758,6 +862,149 @@ class FlowGraphModelsTestCase(TestCase):
             FlowGraphNodeClassification.DECORATIVE.value,
             "decorative",
         )
+        self.assertEqual(
+            tuple(code.value for code in FlowGraphDiagnosticCode),
+            tuple(case[1] for case in _GRAPH_DIAGNOSTIC_CASES),
+        )
+
+    def test_graph_diagnostic_factory_returns_stable_safe_diagnostics(
+        self,
+    ) -> None:
+        source_span = FlowSourceSpan(
+            source="/private/customer/flow.toml",
+            start_line=9,
+            start_column=4,
+        )
+        related_span = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=11,
+            start_column=6,
+        )
+
+        for (
+            code,
+            value,
+            message,
+            hint,
+            load_category,
+        ) in _GRAPH_DIAGNOSTIC_CASES:
+            with self.subTest(code=code):
+                diagnostic = flow_graph_diagnostic(
+                    code,
+                    "graph.edges.route_1",
+                    source_span=source_span,
+                    related_spans=(related_span,),
+                )
+
+                self.assertEqual(diagnostic.code, value)
+                self.assertEqual(
+                    diagnostic.category,
+                    FlowDiagnosticCategory.GRAPH_COMPILER,
+                )
+                self.assertEqual(diagnostic.severity, "error")
+                self.assertEqual(diagnostic.message, message)
+                self.assertEqual(diagnostic.hint, hint)
+                self.assertEqual(
+                    flow_graph_diagnostic_load_category(diagnostic),
+                    load_category,
+                )
+                public = diagnostic.as_public_dict()
+                self.assertEqual(public["code"], value)
+                self.assertEqual(public["message"], message)
+                self.assertEqual(public["hint"], hint)
+                public_text = str(public)
+                self.assertNotIn("/private/customer", public_text)
+                self.assertNotIn("graph TD", public_text)
+                self.assertNotIn("https://example.test", public_text)
+                self.assertNotIn("SECRET_TOKEN", public_text)
+
+    def test_graph_diagnostic_factory_accepts_warning_severity(self) -> None:
+        diagnostic = flow_graph_diagnostic(
+            FlowGraphDiagnosticCode.MISSING_SOURCE,
+            "graph",
+            severity=FlowDiagnosticSeverity.WARNING,
+        )
+
+        self.assertEqual(diagnostic.severity, FlowDiagnosticSeverity.WARNING)
+        self.assertEqual(diagnostic.as_public_dict()["severity"], "warning")
+
+    def test_graph_diagnostic_factory_rejects_unsafe_inputs(self) -> None:
+        span = FlowSourceSpan(start_line=1, start_column=1)
+        invalid_cases = (
+            {"code": "flow.graph.missing_source", "path": "graph"},
+            {
+                "code": FlowGraphDiagnosticCode.MISSING_SOURCE,
+                "path": "/private/customer/graph.mmd",
+            },
+            {
+                "code": FlowGraphDiagnosticCode.MISSING_SOURCE,
+                "path": "https://example.test/graph.mmd",
+            },
+            {
+                "code": FlowGraphDiagnosticCode.MISSING_SOURCE,
+                "path": "graph.{secret}",
+            },
+            {
+                "code": FlowGraphDiagnosticCode.MISSING_SOURCE,
+                "path": "graph\nsource",
+            },
+            {
+                "code": FlowGraphDiagnosticCode.MISSING_SOURCE,
+                "path": "graph",
+                "source_span": object(),
+            },
+            {
+                "code": FlowGraphDiagnosticCode.MISSING_SOURCE,
+                "path": "graph",
+                "related_spans": [span],
+            },
+            {
+                "code": FlowGraphDiagnosticCode.MISSING_SOURCE,
+                "path": "graph",
+                "related_spans": (object(),),
+            },
+            {
+                "code": FlowGraphDiagnosticCode.MISSING_SOURCE,
+                "path": "graph",
+                "severity": "error",
+            },
+        )
+
+        for case in invalid_cases:
+            with self.subTest(case=case):
+                with self.assertRaises(AssertionError):
+                    flow_graph_diagnostic(**case)  # type: ignore[arg-type]
+
+    def test_graph_diagnostic_load_category_rejects_non_graph_diagnostics(
+        self,
+    ) -> None:
+        diagnostic = FlowDiagnostic(
+            code="flow.definition.invalid_node",
+            category=FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+            path="nodes.start",
+            message="Flow node is invalid.",
+        )
+
+        with self.assertRaises(AssertionError):
+            flow_graph_diagnostic_load_category(diagnostic)
+
+        with self.assertRaises(AssertionError):
+            flow_graph_diagnostic_load_category(  # type: ignore[arg-type]
+                "diagnostic"
+            )
+
+    def test_graph_diagnostic_load_category_rejects_unknown_graph_code(
+        self,
+    ) -> None:
+        diagnostic = FlowDiagnostic(
+            code="flow.graph.future_code",
+            category=FlowDiagnosticCategory.GRAPH_COMPILER,
+            path="graph",
+            message="Graph diagnostic is unknown.",
+        )
+
+        with self.assertRaises(ValueError):
+            flow_graph_diagnostic_load_category(diagnostic)
 
 
 if __name__ == "__main__":

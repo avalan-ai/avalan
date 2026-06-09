@@ -7,6 +7,7 @@ from .definition import (
 )
 from .diagnostics import (
     FlowDiagnostic,
+    FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
     FlowSourceSpan,
 )
@@ -49,6 +50,23 @@ class FlowGraphBindingState(StrEnum):
     REJECTED = "rejected"
 
 
+class FlowGraphDiagnosticCode(StrEnum):
+    MALFORMED_SOURCE = "flow.graph.malformed_source"
+    UNSUPPORTED_FORMAT = "flow.graph.unsupported_format"
+    UNSUPPORTED_SOURCE = "flow.graph.unsupported_source"
+    UNSUPPORTED_MODE = "flow.graph.unsupported_mode"
+    MISSING_SOURCE = "flow.graph.missing_source"
+    READ_FAILURE = "flow.graph.read_failure"
+    PATH_ESCAPE = "flow.graph.path_escape"
+    SOURCE_CONFLICT = "flow.graph.source_conflict"
+    EDGE_CONFLICT = "flow.graph.edge_conflict"
+    MISSING_EDGE_METADATA_TARGET = "flow.graph.missing_edge_metadata"
+    DECORATIVE_EDGE_METADATA_TARGET = "flow.graph.decorative_edge_metadata"
+    DUPLICATE_EDGE_ID = "flow.graph.duplicate_edge_id"
+    INVALID_EDGE_ID = "flow.graph.invalid_edge_id"
+    UNSUPPORTED_EXECUTABLE_EDGE = "flow.graph.unsupported_executable_edge"
+
+
 _FLOW_GRAPH_EDGE_BINDING_FIELDS = frozenset(
     {
         "condition",
@@ -57,6 +75,80 @@ _FLOW_GRAPH_EDGE_BINDING_FIELDS = frozenset(
         "label",
         "priority",
         "routing_policy",
+    }
+)
+_FLOW_GRAPH_DIAGNOSTIC_MESSAGES = MappingProxyType(
+    {
+        FlowGraphDiagnosticCode.MALFORMED_SOURCE: (
+            "Graph source is malformed.",
+            "Fix the graph source syntax.",
+        ),
+        FlowGraphDiagnosticCode.UNSUPPORTED_FORMAT: (
+            "Graph format is not supported.",
+            "Use a supported graph format.",
+        ),
+        FlowGraphDiagnosticCode.UNSUPPORTED_SOURCE: (
+            "Graph source type is not supported.",
+            "Use an inline diagram or local file path.",
+        ),
+        FlowGraphDiagnosticCode.UNSUPPORTED_MODE: (
+            "Graph mode is not supported.",
+            "Use executable graph mode.",
+        ),
+        FlowGraphDiagnosticCode.MISSING_SOURCE: (
+            "Graph source is missing.",
+            "Provide exactly one graph source.",
+        ),
+        FlowGraphDiagnosticCode.READ_FAILURE: (
+            "Graph source could not be read.",
+            "Check that the graph file is available to the loader.",
+        ),
+        FlowGraphDiagnosticCode.PATH_ESCAPE: (
+            "Graph source path is outside the allowed base.",
+            "Use a graph path inside the flow definition directory.",
+        ),
+        FlowGraphDiagnosticCode.SOURCE_CONFLICT: (
+            "Graph source is ambiguous.",
+            "Provide exactly one graph source.",
+        ),
+        FlowGraphDiagnosticCode.EDGE_CONFLICT: (
+            "Graph edges conflict with strict edges.",
+            "Use either graph authoring or strict edge definitions.",
+        ),
+        FlowGraphDiagnosticCode.MISSING_EDGE_METADATA_TARGET: (
+            "Graph edge metadata targets a missing edge.",
+            "Bind graph edge metadata to an explicit Mermaid edge ID.",
+        ),
+        FlowGraphDiagnosticCode.DECORATIVE_EDGE_METADATA_TARGET: (
+            "Graph edge metadata targets a decorative edge.",
+            "Bind graph edge metadata only to executable graph edges.",
+        ),
+        FlowGraphDiagnosticCode.DUPLICATE_EDGE_ID: (
+            "Graph edge ID is duplicated.",
+            "Use unique explicit Mermaid edge IDs.",
+        ),
+        FlowGraphDiagnosticCode.INVALID_EDGE_ID: (
+            "Graph edge ID is invalid.",
+            "Use a TOML-key-safe Mermaid edge ID.",
+        ),
+        FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE: (
+            "Graph edge is not supported for execution.",
+            "Use explicit directed graph edges for executable routes.",
+        ),
+    }
+)
+_FLOW_GRAPH_PARSE_CODES = frozenset(
+    {
+        FlowGraphDiagnosticCode.MALFORMED_SOURCE,
+        FlowGraphDiagnosticCode.READ_FAILURE,
+    }
+)
+_FLOW_GRAPH_UNSUPPORTED_CODES = frozenset(
+    {
+        FlowGraphDiagnosticCode.UNSUPPORTED_FORMAT,
+        FlowGraphDiagnosticCode.UNSUPPORTED_SOURCE,
+        FlowGraphDiagnosticCode.UNSUPPORTED_MODE,
+        FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE,
     }
 )
 
@@ -99,6 +191,14 @@ def _assert_string_tuple(values: tuple[str, ...], field_name: str) -> None:
     assert isinstance(values, tuple), f"{field_name} must be a tuple"
     for value in values:
         _assert_non_empty_string(value, field_name)
+
+
+def _assert_safe_diagnostic_path(value: str) -> None:
+    _assert_non_empty_string(value, "path")
+    unsafe_fragments = (":", "/", "\\", "{", "}", "\n", "\r")
+    assert not any(
+        fragment in value for fragment in unsafe_fragments
+    ), "path must be a safe diagnostic path"
 
 
 def _assert_tuple_items(
@@ -148,6 +248,51 @@ def _flow_edge_definition_as_public_dict(
     if edge.condition is not None:
         value["has_condition"] = True
     return value
+
+
+def flow_graph_diagnostic(
+    code: FlowGraphDiagnosticCode,
+    path: str,
+    *,
+    source_span: FlowSourceSpan | None = None,
+    related_spans: tuple[FlowSourceSpan, ...] = (),
+    severity: FlowDiagnosticSeverity = FlowDiagnosticSeverity.ERROR,
+) -> FlowDiagnostic:
+    assert isinstance(code, FlowGraphDiagnosticCode)
+    _assert_safe_diagnostic_path(path)
+    _assert_source_span(source_span, "source_span")
+    assert isinstance(related_spans, tuple), "related_spans must be a tuple"
+    for span in related_spans:
+        assert isinstance(span, FlowSourceSpan)
+    assert isinstance(severity, FlowDiagnosticSeverity)
+    message, hint = _FLOW_GRAPH_DIAGNOSTIC_MESSAGES[code]
+    return FlowDiagnostic(
+        code=code.value,
+        category=FlowDiagnosticCategory.GRAPH_COMPILER,
+        path=path,
+        source_span=source_span,
+        severity=severity,
+        message=message,
+        hint=hint,
+        related_spans=related_spans,
+    )
+
+
+def flow_graph_diagnostic_load_category(
+    diagnostic: FlowDiagnostic,
+) -> str:
+    assert isinstance(diagnostic, FlowDiagnostic)
+    assert (
+        diagnostic.category == FlowDiagnosticCategory.GRAPH_COMPILER
+    ), "diagnostic must be a graph compiler diagnostic"
+    code = FlowGraphDiagnosticCode(diagnostic.code)
+    if code == FlowGraphDiagnosticCode.PATH_ESCAPE:
+        return "privacy"
+    if code in _FLOW_GRAPH_PARSE_CODES:
+        return "parse"
+    if code in _FLOW_GRAPH_UNSUPPORTED_CODES:
+        return "unsupported"
+    return "value"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
