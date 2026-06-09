@@ -1,5 +1,7 @@
 from collections.abc import Mapping
 from enum import Enum
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 
 from avalan.flow import (
@@ -84,6 +86,297 @@ class FlowDefinitionSerializerTestCase(TestCase):
         self.assertTrue(original_plan.ok, original_plan.public_diagnostics)
         self.assertTrue(reloaded_plan.ok, reloaded_plan.public_diagnostics)
         self.assertEqual(original_plan.plan, reloaded_plan.plan)
+
+    def test_serialized_inline_graph_definition_round_trips_as_strict_toml(
+        self,
+    ) -> None:
+        registry = self._registry()
+        loader = FlowDefinitionLoader(registry)
+        result = loader.loads_validation_result("""
+            [flow]
+            name = "graph-runtime"
+            version = "2026-06-09"
+            revision = "rev-graph"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "source"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "mapper.result"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            source route_1@-->|Private visual label| mapper
+            mapper route_2@--> failed
+            source -.-> private_note["Private decorative text"]
+            '''
+
+            [graph.edges.route_1]
+            label = "ready"
+            priority = 2
+            routing_policy = "all_matching"
+
+            [graph.edges.route_1.condition]
+            op = "eq"
+            selector = "source.value.status"
+            value = "ready"
+
+            [graph.edges.route_2]
+            kind = "error"
+
+            [nodes.source]
+            type = "constant"
+
+            [nodes.source.config]
+            value = {status = "ready"}
+
+            [nodes.mapper]
+            type = "mapper"
+            ref = "trusted"
+            output = "result"
+
+            [nodes.mapper.mapping.selected]
+            type = "select"
+            source = "input.payload"
+
+            [nodes.failed]
+            type = "echo"
+            """)
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertTrue(result.authoring_graph)
+        assert result.definition is not None
+
+        source = serialize_flow_definition(result.definition)
+        repeated = serialize_flow_definition(result.definition)
+        reloaded = loader.loads_validation_result(source)
+
+        self.assertEqual(source, repeated)
+        self.assertIn("[[edges]]", source)
+        self.assertIn('source = "source"', source)
+        self.assertIn('target = "mapper"', source)
+        self.assertIn('kind = "error"', source)
+        self.assertNotIn("[graph]", source)
+        self.assertNotIn("[graph.edges", source)
+        self.assertNotIn("diagram", source)
+        self.assertNotIn("flowchart", source)
+        self.assertNotIn("Private visual label", source)
+        self.assertNotIn("Private decorative text", source)
+        self.assertTrue(reloaded.ok, reloaded.public_diagnostics)
+        self.assertFalse(reloaded.authoring_graph)
+        assert reloaded.definition is not None
+        self.assertEqual(
+            serialize_flow_definition(reloaded.definition),
+            source,
+        )
+        original_plan = compile_flow_definition(result.definition, registry)
+        reloaded_plan = compile_flow_definition(
+            reloaded.definition,
+            registry,
+        )
+        self.assertTrue(original_plan.ok, original_plan.public_diagnostics)
+        self.assertTrue(reloaded_plan.ok, reloaded_plan.public_diagnostics)
+        self.assertEqual(original_plan.plan, reloaded_plan.plan)
+
+    def test_serialized_file_graph_definition_round_trips_as_strict_toml(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            graph_dir = base / "graphs"
+            graph_dir.mkdir()
+            (graph_dir / "runtime.mmd").write_text(
+                "\n".join(
+                    (
+                        "flowchart LR",
+                        "source route_1@-->|Private file label| mapper",
+                        "mapper route_2@--> failed",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            flow_path = base / "flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "graph-file-runtime"
+                version = "2026-06-09"
+                revision = "rev-file-graph"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "answer"
+                type = "object"
+
+                [entry]
+                type = "node"
+                node = "source"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                answer = "mapper.result"
+
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                path = "graphs/runtime.mmd"
+
+                [graph.edges.route_1]
+                label = "ready"
+
+                [graph.edges.route_2]
+                kind = "error"
+
+                [nodes.source]
+                type = "constant"
+
+                [nodes.source.config]
+                value = {status = "ready"}
+
+                [nodes.mapper]
+                type = "mapper"
+                ref = "trusted"
+                output = "result"
+
+                [nodes.mapper.mapping.selected]
+                type = "select"
+                source = "input.payload"
+
+                [nodes.failed]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+
+            registry = self._registry()
+            loader = FlowDefinitionLoader(registry)
+            result = loader.load_validation_result(flow_path)
+            self.assertTrue(result.ok, result.public_diagnostics)
+            self.assertTrue(result.authoring_graph)
+            assert result.definition is not None
+            source = serialize_flow_definition(result.definition)
+
+        reloaded = FlowDefinitionLoader(registry).loads_validation_result(
+            source,
+        )
+
+        self.assertIn("[[edges]]", source)
+        self.assertNotIn("[graph]", source)
+        self.assertNotIn("path = ", source)
+        self.assertNotIn("runtime.mmd", source)
+        self.assertNotIn("Private file label", source)
+        self.assertTrue(reloaded.ok, reloaded.public_diagnostics)
+        self.assertFalse(reloaded.authoring_graph)
+        assert reloaded.definition is not None
+        self.assertIsNone(reloaded.definition.definition_base)
+        original_plan = compile_flow_definition(result.definition, registry)
+        reloaded_plan = compile_flow_definition(
+            reloaded.definition,
+            registry,
+        )
+        self.assertTrue(original_plan.ok, original_plan.public_diagnostics)
+        self.assertTrue(reloaded_plan.ok, reloaded_plan.public_diagnostics)
+        self.assertEqual(original_plan.plan, reloaded_plan.plan)
+
+    def test_rejects_strict_canonical_output_mixed_with_graph_section(
+        self,
+    ) -> None:
+        graph_source = """
+            [flow]
+            name = "graph-mixed"
+            version = "2026-06-09"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "source"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "mapper.result"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            source route_1@--> mapper
+            '''
+
+            [nodes.source]
+            type = "constant"
+
+            [nodes.source.config]
+            value = {status = "ready"}
+
+            [nodes.mapper]
+            type = "mapper"
+            ref = "trusted"
+            output = "result"
+
+            [nodes.mapper.mapping.selected]
+            type = "select"
+            source = "input.payload"
+            """
+        loader = FlowDefinitionLoader(self._registry())
+        result = loader.loads_validation_result(graph_source)
+        self.assertTrue(result.ok, result.public_diagnostics)
+        assert result.definition is not None
+
+        strict_source = serialize_flow_definition(result.definition)
+        mixed_source = strict_source + """
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            source route_1@-->|Private mixed label| mapper
+            '''
+            """
+        mixed = loader.loads_validation_result(mixed_source)
+
+        self.assertFalse(mixed.ok)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in mixed.issues],
+            [("flow.graph.edge_conflict", "edges")],
+        )
+        self.assertNotIn(
+            "Private mixed label",
+            str(mixed.public_diagnostics),
+        )
 
     def test_serializes_legacy_alias_definition(self) -> None:
         definition = FlowDefinition(
