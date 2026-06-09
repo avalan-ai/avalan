@@ -1,4 +1,5 @@
 from asyncio import CancelledError
+from asyncio import run as asyncio_run
 from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -190,7 +191,7 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "flow.toml"
             path.write_text(source, encoding="utf-8")
-            file_result = loader.load_validation_result(path)
+            file_result = asyncio_run(loader.load_validation_result(path))
 
         self.assertTrue(result.ok)
         self.assertIsNone(result.flow)
@@ -987,8 +988,8 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             path = Path(temporary_directory) / "flow.toml"
             path.write_text(VALID_FLOW, encoding="utf-8")
 
-            definition = load_flow_definition(path)
-            result = load_flow_definition_result(path)
+            definition = asyncio_run(load_flow_definition(path))
+            result = asyncio_run(load_flow_definition_result(path))
             loaded = loads_flow_definition(VALID_FLOW)
 
         self.assertIsInstance(definition, FlowDefinition)
@@ -1002,7 +1003,7 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             path.write_text("[flow]\nname = 'missing'", encoding="utf-8")
 
             with self.assertRaises(FlowLoadError) as context:
-                FlowDefinitionLoader().load(path)
+                asyncio_run(FlowDefinitionLoader().load(path))
 
         self.assertEqual(
             context.exception.issues[0].code, "flow.missing_section"
@@ -1264,7 +1265,7 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 encoding="utf-8",
             )
 
-            result = load_flow_definition_result(flow_path)
+            result = await load_flow_definition_result(flow_path)
 
         self.assertTrue(result.ok, result.issues)
         assert result.definition is not None
@@ -1379,7 +1380,7 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 encoding="utf-8",
             )
 
-            result = loader.load_validation_result(flow_path)
+            result = asyncio_run(loader.load_validation_result(flow_path))
 
         self.assertTrue(result.ok, result.issues)
         self.assertIsNone(result.flow)
@@ -3780,11 +3781,14 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             "nodes": {"start": {"type": "echo"}},
         }
 
-        result = flow_loader._build_result(  # type: ignore[attr-defined]
-            raw,  # type: ignore[arg-type]
-            registry=FlowNodeRegistry(),
-            source_path=None,
-            build_runtime=True,
+        result = asyncio_run(
+            flow_loader._build_result(  # type: ignore[attr-defined]
+                raw,  # type: ignore[arg-type]
+                registry=FlowNodeRegistry(),
+                source_path=None,
+                build_runtime=True,
+                encoding="utf-8",
+            )
         )
         tuple_value = flow_loader._string_tuple(  # type: ignore[attr-defined]
             {"mime_types": None},

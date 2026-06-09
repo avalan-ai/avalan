@@ -1,3 +1,4 @@
+from ..filesystem import read_text, run_awaitable
 from ..types import LooseJsonValue
 from .definition import (
     FrozenMetadata,
@@ -102,7 +103,7 @@ def resolve_schema_ref(
     base_dir = _schema_base_dir(schema_base_path, path)
     source_path = _schema_source_path(ref, base_dir, path)
     try:
-        source = source_path.read_text(encoding="utf-8")
+        source = run_awaitable(read_text(source_path))
     except OSError as error:
         raise TaskSchemaResolutionError(
             path,

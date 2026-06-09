@@ -1,4 +1,5 @@
 from ...cli.theme import Theme
+from ...filesystem import DEFAULT_TEXT_ENCODING, read_text
 from ...flow import (
     FlowDefinition,
     FlowDefinitionCompileResult,
@@ -134,7 +135,11 @@ def flow_validate(
 ) -> bool:
     """Validate a flow definition without executing it."""
     _ = theme
-    load_result = _flow_load_validation_result(args.flow, console, args)
+    return _run_awaitable(_flow_validate(args, console))
+
+
+async def _flow_validate(args: Namespace, console: Console) -> bool:
+    load_result = await _flow_load_validation_result(args.flow, console, args)
     if load_result is None:
         return False
     ok = load_result.ok
@@ -165,8 +170,15 @@ def flow_compile(
 ) -> bool:
     """Compile a flow definition to strict canonical TOML."""
     _ = theme
+    return _run_awaitable(_flow_compile(args, console))
+
+
+async def _flow_compile(args: Namespace, console: Console) -> bool:
     try:
-        result = compile_flow_file(args.flow)
+        result = await compile_flow_file(
+            args.flow,
+            encoding=_flow_text_encoding(args),
+        )
     except OSError as exc:
         diagnostic = _flow_file_read_diagnostic(exc)
         if _flow_json_output(args):
@@ -242,16 +254,20 @@ def flow_mermaid(
 ) -> bool:
     """Run non-executing Mermaid flow authoring commands."""
     _ = theme
+    return _run_awaitable(_flow_mermaid(args, console))
+
+
+async def _flow_mermaid(args: Namespace, console: Console) -> bool:
     command = args.flow_mermaid_command
     match command:
         case "compare":
-            return _flow_mermaid_compare(args, console)
+            return await _flow_mermaid_compare(args, console)
         case "parse":
-            return _flow_mermaid_parse(args, console)
+            return await _flow_mermaid_parse(args, console)
         case "render":
-            return _flow_mermaid_render(args, console)
+            return await _flow_mermaid_render(args, console)
         case "skeleton":
-            return _flow_mermaid_skeleton(args, console)
+            return await _flow_mermaid_skeleton(args, console)
     raise AssertionError("unsupported Mermaid flow command")
 
 
@@ -307,8 +323,13 @@ def flow_resume(
     return _run_awaitable(_flow_resume(args, console))
 
 
-def _flow_mermaid_parse(args: Namespace, console: Console) -> bool:
-    source = _flow_read_text(args.diagram, console, args, "Mermaid diagram")
+async def _flow_mermaid_parse(args: Namespace, console: Console) -> bool:
+    source = await _flow_read_text(
+        args.diagram,
+        console,
+        args,
+        "Mermaid diagram",
+    )
     if source is None:
         return False
     result = parse_mermaid_view(
@@ -345,8 +366,13 @@ def _flow_mermaid_parse(args: Namespace, console: Console) -> bool:
     return ok
 
 
-def _flow_mermaid_render(args: Namespace, console: Console) -> bool:
-    source = _flow_read_text(args.diagram, console, args, "Mermaid diagram")
+async def _flow_mermaid_render(args: Namespace, console: Console) -> bool:
+    source = await _flow_read_text(
+        args.diagram,
+        console,
+        args,
+        "Mermaid diagram",
+    )
     if source is None:
         return False
     parsed = parse_mermaid_view(
@@ -388,15 +414,20 @@ def _flow_mermaid_render(args: Namespace, console: Console) -> bool:
     return ok
 
 
-def _flow_mermaid_compare(args: Namespace, console: Console) -> bool:
-    source = _flow_read_text(args.diagram, console, args, "Mermaid diagram")
+async def _flow_mermaid_compare(args: Namespace, console: Console) -> bool:
+    source = await _flow_read_text(
+        args.diagram,
+        console,
+        args,
+        "Mermaid diagram",
+    )
     if source is None:
         return False
     parsed = parse_mermaid_view(
         source,
         import_mode=_flow_import_mode(args),
     )
-    load_result = _flow_load_validation_result(args.flow, console, args)
+    load_result = await _flow_load_validation_result(args.flow, console, args)
     if load_result is None:
         return False
     diagnostics: tuple[FlowDiagnostic, ...]
@@ -427,8 +458,13 @@ def _flow_mermaid_compare(args: Namespace, console: Console) -> bool:
     return ok
 
 
-def _flow_mermaid_skeleton(args: Namespace, console: Console) -> bool:
-    source = _flow_read_text(args.diagram, console, args, "Mermaid diagram")
+async def _flow_mermaid_skeleton(args: Namespace, console: Console) -> bool:
+    source = await _flow_read_text(
+        args.diagram,
+        console,
+        args,
+        "Mermaid diagram",
+    )
     if source is None:
         return False
     parsed = parse_mermaid_view(
@@ -473,13 +509,15 @@ def _flow_mermaid_skeleton(args: Namespace, console: Console) -> bool:
     return result.ok
 
 
-def _flow_load_validation_result(
+async def _flow_load_validation_result(
     path: str | Path,
     console: Console,
     args: Namespace,
 ) -> FlowLoadResult | None:
     try:
-        return FlowDefinitionLoader().load_validation_result(Path(path))
+        return await FlowDefinitionLoader(
+            encoding=_flow_text_encoding(args)
+        ).load_validation_result(Path(path))
     except OSError as exc:
         diagnostic = _flow_file_read_diagnostic(exc)
         if _flow_json_output(args):
@@ -497,14 +535,22 @@ def _flow_load_validation_result(
         return None
 
 
-def _flow_read_text(
+def _flow_text_encoding(args: Namespace) -> str:
+    encoding = getattr(args, "encoding", DEFAULT_TEXT_ENCODING)
+    if encoding is None:
+        return DEFAULT_TEXT_ENCODING
+    assert isinstance(encoding, str), "encoding must be a string"
+    return encoding
+
+
+async def _flow_read_text(
     path: str | Path,
     console: Console,
     args: Namespace,
     noun: str,
 ) -> str | None:
     try:
-        return Path(path).read_text(encoding="utf-8")
+        return await read_text(path, encoding=_flow_text_encoding(args))
     except OSError as exc:
         diagnostic = _flow_file_read_diagnostic(exc)
         if _flow_json_output(args):
@@ -1160,10 +1206,10 @@ async def _flow_cancel(args: Namespace, console: Console) -> bool:
 
 
 async def _flow_resume(args: Namespace, console: Console) -> bool:
-    decisions = _flow_resume_decisions(args, console)
+    decisions = await _flow_resume_decisions(args, console)
     if decisions is None:
         return False
-    load_result = _flow_load_validation_result(args.flow, console, args)
+    load_result = await _flow_load_validation_result(args.flow, console, args)
     if load_result is None or not load_result.ok:
         return False
     assert load_result.definition is not None
@@ -1234,9 +1280,9 @@ async def _flow_run(
 ) -> bool:
     diagnostic_console = _task_diagnostic_console(args, console)
     flow_path = Path(args.flow)
-    loader = FlowDefinitionLoader()
+    loader = FlowDefinitionLoader(encoding=_flow_text_encoding(args))
     try:
-        load_result = loader.load_validation_result(flow_path)
+        load_result = await loader.load_validation_result(flow_path)
     except OSError as exc:
         message = strerror(exc.errno) if exc.errno else "Unable to read file."
         diagnostic_console.print(
@@ -1268,7 +1314,7 @@ async def _flow_run(
             _flow_load_task_issues(load_result.issues),
         )
         return False
-    load_result = loader.load_result(flow_path)
+    load_result = await loader.load_result(flow_path)
     if load_result.definition is None or load_result.flow is None:
         _print_issues(
             diagnostic_console,
@@ -1347,7 +1393,9 @@ async def _flow_run_with_task_context(
     logger: Logger | None,
 ) -> bool:
     diagnostic_console = _task_diagnostic_console(args, console)
-    load_result = _flow_metadata_loader().load_validation_result(flow_path)
+    load_result = await _flow_metadata_loader(
+        encoding=_flow_text_encoding(args)
+    ).load_validation_result(flow_path)
     if load_result.definition is None:
         _print_issues(
             diagnostic_console,
@@ -1489,7 +1537,7 @@ def _flow_state_store_context(
     )
 
 
-def _flow_resume_decisions(
+async def _flow_resume_decisions(
     args: Namespace,
     console: Console,
 ) -> Mapping[str, Mapping[str, object]] | None:
@@ -1505,7 +1553,10 @@ def _flow_resume_decisions(
     source = raw_value.strip()
     if source.startswith("@"):
         try:
-            source = Path(source[1:]).read_text(encoding="utf-8")
+            source = await read_text(
+                source[1:],
+                encoding=_flow_text_encoding(args),
+            )
         except OSError:
             _print_task_command_error(
                 console,
@@ -1927,7 +1978,10 @@ def _flow_schema_issue() -> TaskValidationIssue:
     )
 
 
-def _flow_metadata_loader() -> FlowDefinitionLoader:
+def _flow_metadata_loader(
+    *,
+    encoding: str = DEFAULT_TEXT_ENCODING,
+) -> FlowDefinitionLoader:
     registry = default_flow_node_registry()
     for node_type in ("agent", "file_convert", "pdf_to_images", "tool"):
         metadata: FlowNodeMetadata
@@ -1985,7 +2039,7 @@ def _flow_metadata_loader() -> FlowDefinitionLoader:
             _flow_task_context_metadata_node,
             metadata=metadata,
         )
-    return FlowDefinitionLoader(registry)
+    return FlowDefinitionLoader(registry, encoding=encoding)
 
 
 def _flow_task_context_metadata_node(definition: FlowNodeDefinition) -> Node:

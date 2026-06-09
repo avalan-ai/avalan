@@ -1,4 +1,5 @@
 from argparse import Namespace
+from asyncio import run as asyncio_run
 from base64 import b64decode
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AsyncExitStack, contextmanager
@@ -12,7 +13,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest import TestCase, main
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from rich.console import Console
 
@@ -3940,21 +3941,33 @@ class CliTaskCommandShellTestCase(TestCase):
             broken_path.write_text("[flow]\nname = 'broken'", encoding="utf-8")
             resolver = task_cmds._task_flow_resolver(root)
 
-            flow = resolver(
-                _flow_task_context(TaskExecutionTarget.flow("flow.toml"))
+            flow = asyncio_run(
+                resolver(
+                    _flow_task_context(TaskExecutionTarget.flow("flow.toml"))
+                )
             )
-            absolute_flow = resolver(
-                _flow_task_context(TaskExecutionTarget.flow(str(flow_path)))
+            absolute_flow = asyncio_run(
+                resolver(
+                    _flow_task_context(
+                        TaskExecutionTarget.flow(str(flow_path))
+                    )
+                )
             )
-            absolute_issues = task_cmds._validate_task_flow_reference(
-                root / "task.toml",
-                _flow_task_context(
-                    TaskExecutionTarget.flow(str(flow_path))
-                ).definition,
+            absolute_issues = asyncio_run(
+                task_cmds._validate_task_flow_reference(
+                    root / "task.toml",
+                    _flow_task_context(
+                        TaskExecutionTarget.flow(str(flow_path))
+                    ).definition,
+                )
             )
             with self.assertRaises(TaskValidationError) as context:
-                resolver(
-                    _flow_task_context(TaskExecutionTarget.flow("broken.toml"))
+                asyncio_run(
+                    resolver(
+                        _flow_task_context(
+                            TaskExecutionTarget.flow("broken.toml")
+                        )
+                    )
                 )
 
         self.assertIsNotNone(flow)
@@ -4009,15 +4022,25 @@ class CliTaskCommandShellTestCase(TestCase):
             broken_path.write_text("[flow]\nname = 'broken'", encoding="utf-8")
             resolver = task_cmds._task_strict_flow_resolver(root)
 
-            definition = resolver(
-                _flow_task_context(TaskExecutionTarget.flow("strict.toml"))
+            definition = asyncio_run(
+                resolver(
+                    _flow_task_context(TaskExecutionTarget.flow("strict.toml"))
+                )
             )
-            absolute_definition = resolver(
-                _flow_task_context(TaskExecutionTarget.flow(str(flow_path)))
+            absolute_definition = asyncio_run(
+                resolver(
+                    _flow_task_context(
+                        TaskExecutionTarget.flow(str(flow_path))
+                    )
+                )
             )
             with self.assertRaises(TaskValidationError) as context:
-                resolver(
-                    _flow_task_context(TaskExecutionTarget.flow("broken.toml"))
+                asyncio_run(
+                    resolver(
+                        _flow_task_context(
+                            TaskExecutionTarget.flow("broken.toml")
+                        )
+                    )
                 )
 
         self.assertEqual(definition.name, "constant")
@@ -4087,11 +4110,13 @@ class CliTaskCommandShellTestCase(TestCase):
                 "avalan.flow.loader.build_flow",
                 side_effect=AssertionError("runtime build not expected"),
             ) as build_flow:
-                issues = task_cmds._validate_task_flow_reference(
-                    root / "task.toml",
-                    _flow_task_context(
-                        TaskExecutionTarget.flow(str(flow_path))
-                    ).definition,
+                issues = asyncio_run(
+                    task_cmds._validate_task_flow_reference(
+                        root / "task.toml",
+                        _flow_task_context(
+                            TaskExecutionTarget.flow(str(flow_path))
+                        ).definition,
+                    )
                 )
 
         self.assertEqual(issues, ())
@@ -4112,26 +4137,32 @@ class CliTaskCommandShellTestCase(TestCase):
                 category=TaskValidationCategory.UNSUPPORTED,
             )
             loader = MagicMock()
-            loader.load_validation_result.return_value = SimpleNamespace(
-                definition=object(),
-                authoring_graph=False,
-                issues=(),
+            loader.load_validation_result = AsyncMock(
+                return_value=SimpleNamespace(
+                    definition=object(),
+                    authoring_graph=False,
+                    issues=(),
+                )
             )
-            loader.load_result.return_value = SimpleNamespace(
-                definition=None,
-                authoring_graph=False,
-                issues=(issue,),
+            loader.load_result = AsyncMock(
+                return_value=SimpleNamespace(
+                    definition=None,
+                    authoring_graph=False,
+                    issues=(issue,),
+                )
             )
 
             with patch(
                 "avalan.cli.commands.task.FlowDefinitionLoader",
                 return_value=loader,
             ):
-                issues = task_cmds._validate_task_flow_reference(
-                    root / "task.toml",
-                    _flow_task_context(
-                        TaskExecutionTarget.flow(str(flow_path))
-                    ).definition,
+                issues = asyncio_run(
+                    task_cmds._validate_task_flow_reference(
+                        root / "task.toml",
+                        _flow_task_context(
+                            TaskExecutionTarget.flow(str(flow_path))
+                        ).definition,
+                    )
                 )
 
         self.assertEqual(issues, (issue,))
@@ -4192,8 +4223,12 @@ class CliTaskCommandShellTestCase(TestCase):
                 "avalan.flow.loader.build_flow",
                 side_effect=AssertionError("runtime build not expected"),
             ):
-                definition = resolver(
-                    _flow_task_context(TaskExecutionTarget.flow("strict.toml"))
+                definition = asyncio_run(
+                    resolver(
+                        _flow_task_context(
+                            TaskExecutionTarget.flow("strict.toml")
+                        )
+                    )
                 )
 
         self.assertEqual(definition.name, "graph-strict")
@@ -4259,8 +4294,12 @@ class CliTaskCommandShellTestCase(TestCase):
                 ),
                 self.assertRaises(TaskValidationError) as context,
             ):
-                resolver(
-                    _flow_task_context(TaskExecutionTarget.flow("strict.toml"))
+                asyncio_run(
+                    resolver(
+                        _flow_task_context(
+                            TaskExecutionTarget.flow("strict.toml")
+                        )
+                    )
                 )
 
         self.assertEqual(

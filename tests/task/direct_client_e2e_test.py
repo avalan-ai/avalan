@@ -1630,8 +1630,8 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             )
             agent_runner = AgentTaskTargetRunner(loader, ref_base=fixture)
 
-            def resolve_flow(context: TaskTargetContext) -> Flow:
-                result = FlowDefinitionLoader(
+            async def resolve_flow(context: TaskTargetContext) -> Flow:
+                result = await FlowDefinitionLoader(
                     registry=task_flow_node_registry(
                         context,
                         agent_runner=agent_runner,
@@ -1856,8 +1856,8 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             )
             agent_runner = AgentTaskTargetRunner(loader, ref_base=fixture)
 
-            def resolve_image_flow(context: TaskTargetContext) -> Flow:
-                result = FlowDefinitionLoader(
+            async def resolve_image_flow(context: TaskTargetContext) -> Flow:
+                result = await FlowDefinitionLoader(
                     registry=task_flow_node_registry(
                         context,
                         agent_runner=agent_runner,

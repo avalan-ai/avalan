@@ -1,5 +1,6 @@
 from ...agent.loader import OrchestratorLoader
 from ...cli.theme import Theme
+from ...filesystem import read_text, run_awaitable
 from ...flow import (
     Flow,
     FlowDefinition,
@@ -87,7 +88,7 @@ from argparse import Namespace
 from asyncio import run as asyncio_run
 from base64 import b64decode
 from binascii import Error as BinasciiError
-from collections.abc import Callable, Coroutine, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -208,6 +209,15 @@ def task_validate(
     theme: Theme,
 ) -> bool:
     """Validate a task definition without executing it."""
+    return _run_awaitable(_task_validate(args, console, theme))
+
+
+async def _task_validate(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    _ = theme
     definition_path = Path(args.definition)
     try:
         load_result = TaskDefinitionLoader().load_result(definition_path)
@@ -234,7 +244,7 @@ def task_validate(
     if issues:
         _print_issues(console, "Task definition is invalid.", issues)
         return False
-    flow_issues = _validate_task_flow_reference(
+    flow_issues = await _validate_task_flow_reference(
         definition_path,
         load_result.definition,
     )
@@ -273,7 +283,7 @@ def task_validate(
     return True
 
 
-def _validate_task_flow_reference(
+async def _validate_task_flow_reference(
     definition_path: Path,
     definition: TaskDefinition,
 ) -> tuple[TaskValidationIssue, ...]:
@@ -308,9 +318,9 @@ def _validate_task_flow_reference(
         )
     )
     try:
-        result = loader.load_validation_result(path)
+        result = await loader.load_validation_result(path)
         if result.definition is not None and not result.authoring_graph:
-            result = loader.load_result(path)
+            result = await loader.load_result(path)
     except OSError:
         return (
             TaskValidationIssue(
@@ -1188,13 +1198,13 @@ def _task_flow_resolver(
     *,
     agent_runner: TaskTargetRunner | None = None,
     tool_resolver: FlowToolResolver | None = None,
-) -> Callable[[TaskTargetContext], Flow]:
-    def resolve(context: TaskTargetContext) -> Flow:
+) -> Callable[[TaskTargetContext], Awaitable[Flow]]:
+    async def resolve(context: TaskTargetContext) -> Flow:
         flow_ref = context.definition.execution.ref
         path = Path(flow_ref)
         if not path.is_absolute():
             path = ref_base / path
-        result = FlowDefinitionLoader(
+        result = await FlowDefinitionLoader(
             registry=task_flow_node_registry(
                 context,
                 agent_runner=agent_runner,
@@ -1225,13 +1235,13 @@ def _task_strict_flow_resolver(
     *,
     agent_runner: TaskTargetRunner | None = None,
     tool_resolver: FlowToolResolver | None = None,
-) -> Callable[[TaskTargetContext], FlowDefinition]:
-    def resolve(context: TaskTargetContext) -> FlowDefinition:
+) -> Callable[[TaskTargetContext], Awaitable[FlowDefinition]]:
+    async def resolve(context: TaskTargetContext) -> FlowDefinition:
         flow_ref = context.definition.execution.ref
         path = Path(flow_ref)
         if not path.is_absolute():
             path = ref_base / path
-        result = FlowDefinitionLoader(
+        result = await FlowDefinitionLoader(
             registry=task_flow_node_registry(
                 context,
                 agent_runner=agent_runner,
@@ -2116,7 +2126,7 @@ def _load_task_cli_json(value: str) -> object:
         if not path_value:
             raise _task_cli_input_error("Task input JSON file is invalid.")
         try:
-            value = Path(path_value).read_text(encoding="utf-8")
+            value = run_awaitable(read_text(path_value))
         except OSError as exc:
             message = strerror(exc.errno) if exc.errno else "Unable to read."
             raise TaskCliInputError(

@@ -5,6 +5,7 @@ from ..entities import (
     MessageContentText,
     MessageRole,
 )
+from ..filesystem import read_bytes, run_awaitable
 
 from base64 import b64encode
 from mimetypes import guess_type
@@ -38,7 +39,11 @@ def input_files(
             MessageContentFile(
                 type="file",
                 file={
-                    "file_data": b64encode(path.read_bytes()).decode("ascii"),
+                    "file_data": (
+                        b64encode(run_awaitable(read_bytes(path))).decode(
+                            "ascii"
+                        )
+                    ),
                     "filename": path.name,
                     "mime_type": mime_type,
                 },

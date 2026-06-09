@@ -1,3 +1,4 @@
+from asyncio import run as asyncio_run
 from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
@@ -272,7 +273,7 @@ class FlowDefinitionSerializerTestCase(TestCase):
 
             registry = self._registry()
             loader = FlowDefinitionLoader(registry)
-            result = loader.load_validation_result(flow_path)
+            result = asyncio_run(loader.load_validation_result(flow_path))
             self.assertTrue(result.ok, result.public_diagnostics)
             self.assertTrue(result.authoring_graph)
             assert result.definition is not None

@@ -9,6 +9,7 @@ from ...entities import (
     Similarity,
     TextPartition,
 )
+from ...filesystem import read_bytes, read_text
 from ...memory.partitioner.code import CodePartitioner
 from ...memory.partitioner.text import TextPartitioner
 from ...memory.permanent import MemoryType
@@ -130,7 +131,7 @@ async def memory_document_index(
                     content_type = "text/html"
 
                 if content_type:
-                    data = path.read_bytes()
+                    data = await read_bytes(path)
                     async with MemorySource() as memory_source:
                         document = await memory_source.from_bytes(
                             path.resolve().as_uri(),
@@ -141,7 +142,7 @@ async def memory_document_index(
                     description = description or document.description
                     contents = document.markdown
                 else:
-                    contents = path.read_text(encoding=args.encoding)
+                    contents = await read_text(path, encoding=args.encoding)
                     if not title:
                         title = path.name
 

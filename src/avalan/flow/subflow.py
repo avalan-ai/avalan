@@ -1,3 +1,4 @@
+from ..filesystem import run_awaitable
 from .definition import (
     FlowDefinition,
     FlowInputMapping,
@@ -81,12 +82,12 @@ class LocalFlowSubflowResolver:
         output_mapping: Mapping[str, str],
     ) -> Mapping[str, object]:
         loader = FlowDefinitionLoader(registry)
-        load_result = loader.load_validation_result(path)
+        load_result = run_awaitable(loader.load_validation_result(path))
         if (
             load_result.definition is not None
             and not load_result.authoring_graph
         ):
-            load_result = loader.load_result(path)
+            load_result = run_awaitable(loader.load_result(path))
         if load_result.definition is None:
             assert load_result.issues
             raise _configuration_error(

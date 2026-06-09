@@ -12,6 +12,7 @@ from ..entities import (
 )
 from ..event import Event, EventType
 from ..event.manager import EventManager
+from ..filesystem import read_text, run_awaitable
 from ..memory.manager import MemoryManager
 from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
@@ -40,7 +41,7 @@ from importlib import import_module
 from logging import DEBUG, INFO, Logger
 from os import R_OK, access
 from os.path import exists
-from tomllib import load
+from tomllib import loads as toml_loads
 from typing import TYPE_CHECKING, Any, Callable, cast
 from uuid import UUID, uuid4
 
@@ -243,8 +244,7 @@ class OrchestratorLoader:
 
     @classmethod
     def _load_serve_protocol_strings(cls, path: str) -> list[str] | None:
-        with open(path, "rb") as file:
-            config = load(file)
+        config = toml_loads(run_awaitable(read_text(path)))
 
         serve_section = config.get("serve")
         if serve_section is None:
@@ -303,8 +303,7 @@ class OrchestratorLoader:
         if not access(path, R_OK):
             raise PermissionError(path)
 
-        with open(path, "rb") as file:
-            config = load(file)
+        config = toml_loads(run_awaitable(read_text(path)))
 
         config = cls._resolve_agent_config_schema_refs(config, path=path)
         cls.validate_agent_config(config)
@@ -353,278 +352,264 @@ class OrchestratorLoader:
 
         _l("Loading agent from %s", path, is_debug=False)
 
-        with open(path, "rb") as file:
-            config = load(file)
+        config = toml_loads(await read_text(path))
+        config = OrchestratorLoader._resolve_agent_config_schema_refs(
+            config,
+            path=path,
+        )
 
-            config = OrchestratorLoader._resolve_agent_config_schema_refs(
-                config,
-                path=path,
-            )
+        # Validate settings
 
-            # Validate settings
+        assert "agent" in config, "No agent section in configuration"
+        assert "engine" in config, "No engine section defined in configuration"
+        assert (
+            "uri" in config["engine"]
+        ), "No uri defined in engine section of configuration"
 
-            assert "agent" in config, "No agent section in configuration"
-            assert (
-                "engine" in config
-            ), "No engine section defined in configuration"
-            assert (
-                "uri" in config["engine"]
-            ), "No uri defined in engine section of configuration"
+        agent_config = config["agent"]
+        self._validate_agent_section(agent_config)
 
-            agent_config = config["agent"]
-            self._validate_agent_section(agent_config)
+        assert "engine" in config, "No engine section defined in configuration"
+        assert (
+            "uri" in config["engine"]
+        ), "No uri defined in engine section of configuration"
 
-            assert (
-                "engine" in config
-            ), "No engine section defined in configuration"
-            assert (
-                "uri" in config["engine"]
-            ), "No uri defined in engine section of configuration"
+        uri = uri or config["engine"]["uri"]
+        engine_config = config["engine"]
+        OrchestratorLoader._validate_engine_file_delivery_profile(
+            engine_config
+        )
+        assert "tools" not in engine_config, (
+            "tools option in [engine] is no longer supported; "
+            "configure tools under [tool.enable]"
+        )
+        tool_section = config.get("tool")
+        if tool_section is None:
+            tool_section = {}
+        else:
+            assert isinstance(
+                tool_section, dict
+            ), "Tool section must be a mapping"
 
-            uri = uri or config["engine"]["uri"]
-            engine_config = config["engine"]
-            OrchestratorLoader._validate_engine_file_delivery_profile(
-                engine_config
-            )
-            assert "tools" not in engine_config, (
-                "tools option in [engine] is no longer supported; "
-                "configure tools under [tool.enable]"
-            )
-            tool_section = config.get("tool")
-            if tool_section is None:
-                tool_section = {}
+        enable_tools_config = tool_section.get("enable")
+        enable_tools: list[str] | None = None
+        if enable_tools_config is not None:
+            if isinstance(enable_tools_config, str):
+                enable_tools = [enable_tools_config]
             else:
                 assert isinstance(
-                    tool_section, dict
-                ), "Tool section must be a mapping"
-
-            enable_tools_config = tool_section.get("enable")
-            enable_tools: list[str] | None = None
-            if enable_tools_config is not None:
-                if isinstance(enable_tools_config, str):
-                    enable_tools = [enable_tools_config]
-                else:
+                    enable_tools_config, list
+                ), "tool.enable must be a string or a list of strings"
+                enable_tools = []
+                for tool_name in enable_tools_config:
                     assert isinstance(
-                        enable_tools_config, list
-                    ), "tool.enable must be a string or a list of strings"
-                    enable_tools = []
-                    for tool_name in enable_tools_config:
-                        assert isinstance(
-                            tool_name, str
-                        ), "tool.enable entries must be strings"
-                        enable_tools.append(tool_name)
-            engine_config.pop("uri", None)
-            engine_config.pop("file_delivery_profile", None)
-            orchestrator_type = (
-                config["agent"]["type"] if "type" in config["agent"] else None
+                        tool_name, str
+                    ), "tool.enable entries must be strings"
+                    enable_tools.append(tool_name)
+        engine_config.pop("uri", None)
+        engine_config.pop("file_delivery_profile", None)
+        orchestrator_type = (
+            config["agent"]["type"] if "type" in config["agent"] else None
+        )
+        agent_id = (
+            agent_id
+            if agent_id
+            else (
+                config["agent"]["id"] if "id" in config["agent"] else uuid4()
             )
-            agent_id = (
-                agent_id
-                if agent_id
-                else (
-                    config["agent"]["id"]
-                    if "id" in config["agent"]
-                    else uuid4()
-                )
-            )
+        )
 
-            assert orchestrator_type is None or orchestrator_type in [
-                "json"
-            ], (
-                f"Unknown type {config['agent']['type']} in agent section "
-                + "of configuration"
-            )
+        assert orchestrator_type is None or orchestrator_type in ["json"], (
+            f"Unknown type {config['agent']['type']} in agent section "
+            + "of configuration"
+        )
 
-            call_options = config["run"] if "run" in config else None
-            if call_options is not None:
-                assert isinstance(
-                    call_options, dict
-                ), "Run section must be a mapping"
-            if call_options and "chat" in call_options:
-                call_options["chat_settings"] = call_options.pop("chat")
-            template_vars = (
-                config["template"] if "template" in config else None
-            )
-
-            # Memory configuration
-
-            memory_options = (
-                config["memory"]
-                if "memory" in config and not disable_memory
-                else None
-            )
-
-            memory_permanent_message = (
-                memory_options["permanent_message"]
-                if memory_options and "permanent_message" in memory_options
-                else None
-            )
-
-            memory_permanent: (
-                dict[str, PermanentMemoryStoreSettings] | None
-            ) = None
-            if memory_options and "permanent" in memory_options:
-                memory_permanent_option = memory_options["permanent"]
-                assert isinstance(
-                    memory_permanent_option, dict
-                ), "Permanent memory should be a mapping"
-                memory_permanent = {
-                    str(ns): OrchestratorLoader.parse_permanent_store_value(
-                        str(dsn)
-                    )
-                    for ns, dsn in memory_permanent_option.items()
-                }
-            memory_recent = (
-                memory_options["recent"]
-                if memory_options and "recent" in memory_options
-                else False
-            )
+        call_options = config["run"] if "run" in config else None
+        if call_options is not None:
             assert isinstance(
-                memory_recent, bool
-            ), "Recent message memory can only be set or unset"
+                call_options, dict
+            ), "Run section must be a mapping"
+        if call_options and "chat" in call_options:
+            call_options["chat_settings"] = call_options.pop("chat")
+        template_vars = config["template"] if "template" in config else None
 
-            sentence_model_id = (
-                config["memory.engine"]["model_id"]
-                if "memory.engine" in config
-                and "model_id" in config["memory.engine"]
-                else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
-            )
-            sentence_model_engine_config = (
-                config["memory.engine"] if "memory.engine" in config else None
-            )
-            sentence_model_max_tokens = (
-                config["memory.engine"]["max_tokens"]
-                if sentence_model_engine_config
-                and "max_tokens" in sentence_model_engine_config
-                else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_MAX_TOKENS
-            )
-            sentence_model_overlap_size = (
-                config["memory.engine"]["overlap_size"]
-                if sentence_model_engine_config
-                and "overlap_size" in sentence_model_engine_config
-                else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE
-            )
-            sentence_model_window_size = (
-                config["memory.engine"]["window_size"]
-                if sentence_model_engine_config
-                and "window_size" in sentence_model_engine_config
-                else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_WINDOW_SIZE
-            )
+        # Memory configuration
 
-            if sentence_model_engine_config:
-                sentence_model_engine_config.pop("model_id", None)
-                sentence_model_engine_config.pop("max_tokens", None)
-                sentence_model_engine_config.pop("overlap_size", None)
-                sentence_model_engine_config.pop("window_size", None)
+        memory_options = (
+            config["memory"]
+            if "memory" in config and not disable_memory
+            else None
+        )
 
-            settings = OrchestratorSettings(
-                agent_id=agent_id,
-                orchestrator_type=orchestrator_type,
-                agent_config=agent_config,
-                uri=uri,
-                engine_config=engine_config,
-                tools=enable_tools,
-                call_options=call_options,
-                template_vars=template_vars,
-                memory_permanent_message=memory_permanent_message,
-                permanent_memory=memory_permanent,
-                memory_recent=memory_recent,
-                sentence_model_id=sentence_model_id,
-                sentence_model_engine_config=sentence_model_engine_config,
-                sentence_model_max_tokens=sentence_model_max_tokens,
-                sentence_model_overlap_size=sentence_model_overlap_size,
-                sentence_model_window_size=sentence_model_window_size,
-                json_config=(
-                    config.get("json") if isinstance(config, dict) else None
-                ),
-                log_events=True,
-            )
+        memory_permanent_message = (
+            memory_options["permanent_message"]
+            if memory_options and "permanent_message" in memory_options
+            else None
+        )
 
-            browser_config = None
-            browser_section = tool_section.get("browser")
-            if browser_section is not None:
+        memory_permanent: dict[str, PermanentMemoryStoreSettings] | None = None
+        if memory_options and "permanent" in memory_options:
+            memory_permanent_option = memory_options["permanent"]
+            assert isinstance(
+                memory_permanent_option, dict
+            ), "Permanent memory should be a mapping"
+            memory_permanent = {
+                str(ns): OrchestratorLoader.parse_permanent_store_value(
+                    str(dsn)
+                )
+                for ns, dsn in memory_permanent_option.items()
+            }
+        memory_recent = (
+            memory_options["recent"]
+            if memory_options and "recent" in memory_options
+            else False
+        )
+        assert isinstance(
+            memory_recent, bool
+        ), "Recent message memory can only be set or unset"
+
+        sentence_model_id = (
+            config["memory.engine"]["model_id"]
+            if "memory.engine" in config
+            and "model_id" in config["memory.engine"]
+            else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
+        )
+        sentence_model_engine_config = (
+            config["memory.engine"] if "memory.engine" in config else None
+        )
+        sentence_model_max_tokens = (
+            config["memory.engine"]["max_tokens"]
+            if sentence_model_engine_config
+            and "max_tokens" in sentence_model_engine_config
+            else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_MAX_TOKENS
+        )
+        sentence_model_overlap_size = (
+            config["memory.engine"]["overlap_size"]
+            if sentence_model_engine_config
+            and "overlap_size" in sentence_model_engine_config
+            else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_OVERLAP_SIZE
+        )
+        sentence_model_window_size = (
+            config["memory.engine"]["window_size"]
+            if sentence_model_engine_config
+            and "window_size" in sentence_model_engine_config
+            else OrchestratorLoader.DEFAULT_SENTENCE_MODEL_WINDOW_SIZE
+        )
+
+        if sentence_model_engine_config:
+            sentence_model_engine_config.pop("model_id", None)
+            sentence_model_engine_config.pop("max_tokens", None)
+            sentence_model_engine_config.pop("overlap_size", None)
+            sentence_model_engine_config.pop("window_size", None)
+
+        settings = OrchestratorSettings(
+            agent_id=agent_id,
+            orchestrator_type=orchestrator_type,
+            agent_config=agent_config,
+            uri=uri,
+            engine_config=engine_config,
+            tools=enable_tools,
+            call_options=call_options,
+            template_vars=template_vars,
+            memory_permanent_message=memory_permanent_message,
+            permanent_memory=memory_permanent,
+            memory_recent=memory_recent,
+            sentence_model_id=sentence_model_id,
+            sentence_model_engine_config=sentence_model_engine_config,
+            sentence_model_max_tokens=sentence_model_max_tokens,
+            sentence_model_overlap_size=sentence_model_overlap_size,
+            sentence_model_window_size=sentence_model_window_size,
+            json_config=(
+                config.get("json") if isinstance(config, dict) else None
+            ),
+            log_events=True,
+        )
+
+        browser_config = None
+        browser_section = tool_section.get("browser")
+        if browser_section is not None:
+            assert isinstance(
+                browser_section, dict
+            ), "tool.browser section must be a mapping"
+            browser_open_section = browser_section.get("open")
+            if browser_open_section is not None:
                 assert isinstance(
-                    browser_section, dict
-                ), "tool.browser section must be a mapping"
-                browser_open_section = browser_section.get("open")
-                if browser_open_section is not None:
-                    assert isinstance(
-                        browser_open_section, dict
-                    ), "tool.browser.open section must be a mapping"
-                    browser_config = browser_open_section
-                else:
-                    browser_config = browser_section
-            browser_settings = None
-            if browser_config:
-                if "debug_source" in browser_config and isinstance(
-                    browser_config["debug_source"], str
-                ):
-                    browser_config["debug_source"] = open(
-                        browser_config["debug_source"]
-                    )
-                browser_settings = BrowserToolSettings(**browser_config)
-
-            database_settings = None
-            database_config = tool_section.get("database")
-            if database_config:
-                assert isinstance(
-                    database_config, dict
-                ), "tool.database section must be a mapping"
-                database_settings = DatabaseToolSettings(**database_config)
-
-            graph_settings = None
-            graph_config = tool_section.get("graph")
-            if graph_config:
-                assert isinstance(
-                    graph_config, dict
-                ), "tool.graph section must be a mapping"
-                graph_settings = GraphToolSettings(**graph_config)
-
-            if tool_settings:
-                browser_settings = tool_settings.browser or browser_settings
-                database_settings = tool_settings.database or database_settings
-                graph_settings = tool_settings.graph or graph_settings
-                extra = tool_settings.extra
+                    browser_open_section, dict
+                ), "tool.browser.open section must be a mapping"
+                browser_config = browser_open_section
             else:
-                extra = None
-
-            tool_settings = ToolSettingsContext(
-                browser=browser_settings,
-                database=database_settings,
-                graph=graph_settings,
-                extra=extra,
-            )
-
-            tool_format = None
-            tool_format_str = tool_section.get("format")
-            if tool_format_str:
-                tool_format = ToolFormat(tool_format_str)
-
-            recovery_format_values = tool_section.get("recovery_formats", [])
-            assert isinstance(
-                recovery_format_values, list
-            ), "tool.recovery_formats must be a list"
-            tool_recovery_formats: list[ToolCallRecoveryFormat] = []
-            for value in recovery_format_values:
-                assert isinstance(
-                    value, str
-                ), "tool.recovery_formats entries must be strings"
-                tool_recovery_formats.append(ToolCallRecoveryFormat(value))
-
-            _l("Loaded agent from %s", path, is_debug=False)
-
-            if tool_recovery_formats:
-                return await self.from_settings(
-                    settings,
-                    tool_settings=tool_settings,
-                    tool_format=tool_format,
-                    tool_recovery_formats=tool_recovery_formats,
+                browser_config = browser_section
+        browser_settings = None
+        if browser_config:
+            if "debug_source" in browser_config and isinstance(
+                browser_config["debug_source"], str
+            ):
+                browser_config["debug_source"] = open(
+                    browser_config["debug_source"]
                 )
+            browser_settings = BrowserToolSettings(**browser_config)
+
+        database_settings = None
+        database_config = tool_section.get("database")
+        if database_config:
+            assert isinstance(
+                database_config, dict
+            ), "tool.database section must be a mapping"
+            database_settings = DatabaseToolSettings(**database_config)
+
+        graph_settings = None
+        graph_config = tool_section.get("graph")
+        if graph_config:
+            assert isinstance(
+                graph_config, dict
+            ), "tool.graph section must be a mapping"
+            graph_settings = GraphToolSettings(**graph_config)
+
+        if tool_settings:
+            browser_settings = tool_settings.browser or browser_settings
+            database_settings = tool_settings.database or database_settings
+            graph_settings = tool_settings.graph or graph_settings
+            extra = tool_settings.extra
+        else:
+            extra = None
+
+        tool_settings = ToolSettingsContext(
+            browser=browser_settings,
+            database=database_settings,
+            graph=graph_settings,
+            extra=extra,
+        )
+
+        tool_format = None
+        tool_format_str = tool_section.get("format")
+        if tool_format_str:
+            tool_format = ToolFormat(tool_format_str)
+
+        recovery_format_values = tool_section.get("recovery_formats", [])
+        assert isinstance(
+            recovery_format_values, list
+        ), "tool.recovery_formats must be a list"
+        tool_recovery_formats: list[ToolCallRecoveryFormat] = []
+        for value in recovery_format_values:
+            assert isinstance(
+                value, str
+            ), "tool.recovery_formats entries must be strings"
+            tool_recovery_formats.append(ToolCallRecoveryFormat(value))
+
+        _l("Loaded agent from %s", path, is_debug=False)
+
+        if tool_recovery_formats:
             return await self.from_settings(
                 settings,
                 tool_settings=tool_settings,
                 tool_format=tool_format,
+                tool_recovery_formats=tool_recovery_formats,
             )
+        return await self.from_settings(
+            settings,
+            tool_settings=tool_settings,
+            tool_format=tool_format,
+        )
 
     async def from_settings(
         self,

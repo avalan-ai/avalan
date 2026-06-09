@@ -20,6 +20,7 @@ from ..entities import (
     VisionImageFormat,
     WeightType,
 )
+from ..filesystem import read_text, run_awaitable
 from ..model.manager import ModelManager
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
@@ -72,7 +73,7 @@ from signal import signal as set_signal_handler
 from subprocess import run
 from threading import current_thread, main_thread
 from tomllib import TOMLDecodeError
-from tomllib import load as toml_load
+from tomllib import loads as toml_loads
 from types import FrameType
 from typing import (
     TYPE_CHECKING,
@@ -1779,6 +1780,11 @@ class CLI:
             help="Flow definition TOML file to validate",
         )
         flow_validate_parser.add_argument(
+            "--encoding",
+            default="utf-8",
+            help="File encoding used when reading local flow files.",
+        )
+        flow_validate_parser.add_argument(
             "--json",
             dest="flow_json",
             action="store_true",
@@ -1793,6 +1799,11 @@ class CLI:
             "flow",
             type=str,
             help="Flow definition TOML file to compile",
+        )
+        flow_compile_parser.add_argument(
+            "--encoding",
+            default="utf-8",
+            help="File encoding used when reading local flow files.",
         )
         flow_compile_output_group = (
             flow_compile_parser.add_mutually_exclusive_group()
@@ -1834,6 +1845,11 @@ class CLI:
             help="Mermaid diagram file to parse",
         )
         flow_mermaid_parse_parser.add_argument(
+            "--encoding",
+            default="utf-8",
+            help="File encoding used when reading local Mermaid files.",
+        )
+        flow_mermaid_parse_parser.add_argument(
             "--mode",
             choices=("presentation", "executable"),
             required=True,
@@ -1854,6 +1870,11 @@ class CLI:
             "diagram",
             type=str,
             help="Mermaid diagram file to render",
+        )
+        flow_mermaid_render_parser.add_argument(
+            "--encoding",
+            default="utf-8",
+            help="File encoding used when reading local Mermaid files.",
         )
         flow_mermaid_render_parser.add_argument(
             "--mode",
@@ -1883,6 +1904,11 @@ class CLI:
             help="Flow definition TOML file to compare",
         )
         flow_mermaid_compare_parser.add_argument(
+            "--encoding",
+            default="utf-8",
+            help="File encoding used when reading local flow files.",
+        )
+        flow_mermaid_compare_parser.add_argument(
             "--mode",
             choices=("presentation", "executable"),
             required=True,
@@ -1903,6 +1929,11 @@ class CLI:
             "diagram",
             type=str,
             help="Mermaid diagram file to skeletonize",
+        )
+        flow_mermaid_skeleton_parser.add_argument(
+            "--encoding",
+            default="utf-8",
+            help="File encoding used when reading local Mermaid files.",
         )
         flow_mermaid_skeleton_parser.add_argument(
             "--mode",
@@ -3632,8 +3663,7 @@ class CLI:
                 return bool(engine_uri.is_local)
             specs = getattr(args, "specifications_file", None)
             if specs:
-                with open(specs, "rb") as file:
-                    config = toml_load(file)
+                config = toml_loads(run_awaitable(read_text(specs)))
                 engine_uri_str = config.get("engine", {}).get("uri")
                 if engine_uri_str:
                     assert isinstance(engine_uri_str, str)
@@ -3654,8 +3684,7 @@ class CLI:
         if not isinstance(definition, str):
             return None
         try:
-            with open(definition, "rb") as file:
-                task_config = toml_load(file)
+            task_config = toml_loads(run_awaitable(read_text(definition)))
             execution = task_config.get("execution")
             if not isinstance(execution, dict):
                 return None
@@ -3665,8 +3694,7 @@ class CLI:
             if not isinstance(ref, str):
                 return None
             agent_path = Path(definition).parent / ref
-            with agent_path.open("rb") as file:
-                agent_config = toml_load(file)
+            agent_config = toml_loads(run_awaitable(read_text(agent_path)))
             engine = agent_config.get("engine")
             if not isinstance(engine, dict):
                 return None

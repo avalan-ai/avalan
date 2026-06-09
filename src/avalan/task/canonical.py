@@ -1,3 +1,4 @@
+from ..filesystem import read_text, run_awaitable
 from ..types import LooseJsonValue
 from .definition import (
     FrozenMetadata,
@@ -203,7 +204,7 @@ def _provider_instructions_digest(
         root = base_dir.resolve(strict=False)
         source_path = (root / ref).resolve(strict=False)
         source_path.relative_to(root)
-        source = source_path.read_text(encoding="utf-8")
+        source = run_awaitable(read_text(source_path))
         raw = toml_loads(source)
     except (OSError, TOMLDecodeError, ValueError):
         return None
