@@ -1142,6 +1142,190 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         assert result.definition is not None
         self.assertEqual(result.definition.name, "graph_admission")
 
+    async def test_loads_inline_graph_as_strict_edges_and_executes(
+        self,
+    ) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "graph_inline"
+            version = "2026-06-09"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.value"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@-->|Private diagram label| finish
+            start -.-> note
+            '''
+
+            [graph.edges.route_1]
+            label = "approved"
+            kind = "finally"
+            priority = 7
+            default = false
+            routing_policy = "all_matching"
+
+            [graph.edges.route_1.condition]
+            op = "eq"
+            selector = "start.value"
+            value = "go"
+
+            [nodes.start]
+            type = "constant"
+            value = "go"
+
+            [nodes.finish]
+            type = "echo"
+            """)
+
+        self.assertTrue(result.ok, result.issues)
+        assert result.definition is not None
+        assert result.flow is not None
+        self.assertEqual(len(result.definition.edges), 1)
+        edge = result.definition.edges[0]
+        self.assertEqual(edge.source, "start")
+        self.assertEqual(edge.target, "finish")
+        self.assertEqual(edge.label, "approved")
+        self.assertEqual(edge.kind, FlowEdgeKind.FINALLY)
+        self.assertEqual(edge.priority, 7)
+        self.assertFalse(edge.default)
+        self.assertEqual(
+            edge.routing_policy,
+            FlowRouteMatchPolicy.ALL_MATCHING,
+        )
+        assert edge.condition is not None
+        self.assertEqual(edge.condition.operator, FlowConditionOperator.EQ)
+        self.assertEqual(edge.condition.selector, "start.value")
+        self.assertEqual(
+            await result.flow.execute_async(initial_node="start"),
+            "go",
+        )
+        self.assertNotIn("Private diagram label", str(result.definition))
+
+    async def test_loads_file_graph_relative_to_definition_base(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            base = Path(temporary_directory)
+            graph_dir = base / "graphs"
+            graph_dir.mkdir()
+            graph_path = graph_dir / "flow.mmd"
+            graph_path.write_text(
+                "\n".join(
+                    (
+                        "flowchart LR",
+                        "start route_1@--> finish",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            flow_path = base / "flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "graph_file"
+                entrypoint = "start"
+                output_node = "finish"
+
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                path = "graphs/flow.mmd"
+
+                [nodes.start]
+                type = "constant"
+                value = "ok"
+
+                [nodes.finish]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+
+            result = load_flow_definition_result(flow_path)
+
+        self.assertTrue(result.ok, result.issues)
+        assert result.definition is not None
+        assert result.flow is not None
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in result.definition.edges],
+            [("start", "finish")],
+        )
+        self.assertEqual(
+            await result.flow.execute_async(initial_node="start"),
+            "ok",
+        )
+
+    def test_loads_validation_result_compiles_graph_without_building_nodes(
+        self,
+    ) -> None:
+        build_calls = 0
+
+        def factory(definition: FlowNodeDefinition) -> Node:
+            nonlocal build_calls
+            _ = definition
+            build_calls += 1
+            raise AssertionError("factory should not build")
+
+        loader = FlowDefinitionLoader(
+            FlowNodeRegistry(
+                {"external": factory},
+                {"external": FlowNodeMetadata()},
+            )
+        )
+
+        result = loader.loads_validation_result("""
+            [flow]
+            name = "graph_validation"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@--> finish
+            '''
+
+            [nodes.start]
+            type = "external"
+
+            [nodes.finish]
+            type = "external"
+            """)
+
+        self.assertTrue(result.ok, result.issues)
+        self.assertIsNone(result.flow)
+        assert result.definition is not None
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in result.definition.edges],
+            [("start", "finish")],
+        )
+        self.assertEqual(build_calls, 0)
+
     def test_native_edges_load_without_graph_section(self) -> None:
         result = loads_flow_definition_result(VALID_FLOW)
 
@@ -1215,6 +1399,223 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         public = str(result.public_diagnostics)
         self.assertNotIn("private diagram label", public)
         self.assertNotIn("private strict edge label", public)
+
+    def test_graph_compile_failure_skips_validation_and_node_build(
+        self,
+    ) -> None:
+        build_calls = 0
+
+        def factory(definition: FlowNodeDefinition) -> Node:
+            nonlocal build_calls
+            _ = definition
+            build_calls += 1
+            raise AssertionError("factory should not build")
+
+        loader = FlowDefinitionLoader(
+            FlowNodeRegistry(
+                {"external": factory},
+                {"external": FlowNodeMetadata()},
+            )
+        )
+
+        with patch("avalan.flow.loader.validate_flow_definition") as validate:
+            result = loader.loads_result("""
+                [flow]
+                name = "graph_invalid"
+                entrypoint = "start"
+                output_node = "finish"
+
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start -->|Private customer route| finish
+                '''
+
+                [nodes.start]
+                type = "external"
+
+                [nodes.finish]
+                type = "external"
+                """)
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.definition)
+        self.assertIsNone(result.flow)
+        validate.assert_not_called()
+        self.assertEqual(build_calls, 0)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in result.issues],
+            [("flow.graph.unsupported_executable_edge", "graph.edges")],
+        )
+        self.assertNotIn(
+            "Private customer route",
+            str(result.public_diagnostics),
+        )
+
+    def test_graph_metadata_binding_failure_is_privacy_safe(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "graph_binding"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@--> finish
+            '''
+
+            [graph.edges.private_route]
+            label = "private metadata label"
+
+            [nodes.start]
+            type = "constant"
+            value = "ok"
+
+            [nodes.finish]
+            type = "echo"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in result.issues],
+            [("flow.graph.missing_edge_metadata", "graph.edges")],
+        )
+        self.assertNotIn(
+            "private metadata label",
+            str(result.public_diagnostics),
+        )
+
+    def test_graph_section_rejects_source_contract_errors_safely(self) -> None:
+        cases = (
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                """,
+                "flow.graph.missing_source",
+                "graph.source",
+            ),
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                """,
+                "flow.graph.missing_source",
+                "graph.source",
+            ),
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = "flowchart LR\\nstart"
+                path = "private/graph.mmd"
+                """,
+                "flow.graph.source_conflict",
+                "graph.source",
+            ),
+            (
+                """
+                [graph]
+                format = 3
+                source = "inline"
+                mode = "executable"
+                diagram = "flowchart LR\\nstart"
+                """,
+                "flow.graph.unsupported_format",
+                "graph.format",
+            ),
+            (
+                """
+                [graph]
+                format = "private-format"
+                source = "inline"
+                mode = "executable"
+                diagram = "flowchart LR\\nstart"
+                """,
+                "flow.graph.unsupported_format",
+                "graph.format",
+            ),
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "remote"
+                mode = "executable"
+                diagram = "flowchart LR\\nstart"
+                """,
+                "flow.graph.unsupported_source",
+                "graph.source",
+            ),
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "presentation"
+                diagram = "flowchart LR\\nstart"
+                """,
+                "flow.graph.unsupported_mode",
+                "graph.mode",
+            ),
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = 3
+                """,
+                "flow.invalid_type",
+                "graph.diagram",
+            ),
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                path = 3
+                """,
+                "flow.invalid_type",
+                "graph.path",
+            ),
+        )
+
+        for graph_toml, code, path in cases:
+            with self.subTest(code=code):
+                result = loads_flow_definition_result(f"""
+                    {graph_toml}
+
+                    [flow]
+                    name = "graph_source_contract"
+                    entrypoint = "start"
+                    output_node = "start"
+
+                    [nodes.start]
+                    type = "echo"
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    [(issue.code, issue.path) for issue in result.issues],
+                    [(code, path)],
+                )
+                public = str(result.public_diagnostics)
+                self.assertNotIn("private", public)
+                self.assertNotIn("flowchart", public)
 
     def test_graph_section_rejects_invalid_shapes_and_fields(self) -> None:
         cases = (
