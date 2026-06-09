@@ -4,6 +4,7 @@ from base64 import b64decode
 from collections.abc import Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from enum import Enum
+from errno import EACCES
 from io import StringIO
 from json import dumps, loads
 from os import chdir
@@ -60,6 +61,7 @@ from avalan.flow import (
     MermaidRenderResult,
     Node,
     compare_flow_topology,
+    compile_flow_file,
     default_flow_node_registry,
     parse_mermaid_view,
     render_flow_view,
@@ -109,6 +111,9 @@ TASK_ARGS = {
     "quiet": False,
     "tool": None,
     "tools": None,
+    "check": False,
+    "flow_json": False,
+    "output": None,
 }
 
 
@@ -177,6 +182,223 @@ class FlowRunCommandTestCase(TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["diagnostics"][0]["code"], "file.read")
         self.assertNotIn("private.flow.toml", stream.getvalue())
+
+    def test_flow_compile_prints_canonical_strict_toml(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        json_stream = StringIO()
+        json_console = Console(file=json_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            flow_path = _write_strict_graph_constant_flow(
+                Path(temporary_directory)
+            )
+            sdk_result = compile_flow_file(flow_path)
+            result = flow_cmds.flow_compile(
+                _args(flow=flow_path),
+                console,
+                self.theme,
+            )
+            json_result = flow_cmds.flow_compile(
+                _args(flow=flow_path, flow_json=True),
+                json_console,
+                self.theme,
+            )
+
+        payload = loads(json_stream.getvalue())
+        self.assertTrue(result)
+        self.assertTrue(json_result)
+        self.assertEqual(stream.getvalue(), sdk_result.canonical_source)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            payload["canonical_source"],
+            {"format": "toml", "strict": True},
+        )
+        self.assertIn("[[edges]]", stream.getvalue())
+        self.assertNotIn("[graph]", stream.getvalue())
+        self.assertNotIn("Private graph label", stream.getvalue())
+
+    def test_flow_compile_writes_output_and_reports_json(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root)
+            output_path = root / "compiled.flow.toml"
+            result = flow_cmds.flow_compile(
+                _args(
+                    flow=flow_path,
+                    flow_json=True,
+                    output=str(output_path),
+                ),
+                console,
+                self.theme,
+            )
+            output = output_path.read_text(encoding="utf-8")
+
+        payload = loads(stream.getvalue())
+        self.assertTrue(result)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["authoring_graph"])
+        self.assertEqual(payload["definition"]["edge_count"], 1)
+        self.assertEqual(
+            payload["canonical_source"],
+            {"format": "toml", "strict": True},
+        )
+        self.assertIn("[[edges]]", output)
+        self.assertNotIn("[graph]", output)
+
+    def test_flow_compile_output_human_success(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root)
+            output_path = root / "compiled.flow.toml"
+            result = flow_cmds.flow_compile(
+                _args(flow=flow_path, output=str(output_path)),
+                console,
+                self.theme,
+            )
+
+        self.assertTrue(result)
+        self.assertIn("Compiled flow written.", console.export_text())
+
+    def test_flow_compile_check_modes_do_not_write(self) -> None:
+        human_console = Console(record=True, width=160)
+        json_stream = StringIO()
+        json_console = Console(file=json_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root)
+            human_result = flow_cmds.flow_compile(
+                _args(flow=flow_path, check=True),
+                human_console,
+                self.theme,
+            )
+            json_result = flow_cmds.flow_compile(
+                _args(flow=flow_path, check=True, flow_json=True),
+                json_console,
+                self.theme,
+            )
+
+        payload = loads(json_stream.getvalue())
+        self.assertTrue(human_result)
+        self.assertTrue(json_result)
+        self.assertIn(
+            "Flow definition compiles: strict_graph 1",
+            human_console.export_text(),
+        )
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["diagnostics"], [])
+
+    def test_flow_compile_reports_compile_failures_safely(self) -> None:
+        human_console = Console(record=True, width=160)
+        json_stream = StringIO()
+        json_console = Console(file=json_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root, valid=False)
+            human_result = flow_cmds.flow_compile(
+                _args(flow=flow_path),
+                human_console,
+                self.theme,
+            )
+            json_result = flow_cmds.flow_compile(
+                _args(flow=flow_path, flow_json=True),
+                json_console,
+                self.theme,
+            )
+
+        human_output = human_console.export_text()
+        json_output = json_stream.getvalue()
+        payload = loads(json_output)
+        self.assertFalse(human_result)
+        self.assertFalse(json_result)
+        self.assertIn("Flow definition could not be compiled.", human_output)
+        self.assertEqual(
+            payload["diagnostics"][0]["code"],
+            "flow.graph.unsupported_executable_edge",
+        )
+        self.assertNotIn("Private graph label", human_output)
+        self.assertNotIn("Private graph label", json_output)
+
+    def test_flow_compile_reports_read_failure_as_json_safely(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        human_console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            flow_path = Path(temporary_directory) / "private.flow.toml"
+            result = flow_cmds.flow_compile(
+                _args(flow=flow_path, flow_json=True),
+                console,
+                self.theme,
+            )
+            human_result = flow_cmds.flow_compile(
+                _args(flow=flow_path),
+                human_console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertFalse(result)
+        self.assertFalse(human_result)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["diagnostics"][0]["code"], "file.read")
+        self.assertIn(
+            "Flow definition could not be read.",
+            human_console.export_text(),
+        )
+        self.assertNotIn("private.flow.toml", stream.getvalue())
+        self.assertNotIn("private.flow.toml", human_console.export_text())
+
+    def test_flow_compile_reports_write_failures_safely(self) -> None:
+        human_console = Console(record=True, width=160)
+        json_stream = StringIO()
+        json_console = Console(file=json_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root)
+            human_output = root / "human.flow.toml"
+            json_output = root / "json.flow.toml"
+            with patch.object(
+                Path,
+                "replace",
+                side_effect=OSError(EACCES, "private path"),
+            ):
+                human_result = flow_cmds.flow_compile(
+                    _args(flow=flow_path, output=str(human_output)),
+                    human_console,
+                    self.theme,
+                )
+                json_result = flow_cmds.flow_compile(
+                    _args(
+                        flow=flow_path,
+                        flow_json=True,
+                        output=str(json_output),
+                    ),
+                    json_console,
+                    self.theme,
+                )
+
+            self.assertFalse((root / ".human.flow.toml.tmp").exists())
+            self.assertFalse((root / ".json.flow.toml.tmp").exists())
+
+        payload = loads(json_stream.getvalue())
+        self.assertFalse(human_result)
+        self.assertFalse(json_result)
+        self.assertIn(
+            "Compiled flow could not be written.",
+            human_console.export_text(),
+        )
+        self.assertEqual(payload["diagnostics"][0]["code"], "file.write")
+        self.assertNotIn("human.flow.toml", human_console.export_text())
+        self.assertNotIn("json.flow.toml", json_stream.getvalue())
 
     def test_flow_cli_sdk_validate_parity_positive_and_negative(self) -> None:
         success_stream = StringIO()

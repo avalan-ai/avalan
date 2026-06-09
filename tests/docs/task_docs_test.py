@@ -116,6 +116,7 @@ class TaskDocsTest(TestCase):
             subcommands,
             {
                 "cancel",
+                "compile",
                 "inspect",
                 "mermaid",
                 "resume",

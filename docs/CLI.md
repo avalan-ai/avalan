@@ -19,6 +19,7 @@ The CLI offers the following commands, some of them with multiple subcommands:
 * [avalan flow](#avalan-flow)
   * [avalan flow run](#avalan-flow-run)
   * [avalan flow validate](#avalan-flow-validate)
+  * [avalan flow compile](#avalan-flow-compile)
   * [avalan flow mermaid](#avalan-flow-mermaid)
   * [avalan flow inspect](#avalan-flow-inspect)
   * [avalan flow trace](#avalan-flow-trace)
@@ -1519,14 +1520,15 @@ plicate}
 
 ## avalan flow
 
-`avalan flow` validates, renders, compares, runs, inspects, resumes, cancels,
-and exports sanitized traces for flow definitions. Strict flow definitions use
-declared inputs, declared outputs, explicit entry behavior, and explicit output
-selection. Mermaid commands operate on inert Flow Views and do not execute
-nodes.
+`avalan flow` validates, compiles, renders, compares, runs, inspects, resumes,
+cancels, and exports sanitized traces for flow definitions. Strict flow
+definitions use declared inputs, declared outputs, explicit entry behavior, and
+explicit output selection. Mermaid commands operate on inert Flow Views and do
+not execute nodes.
 
 ```bash
 avalan flow validate flow.toml
+avalan flow compile flow.toml --output strict.flow.toml
 avalan flow mermaid parse topology.mmd --mode presentation --json
 avalan flow run flow.toml --input-json '{"name":"Ada"}' --json
 ```
@@ -1537,6 +1539,7 @@ Flow subcommands:
 | --- | --- |
 | `run` | Execute a local strict flow or a compatible native flow. |
 | `validate` | Validate a flow definition without node execution. |
+| `compile` | Compile a flow definition to canonical strict TOML. |
 | `mermaid parse` | Parse Mermaid into an inert Flow View. |
 | `mermaid render` | Render a safe Mermaid view. |
 | `mermaid compare` | Compare Mermaid topology with a flow definition. |
@@ -1593,6 +1596,21 @@ avalan flow validate flow.toml --json
 JSON output contains `ok` and public `diagnostics` fields. Diagnostics avoid
 printing private file paths, prompt text, file bytes, provider bodies, token
 text, and raw model output.
+
+### avalan flow compile
+
+Compile a flow definition to canonical strict TOML:
+
+```bash
+avalan flow compile flow.toml
+avalan flow compile flow.toml --output strict.flow.toml
+avalan flow compile flow.toml --check --json
+```
+
+Without `--output` or `--check`, canonical strict TOML is printed to stdout.
+`--output PATH` writes the canonical strict TOML atomically. `--check`
+compiles and validates without writing. `--json` prints compact status and
+public diagnostics instead of TOML.
 
 ### avalan flow mermaid
 

@@ -1,6 +1,7 @@
 from ...cli.theme import Theme
 from ...flow import (
     FlowDefinition,
+    FlowDefinitionCompileResult,
     FlowDefinitionLoader,
     FlowDiagnostic,
     FlowDiagnosticCategory,
@@ -42,6 +43,7 @@ from ...flow import (
     Node,
     PgsqlFlowStateStore,
     compare_flow_topology,
+    compile_flow_file,
     default_flow_node_registry,
     flow_input_binding,
     parse_mermaid_view,
@@ -154,6 +156,83 @@ def flow_validate(
             diagnostics,
         )
     return ok
+
+
+def flow_compile(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Compile a flow definition to strict canonical TOML."""
+    _ = theme
+    try:
+        result = compile_flow_file(args.flow)
+    except OSError as exc:
+        diagnostic = _flow_file_read_diagnostic(exc)
+        if _flow_json_output(args):
+            _print_flow_json_result(
+                console,
+                ok=False,
+                diagnostics=(diagnostic,),
+            )
+        else:
+            _print_flow_diagnostics(
+                console,
+                "Flow definition could not be read.",
+                (diagnostic,),
+            )
+        return False
+    if not result.ok:
+        if _flow_json_output(args):
+            _print_flow_compile_json_result(console, result)
+        else:
+            _print_flow_diagnostics(
+                console,
+                "Flow definition could not be compiled.",
+                result.diagnostics,
+            )
+        return False
+    assert result.definition is not None
+    assert result.canonical_source is not None
+    if args.check:
+        if _flow_json_output(args):
+            _print_flow_compile_json_result(console, result)
+        else:
+            console.print(
+                "Flow definition compiles: "
+                f"{result.definition.name} "
+                f"{_flow_definition_identity(result.definition)}",
+                markup=False,
+            )
+        return True
+    if args.output is not None:
+        try:
+            _flow_write_text_atomic(Path(args.output), result.canonical_source)
+        except OSError as exc:
+            diagnostic = _flow_file_write_diagnostic(exc)
+            if _flow_json_output(args):
+                _print_flow_json_result(
+                    console,
+                    ok=False,
+                    diagnostics=(diagnostic,),
+                )
+            else:
+                _print_flow_diagnostics(
+                    console,
+                    "Compiled flow could not be written.",
+                    (diagnostic,),
+                )
+            return False
+        if _flow_json_output(args):
+            _print_flow_compile_json_result(console, result)
+        else:
+            console.print("Compiled flow written.", markup=False)
+        return True
+    if _flow_json_output(args):
+        _print_flow_compile_json_result(console, result)
+    else:
+        console.print(result.canonical_source, markup=False, end="")
+    return True
 
 
 def flow_mermaid(
@@ -455,6 +534,18 @@ def _flow_file_read_diagnostic(exc: OSError) -> FlowDiagnostic:
     )
 
 
+def _flow_file_write_diagnostic(exc: OSError) -> FlowDiagnostic:
+    message = strerror(exc.errno) if exc.errno else "Unable to write file."
+    return FlowDiagnostic(
+        code="file.write",
+        path="file",
+        category=FlowDiagnosticCategory.PRIVACY,
+        severity=FlowDiagnosticSeverity.ERROR,
+        message=message,
+        hint="Use a writable local output path.",
+    )
+
+
 def _flow_import_mode(args: Namespace) -> FlowViewImportMode:
     return FlowViewImportMode(args.mode)
 
@@ -494,6 +585,33 @@ def _print_flow_json_result(
         ),
         markup=False,
         soft_wrap=True,
+    )
+
+
+def _print_flow_compile_json_result(
+    console: Console,
+    result: FlowDefinitionCompileResult,
+) -> None:
+    definition = result.definition
+    values: dict[str, object] = {
+        "authoring_graph": result.authoring_graph,
+    }
+    if definition is not None:
+        values["definition"] = {
+            "name": definition.name,
+            "node_count": len(definition.nodes),
+            "edge_count": len(definition.edges),
+        }
+    if result.canonical_source is not None:
+        values["canonical_source"] = {
+            "format": "toml",
+            "strict": True,
+        }
+    _print_flow_json_result(
+        console,
+        ok=result.ok,
+        diagnostics=result.diagnostics,
+        **values,
     )
 
 
@@ -943,6 +1061,18 @@ def _toml_value(value: object) -> str:
         )
         return "{" + items + "}"
     raise AssertionError("unsupported TOML value")
+
+
+def _flow_write_text_atomic(path: Path, content: str) -> None:
+    assert isinstance(path, Path)
+    assert isinstance(content, str)
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    temporary_path.write_text(content, encoding="utf-8")
+    try:
+        temporary_path.replace(path)
+    except OSError:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 async def _flow_inspect(args: Namespace, console: Console) -> bool:
