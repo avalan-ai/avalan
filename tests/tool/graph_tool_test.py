@@ -83,7 +83,7 @@ class GraphToolValidationTestCase(IsolatedAsyncioTestCase):
             AssertionError,
             "graph rendering produced empty output",
         ):
-            tool._render(
+            await tool._render(
                 EmptyFigure(),
                 chart_type="pie",
                 output_format="png",

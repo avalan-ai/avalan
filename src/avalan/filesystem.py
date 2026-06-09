@@ -30,6 +30,24 @@ async def read_bytes(path: str | Path) -> bytes:
     return await to_thread(Path(path).read_bytes)
 
 
+async def write_text(
+    path: str | Path,
+    data: str,
+    *,
+    encoding: str = DEFAULT_TEXT_ENCODING,
+) -> int:
+    assert isinstance(path, str | Path), "path must be a string or path"
+    assert isinstance(data, str), "data must be a string"
+    assert_text_encoding(encoding)
+    return await to_thread(Path(path).write_text, data, encoding=encoding)
+
+
+async def write_bytes(path: str | Path, data: bytes) -> int:
+    assert isinstance(path, str | Path), "path must be a string or path"
+    assert isinstance(data, bytes), "data must be bytes"
+    return await to_thread(Path(path).write_bytes, data)
+
+
 def _run_coroutine(coroutine: Coroutine[Any, Any, T]) -> T:
     return asyncio_run(coroutine)
 

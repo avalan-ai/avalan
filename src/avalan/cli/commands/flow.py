@@ -1,5 +1,5 @@
 from ...cli.theme import Theme
-from ...filesystem import DEFAULT_TEXT_ENCODING, read_text
+from ...filesystem import DEFAULT_TEXT_ENCODING, read_text, write_text
 from ...flow import (
     FlowDefinition,
     FlowDefinitionCompileResult,
@@ -113,6 +113,7 @@ from .task import (
 )
 
 from argparse import Namespace
+from asyncio import to_thread
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -219,7 +220,11 @@ async def _flow_compile(args: Namespace, console: Console) -> bool:
         return True
     if args.output is not None:
         try:
-            _flow_write_text_atomic(Path(args.output), result.canonical_source)
+            await _flow_write_text_atomic(
+                Path(args.output),
+                result.canonical_source,
+                encoding=_flow_text_encoding(args),
+            )
         except OSError as exc:
             diagnostic = _flow_file_write_diagnostic(exc)
             if _flow_json_output(args):
@@ -1109,15 +1114,21 @@ def _toml_value(value: object) -> str:
     raise AssertionError("unsupported TOML value")
 
 
-def _flow_write_text_atomic(path: Path, content: str) -> None:
+async def _flow_write_text_atomic(
+    path: Path,
+    content: str,
+    *,
+    encoding: str = DEFAULT_TEXT_ENCODING,
+) -> None:
     assert isinstance(path, Path)
     assert isinstance(content, str)
+    assert isinstance(encoding, str)
     temporary_path = path.with_name(f".{path.name}.tmp")
-    temporary_path.write_text(content, encoding="utf-8")
+    await write_text(temporary_path, content, encoding=encoding)
     try:
-        temporary_path.replace(path)
+        await to_thread(temporary_path.replace, path)
     except OSError:
-        temporary_path.unlink(missing_ok=True)
+        await to_thread(temporary_path.unlink, missing_ok=True)
         raise
 
 
