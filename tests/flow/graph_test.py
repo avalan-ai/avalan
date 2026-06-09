@@ -1,7 +1,9 @@
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
 from unittest import TestCase, main
+from unittest.mock import patch
 
 from avalan.flow import (
     FlowCondition,
@@ -217,12 +219,173 @@ class FlowGraphCompilerTestCase(TestCase):
         )
         self.assertNotIn("/private/customer", str(result.public_diagnostics))
 
-    def test_compile_flow_graph_rejects_file_sources_for_inline_slice(
+    def test_compile_flow_graph_compiles_file_mermaid_source(self) -> None:
+        with TemporaryDirectory() as directory:
+            base_path = Path(directory) / "flows"
+            graph_directory = base_path / "graphs"
+            graph_directory.mkdir(parents=True)
+            graph_path = graph_directory / "customer-token.mmd"
+            graph_path.write_text(
+                "\n".join(
+                    (
+                        "flowchart LR",
+                        "start route_1@--> done",
+                        "done route_2@--> archive",
+                    )
+                ),
+                encoding="utf-8",
+            )
+            source = FlowGraphSource(
+                source_kind=FlowGraphSourceKind.FILE,
+                path=Path("graphs/customer-token.mmd"),
+                base_path=base_path,
+            )
+
+            result = compile_flow_graph(
+                source,
+                (
+                    FlowNodeDefinition(name="start", type="input"),
+                    FlowNodeDefinition(name="done", type="pass-through"),
+                    FlowNodeDefinition(name="archive", type="pass-through"),
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in result.edges],
+            [("start", "done"), ("done", "archive")],
+        )
+        self.assertNotIn("customer-token", str(result.as_public_dict()))
+        self.assertNotIn(str(graph_path), str(result.as_public_dict()))
+
+    def test_compile_flow_graph_reports_malformed_file_source_safely(
         self,
     ) -> None:
+        with TemporaryDirectory() as directory:
+            base_path = Path(directory)
+            graph_path = base_path / "customer-token.mmd"
+            graph_path.write_text(
+                "flowchart LR\nstart route@ PrivateCustomerToken",
+                encoding="utf-8",
+            )
+            source = FlowGraphSource(
+                source_kind=FlowGraphSourceKind.FILE,
+                path=Path("customer-token.mmd"),
+                base_path=base_path,
+            )
+
+            result = compile_flow_graph(
+                source,
+                (
+                    FlowNodeDefinition(name="start", type="input"),
+                    FlowNodeDefinition(name="done", type="pass-through"),
+                ),
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.malformed_source"],
+        )
+        self.assertIsNotNone(result.diagnostics[0].source_span)
+        assert result.diagnostics[0].source_span is not None
+        self.assertEqual(result.diagnostics[0].source_span.start_line, 2)
+        self.assertEqual(result.diagnostics[0].source_span.start_column, 7)
+        self.assertNotIn(
+            "PrivateCustomerToken", str(result.public_diagnostics)
+        )
+        self.assertNotIn("customer-token", str(result.public_diagnostics))
+        self.assertNotIn(str(graph_path), str(result.public_diagnostics))
+
+    def test_compile_flow_graph_rejects_unsafe_file_source_paths_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            base_path = root / "base"
+            outside_path = root / "outside"
+            base_path.mkdir()
+            outside_path.mkdir()
+            outside_graph = outside_path / "private-token.mmd"
+            outside_graph.write_text("flowchart LR", encoding="utf-8")
+            (base_path / "directory-token").mkdir()
+            (base_path / "linked-token.mmd").symlink_to(outside_graph)
+            source_span = FlowSourceSpan(
+                source="/private/customer/flow.toml",
+                start_line=4,
+                start_column=8,
+            )
+            cases = (
+                (
+                    "url",
+                    Path("https://example.invalid/private-token.mmd"),
+                    "flow.graph.path_escape",
+                ),
+                ("absolute", outside_graph, "flow.graph.path_escape"),
+                (
+                    "traversal",
+                    Path("../outside/private-token.mmd"),
+                    "flow.graph.path_escape",
+                ),
+                (
+                    "symlink",
+                    Path("linked-token.mmd"),
+                    "flow.graph.path_escape",
+                ),
+                (
+                    "missing",
+                    Path("missing-private-token.mmd"),
+                    "flow.graph.read_failure",
+                ),
+                (
+                    "directory",
+                    Path("directory-token"),
+                    "flow.graph.read_failure",
+                ),
+            )
+
+            for name, path, code in cases:
+                with self.subTest(name=name):
+                    source = FlowGraphSource(
+                        source_kind=FlowGraphSourceKind.FILE,
+                        path=path,
+                        base_path=base_path,
+                        source_span=source_span,
+                    )
+
+                    result = compile_flow_graph(source, ())
+
+                    self.assertFalse(result.ok)
+                    self.assertEqual(result.edges, ())
+                    self.assertEqual(
+                        [diagnostic.code for diagnostic in result.diagnostics],
+                        [code],
+                    )
+                    self.assertEqual(
+                        result.diagnostics[0].source_span,
+                        source_span,
+                    )
+                    public_text = str(result.public_diagnostics)
+                    self.assertNotIn("private-token", public_text)
+                    self.assertNotIn("directory-token", public_text)
+                    self.assertNotIn("missing-private-token", public_text)
+                    self.assertNotIn("https://example.invalid", public_text)
+                    self.assertNotIn(str(outside_path), public_text)
+
+    def test_compile_flow_graph_reports_missing_file_base_safely(
+        self,
+    ) -> None:
+        source_span = FlowSourceSpan(
+            source="/private/customer/flow.toml",
+            start_line=4,
+            start_column=8,
+        )
         source = FlowGraphSource(
             source_kind=FlowGraphSourceKind.FILE,
-            path=Path("/private/customer/graph.mmd"),
+            path=Path("customer-token.mmd"),
+            source_span=source_span,
         )
 
         result = compile_flow_graph(source, ())
@@ -231,9 +394,72 @@ class FlowGraphCompilerTestCase(TestCase):
         self.assertEqual(result.edges, ())
         self.assertEqual(
             [diagnostic.code for diagnostic in result.diagnostics],
-            ["flow.graph.unsupported_source"],
+            ["flow.graph.read_failure"],
         )
+        self.assertEqual(result.diagnostics[0].source_span, source_span)
+        self.assertNotIn("customer-token", str(result.public_diagnostics))
         self.assertNotIn("/private/customer", str(result.public_diagnostics))
+
+    def test_compile_flow_graph_reports_unresolvable_file_path_safely(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.FILE,
+            path=Path("customer-token.mmd"),
+            base_path=Path("/private/customer/base"),
+        )
+
+        with patch.object(
+            Path,
+            "resolve",
+            side_effect=OSError("PrivateCustomerToken"),
+        ):
+            result = compile_flow_graph(source, ())
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.read_failure"],
+        )
+        self.assertNotIn(
+            "PrivateCustomerToken", str(result.public_diagnostics)
+        )
+        self.assertNotIn("customer-token", str(result.public_diagnostics))
+        self.assertNotIn("/private/customer", str(result.public_diagnostics))
+
+    def test_compile_flow_graph_reports_unreadable_file_safely(self) -> None:
+        with TemporaryDirectory() as directory:
+            base_path = Path(directory)
+            graph_path = base_path / "customer-token.mmd"
+            graph_path.write_text(
+                "flowchart LR\nstart route_1@--> done",
+                encoding="utf-8",
+            )
+            source = FlowGraphSource(
+                source_kind=FlowGraphSourceKind.FILE,
+                path=Path("customer-token.mmd"),
+                base_path=base_path,
+            )
+
+            with patch.object(
+                Path,
+                "read_text",
+                side_effect=PermissionError("PrivateCustomerToken"),
+            ):
+                result = compile_flow_graph(source, ())
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.read_failure"],
+        )
+        self.assertNotIn(
+            "PrivateCustomerToken", str(result.public_diagnostics)
+        )
+        self.assertNotIn("customer-token", str(result.public_diagnostics))
+        self.assertNotIn(str(graph_path), str(result.public_diagnostics))
 
     def test_compile_flow_graph_rejects_invalid_arguments(self) -> None:
         source = FlowGraphSource(

@@ -24,8 +24,9 @@ from .view import FlowViewImportMode
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
+from urllib.parse import urlsplit
 
 
 class FlowGraphFormat(StrEnum):
@@ -318,24 +319,19 @@ def compile_flow_graph(
         assert isinstance(edge_bindings, Mapping)
 
     bindings = edge_bindings or _empty_edge_bindings()
-    if source.source_kind != FlowGraphSourceKind.INLINE:
+    diagram, source_identity, diagnostic = _load_graph_source(source)
+    if diagnostic is not None:
         return FlowGraphCompileResult(
             source=source,
             edge_bindings=bindings,
-            diagnostics=(
-                flow_graph_diagnostic(
-                    FlowGraphDiagnosticCode.UNSUPPORTED_SOURCE,
-                    "graph.source",
-                    source_span=source.source_span,
-                ),
-            ),
+            diagnostics=(diagnostic,),
         )
 
-    assert source.diagram is not None
+    assert diagram is not None
     parsed = parse_mermaid_import(
-        source.diagram,
+        diagram,
         import_mode=FlowViewImportMode.EXECUTABLE,
-        source=source.source_identity,
+        source=source_identity,
     )
     if not parsed.ok:
         return FlowGraphCompileResult(
@@ -362,6 +358,101 @@ def compile_flow_graph(
         edges=edges,
         edge_bindings=bindings,
     )
+
+
+def _load_graph_source(
+    source: "FlowGraphSource",
+) -> tuple[str | None, str | None, FlowDiagnostic | None]:
+    match source.source_kind:
+        case FlowGraphSourceKind.INLINE:
+            assert source.diagram is not None
+            return source.diagram, source.source_identity, None
+        case FlowGraphSourceKind.FILE:
+            return _load_graph_file_source(source)
+
+
+def _load_graph_file_source(
+    source: "FlowGraphSource",
+) -> tuple[str | None, str | None, FlowDiagnostic | None]:
+    assert source.path is not None
+    if _is_untrusted_graph_path(source.path):
+        return (
+            None,
+            None,
+            flow_graph_diagnostic(
+                FlowGraphDiagnosticCode.PATH_ESCAPE,
+                "graph.source",
+                source_span=source.source_span,
+            ),
+        )
+    if source.base_path is None:
+        return (
+            None,
+            None,
+            flow_graph_diagnostic(
+                FlowGraphDiagnosticCode.READ_FAILURE,
+                "graph.source",
+                source_span=source.source_span,
+            ),
+        )
+    try:
+        base_path = source.base_path.resolve()
+        path = (base_path / source.path).resolve()
+    except (OSError, RuntimeError):
+        return (
+            None,
+            None,
+            flow_graph_diagnostic(
+                FlowGraphDiagnosticCode.READ_FAILURE,
+                "graph.source",
+                source_span=source.source_span,
+            ),
+        )
+    if not _is_relative_to(path, base_path):
+        return (
+            None,
+            None,
+            flow_graph_diagnostic(
+                FlowGraphDiagnosticCode.PATH_ESCAPE,
+                "graph.source",
+                source_span=source.source_span,
+            ),
+        )
+    try:
+        return (
+            path.read_text(encoding="utf-8"),
+            source.source_identity or str(path),
+            None,
+        )
+    except (OSError, UnicodeDecodeError):
+        return (
+            None,
+            None,
+            flow_graph_diagnostic(
+                FlowGraphDiagnosticCode.READ_FAILURE,
+                "graph.source",
+                source_span=source.source_span,
+            ),
+        )
+
+
+def _is_untrusted_graph_path(path: Path) -> bool:
+    value = str(path)
+    posix_path = PurePosixPath(value)
+    windows_path = PureWindowsPath(value)
+    if urlsplit(value).scheme or "://" in value or "\\" in value:
+        return True
+    if posix_path.is_absolute() or windows_path.is_absolute():
+        return True
+    return ".." in posix_path.parts or ".." in windows_path.parts
+
+
+def _is_relative_to(path: Path, base_path: Path) -> bool:
+    try:
+        path.relative_to(base_path)
+    except ValueError:
+        return False
+    return True
 
 
 def _first_error_span(
