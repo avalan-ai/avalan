@@ -117,6 +117,7 @@ class TaskDocsTest(TestCase):
             {
                 "cancel",
                 "compile",
+                "graph",
                 "inspect",
                 "mermaid",
                 "resume",
@@ -155,6 +156,12 @@ class TaskDocsTest(TestCase):
             with self.subTest(command="resume", flag=flag):
                 self.assertIn(flag, docs)
                 self.assertIn(flag, resume_help)
+
+        graph_help = _find_parser(parser, " flow graph inspect").format_help()
+        for flag in ("--encoding", "--json"):
+            with self.subTest(command="graph inspect", flag=flag):
+                self.assertIn(flag, docs)
+                self.assertIn(flag, graph_help)
 
     def test_file_delivery_matrix_matches_profile_vocabulary(self) -> None:
         docs = FILE_DELIVERY_DOC.read_text(encoding="utf-8")

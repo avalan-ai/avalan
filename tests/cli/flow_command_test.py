@@ -32,11 +32,14 @@ from avalan.flow import (
     FlowDefinitionLoader,
     FlowDiagnostic,
     FlowDiagnosticCategory,
+    FlowDiagnosticSeverity,
     FlowEdgeDefinition,
     FlowEdgeKind,
     FlowEntryBehavior,
     FlowExecutionTrace,
     FlowExecutor,
+    FlowGraphInspection,
+    FlowGraphInspectionResult,
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
@@ -64,6 +67,7 @@ from avalan.flow import (
     compare_flow_topology,
     compile_flow_file,
     default_flow_node_registry,
+    inspect_flow_graph_file,
     parse_mermaid_view,
     render_flow_view,
     skeleton_from_mermaid_view,
@@ -510,6 +514,210 @@ class FlowRunCommandTestCase(TestCase):
         self.assertEqual(payload["diagnostics"][0]["code"], "file.write")
         self.assertNotIn("human.flow.toml", human_console.export_text())
         self.assertNotIn("json.flow.toml", json_stream.getvalue())
+
+    def test_flow_graph_inspect_json_matches_sdk_and_is_safe(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root)
+            sdk_result = asyncio_run(inspect_flow_graph_file(flow_path))
+            result = flow_cmds.flow_graph(
+                _args(
+                    flow=flow_path,
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                    flow_json=True,
+                ),
+                console,
+                self.theme,
+            )
+
+        payload = loads(stream.getvalue())
+        self.assertTrue(result)
+        self.assertEqual(
+            payload,
+            flow_cmds._flow_public_value(sdk_result.as_public_dict()),
+        )
+        inspection = payload["inspection"]
+        self.assertEqual(
+            inspection["schema_version"],
+            "flow.graph.inspection.v1",
+        )
+        self.assertEqual(
+            [node["classification"] for node in inspection["nodes"]],
+            ["actual", "actual"],
+        )
+        self.assertEqual(inspection["edges"][0]["edge_id"], "route_1")
+        self.assertEqual(
+            inspection["generated_edges"][0]["source"],
+            "start",
+        )
+        self.assertNotIn("Private graph label", stream.getvalue())
+        self.assertNotIn("strict_graph.flow.toml", stream.getvalue())
+
+    def test_flow_graph_inspect_human_file_graph_summary_is_safe(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_file_graph_constant_flow(root)
+            result = flow_cmds.flow_graph(
+                _args(
+                    flow=flow_path,
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                ),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn(
+            "Flow graph inspection: flow.graph.inspection.v1.",
+            output,
+        )
+        self.assertIn("nodes actual=2 decorative=0", output)
+        self.assertIn("edges executable=1 decorative=0", output)
+        self.assertIn("bindings bound=0 unbound=1", output)
+        self.assertIn("generated_edges 1", output)
+        self.assertNotIn("Private graph label", output)
+        self.assertNotIn("strict_graph.mmd", output)
+
+    def test_flow_graph_inspect_negative_modes_are_safe(self) -> None:
+        invalid_console = Console(record=True, width=160)
+        missing_stream = StringIO()
+        missing_console = Console(file=missing_stream, width=160)
+        missing_human_console = Console(record=True, width=160)
+        strict_stream = StringIO()
+        strict_console = Console(file=strict_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            invalid_path = _write_strict_graph_constant_flow(
+                root,
+                valid=False,
+            )
+            strict_path = _write_strict_constant_flow(root)
+            invalid = flow_cmds.flow_graph(
+                _args(
+                    flow=invalid_path,
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                ),
+                invalid_console,
+                self.theme,
+            )
+            missing = flow_cmds.flow_graph(
+                _args(
+                    flow=root / "private.flow.toml",
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                    flow_json=True,
+                ),
+                missing_console,
+                self.theme,
+            )
+            missing_human = flow_cmds.flow_graph(
+                _args(
+                    flow=root / "private-human.flow.toml",
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                ),
+                missing_human_console,
+                self.theme,
+            )
+            strict = flow_cmds.flow_graph(
+                _args(
+                    flow=strict_path,
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                    flow_json=True,
+                ),
+                strict_console,
+                self.theme,
+            )
+
+        invalid_output = invalid_console.export_text()
+        missing_payload = loads(missing_stream.getvalue())
+        strict_payload = loads(strict_stream.getvalue())
+        self.assertFalse(invalid)
+        self.assertIn("Flow graph could not be inspected.", invalid_output)
+        self.assertIn(
+            "flow.graph.unsupported_executable_edge",
+            invalid_output,
+        )
+        self.assertNotIn("Private graph label", invalid_output)
+        self.assertFalse(missing)
+        self.assertEqual(
+            missing_payload["diagnostics"][0]["code"],
+            "file.read",
+        )
+        self.assertNotIn("private.flow.toml", missing_stream.getvalue())
+        self.assertFalse(missing_human)
+        self.assertIn(
+            "Flow graph could not be read.",
+            missing_human_console.export_text(),
+        )
+        self.assertNotIn(
+            "private-human.flow.toml",
+            missing_human_console.export_text(),
+        )
+        self.assertFalse(strict)
+        self.assertEqual(
+            strict_payload["diagnostics"][0]["code"],
+            "flow.graph.missing_source",
+        )
+
+    def test_flow_graph_private_helpers_cover_branches(self) -> None:
+        console = Console(record=True, width=160)
+        diagnostic = FlowDiagnostic(
+            code="flow.graph.warning",
+            path="graph",
+            category=FlowDiagnosticCategory.GRAPH_COMPILER,
+            severity=FlowDiagnosticSeverity.WARNING,
+            message="Graph warning.",
+        )
+        inspection = FlowGraphInspection(diagnostics=(diagnostic,))
+
+        flow_cmds._print_flow_graph_inspection(console, inspection)
+        counts = flow_cmds._flow_count_public_values(
+            (
+                {"classification": "actual"},
+                {"classification": 1},
+                object(),
+            ),
+            "classification",
+        )
+        empty_diagnostics = flow_cmds._flow_graph_inspect_diagnostics(
+            FlowGraphInspectionResult()
+        )
+        inspection_diagnostics = flow_cmds._flow_graph_inspect_diagnostics(
+            FlowGraphInspectionResult(inspection=inspection)
+        )
+
+        output = console.export_text()
+        self.assertIn("Flow graph diagnostics.", output)
+        self.assertEqual(counts, {"actual": 1})
+        self.assertEqual(empty_diagnostics, ())
+        self.assertEqual(inspection_diagnostics, (diagnostic,))
+
+    def test_flow_graph_dispatch_rejects_unknown_command(self) -> None:
+        console = Console(record=True, width=160)
+
+        with self.assertRaises(AssertionError):
+            flow_cmds.flow_graph(
+                _args(
+                    flow_command="graph",
+                    flow_graph_command="bogus",
+                ),
+                console,
+                self.theme,
+            )
 
     def test_flow_cli_sdk_validate_parity_positive_and_negative(self) -> None:
         success_stream = StringIO()

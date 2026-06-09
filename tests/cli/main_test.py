@@ -413,6 +413,21 @@ class CliTaskOptionTestCase(TestCase):
             (
                 [
                     "flow",
+                    "graph",
+                    "inspect",
+                    "flows/report.toml",
+                    "--json",
+                ],
+                {
+                    "flow_command": "graph",
+                    "flow_graph_command": "inspect",
+                    "flow": "flows/report.toml",
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
                     "mermaid",
                     "parse",
                     "topology.mmd",
@@ -1251,6 +1266,7 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
             ("task_worker", "avalan.cli.commands.task", "task_worker"),
             ("flow_cancel", "avalan.cli.commands.flow", "flow_cancel"),
             ("flow_compile", "avalan.cli.commands.flow", "flow_compile"),
+            ("flow_graph", "avalan.cli.commands.flow", "flow_graph"),
             ("flow_inspect", "avalan.cli.commands.flow", "flow_inspect"),
             ("flow_run", "avalan.cli.commands.flow", "flow_run"),
             ("flow_resume", "avalan.cli.commands.flow", "flow_resume"),
@@ -1372,6 +1388,9 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             flow_compile_mock = stack.enter_context(
                 patch("avalan.cli.__main__.flow_compile")
             )
+            flow_graph_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_graph")
+            )
             flow_inspect_mock = stack.enter_context(
                 patch("avalan.cli.__main__.flow_inspect")
             )
@@ -1455,6 +1474,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("deploy", "run", deploy_run_mock),
                 ("flow", "cancel", flow_cancel_mock),
                 ("flow", "compile", flow_compile_mock),
+                ("flow", "graph", flow_graph_mock),
                 ("flow", "inspect", flow_inspect_mock),
                 ("flow", "resume", flow_resume_mock),
                 ("flow", "run", flow_run_mock),
@@ -1619,6 +1639,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
         cases = (
             ("cancel", "flow_cancel"),
             ("compile", "flow_compile"),
+            ("graph", "flow_graph"),
             ("inspect", "flow_inspect"),
             ("resume", "flow_resume"),
             ("trace", "flow_trace"),
@@ -1712,6 +1733,15 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 Namespace(
                     command="flow",
                     flow_command="compile",
+                    flow_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="graph",
                     flow_json=True,
                 )
             )

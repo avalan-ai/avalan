@@ -11,6 +11,8 @@ from ...flow import (
     FlowEntryBehavior,
     FlowExecutionUpdate,
     FlowExecutor,
+    FlowGraphInspection,
+    FlowGraphInspectionResult,
     FlowInputDefinition,
     FlowInputMapping,
     FlowInputType,
@@ -47,6 +49,7 @@ from ...flow import (
     compile_flow_file,
     default_flow_node_registry,
     flow_input_binding,
+    inspect_flow_graph_file,
     parse_mermaid_view,
     render_flow_view,
     skeleton_from_mermaid_view,
@@ -274,6 +277,24 @@ async def _flow_mermaid(args: Namespace, console: Console) -> bool:
         case "skeleton":
             return await _flow_mermaid_skeleton(args, console)
     raise AssertionError("unsupported Mermaid flow command")
+
+
+def flow_graph(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+) -> bool:
+    """Run static graph authoring commands."""
+    _ = theme
+    return _run_awaitable(_flow_graph(args, console))
+
+
+async def _flow_graph(args: Namespace, console: Console) -> bool:
+    command = args.flow_graph_command
+    match command:
+        case "inspect":
+            return await _flow_graph_inspect(args, console)
+    raise AssertionError("unsupported graph flow command")
 
 
 def flow_run(
@@ -514,6 +535,41 @@ async def _flow_mermaid_skeleton(args: Namespace, console: Console) -> bool:
     return result.ok
 
 
+async def _flow_graph_inspect(args: Namespace, console: Console) -> bool:
+    try:
+        result = await inspect_flow_graph_file(
+            args.flow,
+            encoding=_flow_text_encoding(args),
+        )
+    except OSError as exc:
+        diagnostic = _flow_file_read_diagnostic(exc)
+        if _flow_json_output(args):
+            _print_flow_json_result(
+                console,
+                ok=False,
+                diagnostics=(diagnostic,),
+            )
+        else:
+            _print_flow_diagnostics(
+                console,
+                "Flow graph could not be read.",
+                (diagnostic,),
+            )
+        return False
+    if _flow_json_output(args):
+        _print_flow_graph_inspect_json_result(console, result)
+    elif result.ok:
+        assert result.inspection is not None
+        _print_flow_graph_inspection(console, result.inspection)
+    else:
+        _print_flow_diagnostics(
+            console,
+            "Flow graph could not be inspected.",
+            _flow_graph_inspect_diagnostics(result),
+        )
+    return result.ok
+
+
 async def _flow_load_validation_result(
     path: str | Path,
     console: Console,
@@ -666,6 +722,21 @@ def _print_flow_compile_json_result(
     )
 
 
+def _print_flow_graph_inspect_json_result(
+    console: Console,
+    result: FlowGraphInspectionResult,
+) -> None:
+    console.print(
+        dumps(
+            _flow_public_value(result.as_public_dict()),
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        markup=False,
+        soft_wrap=True,
+    )
+
+
 def _print_flow_diagnostics(
     console: Console,
     title: str,
@@ -683,6 +754,81 @@ def _print_flow_diagnostics(
         hint = value.get("hint")
         if hint is not None:
             console.print(f"hint {hint}", markup=False)
+
+
+def _print_flow_graph_inspection(
+    console: Console,
+    inspection: FlowGraphInspection,
+) -> None:
+    public = inspection.as_public_dict()
+    nodes = public["nodes"]
+    edges = public["edges"]
+    bindings = public["bindings"]
+    generated_edges = public["generated_edges"]
+    assert isinstance(nodes, list | tuple)
+    assert isinstance(edges, list | tuple)
+    assert isinstance(bindings, list | tuple)
+    assert isinstance(generated_edges, list | tuple)
+    node_counts = _flow_count_public_values(nodes, "classification")
+    edge_counts = _flow_count_public_values(edges, "classification")
+    binding_counts = _flow_count_public_values(bindings, "state")
+    console.print(
+        f"Flow graph inspection: {public['schema_version']}.",
+        markup=False,
+    )
+    console.print(
+        "nodes "
+        f"actual={node_counts.get('actual', 0)} "
+        f"decorative={node_counts.get('decorative', 0)}",
+        markup=False,
+    )
+    console.print(
+        "edges "
+        f"executable={edge_counts.get('executable', 0)} "
+        f"decorative={edge_counts.get('decorative', 0)}",
+        markup=False,
+    )
+    console.print(
+        "bindings "
+        f"bound={binding_counts.get('bound', 0)} "
+        f"unbound={binding_counts.get('unbound', 0)} "
+        f"missing={binding_counts.get('missing', 0)} "
+        f"decorative={binding_counts.get('decorative', 0)} "
+        f"rejected={binding_counts.get('rejected', 0)}",
+        markup=False,
+    )
+    console.print(f"generated_edges {len(generated_edges)}", markup=False)
+    if inspection.diagnostics:
+        _print_flow_diagnostics(
+            console,
+            "Flow graph diagnostics.",
+            inspection.diagnostics,
+        )
+
+
+def _flow_count_public_values(
+    values: list[object] | tuple[object, ...],
+    field: str,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        if not isinstance(value, Mapping):
+            continue
+        item = value.get(field)
+        if not isinstance(item, str):
+            continue
+        counts[item] = counts.get(item, 0) + 1
+    return counts
+
+
+def _flow_graph_inspect_diagnostics(
+    result: FlowGraphInspectionResult,
+) -> tuple[FlowDiagnostic, ...]:
+    if result.diagnostics:
+        return result.diagnostics
+    if result.inspection is None:
+        return ()
+    return result.inspection.diagnostics
 
 
 def _flow_diagnostic_location(value: Mapping[str, object]) -> str:

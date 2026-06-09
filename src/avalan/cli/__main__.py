@@ -171,6 +171,7 @@ def _task_run_json_stdout(args: Namespace) -> bool:
             in {
                 "cancel",
                 "compile",
+                "graph",
                 "inspect",
                 "mermaid",
                 "resume",
@@ -532,6 +533,12 @@ def flow_cancel(*args: Any, **kwargs: Any) -> Any:
 
 def flow_compile(*args: Any, **kwargs: Any) -> Any:
     return _load_command("avalan.cli.commands.flow", "flow_compile")(
+        *args, **kwargs
+    )
+
+
+def flow_graph(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_graph")(
         *args, **kwargs
     )
 
@@ -1824,6 +1831,36 @@ class CLI:
             dest="flow_json",
             action="store_true",
             help="Print compile status as compact JSON.",
+        )
+        flow_graph_parser = flow_command_parsers.add_parser(
+            name="graph",
+            description="Inspect flow authoring graphs",
+            parents=[global_parser],
+        )
+        flow_graph_command_parsers = flow_graph_parser.add_subparsers(
+            dest="flow_graph_command",
+            required=True,
+        )
+        flow_graph_inspect_parser = flow_graph_command_parsers.add_parser(
+            name="inspect",
+            description="Inspect a flow authoring graph",
+            parents=[global_parser],
+        )
+        flow_graph_inspect_parser.add_argument(
+            "flow",
+            type=str,
+            help="Flow definition TOML file to inspect",
+        )
+        flow_graph_inspect_parser.add_argument(
+            "--encoding",
+            default="utf-8",
+            help="File encoding used when reading local flow files.",
+        )
+        flow_graph_inspect_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print graph inspection as compact JSON.",
         )
         flow_mermaid_parser = flow_command_parsers.add_parser(
             name="mermaid",
@@ -4042,6 +4079,9 @@ class CLI:
                             raise SystemExit(1)
                     case "compile":
                         if not flow_compile(args, console, theme):
+                            raise SystemExit(1)
+                    case "graph":
+                        if not flow_graph(args, console, theme):
                             raise SystemExit(1)
                     case "inspect":
                         if not flow_inspect(args, console, theme):
