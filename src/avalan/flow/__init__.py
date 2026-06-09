@@ -73,6 +73,7 @@ from .flow import Flow as Flow
 from .graph import FlowGraphBindingInspection as FlowGraphBindingInspection
 from .graph import FlowGraphBindingState as FlowGraphBindingState
 from .graph import FlowGraphCompileResult as FlowGraphCompileResult
+from .graph import FlowGraphDiagnosticCode as FlowGraphDiagnosticCode
 from .graph import FlowGraphEdgeBinding as FlowGraphEdgeBinding
 from .graph import FlowGraphEdgeClassification as FlowGraphEdgeClassification
 from .graph import FlowGraphEdgeInspection as FlowGraphEdgeInspection
@@ -83,6 +84,10 @@ from .graph import FlowGraphNodeClassification as FlowGraphNodeClassification
 from .graph import FlowGraphNodeInspection as FlowGraphNodeInspection
 from .graph import FlowGraphSource as FlowGraphSource
 from .graph import FlowGraphSourceKind as FlowGraphSourceKind
+from .graph import flow_graph_diagnostic as flow_graph_diagnostic
+from .graph import (
+    flow_graph_diagnostic_load_category as flow_graph_diagnostic_load_category,
+)
 from .inspection import FlowArtifactInspection as FlowArtifactInspection
 from .inspection import FlowEdgeInspection as FlowEdgeInspection
 from .inspection import FlowInspection as FlowInspection
