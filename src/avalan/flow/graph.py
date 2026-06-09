@@ -3,6 +3,7 @@ from .definition import (
     FlowEdgeDefinition,
     FlowEdgeKind,
     FlowMetadata,
+    FlowNodeDefinition,
     FlowRouteMatchPolicy,
 )
 from .diagnostics import (
@@ -11,6 +12,14 @@ from .diagnostics import (
     FlowDiagnosticSeverity,
     FlowSourceSpan,
 )
+from .mermaid import (
+    MermaidAstEdge,
+    MermaidAstEdgeStatement,
+    MermaidAstStatement,
+    MermaidAstSubgraph,
+    parse_mermaid_import,
+)
+from .view import FlowViewImportMode
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -293,6 +302,88 @@ def flow_graph_diagnostic_load_category(
     if code in _FLOW_GRAPH_UNSUPPORTED_CODES:
         return "unsupported"
     return "value"
+
+
+def compile_flow_graph(
+    source: "FlowGraphSource",
+    nodes: tuple[FlowNodeDefinition, ...],
+    *,
+    edge_bindings: Mapping[str, "FlowGraphEdgeBinding"] | None = None,
+) -> "FlowGraphCompileResult":
+    assert isinstance(source, FlowGraphSource)
+    assert isinstance(nodes, tuple), "nodes must be a tuple"
+    for node in nodes:
+        assert isinstance(node, FlowNodeDefinition)
+    if edge_bindings is not None:
+        assert isinstance(edge_bindings, Mapping)
+
+    bindings = edge_bindings or _empty_edge_bindings()
+    if source.source_kind != FlowGraphSourceKind.INLINE:
+        return FlowGraphCompileResult(
+            source=source,
+            edge_bindings=bindings,
+            diagnostics=(
+                flow_graph_diagnostic(
+                    FlowGraphDiagnosticCode.UNSUPPORTED_SOURCE,
+                    "graph.source",
+                    source_span=source.source_span,
+                ),
+            ),
+        )
+
+    assert source.diagram is not None
+    parsed = parse_mermaid_import(
+        source.diagram,
+        import_mode=FlowViewImportMode.EXECUTABLE,
+        source=source.source_identity,
+    )
+    if not parsed.ok:
+        return FlowGraphCompileResult(
+            source=source,
+            edge_bindings=bindings,
+            diagnostics=(
+                flow_graph_diagnostic(
+                    FlowGraphDiagnosticCode.MALFORMED_SOURCE,
+                    "graph.source",
+                    source_span=_first_error_span(parsed.diagnostics),
+                ),
+            ),
+        )
+
+    strict_node_names = {node.name for node in nodes}
+    edges = tuple(
+        FlowEdgeDefinition(source=edge.source, target=edge.target)
+        for edge in _mermaid_edges(parsed.parse_result.ast.statements)
+        if edge.source in strict_node_names
+        and edge.target in strict_node_names
+    )
+    return FlowGraphCompileResult(
+        source=source,
+        edges=edges,
+        edge_bindings=bindings,
+    )
+
+
+def _first_error_span(
+    diagnostics: tuple[FlowDiagnostic, ...],
+) -> FlowSourceSpan | None:
+    return next(
+        diagnostic.source_span
+        for diagnostic in diagnostics
+        if diagnostic.severity == FlowDiagnosticSeverity.ERROR
+    )
+
+
+def _mermaid_edges(
+    statements: tuple[MermaidAstStatement, ...],
+) -> tuple[MermaidAstEdge, ...]:
+    edges: list[MermaidAstEdge] = []
+    for statement in statements:
+        if isinstance(statement, MermaidAstEdgeStatement):
+            edges.extend(statement.edges)
+        if isinstance(statement, MermaidAstSubgraph):
+            edges.extend(_mermaid_edges(statement.statements))
+    return tuple(edges)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

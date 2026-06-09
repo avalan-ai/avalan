@@ -84,6 +84,7 @@ from .graph import FlowGraphNodeClassification as FlowGraphNodeClassification
 from .graph import FlowGraphNodeInspection as FlowGraphNodeInspection
 from .graph import FlowGraphSource as FlowGraphSource
 from .graph import FlowGraphSourceKind as FlowGraphSourceKind
+from .graph import compile_flow_graph as compile_flow_graph
 from .graph import flow_graph_diagnostic as flow_graph_diagnostic
 from .graph import (
     flow_graph_diagnostic_load_category as flow_graph_diagnostic_load_category,

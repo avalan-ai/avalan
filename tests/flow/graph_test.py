@@ -25,8 +25,10 @@ from avalan.flow import (
     FlowGraphNodeInspection,
     FlowGraphSource,
     FlowGraphSourceKind,
+    FlowNodeDefinition,
     FlowRouteMatchPolicy,
     FlowSourceSpan,
+    compile_flow_graph,
     flow_graph_diagnostic,
     flow_graph_diagnostic_load_category,
 )
@@ -131,6 +133,126 @@ _GRAPH_DIAGNOSTIC_CASES = (
         "unsupported",
     ),
 )
+
+
+class FlowGraphCompilerTestCase(TestCase):
+    def test_compile_flow_graph_compiles_inline_mermaid_edges(self) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    "start route_1@--> review",
+                    "review route_2@--> done",
+                    "review -.-> note",
+                    "subgraph lane[Private customer label]",
+                    "done route_3@--> archive",
+                    "end",
+                )
+            ),
+            source_identity="/private/customer/flow.toml",
+            source_span=FlowSourceSpan(
+                source="/private/customer/flow.toml",
+                start_line=9,
+                start_column=1,
+            ),
+        )
+        binding = FlowGraphEdgeBinding(edge_id="route_1", label="review")
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="review", type="pass-through"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+                FlowNodeDefinition(name="archive", type="pass-through"),
+            ),
+            edge_bindings={"route_1": binding},
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
+        self.assertEqual(result.edge_bindings["route_1"], binding)
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in result.edges],
+            [
+                ("start", "review"),
+                ("review", "done"),
+                ("done", "archive"),
+            ],
+        )
+        self.assertNotIn(
+            "Private customer label",
+            str(result.as_public_dict()),
+        )
+        self.assertNotIn("/private/customer", str(result.as_public_dict()))
+
+    def test_compile_flow_graph_reports_malformed_inline_source_safely(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="flowchart LR\nstart route@ PrivateCustomerToken",
+            source_identity="/private/customer/flow.toml",
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.malformed_source"],
+        )
+        self.assertEqual(result.diagnostics[0].source_span.start_line, 2)
+        self.assertEqual(result.diagnostics[0].source_span.start_column, 7)
+        self.assertNotIn(
+            "PrivateCustomerToken", str(result.public_diagnostics)
+        )
+        self.assertNotIn("/private/customer", str(result.public_diagnostics))
+
+    def test_compile_flow_graph_rejects_file_sources_for_inline_slice(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.FILE,
+            path=Path("/private/customer/graph.mmd"),
+        )
+
+        result = compile_flow_graph(source, ())
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.unsupported_source"],
+        )
+        self.assertNotIn("/private/customer", str(result.public_diagnostics))
+
+    def test_compile_flow_graph_rejects_invalid_arguments(self) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="flowchart LR\nstart route_1@--> done",
+        )
+
+        with self.assertRaises(AssertionError):
+            compile_flow_graph(object(), ())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            compile_flow_graph(source, [])  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            compile_flow_graph(source, (object(),))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            compile_flow_graph(
+                source,
+                (),
+                edge_bindings=[],  # type: ignore[arg-type]
+            )
 
 
 class FlowGraphModelsTestCase(TestCase):
