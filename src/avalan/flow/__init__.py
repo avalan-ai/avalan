@@ -213,6 +213,7 @@ from .selector import parse_flow_selector as parse_flow_selector
 from .selector import (
     resolve_flow_selector_value as resolve_flow_selector_value,
 )
+from .serializer import serialize_flow_definition as serialize_flow_definition
 from .state import FlowEdgeState as FlowEdgeState
 from .state import FlowEdgeTrace as FlowEdgeTrace
 from .state import FlowExecutionTrace as FlowExecutionTrace
