@@ -37,6 +37,12 @@ from .diagnostics import (
 from .flow import Flow
 from .graph import (
     FlowGraphDiagnosticCode,
+    FlowGraphEdgeBinding,
+    FlowGraphFormat,
+    FlowGraphMode,
+    FlowGraphSource,
+    FlowGraphSourceKind,
+    compile_flow_graph,
     flow_graph_diagnostic,
     flow_graph_diagnostic_load_category,
 )
@@ -561,6 +567,9 @@ def _build_result(
         else {}
     )
     nodes = _node_definitions(nodes_raw, issues)
+    definition_base = (
+        Path(source_path).parent if source_path is not None else None
+    )
     edges = (
         ()
         if has_graph_edge_conflict
@@ -578,6 +587,17 @@ def _build_result(
         return FlowLoadResult(definition=None, issues=tuple(issues))
     if has_graph_edge_conflict:
         return FlowLoadResult(definition=None, issues=tuple(issues))
+    if graph_raw is not None:
+        graph_edges = _compile_graph_edges(
+            graph_raw,
+            nodes,
+            issues,
+            definition_base=definition_base,
+            source_path=source_path,
+        )
+        if graph_edges is None:
+            return FlowLoadResult(definition=None, issues=tuple(issues))
+        edges = graph_edges
     definition = FlowDefinition(
         name=name,
         version=version,
@@ -599,9 +619,7 @@ def _build_result(
         variables=variables or {},
         nodes=nodes,
         edges=edges,
-        definition_base=(
-            Path(source_path).parent if source_path is not None else None
-        ),
+        definition_base=definition_base,
     )
     validation_result = validate_flow_definition(definition, registry)
     issues.extend(
@@ -806,6 +824,172 @@ def _validate_graph_edges_section(
             issues=issues,
             hint="Remove unsupported fields from graph edge metadata.",
         )
+
+
+def _compile_graph_edges(
+    raw: RawSection,
+    nodes: tuple[FlowNodeDefinition, ...],
+    issues: list[FlowLoadIssue],
+    *,
+    definition_base: Path | None,
+    source_path: str | Path | None,
+) -> tuple[FlowEdgeDefinition, ...] | None:
+    if _has_graph_issue(issues):
+        return None
+    source = _graph_source(
+        raw,
+        issues,
+        definition_base=definition_base,
+        source_path=source_path,
+    )
+    edge_bindings = _graph_edge_bindings(raw, issues)
+    if source is None or _has_graph_issue(issues):
+        return None
+    result = compile_flow_graph(
+        source,
+        nodes,
+        edge_bindings=edge_bindings,
+    )
+    issues.extend(
+        _issue_from_diagnostic(diagnostic) for diagnostic in result.diagnostics
+    )
+    if not result.ok:
+        return None
+    return result.edges
+
+
+def _graph_source(
+    raw: RawSection,
+    issues: list[FlowLoadIssue],
+    *,
+    definition_base: Path | None,
+    source_path: str | Path | None,
+) -> FlowGraphSource | None:
+    graph_format = _graph_enum_value(
+        raw,
+        "graph.format",
+        "format",
+        FlowGraphFormat,
+        FlowGraphDiagnosticCode.UNSUPPORTED_FORMAT,
+        issues,
+    )
+    source_kind = _graph_enum_value(
+        raw,
+        "graph.source",
+        "source",
+        FlowGraphSourceKind,
+        FlowGraphDiagnosticCode.UNSUPPORTED_SOURCE,
+        issues,
+    )
+    mode = _graph_enum_value(
+        raw,
+        "graph.mode",
+        "mode",
+        FlowGraphMode,
+        FlowGraphDiagnosticCode.UNSUPPORTED_MODE,
+        issues,
+    )
+    diagram = _optional_str(raw, "graph.diagram", "diagram", issues)
+    graph_path = _optional_path(raw, "graph.path", "path", issues)
+    if graph_format is None or source_kind is None or mode is None:
+        return None
+    if _has_graph_issue(issues):
+        return None
+    if diagram is not None and graph_path is not None:
+        issues.append(
+            _issue_from_diagnostic(
+                flow_graph_diagnostic(
+                    FlowGraphDiagnosticCode.SOURCE_CONFLICT,
+                    "graph.source",
+                )
+            )
+        )
+        return None
+    source_identity = str(source_path) if source_path is not None else None
+    match source_kind:
+        case FlowGraphSourceKind.INLINE:
+            if diagram is None:
+                issues.append(_missing_graph_source())
+                return None
+            return FlowGraphSource(
+                format=graph_format,
+                source_kind=source_kind,
+                mode=mode,
+                diagram=diagram,
+                source_identity=source_identity,
+            )
+        case FlowGraphSourceKind.FILE:
+            if graph_path is None:
+                issues.append(_missing_graph_source())
+                return None
+            return FlowGraphSource(
+                format=graph_format,
+                source_kind=source_kind,
+                mode=mode,
+                path=graph_path,
+                base_path=definition_base,
+            )
+
+
+def _graph_edge_bindings(
+    raw: RawSection,
+    issues: list[FlowLoadIssue],
+) -> Mapping[str, FlowGraphEdgeBinding]:
+    value = raw.get("edges")
+    if value is None or not isinstance(value, Mapping):
+        return {}
+    bindings: dict[str, FlowGraphEdgeBinding] = {}
+    for edge_id, edge_raw in value.items():
+        assert isinstance(edge_id, str) and edge_id.strip()
+        assert isinstance(edge_raw, Mapping)
+        path = f"graph.edges.{edge_id}"
+        label = _optional_str(edge_raw, f"{path}.label", "label", issues)
+        kind = _optional_enum_value(
+            edge_raw,
+            f"{path}.kind",
+            "kind",
+            FlowEdgeKind,
+            issues,
+        )
+        condition = _condition_definition(
+            edge_raw.get("condition"),
+            issues,
+            path=f"{path}.condition",
+        )
+        priority = _optional_int(
+            edge_raw,
+            f"{path}.priority",
+            "priority",
+            issues,
+        )
+        default = _optional_bool(
+            edge_raw,
+            f"{path}.default",
+            "default",
+            issues,
+        )
+        routing_policy = _optional_enum_value(
+            edge_raw,
+            f"{path}.routing_policy",
+            "routing_policy",
+            FlowRouteMatchPolicy,
+            issues,
+        )
+        bindings[edge_id] = FlowGraphEdgeBinding(
+            edge_id=edge_id,
+            metadata={
+                key: _metadata_value(value)
+                for key, value in edge_raw.items()
+                if isinstance(key, str) and key in _ALLOWED_GRAPH_EDGE_FIELDS
+            },
+            label=label,
+            kind=kind,
+            condition=condition,
+            priority=priority,
+            default=default,
+            routing_policy=routing_policy,
+        )
+    return bindings
 
 
 def _input_definition(
@@ -1600,6 +1784,48 @@ def _optional_str(
     return value
 
 
+def _optional_path(
+    raw: RawSection,
+    path: str,
+    field: str,
+    issues: list[FlowLoadIssue],
+) -> Path | None:
+    value = raw.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        issues.append(_invalid_type(path, "Use a non-empty string."))
+        return None
+    return Path(value)
+
+
+def _graph_enum_value(
+    raw: RawSection,
+    path: str,
+    field: str,
+    enum_type: type[EnumValue],
+    diagnostic_code: FlowGraphDiagnosticCode,
+    issues: list[FlowLoadIssue],
+) -> EnumValue | None:
+    value = raw.get(field)
+    if not isinstance(value, str) or not value.strip():
+        issues.append(
+            _issue_from_diagnostic(
+                flow_graph_diagnostic(diagnostic_code, path)
+            )
+        )
+        return None
+    try:
+        return enum_type(value)
+    except ValueError:
+        issues.append(
+            _issue_from_diagnostic(
+                flow_graph_diagnostic(diagnostic_code, path)
+            )
+        )
+        return None
+
+
 def _enum_value(
     raw: RawSection,
     path: str,
@@ -1847,6 +2073,15 @@ def _invalid_type(path: str, hint: str) -> FlowLoadIssue:
     )
 
 
+def _missing_graph_source() -> FlowLoadIssue:
+    return _issue_from_diagnostic(
+        flow_graph_diagnostic(
+            FlowGraphDiagnosticCode.MISSING_SOURCE,
+            "graph.source",
+        )
+    )
+
+
 def _unsupported_section_issue(path: str) -> FlowLoadIssue:
     return _issue(
         code="flow.unsupported_section",
@@ -1917,3 +2152,10 @@ def _has_issue(
     path: str,
 ) -> bool:
     return any(issue.code == code and issue.path == path for issue in issues)
+
+
+def _has_graph_issue(issues: list[FlowLoadIssue]) -> bool:
+    return any(
+        issue.path == "graph" or issue.path.startswith("graph.")
+        for issue in issues
+    )
