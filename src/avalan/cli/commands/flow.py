@@ -125,6 +125,7 @@ from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from os import strerror
 from pathlib import Path
+from uuid import uuid4
 
 from rich.console import Console
 
@@ -178,34 +179,23 @@ def flow_compile(
 
 
 async def _flow_compile(args: Namespace, console: Console) -> bool:
-    try:
-        result = await compile_flow_file(
-            args.flow,
-            encoding=_flow_text_encoding(args),
-        )
-    except OSError as exc:
-        diagnostic = _flow_file_read_diagnostic(exc)
-        if _flow_json_output(args):
-            _print_flow_json_result(
-                console,
-                ok=False,
-                diagnostics=(diagnostic,),
-            )
-        else:
-            _print_flow_diagnostics(
-                console,
-                "Flow definition could not be read.",
-                (diagnostic,),
-            )
-        return False
+    result = await compile_flow_file(
+        args.flow,
+        encoding=_flow_text_encoding(args),
+    )
     if not result.ok:
         if _flow_json_output(args):
             _print_flow_compile_json_result(console, result)
         else:
+            title = (
+                "Flow definition could not be read."
+                if _flow_result_has_diagnostic(result, "file.read")
+                else "Flow definition could not be compiled."
+            )
             _print_flow_diagnostics(
                 console,
-                "Flow definition could not be compiled.",
-                result.diagnostics,
+                title,
+                result.all_diagnostics,
             )
         return False
     assert result.definition is not None
@@ -228,7 +218,7 @@ async def _flow_compile(args: Namespace, console: Console) -> bool:
                 result.canonical_source,
                 encoding=_flow_text_encoding(args),
             )
-        except OSError as exc:
+        except (OSError, UnicodeEncodeError) as exc:
             diagnostic = _flow_file_write_diagnostic(exc)
             if _flow_json_output(args):
                 _print_flow_json_result(
@@ -536,35 +526,24 @@ async def _flow_mermaid_skeleton(args: Namespace, console: Console) -> bool:
 
 
 async def _flow_graph_inspect(args: Namespace, console: Console) -> bool:
-    try:
-        result = await inspect_flow_graph_file(
-            args.flow,
-            encoding=_flow_text_encoding(args),
-        )
-    except OSError as exc:
-        diagnostic = _flow_file_read_diagnostic(exc)
-        if _flow_json_output(args):
-            _print_flow_json_result(
-                console,
-                ok=False,
-                diagnostics=(diagnostic,),
-            )
-        else:
-            _print_flow_diagnostics(
-                console,
-                "Flow graph could not be read.",
-                (diagnostic,),
-            )
-        return False
+    result = await inspect_flow_graph_file(
+        args.flow,
+        encoding=_flow_text_encoding(args),
+    )
     if _flow_json_output(args):
         _print_flow_graph_inspect_json_result(console, result)
     elif result.ok:
         assert result.inspection is not None
         _print_flow_graph_inspection(console, result.inspection)
     else:
+        title = (
+            "Flow graph could not be read."
+            if _flow_result_has_diagnostic(result, "file.read")
+            else "Flow graph could not be inspected."
+        )
         _print_flow_diagnostics(
             console,
-            "Flow graph could not be inspected.",
+            title,
             _flow_graph_inspect_diagnostics(result),
         )
     return result.ok
@@ -579,7 +558,7 @@ async def _flow_load_validation_result(
         return await FlowDefinitionLoader(
             encoding=_flow_text_encoding(args)
         ).load_validation_result(Path(path))
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         diagnostic = _flow_file_read_diagnostic(exc)
         if _flow_json_output(args):
             _print_flow_json_result(
@@ -612,7 +591,7 @@ async def _flow_read_text(
 ) -> str | None:
     try:
         return await read_text(path, encoding=_flow_text_encoding(args))
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         diagnostic = _flow_file_read_diagnostic(exc)
         if _flow_json_output(args):
             _print_flow_json_result(
@@ -629,8 +608,10 @@ async def _flow_read_text(
         return None
 
 
-def _flow_file_read_diagnostic(exc: OSError) -> FlowDiagnostic:
-    message = strerror(exc.errno) if exc.errno else "Unable to read file."
+def _flow_file_read_diagnostic(
+    exc: OSError | UnicodeDecodeError,
+) -> FlowDiagnostic:
+    message = _flow_file_error_message(exc, "Unable to read file.")
     return FlowDiagnostic(
         code="file.read",
         path="file",
@@ -641,8 +622,10 @@ def _flow_file_read_diagnostic(exc: OSError) -> FlowDiagnostic:
     )
 
 
-def _flow_file_write_diagnostic(exc: OSError) -> FlowDiagnostic:
-    message = strerror(exc.errno) if exc.errno else "Unable to write file."
+def _flow_file_write_diagnostic(
+    exc: OSError | UnicodeEncodeError,
+) -> FlowDiagnostic:
+    message = _flow_file_error_message(exc, "Unable to write file.")
     return FlowDiagnostic(
         code="file.write",
         path="file",
@@ -651,6 +634,15 @@ def _flow_file_write_diagnostic(exc: OSError) -> FlowDiagnostic:
         message=message,
         hint="Use a writable local output path.",
     )
+
+
+def _flow_file_error_message(
+    exc: OSError | UnicodeDecodeError | UnicodeEncodeError,
+    fallback: str,
+) -> str:
+    if isinstance(exc, OSError):
+        return strerror(exc.errno) if exc.errno else fallback
+    return str(exc) or fallback
 
 
 def _flow_import_mode(args: Namespace) -> FlowViewImportMode:
@@ -667,6 +659,20 @@ def _flow_diagnostics_ok(
     return not any(
         diagnostic.severity == FlowDiagnosticSeverity.ERROR
         for diagnostic in diagnostics
+    )
+
+
+def _flow_result_has_diagnostic(
+    result: FlowDefinitionCompileResult | FlowGraphInspectionResult,
+    code: str,
+) -> bool:
+    assert isinstance(
+        result,
+        FlowDefinitionCompileResult | FlowGraphInspectionResult,
+    )
+    assert isinstance(code, str) and code.strip()
+    return any(
+        diagnostic["code"] == code for diagnostic in result.public_diagnostics
     )
 
 
@@ -699,26 +705,14 @@ def _print_flow_compile_json_result(
     console: Console,
     result: FlowDefinitionCompileResult,
 ) -> None:
-    definition = result.definition
-    values: dict[str, object] = {
-        "authoring_graph": result.authoring_graph,
-    }
-    if definition is not None:
-        values["definition"] = {
-            "name": definition.name,
-            "node_count": len(definition.nodes),
-            "edge_count": len(definition.edges),
-        }
-    if result.canonical_source is not None:
-        values["canonical_source"] = {
-            "format": "toml",
-            "strict": True,
-        }
-    _print_flow_json_result(
-        console,
-        ok=result.ok,
-        diagnostics=result.diagnostics,
-        **values,
+    console.print(
+        dumps(
+            _flow_public_value(result.as_public_dict()),
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        markup=False,
+        soft_wrap=True,
     )
 
 
@@ -824,11 +818,7 @@ def _flow_count_public_values(
 def _flow_graph_inspect_diagnostics(
     result: FlowGraphInspectionResult,
 ) -> tuple[FlowDiagnostic, ...]:
-    if result.diagnostics:
-        return result.diagnostics
-    if result.inspection is None:
-        return ()
-    return result.inspection.diagnostics
+    return result.all_diagnostics
 
 
 def _flow_diagnostic_location(value: Mapping[str, object]) -> str:
@@ -1269,11 +1259,11 @@ async def _flow_write_text_atomic(
     assert isinstance(path, Path)
     assert isinstance(content, str)
     assert isinstance(encoding, str)
-    temporary_path = path.with_name(f".{path.name}.tmp")
-    await write_text(temporary_path, content, encoding=encoding)
+    temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
+        await write_text(temporary_path, content, encoding=encoding)
         await to_thread(temporary_path.replace, path)
-    except OSError:
+    except (OSError, UnicodeEncodeError):
         await to_thread(temporary_path.unlink, missing_ok=True)
         raise
 
@@ -1440,13 +1430,12 @@ async def _flow_run(
     loader = FlowDefinitionLoader(encoding=_flow_text_encoding(args))
     try:
         load_result = await loader.load_validation_result(flow_path)
-    except OSError as exc:
-        message = strerror(exc.errno) if exc.errno else "Unable to read file."
-        diagnostic_console.print(
+    except (OSError, UnicodeDecodeError) as exc:
+        _print_flow_diagnostics(
+            diagnostic_console,
             "Flow definition could not be read.",
-            markup=False,
+            (_flow_file_read_diagnostic(exc),),
         )
-        diagnostic_console.print(f"error file.read {message}", markup=False)
         return False
     if load_result.definition is not None and load_result.definition.is_strict:
         return await _flow_run_with_task_context(

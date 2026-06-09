@@ -7,6 +7,7 @@ from avalan.flow import (
     FlowCondition,
     FlowConditionOperator,
     FlowDefinition,
+    FlowDefinitionLoader,
     FlowEdgeDefinition,
     FlowEdgeKind,
     FlowEdgeState,
@@ -34,11 +35,121 @@ from avalan.flow import (
     FlowRetryPolicy,
     FlowReviewState,
     Node,
+    compile_flow_source,
     default_flow_node_registry,
+    serialize_flow_definition,
 )
 
 
 class FlowE2ETestCase(IsolatedAsyncioTestCase):
+    async def test_graph_compile_strict_serialization_runs_equivalently(
+        self,
+    ) -> None:
+        compiled = await compile_flow_source("""
+            [flow]
+            name = "graph_runtime"
+            version = "1"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "result"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            result = "finish.value"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@-->|Private graph label| finish
+            start -.-> private_note["Private graph note"]
+            '''
+
+            [graph.edges.route_1]
+            label = "approved"
+
+            [nodes.start]
+            type = "constant"
+            value = {answer = "ok"}
+
+            [nodes.finish]
+            type = "pass-through"
+
+            [nodes.finish.mapping.value]
+            type = "select"
+            source = "start.value"
+            """)
+        invalid = await compile_flow_source("""
+            [flow]
+            name = "invalid_graph_runtime"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start -->|Private graph label| finish
+            '''
+
+            [nodes.start]
+            type = "constant"
+            value = {answer = "ok"}
+
+            [nodes.finish]
+            type = "pass-through"
+            """)
+
+        self.assertTrue(compiled.ok, compiled.public_diagnostics)
+        self.assertTrue(compiled.authoring_graph)
+        assert compiled.definition is not None
+        assert compiled.canonical_source is not None
+        reloaded = await FlowDefinitionLoader().loads_validation_result(
+            compiled.canonical_source,
+        )
+        self.assertTrue(reloaded.ok, reloaded.public_diagnostics)
+        self.assertFalse(reloaded.authoring_graph)
+        assert reloaded.definition is not None
+        self.assertIsNone(compiled.definition.definition_base)
+        self.assertEqual(compiled.definition, reloaded.definition)
+        self.assertEqual(
+            serialize_flow_definition(reloaded.definition),
+            compiled.canonical_source,
+        )
+        self.assertNotIn("[graph]", compiled.canonical_source)
+        self.assertNotIn("Private graph", compiled.canonical_source)
+
+        executor = FlowExecutor()
+        original_run = await executor.run(compiled.definition)
+        strict_run = await executor.run(reloaded.definition)
+
+        self.assertTrue(original_run.ok, original_run.public_diagnostics)
+        self.assertTrue(strict_run.ok, strict_run.public_diagnostics)
+        self.assertEqual(original_run.outputs, {"result": {"answer": "ok"}})
+        self.assertEqual(strict_run.outputs, original_run.outputs)
+        self.assertFalse(invalid.ok)
+        self.assertIsNone(invalid.definition)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in invalid.public_diagnostics],
+            ["flow.graph.unsupported_executable_edge"],
+        )
+        self.assertNotIn("Private graph label", str(invalid.as_public_dict()))
+
     async def test_human_review_pauses_and_resumes_medium_risk_routes(
         self,
     ) -> None:

@@ -19,6 +19,10 @@ from enum import Enum
 from json import dumps
 from math import isfinite
 
+_TOML_BARE_KEY_CHARACTERS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+)
+
 
 def serialize_flow_definition(definition: FlowDefinition) -> str:
     assert isinstance(definition, FlowDefinition)
@@ -367,12 +371,15 @@ def _toml_path(path: Sequence[str]) -> str:
 
 def _toml_key(value: str) -> str:
     assert isinstance(value, str) and value.strip()
-    if (
-        value.replace("_", "").replace("-", "").isalnum()
-        and not value[0].isdigit()
-    ):
+    if _is_toml_bare_key(value):
         return value
     return dumps(value)
+
+
+def _is_toml_bare_key(value: str) -> bool:
+    return value[0] not in "0123456789" and all(
+        char in _TOML_BARE_KEY_CHARACTERS for char in value
+    )
 
 
 def _toml_value(value: object) -> str:
