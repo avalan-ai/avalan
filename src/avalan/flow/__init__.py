@@ -70,10 +70,17 @@ from .executor import FlowExecutorRunResult as FlowExecutorRunResult
 from .executor import FlowTaskExecutor as FlowTaskExecutor
 from .executor import FlowTaskInspection as FlowTaskInspection
 from .flow import Flow as Flow
+from .graph import FlowGraphBindingInspection as FlowGraphBindingInspection
+from .graph import FlowGraphBindingState as FlowGraphBindingState
 from .graph import FlowGraphCompileResult as FlowGraphCompileResult
 from .graph import FlowGraphEdgeBinding as FlowGraphEdgeBinding
+from .graph import FlowGraphEdgeClassification as FlowGraphEdgeClassification
+from .graph import FlowGraphEdgeInspection as FlowGraphEdgeInspection
 from .graph import FlowGraphFormat as FlowGraphFormat
+from .graph import FlowGraphInspection as FlowGraphInspection
 from .graph import FlowGraphMode as FlowGraphMode
+from .graph import FlowGraphNodeClassification as FlowGraphNodeClassification
+from .graph import FlowGraphNodeInspection as FlowGraphNodeInspection
 from .graph import FlowGraphSource as FlowGraphSource
 from .graph import FlowGraphSourceKind as FlowGraphSourceKind
 from .inspection import FlowArtifactInspection as FlowArtifactInspection
