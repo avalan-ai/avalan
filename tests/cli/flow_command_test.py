@@ -768,6 +768,58 @@ class FlowRunCommandTestCase(TestCase):
         self.assertNotIn("private customer prompt", failure_stream.getvalue())
         self.assertNotIn("private.flow.toml", failure_stream.getvalue())
 
+    def test_flow_validate_graph_authoring_uses_compile_first_loader(
+        self,
+    ) -> None:
+        success_stream = StringIO()
+        success_console = Console(file=success_stream, width=160)
+        failure_stream = StringIO()
+        failure_console = Console(file=failure_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            valid_root = root / "valid"
+            invalid_root = root / "invalid"
+            valid_root.mkdir()
+            invalid_root.mkdir()
+            valid_path = _write_strict_graph_constant_flow(valid_root)
+            invalid_path = _write_strict_graph_constant_flow(
+                invalid_root,
+                valid=False,
+            )
+            sdk_valid = asyncio_run(
+                FlowDefinitionLoader().load_validation_result(valid_path)
+            )
+            cli_valid = flow_cmds.flow_validate(
+                _args(flow=valid_path, flow_json=True),
+                success_console,
+                self.theme,
+            )
+            sdk_invalid = asyncio_run(
+                FlowDefinitionLoader().load_validation_result(invalid_path)
+            )
+            cli_invalid = flow_cmds.flow_validate(
+                _args(flow=invalid_path, flow_json=True),
+                failure_console,
+                self.theme,
+            )
+
+        valid_payload = loads(success_stream.getvalue())
+        invalid_payload = loads(failure_stream.getvalue())
+        self.assertTrue(cli_valid)
+        self.assertEqual(valid_payload["ok"], sdk_valid.ok)
+        self.assertEqual(valid_payload["diagnostics"], [])
+        self.assertFalse(cli_invalid)
+        self.assertEqual(invalid_payload["ok"], sdk_invalid.ok)
+        self.assertEqual(
+            [item["code"] for item in invalid_payload["diagnostics"]],
+            [
+                diagnostic.as_public_dict()["code"]
+                for diagnostic in sdk_invalid.diagnostics
+            ],
+        )
+        self.assertNotIn("Private graph label", failure_stream.getvalue())
+
     def test_flow_mermaid_parse_json_success(self) -> None:
         stream = StringIO()
         console = Console(file=stream, width=160)
@@ -1898,6 +1950,80 @@ class FlowRunCommandTestCase(TestCase):
         self.assertTrue(result)
         self.assertEqual(stream.getvalue(), "")
         self.assertEqual(written, '{"answer":"ok"}\n')
+
+    def test_flow_run_graph_authoring_matches_native_strict_result(
+        self,
+    ) -> None:
+        native_stream = StringIO()
+        native_console = Console(file=native_stream, width=160)
+        graph_stream = StringIO()
+        graph_console = Console(file=graph_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            native_path = _write_strict_constant_flow(root)
+            graph_path = _write_strict_graph_constant_flow(root)
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                native = flow_cmds.flow_run(
+                    _args(
+                        flow=native_path,
+                        task_input_json='{"ignored":true}',
+                        task_run_json=True,
+                    ),
+                    native_console,
+                    self.theme,
+                )
+                graph = flow_cmds.flow_run(
+                    _args(
+                        flow=graph_path,
+                        task_input_json='{"ignored":true}',
+                        task_run_json=True,
+                    ),
+                    graph_console,
+                    self.theme,
+                )
+
+        self.assertTrue(native)
+        self.assertTrue(graph)
+        self.assertEqual(
+            loads(native_stream.getvalue()),
+            loads(graph_stream.getvalue()),
+        )
+        self.assertEqual(
+            loads(graph_stream.getvalue()),
+            {"answer": "ok"},
+        )
+        self.assertNotIn("Private graph label", graph_stream.getvalue())
+
+    def test_flow_run_invalid_graph_fails_before_execution(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root, valid=False)
+            with patch.object(
+                flow_cmds,
+                "_flow_run_with_task_context",
+                new=AsyncMock(
+                    side_effect=AssertionError("execution should not start")
+                ),
+            ) as run_with_context:
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"ignored":true}',
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        run_with_context.assert_not_called()
+        self.assertIn("flow.graph.unsupported_executable_edge", output)
+        self.assertNotIn("Private graph label", output)
 
     def test_flow_run_strict_builtin_flow_uses_task_context(self) -> None:
         stream = StringIO()
