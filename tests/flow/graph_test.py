@@ -189,6 +189,108 @@ class FlowGraphCompilerTestCase(TestCase):
         )
         self.assertNotIn("/private/customer", str(result.as_public_dict()))
 
+    def test_compile_flow_graph_classifies_nodes_by_exact_id_only(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    'start(["Private shaped label"]) route_1@--> alias',
+                    'alias["review"] route_2@--> styled',
+                    "styled route_3@--> done",
+                    "style styled fill:#fff,stroke:#333",
+                    "class alias active",
+                    "review",
+                    "subgraph lane[Private lane label]",
+                    "decorative route_4@--> done",
+                    "end",
+                    "done route_5@--> start",
+                )
+            ),
+            source_identity="/private/customer/flow.toml",
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="review", type="pass-through"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (
+                    node.id,
+                    node.classification,
+                    node.strict_node,
+                )
+                for node in result.inspection.nodes
+            ],
+            [
+                ("start", FlowGraphNodeClassification.ACTUAL, "start"),
+                ("alias", FlowGraphNodeClassification.DECORATIVE, None),
+                ("styled", FlowGraphNodeClassification.DECORATIVE, None),
+                ("done", FlowGraphNodeClassification.ACTUAL, "done"),
+                ("review", FlowGraphNodeClassification.ACTUAL, "review"),
+                (
+                    "decorative",
+                    FlowGraphNodeClassification.DECORATIVE,
+                    None,
+                ),
+            ],
+        )
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in result.edges],
+            [("done", "start")],
+        )
+        public = str(result.inspection.as_public_dict())
+        self.assertNotIn("Private shaped label", public)
+        self.assertNotIn("Private lane label", public)
+        self.assertNotIn("/private/customer", public)
+
+    def test_compile_flow_graph_does_not_infer_nodes_from_labels_or_styles(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    'decorative["review"] route_1@--> note',
+                    "style decorative fill:#fff",
+                    "classDef active fill:#eee",
+                    "class decorative active",
+                )
+            ),
+        )
+
+        result = compile_flow_graph(
+            source,
+            (FlowNodeDefinition(name="review", type="pass-through"),),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (node.id, node.classification, node.strict_node)
+                for node in result.inspection.nodes
+            ],
+            [
+                ("decorative", FlowGraphNodeClassification.DECORATIVE, None),
+                ("note", FlowGraphNodeClassification.DECORATIVE, None),
+            ],
+        )
+
     def test_compile_flow_graph_reports_malformed_inline_source_safely(
         self,
     ) -> None:
@@ -738,6 +840,7 @@ class FlowGraphModelsTestCase(TestCase):
             {"edge_bindings": {"": binding}},
             {"edge_bindings": {"other": binding}},
             {"edge_bindings": {"route": object()}},
+            {"inspection": object()},
             {"diagnostics": [object()]},
             {"diagnostics": (object(),)},
         )

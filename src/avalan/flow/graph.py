@@ -15,6 +15,8 @@ from .diagnostics import (
 from .mermaid import (
     MermaidAstEdge,
     MermaidAstEdgeStatement,
+    MermaidAstNode,
+    MermaidAstNodeStatement,
     MermaidAstStatement,
     MermaidAstSubgraph,
     parse_mermaid_import,
@@ -347,6 +349,10 @@ def compile_flow_graph(
         )
 
     strict_node_names = {node.name for node in nodes}
+    node_inspections = _classify_mermaid_nodes(
+        _mermaid_nodes(parsed.parse_result.ast.statements),
+        strict_node_names,
+    )
     edges = tuple(
         FlowEdgeDefinition(source=edge.source, target=edge.target)
         for edge in _mermaid_edges(parsed.parse_result.ast.statements)
@@ -357,6 +363,11 @@ def compile_flow_graph(
         source=source,
         edges=edges,
         edge_bindings=bindings,
+        inspection=FlowGraphInspection(
+            source=source,
+            nodes=node_inspections,
+            generated_edges=edges,
+        ),
     )
 
 
@@ -475,6 +486,50 @@ def _mermaid_edges(
         if isinstance(statement, MermaidAstSubgraph):
             edges.extend(_mermaid_edges(statement.statements))
     return tuple(edges)
+
+
+def _mermaid_nodes(
+    statements: tuple[MermaidAstStatement, ...],
+) -> tuple[MermaidAstNode, ...]:
+    nodes: list[MermaidAstNode] = []
+    for statement in statements:
+        if isinstance(statement, MermaidAstNodeStatement):
+            nodes.append(statement.node)
+        if isinstance(statement, MermaidAstEdgeStatement):
+            nodes.extend(statement.nodes)
+        if isinstance(statement, MermaidAstSubgraph):
+            nodes.extend(_mermaid_nodes(statement.statements))
+    return tuple(nodes)
+
+
+def _classify_mermaid_nodes(
+    nodes: tuple[MermaidAstNode, ...],
+    strict_node_names: set[str],
+) -> tuple["FlowGraphNodeInspection", ...]:
+    inspections: list[FlowGraphNodeInspection] = []
+    seen: set[str] = set()
+    for node in nodes:
+        if node.id in seen:
+            continue
+        seen.add(node.id)
+        if node.id in strict_node_names:
+            inspections.append(
+                FlowGraphNodeInspection(
+                    id=node.id,
+                    classification=FlowGraphNodeClassification.ACTUAL,
+                    strict_node=node.id,
+                    source_span=node.source_span,
+                )
+            )
+        else:
+            inspections.append(
+                FlowGraphNodeInspection(
+                    id=node.id,
+                    classification=FlowGraphNodeClassification.DECORATIVE,
+                    source_span=node.source_span,
+                )
+            )
+    return tuple(inspections)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -767,6 +822,7 @@ class FlowGraphCompileResult:
     edge_bindings: Mapping[str, FlowGraphEdgeBinding] = field(
         default_factory=_empty_edge_bindings
     )
+    inspection: FlowGraphInspection | None = None
     diagnostics: tuple[FlowDiagnostic, ...] = ()
 
     def __post_init__(self) -> None:
@@ -788,6 +844,8 @@ class FlowGraphCompileResult:
             ), "edge binding key must match edge_id"
             frozen[key] = binding
         object.__setattr__(self, "edge_bindings", MappingProxyType(frozen))
+        if self.inspection is not None:
+            assert isinstance(self.inspection, FlowGraphInspection)
         _assert_diagnostics(self.diagnostics)
 
     @property
