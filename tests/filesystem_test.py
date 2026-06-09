@@ -8,6 +8,8 @@ from avalan.filesystem import (
     read_bytes,
     read_text,
     run_awaitable,
+    write_bytes,
+    write_text,
 )
 
 
@@ -38,6 +40,35 @@ class FilesystemTestCase(TestCase):
 
         self.assertEqual(content, b"abc")
 
+    def test_write_text_uses_default_and_explicit_encoding(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "value.txt"
+            latin_path = Path(temporary_directory) / "latin.txt"
+
+            count = asyncio_run(write_text(path, "hello"))
+            latin_count = asyncio_run(
+                write_text(latin_path, "Café", encoding="latin-1")
+            )
+
+            default = path.read_text(encoding="utf-8")
+            latin = latin_path.read_bytes()
+
+        self.assertEqual(count, 5)
+        self.assertEqual(latin_count, 4)
+        self.assertEqual(default, "hello")
+        self.assertEqual(latin, "Café".encode("latin-1"))
+
+    def test_write_bytes_persists_file_contents(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "value.bin"
+
+            count = asyncio_run(write_bytes(path, b"abc"))
+
+            content = path.read_bytes()
+
+        self.assertEqual(count, 3)
+        self.assertEqual(content, b"abc")
+
     def test_rejects_invalid_arguments(self) -> None:
         with self.assertRaises(AssertionError):
             assert_text_encoding("")
@@ -47,6 +78,16 @@ class FilesystemTestCase(TestCase):
             asyncio_run(read_text("value.txt", encoding=""))
         with self.assertRaises(AssertionError):
             asyncio_run(read_bytes(object()))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(write_text(object(), "value"))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(write_text("value.txt", b"value"))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(write_text("value.txt", "value", encoding=""))
+        with self.assertRaises(AssertionError):
+            asyncio_run(write_bytes(object(), b"value"))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(write_bytes("value.bin", "value"))  # type: ignore[arg-type]
 
     def test_run_awaitable_works_inside_and_outside_running_loop(self) -> None:
         async def exercise() -> str:

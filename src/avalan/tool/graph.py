@@ -1,8 +1,10 @@
 from ..compat import override
 from ..entities import ToolCallContext
+from ..filesystem import write_bytes
 from . import Tool, ToolSet
 from .graph_settings import GraphToolSettings
 
+from asyncio import to_thread
 from base64 import b64encode
 from contextlib import AsyncExitStack
 from io import BytesIO
@@ -53,7 +55,7 @@ class GraphRenderer:
         axes = figure.add_subplot(1, 1, 1)
         return figure, axes
 
-    def _render(
+    async def _render(
         self,
         figure: Any,
         *,
@@ -91,7 +93,7 @@ class GraphRenderer:
             "series": series_names,
             "points": point_count,
         }
-        file_path = self._save_file(data)
+        file_path = await self._save_file(data)
         if file_path:
             result["file"] = file_path
         return result
@@ -199,7 +201,7 @@ class GraphRenderer:
                 "Install them with: pip install avalan[tool]"
             )
 
-    def _save_file(self, data: bytes) -> str | None:
+    async def _save_file(self, data: bytes) -> str | None:
         file = self._settings.file
         if not file:
             return None
@@ -209,11 +211,11 @@ class GraphRenderer:
         assert (
             not parent.exists() or parent.is_dir()
         ), "graph file parent must be a directory"
-        parent.mkdir(parents=True, exist_ok=True)
+        await to_thread(parent.mkdir, parents=True, exist_ok=True)
         assert (
             not path.exists() or path.is_file()
         ), "graph file must be a file path"
-        path.write_bytes(data)
+        await write_bytes(path, data)
         return str(path.resolve())
 
 
@@ -278,7 +280,7 @@ class PieChartTool(Tool, GraphRenderer):
         )
         axes.axis("equal")
 
-        return self._render(
+        return await self._render(
             figure,
             chart_type="pie",
             output_format=output_format,
@@ -380,7 +382,7 @@ class BarChartTool(Tool, GraphRenderer):
         if show_legend and (len(series_items) > 1 or series_name != "values"):
             axes.legend()
 
-        return self._render(
+        return await self._render(
             figure,
             chart_type="bar",
             output_format=output_format,
@@ -513,7 +515,7 @@ class LineChartTool(Tool, GraphRenderer):
         if show_legend and (len(series_clean) > 1 or series_name != "values"):
             axes.legend()
 
-        return self._render(
+        return await self._render(
             figure,
             chart_type="line",
             output_format=output_format,
@@ -609,7 +611,7 @@ class ScatterPlotTool(Tool, GraphRenderer):
         if show_legend:
             axes.legend()
 
-        return self._render(
+        return await self._render(
             figure,
             chart_type="scatter",
             output_format=output_format,
@@ -685,7 +687,7 @@ class HistogramTool(Tool, GraphRenderer):
             grid=grid,
         )
 
-        return self._render(
+        return await self._render(
             figure,
             chart_type="histogram",
             output_format=output_format,
