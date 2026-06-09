@@ -33,15 +33,19 @@ FIXTURE_ROOT = (
 
 EXECUTABLE_FIXTURE_CODES = {
     "ambiguous_shorthand.mmd": "flow.mermaid.security.ambiguous_shorthand",
+    "bidirectional_edge.mmd": "flow.mermaid.security.bidirectional_edge",
     "callback_directive.mmd": (
         "flow.mermaid.security.unsafe_callback_directive"
     ),
     "click_directive.mmd": "flow.mermaid.security.unsafe_link_directive",
+    "duplicate_edge_id.mmd": "flow.mermaid.security.duplicate_edge_id",
     "frontmatter.mmd": "flow.mermaid.security.frontmatter",
     "href_directive.mmd": "flow.mermaid.security.unsafe_link_directive",
     "html_label.mmd": "flow.mermaid.security.html_label",
     "init_directive.mmd": "flow.mermaid.security.init_directive",
+    "invalid_edge_id.mmd": "flow.mermaid.security.invalid_edge_id",
     "link_directive.mmd": "flow.mermaid.security.unsafe_link_directive",
+    "malformed_edge_id.mmd": "flow.mermaid.parser.malformed_edge_id",
     "malformed_directive.mmd": "flow.mermaid.security.malformed_directive",
     "malformed_subgraph.mmd": "flow.mermaid.parser.unclosed_subgraph",
     "script_like_label.mmd": "flow.mermaid.security.script_like_label",
@@ -267,6 +271,75 @@ class MermaidImportSecurityTestCase(TestCase):
             "flowchart LR\nA route.one@--> B route.one@--> C",
             import_mode=FlowViewImportMode.PRESENTATION,
             source="/private/customer/diagram.mmd",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
+
+    def test_executable_import_rejects_bidirectional_edges(self) -> None:
+        result = parse_mermaid_import(
+            "\n".join(
+                (
+                    "flowchart LR",
+                    "A private_route@<--> B",
+                    "B public_route@--> C",
+                )
+            ),
+            import_mode=FlowViewImportMode.EXECUTABLE,
+            source="/private/customer/diagram.mmd",
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            _codes(result),
+            ("flow.mermaid.security.bidirectional_edge",),
+        )
+        self.assertEqual(result.diagnostics[0].source_span.start_line, 2)
+        self.assertEqual(result.diagnostics[0].source_span.start_column, 3)
+        self.assertNotIn("customer", str(result.public_diagnostics))
+        self.assertNotIn("private_route", str(result.public_diagnostics))
+
+    def test_presentation_import_keeps_bidirectional_edges_visual(
+        self,
+    ) -> None:
+        result = parse_mermaid_import(
+            "flowchart LR\nA private_route@<--> B",
+            import_mode=FlowViewImportMode.PRESENTATION,
+            source="/private/customer/diagram.mmd",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
+
+    def test_spanless_hand_built_bidirectional_edge_is_ignored_by_security(
+        self,
+    ) -> None:
+        span = FlowSourceSpan(start_line=1, start_column=1)
+        parse_result = MermaidParseResult(
+            cst=MermaidCst(),
+            ast=MermaidAst(
+                statements=(
+                    MermaidAstEdgeStatement(
+                        nodes=(
+                            MermaidAstNode(id="A", source_span=span),
+                            MermaidAstNode(id="B", source_span=span),
+                        ),
+                        edges=(
+                            MermaidAstEdge(
+                                source="A",
+                                target="B",
+                                arrow="<-->",
+                            ),
+                        ),
+                        source_span=span,
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_mermaid_import(
+            parse_result,
+            import_mode=FlowViewImportMode.EXECUTABLE,
         )
 
         self.assertTrue(result.ok)

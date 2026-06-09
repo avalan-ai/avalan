@@ -1918,6 +1918,12 @@ def _import_security_diagnostics(
             import_mode,
         )
     )
+    diagnostics.extend(
+        _edge_safety_diagnostics(
+            parse_result.ast.statements,
+            import_mode,
+        )
+    )
     return tuple(diagnostics)
 
 
@@ -2079,6 +2085,32 @@ def _edge_id_security_diagnostics(
             )
             continue
         seen[edge.explicit_id] = source_span
+    return tuple(diagnostics)
+
+
+def _edge_safety_diagnostics(
+    statements: tuple[MermaidAstStatement, ...],
+    import_mode: FlowViewImportMode,
+) -> tuple[FlowDiagnostic, ...]:
+    if import_mode != FlowViewImportMode.EXECUTABLE:
+        return ()
+
+    diagnostics: list[FlowDiagnostic] = []
+    for edge in _statement_edges(statements):
+        if not _is_bidirectional_arrow(edge.arrow):
+            continue
+        source_span = edge.source_span
+        if source_span is None:
+            continue
+        diagnostics.append(
+            _import_diagnostic(
+                "bidirectional_edge",
+                "Bidirectional Mermaid edges are not supported for "
+                "executable import.",
+                source_span,
+                import_mode,
+            )
+        )
     return tuple(diagnostics)
 
 
