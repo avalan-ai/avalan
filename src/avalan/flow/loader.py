@@ -35,7 +35,11 @@ from .diagnostics import (
     FlowSourceSpan,
 )
 from .flow import Flow
-from .graph import flow_graph_diagnostic_load_category
+from .graph import (
+    FlowGraphDiagnosticCode,
+    flow_graph_diagnostic,
+    flow_graph_diagnostic_load_category,
+)
 from .registry import (
     FlowNodeConfigurationError,
     FlowNodeRegistry,
@@ -476,6 +480,11 @@ def _build_result(
     nodes_raw = _section(raw, "nodes", issues, required=True)
     graph_raw = _section(raw, "graph", issues, required=False)
     _validate_graph_section(graph_raw, issues)
+    has_graph_edge_conflict = _validate_graph_edge_conflict(
+        raw,
+        graph_raw,
+        issues,
+    )
     if flow_raw is None or nodes_raw is None:
         return FlowLoadResult(definition=None, issues=tuple(issues))
 
@@ -552,7 +561,11 @@ def _build_result(
         else {}
     )
     nodes = _node_definitions(nodes_raw, issues)
-    edges = _edge_definitions(raw.get("edges"), issues)
+    edges = (
+        ()
+        if has_graph_edge_conflict
+        else _edge_definitions(raw.get("edges"), issues)
+    )
     is_strict = _uses_strict_definition(raw, flow_raw)
     if not is_strict:
         if entrypoint is None:
@@ -562,6 +575,8 @@ def _build_result(
     if name is None or (
         not is_strict and (entrypoint is None or output_node is None)
     ):
+        return FlowLoadResult(definition=None, issues=tuple(issues))
+    if has_graph_edge_conflict:
         return FlowLoadResult(definition=None, issues=tuple(issues))
     definition = FlowDefinition(
         name=name,
@@ -747,6 +762,24 @@ def _validate_graph_section(
     )
     if "edges" in raw:
         _validate_graph_edges_section(raw["edges"], issues)
+
+
+def _validate_graph_edge_conflict(
+    raw: Mapping[str, object],
+    graph_raw: RawSection | None,
+    issues: list[FlowLoadIssue],
+) -> bool:
+    if graph_raw is None or not isinstance(raw.get("edges"), list):
+        return False
+    issues.append(
+        _issue_from_diagnostic(
+            flow_graph_diagnostic(
+                FlowGraphDiagnosticCode.EDGE_CONFLICT,
+                "edges",
+            )
+        )
+    )
+    return True
 
 
 def _validate_graph_edges_section(

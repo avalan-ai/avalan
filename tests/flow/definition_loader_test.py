@@ -3,6 +3,7 @@ from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
 
 from avalan.entities import (
     ToolCall,
@@ -1140,6 +1141,80 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
         assert result.definition is not None
         self.assertEqual(result.definition.name, "graph_admission")
+
+    def test_native_edges_load_without_graph_section(self) -> None:
+        result = loads_flow_definition_result(VALID_FLOW)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        self.assertEqual(len(result.definition.edges), 1)
+        self.assertEqual(result.definition.edges[0].source, "start")
+        self.assertEqual(result.definition.edges[0].target, "finish")
+
+    def test_graph_section_rejects_native_edges_before_validation(
+        self,
+    ) -> None:
+        build_calls = 0
+
+        def factory(definition: FlowNodeDefinition) -> Node:
+            nonlocal build_calls
+            _ = definition
+            build_calls += 1
+            raise AssertionError("factory should not build")
+
+        loader = FlowDefinitionLoader(
+            FlowNodeRegistry(
+                {"external": factory},
+                {"external": FlowNodeMetadata()},
+            )
+        )
+
+        with patch("avalan.flow.loader.validate_flow_definition") as validate:
+            result = loader.loads_result("""
+                [flow]
+                name = "graph_conflict"
+                entrypoint = "start"
+                output_node = "finish"
+
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start route_1@--> finish
+                private_customer_notes["private diagram label"]
+                '''
+
+                [nodes.start]
+                type = "external"
+
+                [nodes.finish]
+                type = "external"
+
+                [[edges]]
+                source = "start"
+                target = "finish"
+                label = "private strict edge label"
+                """)
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.definition)
+        self.assertIsNone(result.flow)
+        validate.assert_not_called()
+        self.assertEqual(build_calls, 0)
+        self.assertEqual(len(result.issues), 1)
+        issue = result.issues[0]
+        self.assertEqual(issue.code, "flow.graph.edge_conflict")
+        self.assertEqual(issue.path, "edges")
+        self.assertEqual(issue.category, FlowLoadIssueCategory.VALUE)
+        self.assertEqual(
+            issue.diagnostic_category,
+            FlowDiagnosticCategory.GRAPH_COMPILER,
+        )
+        public = str(result.public_diagnostics)
+        self.assertNotIn("private diagram label", public)
+        self.assertNotIn("private strict edge label", public)
 
     def test_graph_section_rejects_invalid_shapes_and_fields(self) -> None:
         cases = (
