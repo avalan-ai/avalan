@@ -34,6 +34,7 @@ from .state import FlowEdgeState, FlowExecutionTrace, FlowNodeState
 from asyncio import CancelledError, gather, sleep, wait_for
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from importlib import import_module
 from inspect import isawaitable
@@ -49,6 +50,17 @@ FlowPlanNodeRunner: TypeAlias = Callable[
     object | Awaitable[object],
 ]
 FlowEventListener: TypeAlias = Callable[[Event], Awaitable[None] | None]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _FlowExecutionOptions:
+    cancellation_checker: CancellationChecker | None = None
+    event_listener: FlowEventListener | None = None
+
+
+_FLOW_EXECUTION_OPTIONS: ContextVar[_FlowExecutionOptions | None] = ContextVar(
+    "_FLOW_EXECUTION_OPTIONS", default=None
+)
 
 
 class _JsonSchemaValidator(Protocol):
@@ -179,7 +191,18 @@ class FlowNodeRegistryRunner:
             Mapping,
         ):
             raise _subflow_execution_error()
-        result = await execute_flow_plan(plan, self, inputs=inputs)
+        options = _FLOW_EXECUTION_OPTIONS.get()
+        result = await execute_flow_plan(
+            plan,
+            self,
+            inputs=inputs,
+            cancellation_checker=(
+                options.cancellation_checker if options is not None else None
+            ),
+            event_listener=(
+                options.event_listener if options is not None else None
+            ),
+        )
         if not result.ok:
             raise FlowNodeExecutionError(
                 code="flow.execution.subflow_failed",
@@ -992,7 +1015,13 @@ async def _run_plan_node_attempts(
     first_failure: _NodeRunOutcome | None = None
     while True:
         attempts += 1
-        outcome = await _run_plan_node_once(node, inputs, runner)
+        outcome = await _run_plan_node_once(
+            node,
+            inputs,
+            runner,
+            cancellation_checker,
+            event_listener=event_listener,
+        )
         if outcome.route_kind == FlowEdgeKind.SUCCESS:
             return _NodeRunOutcome(
                 node=node,
@@ -1496,89 +1525,101 @@ async def _run_plan_node_once(
     node: FlowNodePlan,
     inputs: Mapping[str, object],
     runner: FlowPlanNodeRunner,
+    cancellation_checker: CancellationChecker | None,
+    *,
+    event_listener: FlowEventListener | None,
 ) -> _NodeRunOutcome:
-    try:
-        output = runner(node, inputs)
-        if isawaitable(output):
-            if node.timeout is None:
-                output = await output
-            else:
-                output = await wait_for(
-                    output,
-                    timeout=node.timeout.per_attempt_seconds,
-                )
-    except CancelledError:
-        diagnostic = _execution_diagnostic(
-            code="flow.execution.node_cancelled",
-            path=f"nodes.{node.name}",
-            message="Flow node was cancelled.",
-            hint="Inspect cancellation routes for this node.",
+    token = _FLOW_EXECUTION_OPTIONS.set(
+        _FlowExecutionOptions(
+            cancellation_checker=cancellation_checker,
+            event_listener=event_listener,
         )
-        return _NodeRunOutcome(
-            node=node,
-            state=FlowNodeState.CANCELLED,
-            route_kind=FlowEdgeKind.CANCELLATION,
-            attempts=1,
-            diagnostics=(diagnostic,),
-            failure_category="cancellation",
-        )
-    except FlowNodeExecutionError as error:
-        diagnostic = _execution_diagnostic(
-            code=error.code,
-            path=f"nodes.{node.name}",
-            message=error.safe_message,
-            hint=error.hint,
-        )
-        return _NodeRunOutcome(
-            node=node,
-            state=(
-                FlowNodeState.CANCELLED
-                if error.route_kind == FlowEdgeKind.CANCELLATION
-                else FlowNodeState.FAILED
-            ),
-            route_kind=error.route_kind,
-            attempts=1,
-            diagnostics=(diagnostic,),
-            failure_category=error.failure_category,
-        )
-    except TimeoutError:
-        diagnostic = _execution_diagnostic(
-            code="flow.execution.node_timeout",
-            path=f"nodes.{node.name}",
-            message="Flow node timed out.",
-            hint="Inspect timeout routes for this node.",
-        )
-        return _NodeRunOutcome(
-            node=node,
-            state=FlowNodeState.FAILED,
-            route_kind=FlowEdgeKind.TIMEOUT,
-            attempts=1,
-            diagnostics=(diagnostic,),
-            failure_category="timeout",
-        )
-    except Exception:
-        diagnostic = _execution_diagnostic(
-            code="flow.execution.node_failed",
-            path=f"nodes.{node.name}",
-            message="Flow node failed.",
-            hint="Inspect error routes for this node.",
-        )
-        return _NodeRunOutcome(
-            node=node,
-            state=FlowNodeState.FAILED,
-            route_kind=FlowEdgeKind.ERROR,
-            attempts=1,
-            diagnostics=(diagnostic,),
-            failure_category="error",
-        )
-    return _NodeRunOutcome(
-        node=node,
-        state=FlowNodeState.SUCCEEDED,
-        route_kind=FlowEdgeKind.SUCCESS,
-        attempts=1,
-        diagnostics=(),
-        output=output,
     )
+    try:
+        try:
+            output = runner(node, inputs)
+            if isawaitable(output):
+                if node.timeout is None:
+                    output = await output
+                else:
+                    output = await wait_for(
+                        output,
+                        timeout=node.timeout.per_attempt_seconds,
+                    )
+        except CancelledError:
+            diagnostic = _execution_diagnostic(
+                code="flow.execution.node_cancelled",
+                path=f"nodes.{node.name}",
+                message="Flow node was cancelled.",
+                hint="Inspect cancellation routes for this node.",
+            )
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.CANCELLED,
+                route_kind=FlowEdgeKind.CANCELLATION,
+                attempts=1,
+                diagnostics=(diagnostic,),
+                failure_category="cancellation",
+            )
+        except FlowNodeExecutionError as error:
+            diagnostic = _execution_diagnostic(
+                code=error.code,
+                path=f"nodes.{node.name}",
+                message=error.safe_message,
+                hint=error.hint,
+            )
+            return _NodeRunOutcome(
+                node=node,
+                state=(
+                    FlowNodeState.CANCELLED
+                    if error.route_kind == FlowEdgeKind.CANCELLATION
+                    else FlowNodeState.FAILED
+                ),
+                route_kind=error.route_kind,
+                attempts=1,
+                diagnostics=(diagnostic,),
+                failure_category=error.failure_category,
+            )
+        except TimeoutError:
+            diagnostic = _execution_diagnostic(
+                code="flow.execution.node_timeout",
+                path=f"nodes.{node.name}",
+                message="Flow node timed out.",
+                hint="Inspect timeout routes for this node.",
+            )
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.FAILED,
+                route_kind=FlowEdgeKind.TIMEOUT,
+                attempts=1,
+                diagnostics=(diagnostic,),
+                failure_category="timeout",
+            )
+        except Exception:
+            diagnostic = _execution_diagnostic(
+                code="flow.execution.node_failed",
+                path=f"nodes.{node.name}",
+                message="Flow node failed.",
+                hint="Inspect error routes for this node.",
+            )
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.FAILED,
+                route_kind=FlowEdgeKind.ERROR,
+                attempts=1,
+                diagnostics=(diagnostic,),
+                failure_category="error",
+            )
+        return _NodeRunOutcome(
+            node=node,
+            state=FlowNodeState.SUCCEEDED,
+            route_kind=FlowEdgeKind.SUCCESS,
+            attempts=1,
+            diagnostics=(),
+            output=output,
+        )
+    finally:
+        _FLOW_EXECUTION_OPTIONS.reset(token)
 
 
 def _should_retry_node(
@@ -1625,6 +1666,9 @@ def _node_output_mapping(
     node: FlowNodePlan,
     output: object,
 ) -> Mapping[str, object]:
+    if _preserve_tool_envelope_output(node, output):
+        assert isinstance(output, Mapping)
+        return _freeze_mapping(output)
     names = tuple(
         contract.name
         for contract in node.output_contracts
@@ -1641,6 +1685,15 @@ def _node_output_mapping(
     if isinstance(output, Mapping):
         return _freeze_mapping(output)
     return _freeze_mapping({"result": output})
+
+
+def _preserve_tool_envelope_output(
+    node: FlowNodePlan,
+    output: object,
+) -> bool:
+    if node.kind != FlowNodeKind.TOOL or not isinstance(output, Mapping):
+        return False
+    return node.config.get("output_mode", "raw") == "envelope"
 
 
 def _route_from_node(
