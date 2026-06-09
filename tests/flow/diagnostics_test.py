@@ -234,6 +234,10 @@ class FlowDiagnosticsTestCase(TestCase):
         prefixes = all_flow_diagnostic_code_prefixes()
 
         self.assertEqual(
+            prefixes[FlowDiagnosticCategory.GRAPH_COMPILER],
+            (FlowDiagnosticCodePrefix.GRAPH_COMPILER,),
+        )
+        self.assertEqual(
             prefixes[FlowDiagnosticCategory.MERMAID_PARSER],
             (FlowDiagnosticCodePrefix.MERMAID_PARSER,),
         )

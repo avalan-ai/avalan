@@ -70,6 +70,12 @@ from .executor import FlowExecutorRunResult as FlowExecutorRunResult
 from .executor import FlowTaskExecutor as FlowTaskExecutor
 from .executor import FlowTaskInspection as FlowTaskInspection
 from .flow import Flow as Flow
+from .graph import FlowGraphCompileResult as FlowGraphCompileResult
+from .graph import FlowGraphEdgeBinding as FlowGraphEdgeBinding
+from .graph import FlowGraphFormat as FlowGraphFormat
+from .graph import FlowGraphMode as FlowGraphMode
+from .graph import FlowGraphSource as FlowGraphSource
+from .graph import FlowGraphSourceKind as FlowGraphSourceKind
 from .inspection import FlowArtifactInspection as FlowArtifactInspection
 from .inspection import FlowEdgeInspection as FlowEdgeInspection
 from .inspection import FlowInspection as FlowInspection
