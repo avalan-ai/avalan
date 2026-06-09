@@ -32,6 +32,7 @@ from avalan.flow import (
     FlowTaskExecutor,
     FlowTaskInspection,
     InMemoryFlowStateStore,
+    loads_flow_definition_result,
     parse_flow_selector,
 )
 from avalan.flow.executor import _resume_metadata
@@ -197,6 +198,85 @@ class FlowExecutorTestCase(IsolatedAsyncioTestCase):
             result.inspect()
         with self.assertRaises(AssertionError):
             FlowExecutor().inspect(result)
+
+    async def test_run_loaded_graph_authored_definition_as_strict_plan(
+        self,
+    ) -> None:
+        load_result = loads_flow_definition_result("""
+            [flow]
+            name = "executor-strict"
+            version = "2026-06-09"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "json"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.value"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@-->|Private runtime label| finish
+            start -.-> note
+            '''
+
+            [graph.edges.route_1]
+            label = "approved"
+
+            [nodes.start]
+            type = "echo"
+
+            [nodes.finish]
+            type = "echo"
+            """)
+        calls: list[str] = []
+
+        async def runner(
+            node: FlowNodePlan,
+            inputs: Mapping[str, object],
+        ) -> object:
+            calls.append(node.name)
+            if node.name in {"start", "finish"}:
+                return {"value": "safe"}
+            return dict(inputs)
+
+        self.assertTrue(load_result.ok, load_result.public_diagnostics)
+        assert load_result.definition is not None
+
+        result = await FlowExecutor(runner=runner).run(
+            load_result.definition,
+            inputs={"payload": {"private": "input"}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        assert result.plan is not None
+        self.assertEqual(calls, ["start", "finish"])
+        self.assertEqual(result.outputs, {"answer": "safe"})
+        self.assertEqual(
+            [
+                (edge.source, edge.target, edge.label)
+                for edge in result.plan.edges
+            ],
+            [("start", "finish", "approved")],
+        )
+        self.assertFalse(hasattr(result.plan, "graph"))
+        self.assertNotIn("Private runtime label", str(result.plan))
+        self.assertNotIn("Private runtime label", str(result.result))
 
     async def test_resume_continues_paused_human_review(self) -> None:
         executor = FlowExecutor()

@@ -1400,23 +1400,36 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertNotIn("private diagram label", public)
         self.assertNotIn("private strict edge label", public)
 
-    def test_graph_compile_failure_skips_validation_and_node_build(
+    def test_graph_compile_failure_skips_validation_and_node_registry(
         self,
     ) -> None:
-        build_calls = 0
+        class CountingRegistry(FlowNodeRegistry):
+            def __init__(self) -> None:
+                self.metadata_calls = 0
+                self.build_calls = 0
+                super().__init__(
+                    {"external": self._factory},
+                    {"external": FlowNodeMetadata()},
+                )
 
-        def factory(definition: FlowNodeDefinition) -> Node:
-            nonlocal build_calls
-            _ = definition
-            build_calls += 1
-            raise AssertionError("factory should not build")
+            def _factory(self, definition: FlowNodeDefinition) -> Node:
+                _ = definition
+                raise AssertionError("factory should not build")
 
-        loader = FlowDefinitionLoader(
-            FlowNodeRegistry(
-                {"external": factory},
-                {"external": FlowNodeMetadata()},
-            )
-        )
+            def metadata(
+                self,
+                node_type: str,
+            ) -> FlowNodeMetadata | None:
+                self.metadata_calls += 1
+                return super().metadata(node_type)
+
+            def build(self, definition: FlowNodeDefinition) -> Node:
+                _ = definition
+                self.build_calls += 1
+                raise AssertionError("registry should not build")
+
+        registry = CountingRegistry()
+        loader = FlowDefinitionLoader(registry)
 
         with patch("avalan.flow.loader.validate_flow_definition") as validate:
             result = loader.loads_result("""
@@ -1445,7 +1458,8 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(result.definition)
         self.assertIsNone(result.flow)
         validate.assert_not_called()
-        self.assertEqual(build_calls, 0)
+        self.assertEqual(registry.metadata_calls, 0)
+        self.assertEqual(registry.build_calls, 0)
         self.assertEqual(
             [(issue.code, issue.path) for issue in result.issues],
             [("flow.graph.unsupported_executable_edge", "graph.edges")],
