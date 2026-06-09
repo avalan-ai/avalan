@@ -291,6 +291,112 @@ class FlowGraphCompilerTestCase(TestCase):
             ],
         )
 
+    def test_compile_flow_graph_classifies_edges_by_actual_endpoints(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    "start route_1@--> review",
+                    "review route_2@--> note",
+                    "note route_3@--> archive",
+                    "note route_4@--> comment",
+                    "start route_5@--> waypoint route_6@--> done",
+                    "review route_7@--> done",
+                )
+            ),
+            source_identity="/private/customer/flow.toml",
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="review", type="pass-through"),
+                FlowNodeDefinition(name="archive", type="pass-through"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+            ),
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in result.edges],
+            [("start", "review"), ("review", "done")],
+        )
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (
+                    edge.index,
+                    edge.source,
+                    edge.target,
+                    edge.edge_id,
+                    edge.classification,
+                )
+                for edge in result.inspection.edges
+            ],
+            [
+                (
+                    0,
+                    "start",
+                    "review",
+                    "route_1",
+                    FlowGraphEdgeClassification.EXECUTABLE,
+                ),
+                (
+                    1,
+                    "review",
+                    "note",
+                    "route_2",
+                    FlowGraphEdgeClassification.DECORATIVE,
+                ),
+                (
+                    2,
+                    "note",
+                    "archive",
+                    "route_3",
+                    FlowGraphEdgeClassification.DECORATIVE,
+                ),
+                (
+                    3,
+                    "note",
+                    "comment",
+                    "route_4",
+                    FlowGraphEdgeClassification.DECORATIVE,
+                ),
+                (
+                    4,
+                    "start",
+                    "waypoint",
+                    "route_5",
+                    FlowGraphEdgeClassification.DECORATIVE,
+                ),
+                (
+                    5,
+                    "waypoint",
+                    "done",
+                    "route_6",
+                    FlowGraphEdgeClassification.DECORATIVE,
+                ),
+                (
+                    6,
+                    "review",
+                    "done",
+                    "route_7",
+                    FlowGraphEdgeClassification.EXECUTABLE,
+                ),
+            ],
+        )
+        self.assertNotIn(
+            ("start", "done"),
+            [(edge.source, edge.target) for edge in result.edges],
+        )
+        public = str(result.inspection.as_public_dict())
+        self.assertNotIn("/private/customer", public)
+
     def test_compile_flow_graph_reports_malformed_inline_source_safely(
         self,
     ) -> None:
