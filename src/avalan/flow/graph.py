@@ -606,16 +606,40 @@ def _bind_graph_edges(
         executable_edges_by_id=executable_edges_by_id,
         decorative_edge_ids=decorative_edge_ids,
     )
-    diagnostics = _binding_diagnostics(edge_bindings, binding_inspections)
+    diagnostics = _executable_edge_diagnostics(
+        edge_inspections
+    ) + _binding_diagnostics(edge_bindings, binding_inspections)
     generated_edges = tuple(
         _graph_edge_definition(
             edge,
             edge_bindings.get(edge.edge_id) if edge.edge_id else None,
         )
         for edge in edge_inspections
-        if edge.classification == FlowGraphEdgeClassification.EXECUTABLE
+        if (
+            edge.classification == FlowGraphEdgeClassification.EXECUTABLE
+            and edge.edge_id is not None
+        )
     )
     return generated_edges, binding_inspections, diagnostics
+
+
+def _executable_edge_diagnostics(
+    edge_inspections: tuple["FlowGraphEdgeInspection", ...],
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    for edge in edge_inspections:
+        if edge.classification != FlowGraphEdgeClassification.EXECUTABLE:
+            continue
+        if edge.edge_id is not None:
+            continue
+        diagnostics.append(
+            flow_graph_diagnostic(
+                FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE,
+                "graph.edges",
+                source_span=edge.source_span,
+            )
+        )
+    return tuple(diagnostics)
 
 
 def _binding_inspections(
