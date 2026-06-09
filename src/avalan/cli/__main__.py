@@ -169,6 +169,7 @@ def _task_run_json_stdout(args: Namespace) -> bool:
             getattr(args, "flow_command", None)
             in {
                 "cancel",
+                "compile",
                 "inspect",
                 "mermaid",
                 "resume",
@@ -524,6 +525,12 @@ def flow_trace(*args: Any, **kwargs: Any) -> Any:
 
 def flow_cancel(*args: Any, **kwargs: Any) -> Any:
     return _load_command("avalan.cli.commands.flow", "flow_cancel")(
+        *args, **kwargs
+    )
+
+
+def flow_compile(*args: Any, **kwargs: Any) -> Any:
+    return _load_command("avalan.cli.commands.flow", "flow_compile")(
         *args, **kwargs
     )
 
@@ -1776,6 +1783,36 @@ class CLI:
             dest="flow_json",
             action="store_true",
             help="Print diagnostics as compact JSON.",
+        )
+        flow_compile_parser = flow_command_parsers.add_parser(
+            name="compile",
+            description="Compile a flow definition to strict TOML",
+            parents=[global_parser],
+        )
+        flow_compile_parser.add_argument(
+            "flow",
+            type=str,
+            help="Flow definition TOML file to compile",
+        )
+        flow_compile_output_group = (
+            flow_compile_parser.add_mutually_exclusive_group()
+        )
+        flow_compile_output_group.add_argument(
+            "--output",
+            type=str,
+            default=None,
+            help="Write canonical strict TOML to this path.",
+        )
+        flow_compile_output_group.add_argument(
+            "--check",
+            action="store_true",
+            help="Compile and validate without writing output.",
+        )
+        flow_compile_parser.add_argument(
+            "--json",
+            dest="flow_json",
+            action="store_true",
+            help="Print compile status as compact JSON.",
         )
         flow_mermaid_parser = flow_command_parsers.add_parser(
             name="mermaid",
@@ -3974,6 +4011,9 @@ class CLI:
                 match subcommand:
                     case "cancel":
                         if not flow_cancel(args, console, theme):
+                            raise SystemExit(1)
+                    case "compile":
+                        if not flow_compile(args, console, theme):
                             raise SystemExit(1)
                     case "inspect":
                         if not flow_inspect(args, console, theme):

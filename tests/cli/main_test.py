@@ -382,6 +382,37 @@ class CliTaskOptionTestCase(TestCase):
             (
                 [
                     "flow",
+                    "compile",
+                    "flows/report.toml",
+                    "--output",
+                    "build/report.flow.toml",
+                    "--json",
+                ],
+                {
+                    "flow_command": "compile",
+                    "flow": "flows/report.toml",
+                    "output": "build/report.flow.toml",
+                    "check": False,
+                    "flow_json": True,
+                },
+            ),
+            (
+                [
+                    "flow",
+                    "compile",
+                    "flows/report.toml",
+                    "--check",
+                ],
+                {
+                    "flow_command": "compile",
+                    "flow": "flows/report.toml",
+                    "output": None,
+                    "check": True,
+                },
+            ),
+            (
+                [
+                    "flow",
                     "mermaid",
                     "parse",
                     "topology.mmd",
@@ -1219,6 +1250,7 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
             ("task_run", "avalan.cli.commands.task", "task_run"),
             ("task_worker", "avalan.cli.commands.task", "task_worker"),
             ("flow_cancel", "avalan.cli.commands.flow", "flow_cancel"),
+            ("flow_compile", "avalan.cli.commands.flow", "flow_compile"),
             ("flow_inspect", "avalan.cli.commands.flow", "flow_inspect"),
             ("flow_run", "avalan.cli.commands.flow", "flow_run"),
             ("flow_resume", "avalan.cli.commands.flow", "flow_resume"),
@@ -1337,6 +1369,9 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
             flow_cancel_mock = stack.enter_context(
                 patch("avalan.cli.__main__.flow_cancel")
             )
+            flow_compile_mock = stack.enter_context(
+                patch("avalan.cli.__main__.flow_compile")
+            )
             flow_inspect_mock = stack.enter_context(
                 patch("avalan.cli.__main__.flow_inspect")
             )
@@ -1419,6 +1454,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 ("model", "uninstall", model_uninstall),
                 ("deploy", "run", deploy_run_mock),
                 ("flow", "cancel", flow_cancel_mock),
+                ("flow", "compile", flow_compile_mock),
                 ("flow", "inspect", flow_inspect_mock),
                 ("flow", "resume", flow_resume_mock),
                 ("flow", "run", flow_run_mock),
@@ -1582,6 +1618,7 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
     async def test_flow_non_executing_failure_exits_nonzero(self):
         cases = (
             ("cancel", "flow_cancel"),
+            ("compile", "flow_compile"),
             ("inspect", "flow_inspect"),
             ("resume", "flow_resume"),
             ("trace", "flow_trace"),
@@ -1666,6 +1703,15 @@ class CliMainDispatchTestCase(IsolatedAsyncioTestCase):
                 Namespace(
                     command="flow",
                     flow_command="cancel",
+                    flow_json=True,
+                )
+            )
+        )
+        self.assertTrue(
+            _task_run_json_stdout(
+                Namespace(
+                    command="flow",
+                    flow_command="compile",
                     flow_json=True,
                 )
             )
