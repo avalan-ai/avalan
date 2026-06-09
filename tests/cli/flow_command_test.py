@@ -15,6 +15,7 @@ from typing import Any, cast
 from unittest import TestCase, main
 from unittest.mock import AsyncMock, patch
 
+from async_helpers import run_async
 from rich.console import Console
 
 from avalan.cli.commands import flow as flow_cmds
@@ -3465,7 +3466,7 @@ class FlowRunCommandTestCase(TestCase):
                 )
 
                 self.assertEqual(
-                    flow_cmds._flow_task_output(definition).type,
+                    run_async(flow_cmds._flow_task_output(definition)).type,
                     expected,
                 )
 
@@ -3558,7 +3559,7 @@ class FlowRunCommandTestCase(TestCase):
             FlowNodeDefinition(name="agent", type="agent", ref="agent.toml")
         )
 
-        self.assertIsNone(flow_cmds._flow_output_schema(definition))
+        self.assertIsNone(run_async(flow_cmds._flow_output_schema(definition)))
         with self.assertRaises(RuntimeError):
             asyncio_run(node.execute_async({}))
 

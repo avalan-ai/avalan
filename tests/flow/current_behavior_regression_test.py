@@ -1,5 +1,7 @@
 from unittest import IsolatedAsyncioTestCase, main
 
+from async_helpers import run_async
+
 from avalan.entities import ToolCallDiagnosticCode, ToolCallDiagnosticStage
 from avalan.flow import (
     FLOW_TOOL_NODE_TYPE,
@@ -14,6 +16,20 @@ from avalan.flow.node import Node
 from avalan.flow.registry import FlowNodeConfigurationError
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
+
+_AsyncFlowDefinitionLoader = FlowDefinitionLoader
+
+
+class FlowDefinitionLoader(_AsyncFlowDefinitionLoader):  # type: ignore[no-redef]
+    def loads_result(self, *args: object, **kwargs: object) -> object:
+        return run_async(super().loads_result(*args, **kwargs))
+
+    def loads_validation_result(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        return run_async(super().loads_validation_result(*args, **kwargs))
 
 
 async def current_adder(a: int, b: int) -> int:

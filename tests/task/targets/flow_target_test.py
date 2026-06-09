@@ -751,10 +751,11 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
         context = self._context(file_converters={"pdf_image": converter})
 
-        result = FlowDefinitionLoader(
-            registry=task_flow_node_registry(context)
-        ).loads_result(
-            """
+        result = asyncio_run(
+            FlowDefinitionLoader(
+                registry=task_flow_node_registry(context)
+            ).loads_result(
+                """
             [flow]
             name = "render"
             entrypoint = "render_pages"
@@ -774,6 +775,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             max_pixels_per_page = 12000000
             max_total_pixels = 24000000
             """
+            )
         )
 
         self.assertTrue(result.ok)
@@ -1380,10 +1382,11 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         for node_type, config, name, expected_code in cases:
             with self.subTest(name=name):
-                result = FlowDefinitionLoader(
-                    registry=task_flow_node_registry(context)
-                ).loads_result(
-                    f"""
+                result = asyncio_run(
+                    FlowDefinitionLoader(
+                        registry=task_flow_node_registry(context)
+                    ).loads_result(
+                        f"""
                     [flow]
                     name = "render"
                     entrypoint = "render_pages"
@@ -1395,6 +1398,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                     [nodes.render_pages.config]
                     {config}
                     """
+                    )
                 )
 
                 self.assertFalse(result.ok)
@@ -1566,7 +1570,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     async def test_run_executes_incomplete_strict_state(
         self,
     ) -> None:
-        compile_result = compile_flow_definition(_strict_echo_definition())
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
         assert compile_result.plan is not None
         flow_store = InMemoryFlowStateStore()
         await flow_store.create_flow_execution(
@@ -1608,7 +1614,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     async def test_run_resumes_partial_strict_state_without_rerunning_node(
         self,
     ) -> None:
-        compile_result = compile_flow_definition(_strict_two_step_definition())
+        compile_result = await compile_flow_definition(
+            _strict_two_step_definition()
+        )
         assert compile_result.plan is not None
         flow_store = InMemoryFlowStateStore()
         trace = FlowExecutionTrace.from_plan(
@@ -2362,7 +2370,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     async def test_run_reruns_partial_strict_state_without_node_outputs(
         self,
     ) -> None:
-        compile_result = compile_flow_definition(_strict_two_step_definition())
+        compile_result = await compile_flow_definition(
+            _strict_two_step_definition()
+        )
         assert compile_result.plan is not None
         flow_store = InMemoryFlowStateStore()
         trace = FlowExecutionTrace.from_plan(
@@ -2418,10 +2428,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     async def test_run_rejects_stale_completed_state_for_changed_node(
         self,
     ) -> None:
-        old_compile_result = compile_flow_definition(
+        old_compile_result = await compile_flow_definition(
             _strict_constant_definition("old result")
         )
-        new_compile_result = compile_flow_definition(
+        new_compile_result = await compile_flow_definition(
             _strict_constant_definition("new result")
         )
         assert old_compile_result.plan is not None
@@ -2478,10 +2488,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     async def test_run_rejects_stale_completed_state_for_changed_route(
         self,
     ) -> None:
-        old_compile_result = compile_flow_definition(
+        old_compile_result = await compile_flow_definition(
             _strict_routed_definition("answer")
         )
-        new_compile_result = compile_flow_definition(
+        new_compile_result = await compile_flow_definition(
             _strict_routed_definition("alternate")
         )
         assert old_compile_result.plan is not None
@@ -2565,7 +2575,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             TaskExecutionRequest(definition_id="flow-pgsql-resume")
         )
         attempt = await task_store.create_attempt(run.run_id)
-        compile_result = compile_flow_definition(_strict_echo_definition())
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
         assert compile_result.plan is not None
         await flow_store.create_flow_execution(
             run.run_id,
@@ -2621,7 +2633,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     async def test_run_rejects_mismatched_strict_state_safely(
         self,
     ) -> None:
-        compile_result = compile_flow_definition(_strict_echo_definition())
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
         assert compile_result.plan is not None
         flow_store = InMemoryFlowStateStore()
         await flow_store.create_flow_execution(
@@ -2680,7 +2694,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     async def test_strict_state_helpers_cover_unfinished_records(
         self,
     ) -> None:
-        compile_result = compile_flow_definition(_strict_echo_definition())
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
         assert compile_result.plan is not None
         flow_store = InMemoryFlowStateStore()
         runner = FlowTaskTargetRunner(flow_state_store=flow_store)
@@ -2747,7 +2763,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             trace=FlowExecutionTrace.from_plan(compile_result.plan),
             selected_outputs={"answer": "ready"},
         )
-        routed_compile_result = compile_flow_definition(
+        routed_compile_result = await compile_flow_definition(
             _strict_routed_definition("answer")
         )
         assert routed_compile_result.plan is not None
@@ -3070,7 +3086,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     async def test_run_executes_compiled_strict_plan_for_direct_and_queue(
         self,
     ) -> None:
-        compile_result = compile_flow_definition(_strict_echo_definition())
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
         assert compile_result.plan is not None
 
         async def resolve(_: TaskTargetContext) -> FlowExecutionPlan:
@@ -3120,7 +3138,9 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         self.assertNotIn("private prompt", str(error.exception))
 
     async def test_run_maps_strict_runtime_diagnostics_safely(self) -> None:
-        compile_result = compile_flow_definition(_strict_echo_definition())
+        compile_result = await compile_flow_definition(
+            _strict_echo_definition()
+        )
         assert compile_result.plan is not None
         plan = replace(
             compile_result.plan,
@@ -3241,8 +3261,8 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         self.assertNotIn("private flow", str(error.exception))
 
     def test_strict_helpers_cover_safe_runtime_snapshots(self) -> None:
-        compile_result = compile_flow_definition(
-            _strict_file_binding_definition()
+        compile_result = asyncio_run(
+            compile_flow_definition(_strict_file_binding_definition())
         )
         assert compile_result.plan is not None
         file = TaskInputFile(
@@ -3659,13 +3679,14 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                     if name == "missing_edge"
                     else '[[edges]]\nsource = "render"\ntarget = "review"'
                 )
-                result = FlowDefinitionLoader(
-                    registry=task_flow_node_registry(
-                        context,
-                        agent_runner=CapturingTaskTargetRunner(),
-                    )
-                ).loads_result(
-                    f"""
+                result = asyncio_run(
+                    FlowDefinitionLoader(
+                        registry=task_flow_node_registry(
+                            context,
+                            agent_runner=CapturingTaskTargetRunner(),
+                        )
+                    ).loads_result(
+                        f"""
                     [flow]
                     name = "select"
                     entrypoint = "render"
@@ -3684,6 +3705,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
                     {edge}
                     """
+                    )
                 )
 
                 self.assertFalse(result.ok)
@@ -4536,7 +4558,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
     ) -> None:
         context = self._context()
 
-        result = FlowDefinitionLoader(
+        result = await FlowDefinitionLoader(
             registry=task_flow_node_registry(context)
         ).loads_result(
             """
@@ -4574,7 +4596,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             "avalan.task.targets.flow.feature_available",
             return_value=False,
         ):
-            result = FlowDefinitionLoader(
+            result = await FlowDefinitionLoader(
                 registry=task_flow_node_registry(context)
             ).loads_result(
                 """
@@ -5141,10 +5163,16 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
 
     async def test_direct_runner_executes_strict_subflow_plan(self) -> None:
         flow_store = InMemoryFlowStateStore()
+
+        async def resolve_strict_subflow(
+            _: TaskTargetContext,
+        ) -> FlowExecutionPlan:
+            return await _strict_subflow_plan()
+
         runner = DirectTaskRunner(
             self.store,
             target=FlowTaskTargetRunner(
-                strict_resolver=lambda _: _strict_subflow_plan(),
+                strict_resolver=resolve_strict_subflow,
                 flow_state_store=flow_store,
             ),
             hmac_provider=StaticHmacProvider(),
@@ -6733,8 +6761,8 @@ def _strict_file_binding_definition() -> FlowDefinition:
     )
 
 
-def _strict_subflow_plan() -> FlowExecutionPlan:
-    child_result = compile_flow_definition(_strict_echo_definition())
+async def _strict_subflow_plan() -> FlowExecutionPlan:
+    child_result = await compile_flow_definition(_strict_echo_definition())
     assert child_result.plan is not None
     return FlowExecutionPlan(
         name="task-subflow",
@@ -6785,7 +6813,9 @@ def _strict_subflow_plan() -> FlowExecutionPlan:
 
 
 def _loop_counter_plan() -> FlowExecutionPlan:
-    compile_result = compile_flow_definition(_strict_echo_definition())
+    compile_result = asyncio_run(
+        compile_flow_definition(_strict_echo_definition())
+    )
     assert compile_result.plan is not None
     node = compile_result.plan.nodes[0]
     loop = FlowLoopPlan(

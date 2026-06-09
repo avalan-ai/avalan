@@ -7,14 +7,9 @@ from avalan.filesystem import (
     assert_text_encoding,
     read_bytes,
     read_text,
-    run_awaitable,
     write_bytes,
     write_text,
 )
-
-
-async def _value() -> str:
-    return "ok"
 
 
 class FilesystemTestCase(TestCase):
@@ -88,13 +83,6 @@ class FilesystemTestCase(TestCase):
             asyncio_run(write_bytes(object(), b"value"))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
             asyncio_run(write_bytes("value.bin", "value"))  # type: ignore[arg-type]
-
-    def test_run_awaitable_works_inside_and_outside_running_loop(self) -> None:
-        async def exercise() -> str:
-            return run_awaitable(_value())
-
-        self.assertEqual(run_awaitable(_value()), "ok")
-        self.assertEqual(asyncio_run(exercise()), "ok")
 
 
 if __name__ == "__main__":

@@ -44,8 +44,6 @@ from .privacy import (
     privacy_policy_store_fields,
 )
 from .schema import (
-    TaskSchemaResolutionError,
-    resolve_schema_ref,
     task_definition_schema_base_path,
 )
 
@@ -313,14 +311,8 @@ def _runtime_schema(
         return schema
     if schema_ref is None:
         return None
-    try:
-        return resolve_schema_ref(
-            schema_ref,
-            schema_base_path=schema_base_path,
-            path=path,
-        ).schema
-    except TaskSchemaResolutionError:
-        return None
+    _ = schema_base_path, path
+    return None
 
 
 def validate_task_input(
@@ -1772,39 +1764,6 @@ def _validate_schema_contract(
                 "Use a non-empty logical schema reference.",
             )
         )
-    elif schema_ref is not None:
-        try:
-            resolved_schema = resolve_schema_ref(
-                schema_ref,
-                schema_base_path=schema_base_path,
-                path=schema_ref_path,
-            ).schema
-        except TaskSchemaResolutionError:
-            issues.append(
-                _invalid_schema_issue(
-                    code,
-                    schema_ref_path,
-                    "Task contract schema reference cannot be resolved.",
-                    "Use a local JSON object schema file.",
-                )
-            )
-        else:
-            schema_mapping = cast(Mapping[object, object], resolved_schema)
-            declared_type_issues = _validate_schema_declared_type(
-                schema_mapping,
-                expected_schema_type,
-                code,
-                schema_path,
-            )
-            issues.extend(declared_type_issues)
-            if not declared_type_issues:
-                issues.extend(
-                    _validate_schema_syntax(
-                        schema_mapping,
-                        code=code,
-                        path=schema_path,
-                    )
-                )
 
     return tuple(issues)
 

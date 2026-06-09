@@ -20,7 +20,7 @@ from ..entities import (
     VisionImageFormat,
     WeightType,
 )
-from ..filesystem import read_text, run_awaitable
+from ..filesystem import read_text
 from ..model.manager import ModelManager
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
@@ -3628,11 +3628,11 @@ class CLI:
         return group
 
     @staticmethod
-    def _needs_hf_token(args: Namespace) -> bool:
+    async def _needs_hf_token(args: Namespace) -> bool:
         """Return ``True`` if the command needs hub authentication."""
         command = args.command
         if command == "task":
-            engine = CLI._task_agent_engine_uri(args)
+            engine = await CLI._task_agent_engine_uri(args)
             if not engine:
                 return False
             engine_uri = ModelManager.parse_uri(engine)
@@ -3663,7 +3663,7 @@ class CLI:
                 return bool(engine_uri.is_local)
             specs = getattr(args, "specifications_file", None)
             if specs:
-                config = toml_loads(run_awaitable(read_text(specs)))
+                config = toml_loads(await read_text(specs))
                 engine_uri_str = config.get("engine", {}).get("uri")
                 if engine_uri_str:
                     assert isinstance(engine_uri_str, str)
@@ -3676,7 +3676,7 @@ class CLI:
         return True
 
     @staticmethod
-    def _task_agent_engine_uri(args: Namespace) -> str | None:
+    async def _task_agent_engine_uri(args: Namespace) -> str | None:
         task_command = args.task_command or "validate"
         if task_command not in {"enqueue", "run"}:
             return None
@@ -3684,7 +3684,7 @@ class CLI:
         if not isinstance(definition, str):
             return None
         try:
-            task_config = toml_loads(run_awaitable(read_text(definition)))
+            task_config = toml_loads(await read_text(definition))
             execution = task_config.get("execution")
             if not isinstance(execution, dict):
                 return None
@@ -3694,7 +3694,7 @@ class CLI:
             if not isinstance(ref, str):
                 return None
             agent_path = Path(definition).parent / ref
-            agent_config = toml_loads(run_awaitable(read_text(agent_path)))
+            agent_config = toml_loads(await read_text(agent_path))
             engine = agent_config.get("engine")
             if not isinstance(engine, dict):
                 return None
@@ -3772,7 +3772,7 @@ class CLI:
             return self._help(console, self._parser)
 
         access_token = args.hf_token
-        requires_token = self._needs_hf_token(args)
+        requires_token = await self._needs_hf_token(args)
 
         if requires_token:
             if not access_token:

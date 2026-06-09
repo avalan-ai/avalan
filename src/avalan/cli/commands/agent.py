@@ -787,7 +787,7 @@ async def agent_serve(
     database_settings: DatabaseToolSettings | None = None
     graph_settings: GraphToolSettings | None = None
 
-    protocols = OrchestratorLoader.resolve_serve_protocols(
+    protocols = await OrchestratorLoader.resolve_serve_protocols(
         specs_path=specs_path,
         cli_protocols=getattr(args, "protocol", None),
     )

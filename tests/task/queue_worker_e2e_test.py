@@ -2670,7 +2670,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
             observability=TaskObservabilityPolicy.noop(),
         )
         flow_definition = _strict_constant_flow_definition("fresh output")
-        plan_result = compile_flow_definition(flow_definition)
+        plan_result = await compile_flow_definition(flow_definition)
         assert plan_result.plan is not None
         target = FlowTaskTargetRunner(
             strict_resolver=lambda _: flow_definition,
@@ -2726,8 +2726,14 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
             execution=TaskExecutionTarget.flow("flows/report.toml"),
             observability=TaskObservabilityPolicy.noop(),
         )
+
+        async def resolve_strict_subflow(
+            _: TaskTargetContext,
+        ) -> FlowExecutionPlan:
+            return await _strict_subflow_flow_plan()
+
         target = FlowTaskTargetRunner(
-            strict_resolver=lambda _: _strict_subflow_flow_plan(),
+            strict_resolver=resolve_strict_subflow,
             flow_state_store=flow_store,
         )
         client = _client(store, queue, target=target, clock=clock)
@@ -2808,7 +2814,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
             observability=TaskObservabilityPolicy.noop(),
         )
         flow_definition = _strict_two_step_flow_definition()
-        plan_result = compile_flow_definition(flow_definition)
+        plan_result = await compile_flow_definition(flow_definition)
         assert plan_result.plan is not None
         target = FlowTaskTargetRunner(
             strict_resolver=lambda _: flow_definition,
@@ -3257,7 +3263,7 @@ class QueueWorkerE2ETest(IsolatedAsyncioTestCase):
             retry=TaskRetryPolicy(max_attempts=1),
         )
         previous_flow = _strict_constant_flow_definition("previous output")
-        plan_result = compile_flow_definition(previous_flow)
+        plan_result = await compile_flow_definition(previous_flow)
         assert plan_result.plan is not None
         current_flow = _strict_constant_flow_definition("fresh output")
         target = FlowTaskTargetRunner(
@@ -4197,8 +4203,10 @@ def _strict_declared_output_flow_definition() -> FlowDefinition:
     )
 
 
-def _strict_subflow_flow_plan() -> FlowExecutionPlan:
-    child_result = compile_flow_definition(_strict_two_step_flow_definition())
+async def _strict_subflow_flow_plan() -> FlowExecutionPlan:
+    child_result = await compile_flow_definition(
+        _strict_two_step_flow_definition()
+    )
     assert child_result.plan is not None
     return FlowExecutionPlan(
         name="queued-subflow",

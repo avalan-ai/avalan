@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 from unittest.mock import patch
 
+from async_helpers import run_async
 from rich.console import Console
 
 from avalan.cli.__main__ import CLI, _consume_task_input_field_args
@@ -23,6 +24,20 @@ TASK_HMAC_ENV = {
     "AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1",
     "AVALAN_TASK_HMAC_KEY_B64": "dGFzay1obWFjLXRlc3Qta2V5",
 }
+
+
+def _task_cli_input(
+    args: Namespace, definition: TaskDefinition
+) -> task_cmds.TaskCliInput:
+    return run_async(task_cmds.task_cli_input(args, definition))
+
+
+def _validate_task_cli_input_for_command(
+    args: Namespace, console: Console
+) -> bool:
+    return run_async(
+        task_cmds._validate_task_cli_input_for_command(args, console)
+    )
 
 
 class CliTaskInputParserTestCase(TestCase):
@@ -189,7 +204,7 @@ class CliTaskInputParserTestCase(TestCase):
 
 class CliTaskInputTestCase(TestCase):
     def test_absent_input_returns_unprovided_value(self) -> None:
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -203,7 +218,7 @@ class CliTaskInputTestCase(TestCase):
         self.assertIsNone(parsed.value)
 
     def test_plain_input_matches_scalar_contract(self) -> None:
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input="Leo Messi",
                 task_input_json=None,
@@ -231,7 +246,7 @@ class CliTaskInputTestCase(TestCase):
                 encoding="utf-8",
             )
 
-            parsed = task_cmds.task_cli_input(
+            parsed = _task_cli_input(
                 Namespace(
                     task_input=None,
                     task_input_json=f"@{input_path}",
@@ -256,7 +271,7 @@ class CliTaskInputTestCase(TestCase):
     def test_json_object_merges_field_and_file_inputs(self) -> None:
         definition = self._definition(self._object_contract())
 
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json='{"nested":{"count":1},"documents":[]}',
@@ -280,7 +295,7 @@ class CliTaskInputTestCase(TestCase):
     def test_field_and_file_input_builds_valid_object(self) -> None:
         definition = self._definition(self._object_contract())
 
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -346,7 +361,7 @@ class CliTaskInputTestCase(TestCase):
             )
         )
 
-        pdf_input = task_cmds.task_cli_input(
+        pdf_input = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -356,7 +371,7 @@ class CliTaskInputTestCase(TestCase):
             ),
             definition,
         )
-        file_input = task_cmds.task_cli_input(
+        file_input = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -398,7 +413,7 @@ class CliTaskInputTestCase(TestCase):
     def test_single_file_input_builds_valid_descriptor(self) -> None:
         definition = self._definition(TaskInputContract.file())
 
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -417,7 +432,7 @@ class CliTaskInputTestCase(TestCase):
     def test_file_array_input_builds_valid_descriptor_list(self) -> None:
         definition = self._definition(TaskInputContract.file_array())
 
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -447,7 +462,7 @@ class CliTaskInputTestCase(TestCase):
         )
         digest = "a" * 64
 
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -487,7 +502,7 @@ class CliTaskInputTestCase(TestCase):
     ) -> None:
         definition = self._definition(TaskInputContract.file_array())
 
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -548,7 +563,7 @@ class CliTaskInputTestCase(TestCase):
     def test_explicit_json_descriptor_merges_with_object_input(self) -> None:
         definition = self._definition(self._object_contract())
 
-        parsed = task_cmds.task_cli_input(
+        parsed = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json='{"question":"What changed?"}',
@@ -614,7 +629,7 @@ class CliTaskInputTestCase(TestCase):
 
         for contract, raw_value, expected in cases:
             with self.subTest(contract=contract.type):
-                parsed = task_cmds.task_cli_input(
+                parsed = _task_cli_input(
                     Namespace(
                         task_input=raw_value,
                         task_input_json=None,
@@ -807,7 +822,7 @@ class CliTaskInputTestCase(TestCase):
         for args, definition in cases:
             with self.subTest(args=args):
                 with self.assertRaises(task_cmds.TaskCliInputError) as error:
-                    task_cmds.task_cli_input(args, definition)
+                    _task_cli_input(args, definition)
 
             self.assertEqual(error.exception.code, "input.parse")
             self.assertNotIn("report.pdf", error.exception.message)
@@ -823,7 +838,7 @@ class CliTaskInputTestCase(TestCase):
         for contract, raw_value in cases:
             with self.subTest(contract=contract.type):
                 with self.assertRaises(task_cmds.TaskCliInputError):
-                    task_cmds.task_cli_input(
+                    _task_cli_input(
                         Namespace(
                             task_input=raw_value,
                             task_input_json=None,
@@ -852,7 +867,7 @@ class CliTaskInputTestCase(TestCase):
         for args in cases:
             with self.subTest(args=args):
                 with self.assertRaises(task_cmds.TaskCliInputError):
-                    task_cmds.task_cli_input(
+                    _task_cli_input(
                         args,
                         self._definition(self._object_contract()),
                     )
@@ -867,7 +882,7 @@ class CliTaskInputTestCase(TestCase):
         for raw_json, code in cases:
             with self.subTest(raw_json=raw_json):
                 with self.assertRaises(task_cmds.TaskCliInputError) as error:
-                    task_cmds.task_cli_input(
+                    _task_cli_input(
                         Namespace(
                             task_input=None,
                             task_input_json=raw_json,
@@ -901,7 +916,7 @@ class CliTaskInputTestCase(TestCase):
         for args in cases:
             with self.subTest(args=args):
                 with self.assertRaises(task_cmds.TaskCliInputError):
-                    task_cmds.task_cli_input(
+                    _task_cli_input(
                         args,
                         self._definition(self._object_contract()),
                     )
@@ -1189,7 +1204,7 @@ class CliTaskInputTestCase(TestCase):
     ) -> None:
         console = Console(record=True, width=160)
 
-        result = task_cmds._validate_task_cli_input_for_command(
+        result = _validate_task_cli_input_for_command(
             Namespace(
                 task_input="raw",
                 task_input_json=None,
@@ -1243,7 +1258,7 @@ class CliTaskInputTestCase(TestCase):
             TaskInputContract.file_array(mime_types=("application/pdf",))
         )
 
-        task_input = task_cmds.task_cli_input(
+        task_input = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -1253,7 +1268,7 @@ class CliTaskInputTestCase(TestCase):
             ),
             definition,
         )
-        array_input = task_cmds.task_cli_input(
+        array_input = _task_cli_input(
             Namespace(
                 task_input=None,
                 task_input_json=None,
@@ -1369,7 +1384,7 @@ class CliTaskInputTestCase(TestCase):
         for definition, args, message in cases:
             with self.subTest(message=message):
                 with self.assertRaises(task_cmds.TaskCliInputError) as error:
-                    task_cmds.task_cli_input(args, definition)
+                    _task_cli_input(args, definition)
 
             self.assertIn(message, str(error.exception))
 
@@ -1464,7 +1479,7 @@ class CliTaskInputTestCase(TestCase):
         object.__setattr__(definition.input, "type", "unknown")
 
         with self.assertRaises(task_cmds.TaskCliInputError):
-            task_cmds.task_cli_input(
+            _task_cli_input(
                 Namespace(
                     task_input="raw",
                     task_input_json=None,

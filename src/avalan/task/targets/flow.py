@@ -95,6 +95,7 @@ from ..validation import (
     validate_task_input,
     validate_task_output,
 )
+from .flow_constants import FLOW_RESUME_DECISIONS_METADATA_KEY
 
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -145,7 +146,6 @@ _UNAVAILABLE_PRIVACY_MARKERS = frozenset(
     }
 )
 _NO_STRICT_RESUME = object()
-FLOW_RESUME_DECISIONS_METADATA_KEY = "flow_resume_decisions"
 _FLOW_REVIEW_AUDIT_METADATA_KEY = "human_review_audit"
 _INVALID_RESUME_DIAGNOSTIC_CODES = frozenset(
     {
@@ -441,7 +441,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
             execution_roots=self._execution_roots,
             tool_resolver=self._tool_resolver,
         )
-        result = compile_flow_definition(resolved, registry)
+        result = await compile_flow_definition(resolved, registry)
         if not result.ok:
             raise TaskValidationError(
                 _flow_diagnostics_to_issues(result.diagnostics)

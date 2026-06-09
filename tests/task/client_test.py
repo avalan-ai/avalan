@@ -7,6 +7,8 @@ from tempfile import TemporaryDirectory
 from typing import BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
 
+from async_helpers import run_async
+
 from avalan.event import Event, EventType
 from avalan.task import (
     ENCRYPTED_MARKER,
@@ -69,6 +71,18 @@ from avalan.task.materialization import TaskRemoteUrlResponse
 from avalan.task.runner import TaskExecutableInputFileEntry
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
+
+_AsyncTaskDefinitionLoader = TaskDefinitionLoader
+_async_spec_hash = spec_hash
+
+
+class TaskDefinitionLoader(_AsyncTaskDefinitionLoader):  # type: ignore[no-redef]
+    def load(self, *args: object, **kwargs: object) -> object:
+        return run_async(super().load(*args, **kwargs))
+
+
+def spec_hash(*args: object, **kwargs: object) -> str:
+    return run_async(_async_spec_hash(*args, **kwargs))
 
 
 class FakeResponse:
@@ -772,6 +786,38 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(target.validated[0].output.schema, {"type": "object"})
         self.assertIsNone(target.validated[0].output.schema_ref)
         self.assertIsNone(target.validated[0].definition_base)
+
+    async def test_validate_reports_schema_resolution_failure_safely(
+        self,
+    ) -> None:
+        target = CapturingTarget()
+        client = TaskClient(
+            InMemoryTaskStore(),
+            target=target,
+            hmac_provider=StaticHmacProvider(),
+        )
+
+        result = await client.validate(
+            TaskDefinition(
+                task=TaskMetadata(name="validate_missing_schema", version="1"),
+                input=TaskInputContract.string(),
+                output=TaskOutputContract.object(
+                    schema_ref="schemas/private-answer.json"
+                ),
+                execution=TaskExecutionTarget.agent("agents/answer.toml"),
+            ),
+            input_value="private prompt",
+        )
+
+        self.assertFalse(result.valid)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in result.issues],
+            [("output.invalid_schema", "output.schema_ref")],
+        )
+        self.assertEqual(len(target.validated), 1)
+        self.assertIsNotNone(target.validated[0].output.schema_ref)
+        self.assertNotIn("private-answer", str(result.issues))
+        self.assertNotIn("private prompt", str(result.issues))
 
     async def test_validate_uses_default_file_converters(self) -> None:
         client = TaskClient(
@@ -1517,7 +1563,7 @@ ref = "agents/reviewer.toml"
         )
 
         with self.assertRaises(TaskValidationError) as error:
-            client._resolve_definition_schemas(definition)
+            run_async(client._resolve_definition_schemas(definition))
 
         self.assertEqual(
             [(issue.code, issue.path) for issue in error.exception.issues],

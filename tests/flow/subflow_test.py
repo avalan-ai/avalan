@@ -4,6 +4,8 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import patch
 
+from async_helpers import run_async
+
 from avalan.flow import (
     FLOW_SUBFLOW_NODE_TYPE,
     FlowDefinition,
@@ -34,8 +36,91 @@ from avalan.flow import (
 )
 from avalan.flow.registry import FlowNodeConfigurationError
 
+_async_compile_flow_definition = compile_flow_definition
+_sync_validate_flow_definition = validate_flow_definition
+
+
+def compile_flow_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_compile_flow_definition(*args, **kwargs))
+
+
+def validate_flow_definition(*args: object, **kwargs: object) -> object:
+    result = _sync_validate_flow_definition(*args, **kwargs)
+    if not result.ok or len(args) < 2:
+        return result
+    definition = args[0]
+    registry = args[1]
+    if not isinstance(definition, FlowDefinition):
+        return result
+    if not isinstance(registry, FlowNodeRegistry):
+        return result
+    if any(
+        registry.supports_subflow_resolution(node.type)
+        for node in definition.nodes
+    ):
+        return compile_flow_definition(definition, registry)
+    return result
+
 
 class FlowSubflowValidationTestCase(TestCase):
+    def test_subflow_ref_shape_allows_missing_ref(self) -> None:
+        registry = subflow_node_registry()
+        result = validate_flow_definition(
+            FlowDefinition(
+                name="parent",
+                entry_behavior=FlowEntryBehavior(node="child"),
+                output_behavior=FlowOutputBehavior(
+                    outputs={"answer": "child.result"}
+                ),
+                nodes=(FlowNodeDefinition(name="child", type="subflow"),),
+            ),
+            registry,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.diagnostics[0].code, "flow.missing_ref")
+
+    def test_subflow_path_rejects_unsafe_shapes(self) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            resolver = LocalFlowSubflowResolver()
+            parent = _parent_definition(base)
+            node = FlowNodeDefinition(
+                name="child",
+                type="subflow",
+                config={"output_mapping": {"result": "answer"}},
+            )
+
+            with self.assertRaises(FlowNodeConfigurationError) as escape:
+                resolver._subflow_path("../secret.toml", parent, node)
+            with self.assertRaises(FlowNodeConfigurationError) as extension:
+                resolver._subflow_path("child.txt", parent, node)
+
+        self.assertEqual(escape.exception.code, "flow.path_escape")
+        self.assertEqual(extension.exception.code, "flow.invalid_ref")
+
+    def test_subflow_path_rejects_resolved_symlink_escape(self) -> None:
+        with TemporaryDirectory() as directory:
+            base = Path(directory) / "base"
+            outside = Path(directory) / "outside"
+            base.mkdir()
+            outside.mkdir()
+            target = outside / "child.toml"
+            target.write_text("[flow]\nname = 'child'\n", encoding="utf-8")
+            (base / "child.toml").symlink_to(target)
+            resolver = LocalFlowSubflowResolver()
+            parent = _parent_definition(base)
+            node = FlowNodeDefinition(
+                name="child",
+                type="subflow",
+                config={"output_mapping": {"result": "answer"}},
+            )
+
+            with self.assertRaises(FlowNodeConfigurationError) as error:
+                resolver._subflow_path("child.toml", parent, node)
+
+        self.assertEqual(error.exception.code, "flow.path_escape")
+
     def test_validate_flow_definition_accepts_local_subflow(self) -> None:
         with TemporaryDirectory() as directory:
             base = Path(directory)
@@ -473,17 +558,21 @@ class FlowSubflowValidationTestCase(TestCase):
             definition = _parent_definition(base)
             node = definition.nodes[0]
 
-            first = resolver.compile_subflow(
-                "child.toml",
-                parent_definition=definition,
-                node=node,
-                registry=registry,
+            first = run_async(
+                resolver.compile_subflow(
+                    "child.toml",
+                    parent_definition=definition,
+                    node=node,
+                    registry=registry,
+                )
             )
-            second = resolver.compile_subflow(
-                "child.toml",
-                parent_definition=definition,
-                node=node,
-                registry=registry,
+            second = run_async(
+                resolver.compile_subflow(
+                    "child.toml",
+                    parent_definition=definition,
+                    node=node,
+                    registry=registry,
+                )
             )
 
             self.assertIs(first, second)
@@ -500,11 +589,13 @@ class FlowSubflowValidationTestCase(TestCase):
             resolver._compiling.add(path)
 
             with self.assertRaises(FlowNodeConfigurationError) as raised:
-                resolver.compile_subflow(
-                    "child.toml",
-                    parent_definition=definition,
-                    node=node,
-                    registry=registry,
+                run_async(
+                    resolver.compile_subflow(
+                        "child.toml",
+                        parent_definition=definition,
+                        node=node,
+                        registry=registry,
+                    )
                 )
 
             self.assertEqual(raised.exception.code, "flow.subflow_cycle")

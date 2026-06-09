@@ -3,6 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 
+from async_helpers import run_async
+
 from avalan.task import (
     IdempotencyMode,
     PrivacyAction,
@@ -19,6 +21,33 @@ from avalan.task import (
     loads_task_definition,
     spec_hash,
 )
+
+_async_canonical_definition = canonical_definition
+_async_canonical_json = canonical_json
+_async_load_task_definition = load_task_definition
+_async_loads_task_definition = loads_task_definition
+_async_spec_hash = spec_hash
+
+
+def canonical_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_canonical_definition(*args, **kwargs))
+
+
+def canonical_json(*args: object, **kwargs: object) -> str:
+    return run_async(_async_canonical_json(*args, **kwargs))
+
+
+def load_task_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_load_task_definition(*args, **kwargs))
+
+
+def loads_task_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_loads_task_definition(*args, **kwargs))
+
+
+def spec_hash(*args: object, **kwargs: object) -> str:
+    return run_async(_async_spec_hash(*args, **kwargs))
+
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures"
 

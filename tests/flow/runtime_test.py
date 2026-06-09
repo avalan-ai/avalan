@@ -6,6 +6,8 @@ from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import patch
 
+from async_helpers import run_async
+
 from avalan.entities import ToolManagerSettings
 from avalan.event import Event, EventType
 from avalan.flow import (
@@ -77,6 +79,20 @@ from avalan.flow.runtime import (
 )
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
+
+_async_compile_flow_definition = compile_flow_definition
+_async_loads_flow_definition_result = loads_flow_definition_result
+
+
+def compile_flow_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_compile_flow_definition(*args, **kwargs))
+
+
+def loads_flow_definition_result(
+    *args: object,
+    **kwargs: object,
+) -> object:
+    return run_async(_async_loads_flow_definition_result(*args, **kwargs))
 
 
 async def runtime_flow_adder(a: int, b: int) -> int:

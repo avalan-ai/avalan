@@ -2,7 +2,6 @@ from ..filesystem import (
     DEFAULT_TEXT_ENCODING,
     assert_text_encoding,
     read_text,
-    run_awaitable,
 )
 from .definition import (
     FrozenMetadata,
@@ -102,27 +101,29 @@ class TaskDefinitionLoader:
         assert_text_encoding(encoding)
         self._encoding = encoding
 
-    def load(
+    async def load(
         self,
         path: str | Path,
         *,
         encoding: str | None = None,
     ) -> TaskDefinition:
-        result = self.load_result(path, encoding=encoding)
+        result = await self.load_result(path, encoding=encoding)
         if result.definition is None:
             raise TaskLoadError(result.issues)
         return result.definition
 
-    def load_result(
+    async def load_result(
         self,
         path: str | Path,
         *,
         encoding: str | None = None,
     ) -> TaskLoadResult:
-        source = run_awaitable(
-            read_text(Path(path), encoding=self._text_encoding(encoding))
+        source_path = Path(path)
+        source = await read_text(
+            source_path,
+            encoding=self._text_encoding(encoding),
         )
-        return self.loads_result(source, source_path=path)
+        return await self.loads_result(source, source_path=source_path)
 
     def _text_encoding(self, encoding: str | None) -> str:
         if encoding is None:
@@ -130,15 +131,15 @@ class TaskDefinitionLoader:
         assert_text_encoding(encoding)
         return encoding
 
-    def loads(
+    async def loads(
         self, source: str, *, source_path: str | Path | None = None
     ) -> TaskDefinition:
-        result = self.loads_result(source, source_path=source_path)
+        result = await self.loads_result(source, source_path=source_path)
         if result.definition is None:
             raise TaskLoadError(result.issues)
         return result.definition
 
-    def loads_result(
+    async def loads_result(
         self, source: str, *, source_path: str | Path | None = None
     ) -> TaskLoadResult:
         assert isinstance(source, str), "source must be a string"
@@ -158,38 +159,44 @@ class TaskDefinitionLoader:
                 ),
             )
 
-        return _build_definition(raw, source_path=source_path)
+        return await _build_definition(raw, source_path=source_path)
 
 
-def load_task_definition(
+async def load_task_definition(
     path: str | Path,
     *,
     encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> TaskDefinition:
-    return TaskDefinitionLoader(encoding=encoding).load(path)
+    return await TaskDefinitionLoader(encoding=encoding).load(path)
 
 
-def load_task_definition_result(
+async def load_task_definition_result(
     path: str | Path,
     *,
     encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> TaskLoadResult:
-    return TaskDefinitionLoader(encoding=encoding).load_result(path)
+    return await TaskDefinitionLoader(encoding=encoding).load_result(path)
 
 
-def loads_task_definition(
+async def loads_task_definition(
     source: str, *, source_path: str | Path | None = None
 ) -> TaskDefinition:
-    return TaskDefinitionLoader().loads(source, source_path=source_path)
+    return await TaskDefinitionLoader().loads(
+        source,
+        source_path=source_path,
+    )
 
 
-def loads_task_definition_result(
+async def loads_task_definition_result(
     source: str, *, source_path: str | Path | None = None
 ) -> TaskLoadResult:
-    return TaskDefinitionLoader().loads_result(source, source_path=source_path)
+    return await TaskDefinitionLoader().loads_result(
+        source,
+        source_path=source_path,
+    )
 
 
-def _build_definition(
+async def _build_definition(
     raw: Mapping[str, object],
     *,
     source_path: str | Path | None,
@@ -243,7 +250,7 @@ def _build_definition(
         observability=observability,
     )
     try:
-        definition = resolve_task_definition_schemas(
+        definition = await resolve_task_definition_schemas(
             definition,
             schema_base_path=source_path,
         )

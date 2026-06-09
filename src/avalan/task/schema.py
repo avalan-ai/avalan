@@ -1,4 +1,4 @@
-from ..filesystem import read_text, run_awaitable
+from ..filesystem import read_text
 from ..types import LooseJsonValue
 from .definition import (
     FrozenMetadata,
@@ -40,7 +40,7 @@ class ResolvedTaskSchema:
         assert isinstance(self.digest, str) and self.digest
 
 
-def resolve_task_definition_schemas(
+async def resolve_task_definition_schemas(
     definition: TaskDefinition,
     *,
     schema_base_path: str | Path | None,
@@ -53,12 +53,12 @@ def resolve_task_definition_schemas(
     input_contract = definition.input
     output_contract = definition.output
     if input_contract.schema_ref is not None:
-        input_contract = _resolved_input_contract(
+        input_contract = await _resolved_input_contract(
             input_contract,
             schema_base_path=schema_base_path,
         )
     if output_contract.schema_ref is not None:
-        output_contract = _resolved_output_contract(
+        output_contract = await _resolved_output_contract(
             output_contract,
             schema_base_path=schema_base_path,
         )
@@ -92,7 +92,7 @@ def task_definition_schema_base_path(
     )
 
 
-def resolve_schema_ref(
+async def resolve_schema_ref(
     schema_ref: str,
     *,
     schema_base_path: str | Path | None,
@@ -103,7 +103,7 @@ def resolve_schema_ref(
     base_dir = _schema_base_dir(schema_base_path, path)
     source_path = _schema_source_path(ref, base_dir, path)
     try:
-        source = run_awaitable(read_text(source_path))
+        source = await read_text(source_path)
     except OSError as error:
         raise TaskSchemaResolutionError(
             path,
@@ -178,13 +178,13 @@ def normalize_schema_value(
     return _normalize_scalar(value)
 
 
-def _resolved_input_contract(
+async def _resolved_input_contract(
     contract: TaskInputContract,
     *,
     schema_base_path: str | Path | None,
 ) -> TaskInputContract:
     assert contract.schema_ref is not None
-    resolved = resolve_schema_ref(
+    resolved = await resolve_schema_ref(
         contract.schema_ref,
         schema_base_path=schema_base_path,
         path="input.schema_ref",
@@ -192,13 +192,13 @@ def _resolved_input_contract(
     return replace(contract, schema=resolved.schema, schema_ref=None)
 
 
-def _resolved_output_contract(
+async def _resolved_output_contract(
     contract: TaskOutputContract,
     *,
     schema_base_path: str | Path | None,
 ) -> TaskOutputContract:
     assert contract.schema_ref is not None
-    resolved = resolve_schema_ref(
+    resolved = await resolve_schema_ref(
         contract.schema_ref,
         schema_base_path=schema_base_path,
         path="output.schema_ref",

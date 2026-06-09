@@ -3,7 +3,7 @@ from ..task.context import TaskInputFile
 from ..task.definition import TaskDefinition
 from ..task.runner import TaskRunResult
 from ..task.store import TaskSnapshotMetadata, TaskStoreNotFoundError
-from ..task.targets.flow import FLOW_RESUME_DECISIONS_METADATA_KEY
+from ..task.targets.flow_constants import FLOW_RESUME_DECISIONS_METADATA_KEY
 from .definition import FlowDefinition, FlowNodeCapability
 from .diagnostics import (
     FlowDiagnostic,
@@ -174,7 +174,7 @@ class FlowExecutor:
             assert isinstance(inputs, Mapping)
         if runner is not None:
             assert callable(runner)
-        plan_result = self._compile(flow)
+        plan_result = await self._compile(flow)
         if not plan_result.ok:
             return FlowExecutorRunResult(
                 plan=plan_result.plan,
@@ -222,7 +222,7 @@ class FlowExecutor:
             assert isinstance(inputs, Mapping)
         if runner is not None:
             assert callable(runner)
-        plan_result = self._compile(flow)
+        plan_result = await self._compile(flow)
         if not plan_result.ok:
             return FlowExecutorRunResult(
                 plan=plan_result.plan,
@@ -283,11 +283,13 @@ class FlowExecutor:
             return value.export_sanitized_trace()
         return export_sanitized_flow_trace(value, plan=plan)
 
-    def _compile(self, flow: FlowExecutionInput) -> FlowPlanCompileResult:
+    async def _compile(
+        self, flow: FlowExecutionInput
+    ) -> FlowPlanCompileResult:
         if isinstance(flow, FlowExecutionPlan):
             return FlowPlanCompileResult(plan=flow)
         if isinstance(flow, FlowDefinition):
-            return compile_flow_definition(flow, self._registry)
+            return await compile_flow_definition(flow, self._registry)
         raise AssertionError("flow must be a flow definition or plan")
 
     def _node_runner(self) -> FlowPlanNodeRunner:

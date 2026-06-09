@@ -97,6 +97,7 @@ from asyncio import sleep as asyncio_sleep
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from inspect import isawaitable
 from math import isfinite
 from pathlib import Path
 from typing import cast
@@ -228,7 +229,9 @@ class TaskClient:
         raw_storage_allowed: bool = False,
         artifact_store: ArtifactStore | None = None,
         file_converters: Mapping[str, FileConverter] | None = None,
-        definition_hash: Callable[[TaskDefinition], str] | None = None,
+        definition_hash: (
+            Callable[[TaskDefinition], str | Awaitable[str]] | None
+        ) = None,
         execution_roots: Iterable[str | Path] = (),
         input_roots: Iterable[str | Path] | None = None,
         remote_url_policy: TaskRemoteUrlPolicy | None = None,
@@ -460,6 +463,10 @@ class TaskClient:
     ) -> TaskClientValidationResult:
         assert isinstance(definition, TaskDefinition)
         issues: list[TaskValidationIssue] = []
+        try:
+            definition = await self._resolve_definition_schemas(definition)
+        except TaskValidationError as error:
+            issues.extend(error.issues)
         issues.extend(
             validate_task_definition(
                 definition,
@@ -479,7 +486,9 @@ class TaskClient:
                 remote_url_policy=self._remote_url_policy,
             )
         )
-        target_definition = self._target_validation_definition(definition)
+        target_definition = await self._target_validation_definition(
+            definition
+        )
         issues.extend(
             await self._target.validate_definition(
                 target_definition,
@@ -543,11 +552,11 @@ class TaskClient:
             raise _unsupported_queue_operation("enqueue")
         if self._queue is None:
             raise _unsupported_queue_operation("enqueue")
+        definition = await self._resolve_definition_schemas(definition)
         validation = await self.validate(definition, input_value=input_value)
         validation.raise_for_issues()
-        definition = self._resolve_definition_schemas(definition)
         sanitizer = self._sanitizer(definition)
-        definition_id = self._definition_hash_value(definition)
+        definition_id = await self._definition_hash_value(definition)
         await self._store.register_definition(
             definition,
             definition_hash=definition_id,
@@ -828,19 +837,23 @@ class TaskClient:
             input_roots=self._input_roots,
         )
 
-    def _definition_hash_value(self, definition: TaskDefinition) -> str:
-        return (
+    async def _definition_hash_value(self, definition: TaskDefinition) -> str:
+        value = (
             self._definition_hash(definition)
             if self._definition_hash is not None
             else _default_definition_hash(definition)
         )
+        if isawaitable(value):
+            value = await value
+        assert isinstance(value, str) and value.strip()
+        return value
 
-    def _resolve_definition_schemas(
+    async def _resolve_definition_schemas(
         self,
         definition: TaskDefinition,
     ) -> TaskDefinition:
         try:
-            return resolve_task_definition_schemas(
+            return await resolve_task_definition_schemas(
                 definition,
                 schema_base_path=None,
             )
@@ -849,12 +862,12 @@ class TaskClient:
                 (_schema_resolution_issue(error),)
             ) from error
 
-    def _target_validation_definition(
+    async def _target_validation_definition(
         self,
         definition: TaskDefinition,
     ) -> TaskDefinition:
         try:
-            return resolve_task_definition_schemas(
+            return await resolve_task_definition_schemas(
                 definition,
                 schema_base_path=None,
             )
@@ -1294,8 +1307,8 @@ def _unsupported_cancel_operation() -> TaskClientUnsupportedOperationError:
     )
 
 
-def _default_definition_hash(definition: TaskDefinition) -> str:
-    return spec_hash(definition)
+async def _default_definition_hash(definition: TaskDefinition) -> str:
+    return await spec_hash(definition)
 
 
 def _file_conversion_requests(

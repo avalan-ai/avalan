@@ -3,6 +3,8 @@ from tempfile import TemporaryDirectory
 from typing import cast
 from unittest import TestCase, main
 
+from async_helpers import run_async
+
 from avalan.task import (
     IdempotencyMode,
     ObservabilitySinkType,
@@ -21,6 +23,47 @@ from avalan.task import (
     loads_task_definition,
     loads_task_definition_result,
 )
+
+_AsyncTaskDefinitionLoader = TaskDefinitionLoader
+_async_load_task_definition = load_task_definition
+_async_load_task_definition_result = load_task_definition_result
+_async_loads_task_definition = loads_task_definition
+_async_loads_task_definition_result = loads_task_definition_result
+
+
+class TaskDefinitionLoader(_AsyncTaskDefinitionLoader):  # type: ignore[no-redef]
+    def load(self, *args: object, **kwargs: object) -> object:
+        loader = _AsyncTaskDefinitionLoader(encoding=self._encoding)
+        return run_async(loader.load(*args, **kwargs))
+
+    def load_result(self, *args: object, **kwargs: object) -> object:
+        loader = _AsyncTaskDefinitionLoader(encoding=self._encoding)
+        return run_async(loader.load_result(*args, **kwargs))
+
+    def loads(self, *args: object, **kwargs: object) -> object:
+        loader = _AsyncTaskDefinitionLoader(encoding=self._encoding)
+        return run_async(loader.loads(*args, **kwargs))
+
+    def loads_result(self, *args: object, **kwargs: object) -> object:
+        loader = _AsyncTaskDefinitionLoader(encoding=self._encoding)
+        return run_async(loader.loads_result(*args, **kwargs))
+
+
+def load_task_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_load_task_definition(*args, **kwargs))
+
+
+def load_task_definition_result(*args: object, **kwargs: object) -> object:
+    return run_async(_async_load_task_definition_result(*args, **kwargs))
+
+
+def loads_task_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_loads_task_definition(*args, **kwargs))
+
+
+def loads_task_definition_result(*args: object, **kwargs: object) -> object:
+    return run_async(_async_loads_task_definition_result(*args, **kwargs))
+
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures"
 

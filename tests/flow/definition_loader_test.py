@@ -6,6 +6,8 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
+from async_helpers import run_async
+
 from avalan.entities import (
     ToolCall,
     ToolCallContext,
@@ -54,6 +56,66 @@ from avalan.flow.registry import FlowNodeConfigurationError
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.mcp import McpToolSet
+
+_AsyncFlowDefinitionLoader = FlowDefinitionLoader
+_async_loads_flow_definition = loads_flow_definition
+_async_loads_flow_definition_result = loads_flow_definition_result
+
+
+class FlowDefinitionLoader(_AsyncFlowDefinitionLoader):  # type: ignore[no-redef]
+    async def load(self, *args: object, **kwargs: object) -> FlowDefinition:
+        loader = _AsyncFlowDefinitionLoader(
+            self._registry,
+            encoding=self._encoding,
+        )
+        return await loader.load(*args, **kwargs)
+
+    async def load_result(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> FlowLoadResult:
+        loader = _AsyncFlowDefinitionLoader(
+            self._registry,
+            encoding=self._encoding,
+        )
+        return await loader.load_result(*args, **kwargs)
+
+    async def load_validation_result(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> FlowLoadResult:
+        loader = _AsyncFlowDefinitionLoader(
+            self._registry,
+            encoding=self._encoding,
+        )
+        return await loader.load_validation_result(*args, **kwargs)
+
+    def loads(self, *args: object, **kwargs: object) -> object:
+        return run_async(super().loads(*args, **kwargs))
+
+    def loads_result(self, *args: object, **kwargs: object) -> FlowLoadResult:
+        return run_async(super().loads_result(*args, **kwargs))
+
+    def loads_validation_result(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> FlowLoadResult:
+        return run_async(super().loads_validation_result(*args, **kwargs))
+
+
+def loads_flow_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_loads_flow_definition(*args, **kwargs))
+
+
+def loads_flow_definition_result(
+    *args: object,
+    **kwargs: object,
+) -> FlowLoadResult:
+    return run_async(_async_loads_flow_definition_result(*args, **kwargs))
+
 
 VALID_FLOW = """
 [flow]

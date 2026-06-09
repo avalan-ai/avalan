@@ -5,7 +5,17 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from async_helpers import run_async
+
 from avalan.cli.__main__ import CLI, ModelManager
+
+
+def _needs_hf_token(args: Namespace) -> bool:
+    return run_async(CLI._needs_hf_token(args))
+
+
+def _task_agent_engine_uri(args: Namespace) -> str | None:
+    return run_async(CLI._task_agent_engine_uri(args))
 
 
 class NeedsHfTokenTestCase(unittest.TestCase):
@@ -16,7 +26,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
             "parse_uri",
             return_value=SimpleNamespace(is_local=True),
         ) as parse_patch:
-            self.assertTrue(CLI._needs_hf_token(args))
+            self.assertTrue(_needs_hf_token(args))
         parse_patch.assert_called_once_with("m")
 
     def test_model_run_local_ds4_cli_backend_no_token(self):
@@ -31,7 +41,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
             "parse_uri",
             return_value=SimpleNamespace(is_local=True, params={}),
         ) as parse_patch:
-            self.assertFalse(CLI._needs_hf_token(args))
+            self.assertFalse(_needs_hf_token(args))
         parse_patch.assert_called_once_with("ai://local/./model.gguf")
 
     def test_model_run_local_ds4_uri_backend_no_token(self):
@@ -48,7 +58,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 is_local=True, params={"backend": "ds4"}
             ),
         ) as parse_patch:
-            self.assertFalse(CLI._needs_hf_token(args))
+            self.assertFalse(_needs_hf_token(args))
         parse_patch.assert_called_once_with(
             "ai://local/./model.gguf?backend=ds4"
         )
@@ -60,7 +70,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
             "parse_uri",
             return_value=SimpleNamespace(is_local=False),
         ):
-            self.assertFalse(CLI._needs_hf_token(args))
+            self.assertFalse(_needs_hf_token(args))
 
     def test_agent_run_local_requires_token(self):
         args = Namespace(command="agent", agent_command="run", engine_uri="e")
@@ -69,7 +79,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
             "parse_uri",
             return_value=SimpleNamespace(is_local=True),
         ) as parse_patch:
-            self.assertTrue(CLI._needs_hf_token(args))
+            self.assertTrue(_needs_hf_token(args))
         parse_patch.assert_called_once_with("e")
 
     def test_agent_run_local_ds4_uri_backend_no_token(self):
@@ -86,7 +96,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 is_local=True, params={"backend": "ds4"}
             ),
         ) as parse_patch:
-            self.assertFalse(CLI._needs_hf_token(args))
+            self.assertFalse(_needs_hf_token(args))
         parse_patch.assert_called_once_with(
             "ai://local/./model.gguf?backend=ds4"
         )
@@ -100,16 +110,16 @@ class NeedsHfTokenTestCase(unittest.TestCase):
             "parse_uri",
             return_value=SimpleNamespace(is_local=False),
         ):
-            self.assertFalse(CLI._needs_hf_token(args))
+            self.assertFalse(_needs_hf_token(args))
 
     def test_agent_missing_engine_defaults_true(self):
         args = Namespace(command="agent", agent_command="serve")
-        self.assertTrue(CLI._needs_hf_token(args))
+        self.assertTrue(_needs_hf_token(args))
 
     def test_task_command_does_not_need_token(self):
         args = Namespace(command="task", task_command="validate")
 
-        self.assertFalse(CLI._needs_hf_token(args))
+        self.assertFalse(_needs_hf_token(args))
 
     def test_task_run_local_agent_requires_token(self):
         with TemporaryDirectory() as tmp:
@@ -135,7 +145,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 "parse_uri",
                 return_value=SimpleNamespace(is_local=True, params={}),
             ) as parse_patch:
-                self.assertTrue(CLI._needs_hf_token(args))
+                self.assertTrue(_needs_hf_token(args))
         parse_patch.assert_called_once_with("ai://local/private-model")
 
     def test_task_enqueue_remote_agent_does_not_need_token(self):
@@ -162,7 +172,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 "parse_uri",
                 return_value=SimpleNamespace(is_local=False, params={}),
             ) as parse_patch:
-                self.assertFalse(CLI._needs_hf_token(args))
+                self.assertFalse(_needs_hf_token(args))
         parse_patch.assert_called_once_with("ai://openai/gpt-4o-mini")
 
     def test_task_run_local_ds4_agent_does_not_need_token(self):
@@ -192,7 +202,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                     is_local=True, params={"backend": "ds4"}
                 ),
             ) as parse_patch:
-                self.assertFalse(CLI._needs_hf_token(args))
+                self.assertFalse(_needs_hf_token(args))
         parse_patch.assert_called_once_with(
             "ai://local/./model.gguf?backend=ds4"
         )
@@ -210,13 +220,13 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 definition=str(task),
             )
             with patch.object(ModelManager, "parse_uri") as parse_patch:
-                self.assertFalse(CLI._needs_hf_token(args))
+                self.assertFalse(_needs_hf_token(args))
         parse_patch.assert_not_called()
 
     def test_task_agent_engine_uri_rejects_missing_definition_argument(self):
         args = Namespace(command="task", task_command="run")
 
-        self.assertIsNone(CLI._task_agent_engine_uri(args))
+        self.assertIsNone(_task_agent_engine_uri(args))
 
     def test_task_agent_engine_uri_rejects_missing_execution_section(self):
         with TemporaryDirectory() as tmp:
@@ -228,7 +238,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 definition=str(task),
             )
 
-            self.assertIsNone(CLI._task_agent_engine_uri(args))
+            self.assertIsNone(_task_agent_engine_uri(args))
 
     def test_task_agent_engine_uri_rejects_non_agent_target(self):
         with TemporaryDirectory() as tmp:
@@ -243,7 +253,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 definition=str(task),
             )
 
-            self.assertIsNone(CLI._task_agent_engine_uri(args))
+            self.assertIsNone(_task_agent_engine_uri(args))
 
     def test_task_agent_engine_uri_rejects_missing_agent_ref(self):
         with TemporaryDirectory() as tmp:
@@ -258,7 +268,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 definition=str(task),
             )
 
-            self.assertIsNone(CLI._task_agent_engine_uri(args))
+            self.assertIsNone(_task_agent_engine_uri(args))
 
     def test_task_agent_engine_uri_rejects_missing_engine_section(self):
         with TemporaryDirectory() as tmp:
@@ -281,7 +291,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 definition=str(task),
             )
 
-            self.assertIsNone(CLI._task_agent_engine_uri(args))
+            self.assertIsNone(_task_agent_engine_uri(args))
 
     def test_agent_proxy_remote_no_token(self):
         args = Namespace(
@@ -292,11 +302,11 @@ class NeedsHfTokenTestCase(unittest.TestCase):
             "parse_uri",
             return_value=SimpleNamespace(is_local=False),
         ):
-            self.assertFalse(CLI._needs_hf_token(args))
+            self.assertFalse(_needs_hf_token(args))
 
     def test_agent_proxy_missing_engine_defaults_true(self):
         args = Namespace(command="agent", agent_command="proxy")
-        self.assertTrue(CLI._needs_hf_token(args))
+        self.assertTrue(_needs_hf_token(args))
 
     def test_agent_run_specs_remote_no_token(self):
         with NamedTemporaryFile("w", suffix=".toml") as spec:
@@ -313,7 +323,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 "parse_uri",
                 return_value=SimpleNamespace(is_local=False),
             ) as parse_patch:
-                self.assertFalse(CLI._needs_hf_token(args))
+                self.assertFalse(_needs_hf_token(args))
         parse_patch.assert_called_once_with("e")
 
     def test_agent_run_specs_local_requires_token(self):
@@ -331,7 +341,7 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 "parse_uri",
                 return_value=SimpleNamespace(is_local=True),
             ) as parse_patch:
-                self.assertTrue(CLI._needs_hf_token(args))
+                self.assertTrue(_needs_hf_token(args))
         parse_patch.assert_called_once_with("e")
 
     def test_agent_run_specs_local_ds4_backend_no_token(self):
@@ -350,5 +360,5 @@ class NeedsHfTokenTestCase(unittest.TestCase):
                 "parse_uri",
                 return_value=SimpleNamespace(is_local=True, params={}),
             ) as parse_patch:
-                self.assertFalse(CLI._needs_hf_token(args))
+                self.assertFalse(_needs_hf_token(args))
         parse_patch.assert_called_once_with("e")

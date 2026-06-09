@@ -1,5 +1,7 @@
 from unittest import TestCase, main
 
+from async_helpers import run_async
+
 from avalan.entities import (
     ToolCall,
     ToolCallContext,
@@ -4650,10 +4652,11 @@ class FlowValidatorTestCase(TestCase):
             calls.append(definition.name)
             return Node(definition.name)
 
-        result = flow_loader.FlowDefinitionLoader(
-            FlowNodeRegistry({"counted": factory})
-        ).loads_result(
-            """
+        result = run_async(
+            flow_loader.FlowDefinitionLoader(
+                FlowNodeRegistry({"counted": factory})
+            ).loads_result(
+                """
             [flow]
             name = "invalid"
             entrypoint = "start"
@@ -4662,6 +4665,7 @@ class FlowValidatorTestCase(TestCase):
             [nodes.start]
             type = "counted"
             """
+            )
         )
 
         self.assertFalse(result.ok)
@@ -4669,7 +4673,7 @@ class FlowValidatorTestCase(TestCase):
         self.assertEqual(calls, [])
 
     def test_loader_maps_validation_diagnostics_to_load_issues(self) -> None:
-        result = flow_loader.loads_flow_definition_result("""
+        result = run_async(flow_loader.loads_flow_definition_result("""
             [flow]
             name = "invalid"
             entrypoint = "start"
@@ -4677,7 +4681,7 @@ class FlowValidatorTestCase(TestCase):
 
             [nodes.start]
             type = "missing"
-            """)
+            """))
 
         self.assertFalse(result.ok)
         self.assertEqual(result.issues[0].code, "flow.unknown_node_type")

@@ -1,3 +1,4 @@
+from asyncio import run as asyncio_run
 from base64 import b64encode
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -16,7 +17,7 @@ def test_input_files_with_text_and_file() -> None:
         tmp.write(b"%PDF-1.7")
         tmp.flush()
 
-        result = input_files("Summarize", [tmp.name])
+        result = asyncio_run(input_files("Summarize", [tmp.name]))
 
     assert isinstance(result, Message)
     assert result.role == MessageRole.USER
@@ -39,7 +40,7 @@ def test_input_files_without_text() -> None:
         tmp.write(b"content")
         tmp.flush()
 
-        result = input_files(None, [tmp.name])
+        result = asyncio_run(input_files(None, [tmp.name]))
 
     assert isinstance(result, Message)
     assert isinstance(result.content, list)
@@ -60,7 +61,7 @@ def test_input_files_missing_file() -> None:
     assert not missing.exists()
 
     try:
-        input_files("Summarize", [str(missing)])
+        asyncio_run(input_files("Summarize", [str(missing)]))
     except AssertionError as exc:
         assert str(exc) == f"Input file not found: {missing}"
     else:
@@ -68,5 +69,5 @@ def test_input_files_missing_file() -> None:
 
 
 def test_input_files_without_paths() -> None:
-    assert input_files("Hello", None) == "Hello"
-    assert input_files(None, []) is None
+    assert asyncio_run(input_files("Hello", None)) == "Hello"
+    assert asyncio_run(input_files(None, [])) is None

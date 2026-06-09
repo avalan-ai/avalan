@@ -28,7 +28,11 @@ from .diagnostics import (
     FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
 )
-from .registry import FlowNodeRegistry, default_flow_node_registry
+from .registry import (
+    FlowNodeConfigurationError,
+    FlowNodeRegistry,
+    default_flow_node_registry,
+)
 from .selector import FlowSelector, parse_flow_selector
 from .validator import validate_flow_definition
 
@@ -377,7 +381,7 @@ class FlowPlanCompileResult:
         )
 
 
-def compile_flow_definition(
+async def compile_flow_definition(
     definition: FlowDefinition,
     registry: FlowNodeRegistry | None = None,
 ) -> FlowPlanCompileResult:
@@ -406,6 +410,23 @@ def compile_flow_definition(
         )
     assert definition.entry_behavior is not None
     assert definition.output_behavior is not None
+    nodes: list[FlowNodePlan] = []
+    try:
+        for node in definition.nodes:
+            nodes.append(await _compile_node(definition, node, node_registry))
+    except FlowNodeConfigurationError as error:
+        return FlowPlanCompileResult(
+            diagnostics=(
+                FlowDiagnostic(
+                    code=error.code,
+                    category=FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+                    severity=FlowDiagnosticSeverity.ERROR,
+                    path=error.path,
+                    message=error.message,
+                    hint=error.hint,
+                ),
+            )
+        )
     return FlowPlanCompileResult(
         plan=FlowExecutionPlan(
             name=definition.name,
@@ -420,10 +441,7 @@ def compile_flow_definition(
                     definition.output_behavior.outputs.items()
                 )
             },
-            nodes=tuple(
-                _compile_node(definition, node, node_registry)
-                for node in definition.nodes
-            ),
+            nodes=tuple(nodes),
             edges=tuple(
                 _compile_edge(index, edge)
                 for index, edge in enumerate(definition.edges)
@@ -432,7 +450,7 @@ def compile_flow_definition(
     )
 
 
-def _compile_node(
+async def _compile_node(
     definition: FlowDefinition,
     node: FlowNodeDefinition,
     registry: FlowNodeRegistry,
@@ -454,7 +472,7 @@ def _compile_node(
         timeout=_compile_timeout(node.timeout_policy),
         loop=_compile_loop(node.loop_policy),
         config=node.config,
-        metadata=_compile_node_metadata(
+        metadata=await _compile_node_metadata(
             definition,
             node,
             registry,
@@ -463,7 +481,7 @@ def _compile_node(
     )
 
 
-def _compile_node_metadata(
+async def _compile_node_metadata(
     definition: FlowDefinition,
     node: FlowNodeDefinition,
     registry: FlowNodeRegistry,
@@ -482,7 +500,10 @@ def _compile_node_metadata(
             tool_metadata["return_schema"] = descriptor.return_schema
         compiled["tool"] = tool_metadata
     if registry.supports_subflow_resolution(node.type):
-        compiled["subflow"] = registry.subflow_metadata(definition, node)
+        compiled["subflow"] = await registry.subflow_metadata(
+            definition,
+            node,
+        )
     return compiled
 
 

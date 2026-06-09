@@ -1,4 +1,4 @@
-from ..filesystem import read_text, run_awaitable
+from ..filesystem import read_text
 from ..types import LooseJsonValue
 from .definition import (
     FrozenMetadata,
@@ -53,7 +53,7 @@ class TaskCanonicalizationError(ValueError):
     pass
 
 
-def canonical_definition(
+async def canonical_definition(
     definition: TaskDefinition,
     *,
     schema_base_path: str | Path | None = None,
@@ -75,9 +75,11 @@ def canonical_definition(
             "store_bytes": definition.artifact.store_bytes,
         },
         "execution": {
-            "provider_instructions_sha256": _provider_instructions_digest(
-                definition,
-                schema_base_path,
+            "provider_instructions_sha256": (
+                await _provider_instructions_digest(
+                    definition,
+                    schema_base_path,
+                )
             ),
             "ref": _normalize_ref(definition.execution.ref),
             "type": definition.execution.type.value,
@@ -90,7 +92,7 @@ def canonical_definition(
             "file_conversions": list(definition.input.file_conversions),
             "mime_types": list(definition.input.mime_types),
             "required": definition.input.required,
-            "schema": _canonical_schema(
+            "schema": await _canonical_schema(
                 definition.input.schema,
                 definition.input.schema_ref,
                 schema_base_path,
@@ -115,7 +117,7 @@ def canonical_definition(
         },
         "output": {
             "description": definition.output.description,
-            "schema": _canonical_schema(
+            "schema": await _canonical_schema(
                 definition.output.schema,
                 definition.output.schema_ref,
                 schema_base_path,
@@ -163,13 +165,16 @@ def canonical_definition(
     }
 
 
-def canonical_json(
+async def canonical_json(
     definition: TaskDefinition,
     *,
     schema_base_path: str | Path | None = None,
 ) -> str:
     return dumps(
-        canonical_definition(definition, schema_base_path=schema_base_path),
+        await canonical_definition(
+            definition,
+            schema_base_path=schema_base_path,
+        ),
         allow_nan=False,
         ensure_ascii=False,
         separators=_CANONICAL_JSON_SEPARATORS,
@@ -177,16 +182,19 @@ def canonical_json(
     )
 
 
-def spec_hash(
+async def spec_hash(
     definition: TaskDefinition,
     *,
     schema_base_path: str | Path | None = None,
 ) -> str:
-    canonical = canonical_json(definition, schema_base_path=schema_base_path)
+    canonical = await canonical_json(
+        definition,
+        schema_base_path=schema_base_path,
+    )
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _provider_instructions_digest(
+async def _provider_instructions_digest(
     definition: TaskDefinition,
     schema_base_path: str | Path | None,
 ) -> str | None:
@@ -204,7 +212,7 @@ def _provider_instructions_digest(
         root = base_dir.resolve(strict=False)
         source_path = (root / ref).resolve(strict=False)
         source_path.relative_to(root)
-        source = run_awaitable(read_text(source_path))
+        source = await read_text(source_path)
         raw = toml_loads(source)
     except (OSError, TOMLDecodeError, ValueError):
         return None
@@ -218,7 +226,7 @@ def _provider_instructions_digest(
     return sha256(instructions.encode("utf-8")).hexdigest()
 
 
-def _canonical_schema(
+async def _canonical_schema(
     schema: FrozenMetadata | None,
     schema_ref: str | None,
     schema_base_path: str | Path | None,
@@ -228,19 +236,21 @@ def _canonical_schema(
         return _normalize_schema_value(schema)
     if schema_ref is None:
         return None
-    return _load_schema_ref(schema_ref, schema_base_path, path)
+    return await _load_schema_ref(schema_ref, schema_base_path, path)
 
 
-def _load_schema_ref(
+async def _load_schema_ref(
     schema_ref: str,
     schema_base_path: str | Path | None,
     path: str,
 ) -> object:
     try:
-        return resolve_schema_ref(
-            schema_ref,
-            schema_base_path=schema_base_path,
-            path=path,
+        return (
+            await resolve_schema_ref(
+                schema_ref,
+                schema_base_path=schema_base_path,
+                path=path,
+            )
         ).schema
     except TaskSchemaResolutionError as error:
         raise TaskCanonicalizationError(str(error)) from error

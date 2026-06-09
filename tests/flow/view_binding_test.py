@@ -2,6 +2,8 @@ from dataclasses import FrozenInstanceError
 from typing import cast
 from unittest import TestCase, main
 
+from async_helpers import run_async
+
 from avalan.flow import (
     FLOW_VIEW_SKELETON_NODE_TYPE,
     FLOW_VIEW_SKELETON_TAG,
@@ -32,6 +34,15 @@ from avalan.flow import (
     render_mermaid_view,
     validate_flow_definition,
 )
+
+_async_loads_flow_definition_result = loads_flow_definition_result
+
+
+def loads_flow_definition_result(
+    *args: object,
+    **kwargs: object,
+) -> object:
+    return run_async(_async_loads_flow_definition_result(*args, **kwargs))
 
 
 class FlowViewBindingTestCase(TestCase):

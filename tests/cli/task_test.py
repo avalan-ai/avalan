@@ -15,6 +15,7 @@ from typing import Any, cast
 from unittest import TestCase, main
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from async_helpers import run_async
 from rich.console import Console
 
 from avalan.cli.commands import task as task_cmds
@@ -68,6 +69,14 @@ TASK_HMAC_ENV = {
     "AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1",
     "AVALAN_TASK_HMAC_KEY_B64": "dGFzay1obWFjLXRlc3Qta2V5",
 }
+
+
+def _validate_task_cli_input_for_command(
+    args: Namespace, console: Console
+) -> bool:
+    return run_async(
+        task_cmds._validate_task_cli_input_for_command(args, console)
+    )
 
 
 def _extraction_cli_usage_fixture() -> Mapping[str, object]:
@@ -2111,9 +2120,11 @@ class CliTaskCommandShellTestCase(TestCase):
                         orchestrator.text_formats[0]["schema"]
                     ),
                     canonical_schema_json(
-                        task_cmds.TaskDefinitionLoader()
-                        .load(fixture / "task.toml")
-                        .output.schema
+                        run_async(
+                            task_cmds.TaskDefinitionLoader().load(
+                                fixture / "task.toml"
+                            )
+                        ).output.schema
                     ),
                 )
                 self.assertEqual(len(orchestrator.inputs), 1)
@@ -4437,7 +4448,7 @@ class CliTaskCommandShellTestCase(TestCase):
     def test_validate_task_cli_input_for_command_success_path(self) -> None:
         console = Console(record=True, width=160)
 
-        result = task_cmds._validate_task_cli_input_for_command(
+        result = _validate_task_cli_input_for_command(
             Namespace(
                 definition=str(FIXTURE_ROOT / "minimal.task.toml"),
                 task_input="Ada Lovelace",
@@ -4477,7 +4488,7 @@ class CliTaskCommandShellTestCase(TestCase):
         for definition, task_input, task_input_json, expected in cases:
             console = Console(record=True, width=160)
             with self.subTest(expected=expected):
-                result = task_cmds._validate_task_cli_input_for_command(
+                result = _validate_task_cli_input_for_command(
                     Namespace(
                         definition=definition,
                         task_input=task_input,
@@ -4494,7 +4505,7 @@ class CliTaskCommandShellTestCase(TestCase):
     def test_validate_task_cli_input_for_command_non_input_paths(self) -> None:
         console = Console(record=True, width=160)
         self.assertTrue(
-            task_cmds._validate_task_cli_input_for_command(
+            _validate_task_cli_input_for_command(
                 Namespace(
                     definition=None,
                     task_input=None,
@@ -4506,7 +4517,7 @@ class CliTaskCommandShellTestCase(TestCase):
             )
         )
         self.assertTrue(
-            task_cmds._validate_task_cli_input_for_command(
+            _validate_task_cli_input_for_command(
                 Namespace(
                     definition=123,
                     task_input="Ada",
@@ -4518,7 +4529,7 @@ class CliTaskCommandShellTestCase(TestCase):
             )
         )
         self.assertFalse(
-            task_cmds._validate_task_cli_input_for_command(
+            _validate_task_cli_input_for_command(
                 Namespace(
                     definition="/tmp/private/missing.task.toml",
                     task_input="Ada",

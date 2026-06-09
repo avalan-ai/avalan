@@ -1,6 +1,6 @@
 from asyncio import CancelledError
 from asyncio import run as asyncio_run
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -702,13 +702,75 @@ uri = "ai://env:KEY@google/gemini-2.0-flash"
             )
             runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
 
-            uri = runner._agent_uri(self._definition())
-            profile = runner._agent_local_file_delivery_profile(
-                self._definition()
+            uri = asyncio_run(runner._agent_uri(self._definition()))
+            profile = asyncio_run(
+                runner._agent_local_file_delivery_profile(self._definition())
             )
 
         self.assertIsNone(uri)
         self.assertEqual(profile, LocalFileDeliveryProfile.TEXT)
+
+    def test_missing_agent_config_uses_safe_file_profile_defaults(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            runner = AgentTaskTargetRunner(FakeLoader(), ref_base=Path(tmp))
+
+            async def missing_config(
+                definition: TaskDefinition,
+            ) -> Mapping[str, object] | None:
+                _ = definition
+                return None
+
+            runner._agent_config = missing_config  # type: ignore[method-assign]
+
+            engine = asyncio_run(
+                runner._agent_engine_config(self._definition())
+            )
+            prompt = asyncio_run(runner._agent_prompt(self._definition()))
+
+        self.assertIsNone(engine)
+        self.assertIsNone(prompt.user)
+        self.assertIsNone(prompt.user_template)
+
+    def test_custom_file_delivery_resolver_receives_agent_uri(self) -> None:
+        profile = FileDeliveryProfile(
+            name="custom",
+            delivery_modes=frozenset({FileDeliveryMode.INLINE_TEXT}),
+        )
+        seen_uris: list[str | None] = []
+
+        def resolver(uri: str | None) -> FileDeliveryProfile:
+            seen_uris.append(uri)
+            return profile
+
+        with TemporaryDirectory() as tmp:
+            runner = AgentTaskTargetRunner(
+                FakeLoader(),
+                ref_base=Path(tmp),
+                file_delivery_resolver=resolver,
+            )
+
+            async def agent_uri(definition: TaskDefinition) -> str:
+                _ = definition
+                return "ai://env:KEY@provider/model"
+
+            async def local_profile(
+                definition: TaskDefinition,
+            ) -> LocalFileDeliveryProfile:
+                _ = definition
+                return LocalFileDeliveryProfile.TEXT
+
+            runner._agent_uri = agent_uri  # type: ignore[method-assign]
+            runner._agent_local_file_delivery_profile = (  # type: ignore[method-assign]
+                local_profile
+            )
+            resolved_profile = asyncio_run(
+                runner._agent_file_profile(self._definition())
+            )
+
+        self.assertIs(resolved_profile, profile)
+        self.assertEqual(seen_uris, ["ai://env:KEY@provider/model"])
 
     def test_local_text_target_requires_compatible_text_delivery(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -860,8 +922,8 @@ file_delivery_profile = "binary"
             )
             runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
 
-            profile = runner._agent_local_file_delivery_profile(
-                self._definition()
+            profile = asyncio_run(
+                runner._agent_local_file_delivery_profile(self._definition())
             )
 
         self.assertEqual(profile, LocalFileDeliveryProfile.TEXT)
@@ -3244,7 +3306,7 @@ file_delivery_profile = "multimodal"
             )
             runner = AgentTaskTargetRunner(FakeLoader(), ref_base=root)
 
-            prompt = runner._agent_prompt(self._definition())
+            prompt = asyncio_run(runner._agent_prompt(self._definition()))
 
         descriptor = TaskFileDescriptor.provider_reference_descriptor(
             "file-test",
