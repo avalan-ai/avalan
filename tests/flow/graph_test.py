@@ -31,6 +31,14 @@ from avalan.flow import (
     FlowNodeDefinition,
     FlowRouteMatchPolicy,
     FlowSourceSpan,
+    FlowViewImportMode,
+    MermaidAst,
+    MermaidAstEdge,
+    MermaidAstEdgeStatement,
+    MermaidAstNode,
+    MermaidCst,
+    MermaidImportValidationResult,
+    MermaidParseResult,
     compile_flow_graph,
     flow_graph_diagnostic,
     flow_graph_diagnostic_load_category,
@@ -419,6 +427,75 @@ class FlowGraphCompilerTestCase(TestCase):
         self.assertNotIn("Private customer label", public)
         self.assertNotIn("/private/customer", public)
 
+    def test_compile_flow_graph_rejects_ambiguous_shorthand_safely(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "source_group",
+                "flowchart LR\nstart & review route_1@--> done",
+                (
+                    "flow.graph.unsupported_executable_edge",
+                    "flow.graph.duplicate_edge_id",
+                ),
+            ),
+            (
+                "target_group",
+                "flowchart LR\nstart route_1@--> review & done",
+                (
+                    "flow.graph.unsupported_executable_edge",
+                    "flow.graph.duplicate_edge_id",
+                ),
+            ),
+            (
+                "missing_id",
+                "flowchart LR\nstart & review --> done",
+                ("flow.graph.unsupported_executable_edge",),
+            ),
+        )
+
+        for name, diagram, expected_codes in cases:
+            with self.subTest(name=name):
+                source = FlowGraphSource(
+                    source_kind=FlowGraphSourceKind.INLINE,
+                    diagram=diagram,
+                    source_identity="/private/customer/flow.toml",
+                )
+
+                result = compile_flow_graph(
+                    source,
+                    (
+                        FlowNodeDefinition(name="start", type="input"),
+                        FlowNodeDefinition(
+                            name="review",
+                            type="pass-through",
+                        ),
+                        FlowNodeDefinition(
+                            name="done",
+                            type="pass-through",
+                        ),
+                    ),
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.edges, ())
+                self.assertEqual(
+                    tuple(
+                        diagnostic.code for diagnostic in result.diagnostics
+                    ),
+                    expected_codes,
+                )
+                self.assertNotIn(
+                    "flow.graph.malformed_source",
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+                self.assertIsNotNone(result.inspection)
+                assert result.inspection is not None
+                self.assertEqual(result.inspection.generated_edges, ())
+                public = str(result.as_public_dict())
+                self.assertNotIn("route_1", public)
+                self.assertNotIn("/private/customer", public)
+
     def test_compile_flow_graph_rejects_missing_edge_metadata_target(
         self,
     ) -> None:
@@ -594,6 +671,60 @@ class FlowGraphCompilerTestCase(TestCase):
         )
         public = str(result.public_diagnostics)
         self.assertNotIn("route.one", public)
+        self.assertNotIn("private invalid route", public)
+        self.assertNotIn("/private/customer", public)
+
+    def test_compile_flow_graph_rejects_unparseable_edge_metadata_id_safely(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="flowchart LR\nstart route_1@--> done",
+            source_identity="/private/customer/flow.toml",
+        )
+        binding_span = FlowSourceSpan(
+            source="/private/customer/flow.toml",
+            start_line=8,
+            start_column=3,
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+            ),
+            edge_bindings={
+                "-private-route": FlowGraphEdgeBinding(
+                    edge_id="-private-route",
+                    label="private invalid route",
+                    source_span=binding_span,
+                )
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.invalid_edge_id"],
+        )
+        self.assertEqual(result.diagnostics[0].path, "graph.edges")
+        self.assertEqual(result.diagnostics[0].source_span, binding_span)
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (binding.edge_id, binding.state)
+                for binding in result.inspection.bindings
+            ],
+            [
+                ("-private-route", FlowGraphBindingState.REJECTED),
+                ("route_1", FlowGraphBindingState.UNBOUND),
+            ],
+        )
+        public = str(result.public_diagnostics)
+        self.assertNotIn("-private-route", public)
         self.assertNotIn("private invalid route", public)
         self.assertNotIn("/private/customer", public)
 
@@ -884,10 +1015,644 @@ class FlowGraphCompilerTestCase(TestCase):
         )
         self.assertEqual(result.diagnostics[0].source_span.start_line, 2)
         self.assertEqual(result.diagnostics[0].source_span.start_column, 7)
+        self.assertIsNone(result.inspection)
         self.assertNotIn(
             "PrivateCustomerToken", str(result.public_diagnostics)
         )
         self.assertNotIn("/private/customer", str(result.public_diagnostics))
+
+    def test_compile_flow_graph_reports_duplicate_edge_ids_safely(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    "start private_route@--> review",
+                    "review private_route@--> done",
+                )
+            ),
+            source_identity="/private/customer/flow.toml",
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="review", type="pass-through"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.duplicate_edge_id"],
+        )
+        self.assertEqual(result.diagnostics[0].path, "graph.edges")
+        self.assertEqual(result.diagnostics[0].source_span.start_line, 3)
+        self.assertEqual(len(result.diagnostics[0].related_spans), 1)
+        self.assertEqual(
+            result.diagnostics[0].related_spans[0].start_line,
+            2,
+        )
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (
+                    edge.source,
+                    edge.target,
+                    edge.edge_id,
+                    edge.classification,
+                )
+                for edge in result.inspection.edges
+            ],
+            [
+                (
+                    "start",
+                    "review",
+                    "private_route",
+                    FlowGraphEdgeClassification.EXECUTABLE,
+                ),
+                (
+                    "review",
+                    "done",
+                    "private_route",
+                    FlowGraphEdgeClassification.EXECUTABLE,
+                ),
+            ],
+        )
+        self.assertEqual(result.inspection.generated_edges, ())
+        public = str(result.public_diagnostics)
+        self.assertNotIn("private_route", public)
+        self.assertNotIn("/private/customer", public)
+        inspection_public = str(result.inspection.as_public_dict())
+        self.assertNotIn("/private/customer", inspection_public)
+
+    def test_compile_flow_graph_reports_invalid_edge_id_safely(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="flowchart LR\nstart route.one@--> done",
+            source_identity="/private/customer/flow.toml",
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.invalid_edge_id"],
+        )
+        self.assertEqual(result.diagnostics[0].path, "graph.edges")
+        self.assertEqual(result.diagnostics[0].source_span.start_line, 2)
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (
+                    edge.source,
+                    edge.target,
+                    edge.edge_id,
+                    edge.classification,
+                )
+                for edge in result.inspection.edges
+            ],
+            [
+                (
+                    "start",
+                    "done",
+                    "route.one",
+                    FlowGraphEdgeClassification.EXECUTABLE,
+                ),
+            ],
+        )
+        self.assertEqual(result.inspection.generated_edges, ())
+        public = str(result.public_diagnostics)
+        self.assertNotIn("route.one", public)
+        self.assertNotIn("/private/customer", public)
+        inspection_public = str(result.inspection.as_public_dict())
+        self.assertNotIn("/private/customer", inspection_public)
+
+    def test_compile_flow_graph_reports_duplicate_invalid_edge_ids_safely(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="flowchart LR\nprivate source is not parsed",
+            source_identity="/private/customer/flow.toml",
+        )
+        first_span = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=2,
+            start_column=7,
+        )
+        second_span = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=3,
+            start_column=8,
+        )
+        valid_span = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=4,
+            start_column=5,
+        )
+        parser_result = MermaidImportValidationResult(
+            import_mode=FlowViewImportMode.EXECUTABLE,
+            parse_result=MermaidParseResult(
+                cst=MermaidCst(),
+                ast=MermaidAst(
+                    statements=(
+                        MermaidAstEdgeStatement(
+                            nodes=(
+                                MermaidAstNode(
+                                    id="start",
+                                    source_span=first_span,
+                                ),
+                                MermaidAstNode(
+                                    id="review",
+                                    source_span=first_span,
+                                ),
+                                MermaidAstNode(
+                                    id="done",
+                                    source_span=second_span,
+                                ),
+                                MermaidAstNode(
+                                    id="archive",
+                                    source_span=valid_span,
+                                ),
+                            ),
+                            edges=(
+                                MermaidAstEdge(
+                                    source="start",
+                                    target="review",
+                                    arrow="-->",
+                                    explicit_id="route.private",
+                                    source_span=first_span,
+                                ),
+                                MermaidAstEdge(
+                                    source="review",
+                                    target="done",
+                                    arrow="-->",
+                                    explicit_id="route.private",
+                                    source_span=second_span,
+                                ),
+                                MermaidAstEdge(
+                                    source="done",
+                                    target="archive",
+                                    arrow="-->",
+                                    explicit_id="route_ok",
+                                    source_span=valid_span,
+                                ),
+                            ),
+                            source_span=first_span,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        with patch(
+            "avalan.flow.graph.parse_mermaid_import",
+            return_value=parser_result,
+        ):
+            result = compile_flow_graph(
+                source,
+                (
+                    FlowNodeDefinition(name="start", type="input"),
+                    FlowNodeDefinition(name="review", type="pass-through"),
+                    FlowNodeDefinition(name="done", type="pass-through"),
+                    FlowNodeDefinition(name="archive", type="pass-through"),
+                ),
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.graph.invalid_edge_id",
+                "flow.graph.duplicate_edge_id",
+            ],
+        )
+        self.assertEqual(result.diagnostics[0].source_span, first_span)
+        self.assertEqual(result.diagnostics[1].source_span, second_span)
+        self.assertEqual(result.diagnostics[1].related_spans, (first_span,))
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (edge.source, edge.target)
+                for edge in result.inspection.generated_edges
+            ],
+            [("done", "archive")],
+        )
+        self.assertEqual(
+            [
+                (binding.edge_id, binding.state)
+                for binding in result.inspection.bindings
+            ],
+            [("route_ok", FlowGraphBindingState.UNBOUND)],
+        )
+        public = str(result.public_diagnostics)
+        self.assertNotIn("route.private", public)
+        self.assertNotIn("/private/customer", public)
+
+    def test_compile_flow_graph_reports_bidirectional_edges_safely(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    "start private_route@<--> done",
+                    "done route_2@--> archive",
+                )
+            ),
+            source_identity="/private/customer/flow.toml",
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+                FlowNodeDefinition(name="archive", type="pass-through"),
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.unsupported_executable_edge"],
+        )
+        self.assertEqual(result.diagnostics[0].path, "graph.edges")
+        self.assertEqual(result.diagnostics[0].source_span.start_line, 2)
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (
+                    edge.source,
+                    edge.target,
+                    edge.edge_id,
+                    edge.bidirectional,
+                )
+                for edge in result.inspection.edges
+            ],
+            [
+                ("start", "done", "private_route", True),
+                ("done", "archive", "route_2", False),
+            ],
+        )
+        self.assertEqual(
+            [
+                (edge.source, edge.target)
+                for edge in result.inspection.generated_edges
+            ],
+            [("done", "archive")],
+        )
+        public = str(result.public_diagnostics)
+        self.assertNotIn("private_route", public)
+        self.assertNotIn("/private/customer", public)
+        inspection_public = str(result.inspection.as_public_dict())
+        self.assertNotIn("/private/customer", inspection_public)
+
+    def test_compile_flow_graph_rejects_bindings_to_rejected_edge_ids(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "duplicate",
+                "\n".join(
+                    (
+                        "flowchart LR",
+                        "start private_route@--> review",
+                        "review private_route@--> done",
+                        "done route_2@--> archive",
+                    )
+                ),
+                "flow.graph.duplicate_edge_id",
+            ),
+            (
+                "bidirectional",
+                "\n".join(
+                    (
+                        "flowchart LR",
+                        "start private_route@<--> done",
+                        "done route_2@--> archive",
+                    )
+                ),
+                "flow.graph.unsupported_executable_edge",
+            ),
+        )
+
+        for name, diagram, code in cases:
+            with self.subTest(name=name):
+                source = FlowGraphSource(
+                    source_kind=FlowGraphSourceKind.INLINE,
+                    diagram=diagram,
+                    source_identity="/private/customer/flow.toml",
+                )
+
+                result = compile_flow_graph(
+                    source,
+                    (
+                        FlowNodeDefinition(name="start", type="input"),
+                        FlowNodeDefinition(
+                            name="review",
+                            type="pass-through",
+                        ),
+                        FlowNodeDefinition(
+                            name="done",
+                            type="pass-through",
+                        ),
+                        FlowNodeDefinition(
+                            name="archive",
+                            type="pass-through",
+                        ),
+                    ),
+                    edge_bindings={
+                        "private_route": FlowGraphEdgeBinding(
+                            edge_id="private_route",
+                            label="private route metadata",
+                        )
+                    },
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.edges, ())
+                self.assertEqual(
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                    [code],
+                )
+                self.assertIsNotNone(result.inspection)
+                assert result.inspection is not None
+                self.assertEqual(
+                    [
+                        (
+                            binding.edge_id,
+                            binding.state,
+                            binding.diagnostic_codes,
+                        )
+                        for binding in result.inspection.bindings
+                    ],
+                    [
+                        (
+                            "private_route",
+                            FlowGraphBindingState.REJECTED,
+                            (code,),
+                        ),
+                        ("route_2", FlowGraphBindingState.UNBOUND, ()),
+                    ],
+                )
+                self.assertNotIn(
+                    "flow.graph.missing_edge_metadata",
+                    [diagnostic.code for diagnostic in result.diagnostics],
+                )
+                public = str(result.public_diagnostics)
+                self.assertNotIn("private_route", public)
+                self.assertNotIn("private route metadata", public)
+                self.assertNotIn("/private/customer", public)
+
+    def test_compile_flow_graph_inspects_bindings_on_edge_id_failures(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    "start private_route@--> review",
+                    "review private_route@--> done",
+                    "done route_2@--> archive",
+                )
+            ),
+            source_identity="/private/customer/flow.toml",
+        )
+        binding_span = FlowSourceSpan(
+            source="/private/customer/flow.toml",
+            start_line=14,
+            start_column=5,
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="review", type="pass-through"),
+                FlowNodeDefinition(name="done", type="pass-through"),
+                FlowNodeDefinition(name="archive", type="pass-through"),
+            ),
+            edge_bindings={
+                "missing_private_route": FlowGraphEdgeBinding(
+                    edge_id="missing_private_route",
+                    label="private fallback",
+                    source_span=binding_span,
+                )
+            },
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.graph.duplicate_edge_id",
+                "flow.graph.missing_edge_metadata",
+            ],
+        )
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (binding.edge_id, binding.state)
+                for binding in result.inspection.bindings
+            ],
+            [
+                (
+                    "missing_private_route",
+                    FlowGraphBindingState.MISSING,
+                ),
+                ("route_2", FlowGraphBindingState.UNBOUND),
+            ],
+        )
+        self.assertEqual(
+            [
+                (edge.source, edge.target)
+                for edge in result.inspection.generated_edges
+            ],
+            [("done", "archive")],
+        )
+        public = str(result.public_diagnostics)
+        self.assertNotIn("private_route", public)
+        self.assertNotIn("private fallback", public)
+        self.assertNotIn("/private/customer", public)
+
+    def test_compile_flow_graph_revalidates_edge_security_invariants(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="flowchart LR\nprivate source is not parsed",
+            source_identity="/private/customer/flow.toml",
+        )
+        duplicate_first = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=2,
+            start_column=7,
+        )
+        duplicate_second = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=3,
+            start_column=8,
+        )
+        invalid_span = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=4,
+            start_column=5,
+        )
+        bidirectional_span = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=5,
+            start_column=3,
+        )
+        valid_span = FlowSourceSpan(
+            source="/private/customer/graph.mmd",
+            start_line=6,
+            start_column=2,
+        )
+        parser_result = MermaidImportValidationResult(
+            import_mode=FlowViewImportMode.EXECUTABLE,
+            parse_result=MermaidParseResult(
+                cst=MermaidCst(),
+                ast=MermaidAst(
+                    statements=(
+                        MermaidAstEdgeStatement(
+                            nodes=(
+                                MermaidAstNode(
+                                    id="start",
+                                    source_span=duplicate_first,
+                                ),
+                                MermaidAstNode(
+                                    id="review",
+                                    source_span=duplicate_second,
+                                ),
+                                MermaidAstNode(
+                                    id="done",
+                                    source_span=invalid_span,
+                                ),
+                                MermaidAstNode(
+                                    id="archive",
+                                    source_span=valid_span,
+                                ),
+                            ),
+                            edges=(
+                                MermaidAstEdge(
+                                    source="start",
+                                    target="review",
+                                    arrow="-->",
+                                    explicit_id="same_route",
+                                    source_span=duplicate_first,
+                                ),
+                                MermaidAstEdge(
+                                    source="review",
+                                    target="done",
+                                    arrow="-->",
+                                    explicit_id="same_route",
+                                    source_span=duplicate_second,
+                                ),
+                                MermaidAstEdge(
+                                    source="done",
+                                    target="archive",
+                                    arrow="-->",
+                                    explicit_id="route.private",
+                                    source_span=invalid_span,
+                                ),
+                                MermaidAstEdge(
+                                    source="archive",
+                                    target="start",
+                                    arrow="<-->",
+                                    explicit_id="two_way",
+                                    source_span=bidirectional_span,
+                                ),
+                                MermaidAstEdge(
+                                    source="done",
+                                    target="archive",
+                                    arrow="-->",
+                                    explicit_id="route_ok",
+                                    source_span=valid_span,
+                                ),
+                            ),
+                            source_span=duplicate_first,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        with patch(
+            "avalan.flow.graph.parse_mermaid_import",
+            return_value=parser_result,
+        ):
+            result = compile_flow_graph(
+                source,
+                (
+                    FlowNodeDefinition(name="start", type="input"),
+                    FlowNodeDefinition(name="review", type="pass-through"),
+                    FlowNodeDefinition(name="done", type="pass-through"),
+                    FlowNodeDefinition(name="archive", type="pass-through"),
+                ),
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            [
+                "flow.graph.duplicate_edge_id",
+                "flow.graph.invalid_edge_id",
+                "flow.graph.unsupported_executable_edge",
+            ],
+        )
+        self.assertEqual(
+            result.diagnostics[0].related_spans,
+            (duplicate_first,),
+        )
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (edge.source, edge.target)
+                for edge in result.inspection.generated_edges
+            ],
+            [("done", "archive")],
+        )
+        self.assertEqual(
+            [
+                (binding.edge_id, binding.state)
+                for binding in result.inspection.bindings
+            ],
+            [("route_ok", FlowGraphBindingState.UNBOUND)],
+        )
+        public = str(result.public_diagnostics)
+        self.assertNotIn("same_route", public)
+        self.assertNotIn("route.private", public)
+        self.assertNotIn("two_way", public)
+        self.assertNotIn("/private/customer", public)
 
     def test_compile_flow_graph_compiles_file_mermaid_source(self) -> None:
         with TemporaryDirectory() as directory:
@@ -1136,6 +1901,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_kind=FlowGraphSourceKind.INLINE,
             diagram="flowchart LR\nstart route_1@--> done",
         )
+        binding = FlowGraphEdgeBinding(edge_id="route_1")
 
         with self.assertRaises(AssertionError):
             compile_flow_graph(object(), ())  # type: ignore[arg-type]
@@ -1149,6 +1915,25 @@ class FlowGraphCompilerTestCase(TestCase):
                 (),
                 edge_bindings=[],  # type: ignore[arg-type]
             )
+        invalid_bindings = (
+            {"": binding},
+            {"other": binding},
+            {"route_1": object()},
+        )
+        for edge_bindings in invalid_bindings:
+            with self.subTest(edge_bindings=edge_bindings):
+                with self.assertRaises(AssertionError):
+                    compile_flow_graph(
+                        source,
+                        (
+                            FlowNodeDefinition(name="start", type="input"),
+                            FlowNodeDefinition(
+                                name="done",
+                                type="pass-through",
+                            ),
+                        ),
+                        edge_bindings=edge_bindings,  # type: ignore[arg-type]
+                    )
 
 
 class FlowGraphModelsTestCase(TestCase):

@@ -19,6 +19,7 @@ from .mermaid import (
     MermaidAstNodeStatement,
     MermaidAstStatement,
     MermaidAstSubgraph,
+    is_executable_mermaid_edge_id,
     parse_mermaid_import,
 )
 from .view import FlowViewImportMode
@@ -163,6 +164,36 @@ _FLOW_GRAPH_UNSUPPORTED_CODES = frozenset(
         FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE,
     }
 )
+_FLOW_GRAPH_INSPECTABLE_IMPORT_FAILURE_CODES = frozenset(
+    {
+        FlowGraphDiagnosticCode.DUPLICATE_EDGE_ID,
+        FlowGraphDiagnosticCode.INVALID_EDGE_ID,
+        FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE,
+    }
+)
+_MERMAID_IMPORT_GRAPH_DIAGNOSTIC_CODES = MappingProxyType(
+    {
+        "flow.mermaid.security.ambiguous_shorthand": (
+            FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE
+        ),
+        "flow.mermaid.security.bidirectional_edge": (
+            FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE
+        ),
+        "flow.mermaid.security.duplicate_edge_id": (
+            FlowGraphDiagnosticCode.DUPLICATE_EDGE_ID
+        ),
+        "flow.mermaid.security.invalid_edge_id": (
+            FlowGraphDiagnosticCode.INVALID_EDGE_ID
+        ),
+    }
+)
+_MERMAID_IMPORT_GRAPH_DIAGNOSTIC_PATHS = MappingProxyType(
+    {
+        FlowGraphDiagnosticCode.DUPLICATE_EDGE_ID: "graph.edges",
+        FlowGraphDiagnosticCode.INVALID_EDGE_ID: "graph.edges",
+        FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE: "graph.edges",
+    }
+)
 
 
 def _empty_mapping() -> FlowMetadata:
@@ -223,19 +254,25 @@ def _assert_tuple_items(
         assert isinstance(value, item_type)
 
 
-def _is_executable_edge_id(value: str) -> bool:
-    return bool(value) and all(
-        character.isascii() and (character.isalnum() or character in "_-")
-        for character in value
-    )
-
-
 def _freeze_mapping(value: FlowMetadata, *, field_name: str) -> FlowMetadata:
     assert isinstance(value, Mapping), f"{field_name} must be a mapping"
     frozen: dict[str, object] = {}
     for key, item in value.items():
         _assert_non_empty_string(key, f"{field_name} key")
         frozen[key] = _freeze_value(item, field_name=field_name)
+    return MappingProxyType(frozen)
+
+
+def _freeze_edge_bindings(
+    value: Mapping[str, "FlowGraphEdgeBinding"],
+) -> Mapping[str, "FlowGraphEdgeBinding"]:
+    assert isinstance(value, Mapping), "edge_bindings must be a mapping"
+    frozen: dict[str, FlowGraphEdgeBinding] = {}
+    for key, binding in value.items():
+        _assert_non_empty_string(key, "edge_bindings key")
+        assert isinstance(binding, FlowGraphEdgeBinding)
+        assert key == binding.edge_id, "edge binding key must match edge_id"
+        frozen[key] = binding
     return MappingProxyType(frozen)
 
 
@@ -324,10 +361,11 @@ def compile_flow_graph(
     assert isinstance(nodes, tuple), "nodes must be a tuple"
     for node in nodes:
         assert isinstance(node, FlowNodeDefinition)
-    if edge_bindings is not None:
-        assert isinstance(edge_bindings, Mapping)
-
-    bindings = edge_bindings or _empty_edge_bindings()
+    bindings = (
+        _freeze_edge_bindings(edge_bindings)
+        if edge_bindings is not None
+        else _empty_edge_bindings()
+    )
     diagram, source_identity, diagnostic = _load_graph_source(source)
     if diagnostic is not None:
         return FlowGraphCompileResult(
@@ -343,38 +381,32 @@ def compile_flow_graph(
         source=source_identity,
     )
     if not parsed.ok:
+        diagnostics = _graph_import_diagnostics(parsed.diagnostics)
+        if _can_inspect_import_failure(diagnostics):
+            _, inspection, diagnostics = _inspect_graph_parse(
+                source,
+                nodes,
+                bindings,
+                parsed.parse_result.ast.statements,
+                import_diagnostics=diagnostics,
+            )
+            return FlowGraphCompileResult(
+                source=source,
+                edge_bindings=bindings,
+                inspection=inspection,
+                diagnostics=diagnostics,
+            )
         return FlowGraphCompileResult(
             source=source,
             edge_bindings=bindings,
-            diagnostics=(
-                flow_graph_diagnostic(
-                    FlowGraphDiagnosticCode.MALFORMED_SOURCE,
-                    "graph.source",
-                    source_span=_first_error_span(parsed.diagnostics),
-                ),
-            ),
+            diagnostics=diagnostics,
         )
 
-    strict_node_names = {node.name for node in nodes}
-    node_inspections = _classify_mermaid_nodes(
-        _mermaid_nodes(parsed.parse_result.ast.statements),
-        strict_node_names,
-    )
-    edge_inspections = _classify_mermaid_edges(
-        _mermaid_edges(parsed.parse_result.ast.statements),
-        strict_node_names,
-    )
-    edges, binding_inspections, diagnostics = _bind_graph_edges(
-        edge_inspections,
+    edges, inspection, diagnostics = _inspect_graph_parse(
+        source,
+        nodes,
         bindings,
-    )
-    inspection = FlowGraphInspection(
-        source=source,
-        diagnostics=diagnostics,
-        nodes=node_inspections,
-        edges=edge_inspections,
-        bindings=binding_inspections,
-        generated_edges=edges,
+        parsed.parse_result.ast.statements,
     )
     if diagnostics:
         return FlowGraphCompileResult(
@@ -490,10 +522,93 @@ def _first_error_span(
     diagnostics: tuple[FlowDiagnostic, ...],
 ) -> FlowSourceSpan | None:
     return next(
-        diagnostic.source_span
-        for diagnostic in diagnostics
-        if diagnostic.severity == FlowDiagnosticSeverity.ERROR
+        (
+            diagnostic.source_span
+            for diagnostic in diagnostics
+            if diagnostic.severity == FlowDiagnosticSeverity.ERROR
+        ),
+        None,
     )
+
+
+def _graph_import_diagnostics(
+    diagnostics: tuple[FlowDiagnostic, ...],
+) -> tuple[FlowDiagnostic, ...]:
+    graph_diagnostics: list[FlowDiagnostic] = []
+    malformed_diagnostics: list[FlowDiagnostic] = []
+    for diagnostic in diagnostics:
+        code = _MERMAID_IMPORT_GRAPH_DIAGNOSTIC_CODES.get(diagnostic.code)
+        if code is None:
+            malformed_diagnostics.append(diagnostic)
+            continue
+        graph_diagnostics.append(
+            flow_graph_diagnostic(
+                code,
+                _MERMAID_IMPORT_GRAPH_DIAGNOSTIC_PATHS[code],
+                source_span=diagnostic.source_span,
+                related_spans=diagnostic.related_spans,
+            )
+        )
+
+    if malformed_diagnostics:
+        graph_diagnostics.append(
+            flow_graph_diagnostic(
+                FlowGraphDiagnosticCode.MALFORMED_SOURCE,
+                "graph.source",
+                source_span=_first_error_span(tuple(malformed_diagnostics)),
+            )
+        )
+    return tuple(graph_diagnostics)
+
+
+def _can_inspect_import_failure(
+    diagnostics: tuple[FlowDiagnostic, ...],
+) -> bool:
+    return bool(diagnostics) and all(
+        FlowGraphDiagnosticCode(diagnostic.code)
+        in _FLOW_GRAPH_INSPECTABLE_IMPORT_FAILURE_CODES
+        for diagnostic in diagnostics
+    )
+
+
+def _inspect_graph_parse(
+    source: "FlowGraphSource",
+    nodes: tuple[FlowNodeDefinition, ...],
+    edge_bindings: Mapping[str, "FlowGraphEdgeBinding"],
+    statements: tuple[MermaidAstStatement, ...],
+    *,
+    import_diagnostics: tuple[FlowDiagnostic, ...] = (),
+) -> tuple[
+    tuple[FlowEdgeDefinition, ...],
+    "FlowGraphInspection",
+    tuple[FlowDiagnostic, ...],
+]:
+    strict_node_names = {node.name for node in nodes}
+    node_inspections = _classify_mermaid_nodes(
+        _mermaid_nodes(statements),
+        strict_node_names,
+    )
+    edge_inspections = _classify_mermaid_edges(
+        _mermaid_edges(statements),
+        strict_node_names,
+    )
+    edges, binding_inspections, diagnostics = _bind_graph_edges(
+        edge_inspections,
+        edge_bindings,
+    )
+    if import_diagnostics:
+        diagnostics = import_diagnostics + _binding_diagnostics(
+            edge_bindings, binding_inspections
+        )
+    inspection = FlowGraphInspection(
+        source=source,
+        diagnostics=diagnostics,
+        nodes=node_inspections,
+        edges=edge_inspections,
+        bindings=binding_inspections,
+        generated_edges=edges,
+    )
+    return edges, inspection, diagnostics
 
 
 def _mermaid_edges(
@@ -593,8 +708,14 @@ def _bind_graph_edges(
 ]:
     executable_edges_by_id: dict[str, FlowGraphEdgeInspection] = {}
     decorative_edge_ids: set[str] = set()
+    rejected_edge_diagnostic_codes = _rejected_graph_edge_diagnostic_codes(
+        edge_inspections
+    )
+    rejected_edge_ids = frozenset(rejected_edge_diagnostic_codes)
     for edge in edge_inspections:
         if edge.edge_id is None:
+            continue
+        if edge.edge_id in rejected_edge_ids:
             continue
         if edge.classification == FlowGraphEdgeClassification.EXECUTABLE:
             executable_edges_by_id[edge.edge_id] = edge
@@ -605,22 +726,102 @@ def _bind_graph_edges(
         edge_bindings,
         executable_edges_by_id=executable_edges_by_id,
         decorative_edge_ids=decorative_edge_ids,
+        rejected_edge_diagnostic_codes=rejected_edge_diagnostic_codes,
     )
-    diagnostics = _executable_edge_diagnostics(
-        edge_inspections
-    ) + _binding_diagnostics(edge_bindings, binding_inspections)
+    diagnostics = (
+        _edge_id_diagnostics(edge_inspections)
+        + _executable_edge_diagnostics(edge_inspections)
+        + _binding_diagnostics(edge_bindings, binding_inspections)
+    )
     generated_edges = tuple(
         _graph_edge_definition(
             edge,
             edge_bindings.get(edge.edge_id) if edge.edge_id else None,
         )
         for edge in edge_inspections
-        if (
-            edge.classification == FlowGraphEdgeClassification.EXECUTABLE
-            and edge.edge_id is not None
-        )
+        if _is_supported_executable_graph_edge(edge, rejected_edge_ids)
     )
     return generated_edges, binding_inspections, diagnostics
+
+
+def _rejected_graph_edge_diagnostic_codes(
+    edge_inspections: tuple["FlowGraphEdgeInspection", ...],
+) -> Mapping[str, tuple[str, ...]]:
+    counts: dict[str, int] = {}
+    rejected: dict[str, list[str]] = {}
+    for edge in edge_inspections:
+        if edge.edge_id is None:
+            continue
+        counts[edge.edge_id] = counts.get(edge.edge_id, 0) + 1
+        if not is_executable_mermaid_edge_id(edge.edge_id):
+            _add_rejected_edge_diagnostic_code(
+                rejected,
+                edge.edge_id,
+                FlowGraphDiagnosticCode.INVALID_EDGE_ID,
+            )
+        if (
+            edge.classification == FlowGraphEdgeClassification.EXECUTABLE
+            and edge.bidirectional
+        ):
+            _add_rejected_edge_diagnostic_code(
+                rejected,
+                edge.edge_id,
+                FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE,
+            )
+    for edge_id, count in counts.items():
+        if count > 1:
+            _add_rejected_edge_diagnostic_code(
+                rejected,
+                edge_id,
+                FlowGraphDiagnosticCode.DUPLICATE_EDGE_ID,
+            )
+    return MappingProxyType(
+        {edge_id: tuple(codes) for edge_id, codes in rejected.items()}
+    )
+
+
+def _add_rejected_edge_diagnostic_code(
+    diagnostics: dict[str, list[str]],
+    edge_id: str,
+    code: FlowGraphDiagnosticCode,
+) -> None:
+    codes = diagnostics.setdefault(edge_id, [])
+    if code.value not in codes:
+        codes.append(code.value)
+
+
+def _edge_id_diagnostics(
+    edge_inspections: tuple["FlowGraphEdgeInspection", ...],
+) -> tuple[FlowDiagnostic, ...]:
+    diagnostics: list[FlowDiagnostic] = []
+    seen: dict[str, FlowSourceSpan | None] = {}
+    invalid_seen: set[str] = set()
+    for edge in edge_inspections:
+        if edge.edge_id is None:
+            continue
+        if not is_executable_mermaid_edge_id(edge.edge_id):
+            if edge.edge_id not in invalid_seen:
+                diagnostics.append(
+                    flow_graph_diagnostic(
+                        FlowGraphDiagnosticCode.INVALID_EDGE_ID,
+                        "graph.edges",
+                        source_span=edge.source_span,
+                    )
+                )
+                invalid_seen.add(edge.edge_id)
+        if edge.edge_id in seen:
+            first_span = seen[edge.edge_id]
+            diagnostics.append(
+                flow_graph_diagnostic(
+                    FlowGraphDiagnosticCode.DUPLICATE_EDGE_ID,
+                    "graph.edges",
+                    source_span=edge.source_span,
+                    related_spans=(first_span,) if first_span else (),
+                )
+            )
+            continue
+        seen[edge.edge_id] = edge.source_span
+    return tuple(diagnostics)
 
 
 def _executable_edge_diagnostics(
@@ -629,6 +830,15 @@ def _executable_edge_diagnostics(
     diagnostics: list[FlowDiagnostic] = []
     for edge in edge_inspections:
         if edge.classification != FlowGraphEdgeClassification.EXECUTABLE:
+            continue
+        if edge.bidirectional:
+            diagnostics.append(
+                flow_graph_diagnostic(
+                    FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE,
+                    "graph.edges",
+                    source_span=edge.source_span,
+                )
+            )
             continue
         if edge.edge_id is not None:
             continue
@@ -642,20 +852,35 @@ def _executable_edge_diagnostics(
     return tuple(diagnostics)
 
 
+def _is_supported_executable_graph_edge(
+    edge: "FlowGraphEdgeInspection",
+    rejected_edge_ids: frozenset[str],
+) -> bool:
+    if edge.classification != FlowGraphEdgeClassification.EXECUTABLE:
+        return False
+    if edge.edge_id is None or edge.edge_id in rejected_edge_ids:
+        return False
+    return not edge.bidirectional
+
+
 def _binding_inspections(
     edge_bindings: Mapping[str, "FlowGraphEdgeBinding"],
     *,
     executable_edges_by_id: Mapping[str, "FlowGraphEdgeInspection"],
     decorative_edge_ids: set[str],
+    rejected_edge_diagnostic_codes: Mapping[str, tuple[str, ...]],
 ) -> tuple["FlowGraphBindingInspection", ...]:
     inspections: list[FlowGraphBindingInspection] = []
     for edge_id, binding in edge_bindings.items():
         diagnostic_codes: tuple[str, ...] = ()
-        if not _is_executable_edge_id(edge_id):
+        if not is_executable_mermaid_edge_id(edge_id):
             state = FlowGraphBindingState.REJECTED
             diagnostic_codes = (FlowGraphDiagnosticCode.INVALID_EDGE_ID.value,)
         elif edge_id in executable_edges_by_id:
             state = FlowGraphBindingState.BOUND
+        elif edge_id in rejected_edge_diagnostic_codes:
+            state = FlowGraphBindingState.REJECTED
+            diagnostic_codes = rejected_edge_diagnostic_codes[edge_id]
         elif edge_id in decorative_edge_ids:
             state = FlowGraphBindingState.DECORATIVE
             diagnostic_codes = (
@@ -738,6 +963,8 @@ def _binding_diagnostics(
                     )
                 )
             case FlowGraphBindingState.REJECTED:
+                if is_executable_mermaid_edge_id(inspection.edge_id):
+                    continue
                 diagnostics.append(
                     flow_graph_diagnostic(
                         FlowGraphDiagnosticCode.INVALID_EDGE_ID,
@@ -1073,15 +1300,11 @@ class FlowGraphCompileResult:
             self.edge_bindings,
             Mapping,
         ), "edge_bindings must be a mapping"
-        frozen: dict[str, FlowGraphEdgeBinding] = {}
-        for key, binding in self.edge_bindings.items():
-            _assert_non_empty_string(key, "edge_bindings key")
-            assert isinstance(binding, FlowGraphEdgeBinding)
-            assert (
-                key == binding.edge_id
-            ), "edge binding key must match edge_id"
-            frozen[key] = binding
-        object.__setattr__(self, "edge_bindings", MappingProxyType(frozen))
+        object.__setattr__(
+            self,
+            "edge_bindings",
+            _freeze_edge_bindings(self.edge_bindings),
+        )
         if self.inspection is not None:
             assert isinstance(self.inspection, FlowGraphInspection)
         _assert_diagnostics(self.diagnostics)

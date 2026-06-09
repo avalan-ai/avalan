@@ -17,6 +17,7 @@ from avalan.flow import (
     MermaidCst,
     MermaidImportValidationResult,
     MermaidParseResult,
+    is_executable_mermaid_edge_id,
     parse_mermaid,
     parse_mermaid_import,
     validate_mermaid_import,
@@ -228,6 +229,33 @@ class MermaidImportSecurityTestCase(TestCase):
                 self.assertNotIn("#route", str(result.public_diagnostics))
                 self.assertNotIn("route/path", str(result.public_diagnostics))
 
+    def test_executable_edge_id_predicate_uses_toml_safe_profile(
+        self,
+    ) -> None:
+        valid_cases = ("route_1", "route-2", "_route", "1route")
+        invalid_cases = (
+            "",
+            "-route",
+            "route.one",
+            "route/path",
+            "route:one",
+            "#route",
+            "https://route",
+            "route one",
+            "λroute",
+        )
+
+        for value in valid_cases:
+            with self.subTest(value=value):
+                self.assertTrue(is_executable_mermaid_edge_id(value))
+
+        for value in invalid_cases:
+            with self.subTest(value=value):
+                self.assertFalse(is_executable_mermaid_edge_id(value))
+
+        with self.assertRaises(AssertionError):
+            is_executable_mermaid_edge_id(object())  # type: ignore[arg-type]
+
     def test_executable_import_rejects_duplicate_explicit_edge_ids(
         self,
     ) -> None:
@@ -395,6 +423,85 @@ class MermaidImportSecurityTestCase(TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.diagnostics, ())
+
+    def test_hand_built_duplicate_invalid_edge_ids_report_both_rules(
+        self,
+    ) -> None:
+        first_span = FlowSourceSpan(
+            source="/private/customer/diagram.mmd",
+            start_line=2,
+            start_column=3,
+        )
+        second_span = FlowSourceSpan(
+            source="/private/customer/diagram.mmd",
+            start_line=3,
+            start_column=3,
+        )
+        parse_result = MermaidParseResult(
+            cst=MermaidCst(),
+            ast=MermaidAst(
+                statements=(
+                    MermaidAstEdgeStatement(
+                        nodes=(
+                            MermaidAstNode(
+                                id="A",
+                                source_span=first_span,
+                            ),
+                            MermaidAstNode(
+                                id="B",
+                                source_span=first_span,
+                            ),
+                            MermaidAstNode(
+                                id="C",
+                                source_span=second_span,
+                            ),
+                        ),
+                        edges=(
+                            MermaidAstEdge(
+                                source="A",
+                                target="B",
+                                arrow="-->",
+                                explicit_id="-private-route",
+                                explicit_id_source_span=first_span,
+                                source_span=first_span,
+                            ),
+                            MermaidAstEdge(
+                                source="B",
+                                target="C",
+                                arrow="-->",
+                                explicit_id="-private-route",
+                                explicit_id_source_span=second_span,
+                                source_span=second_span,
+                            ),
+                        ),
+                        source_span=first_span,
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_mermaid_import(
+            parse_result,
+            import_mode=FlowViewImportMode.EXECUTABLE,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            _codes(result),
+            (
+                "flow.mermaid.security.invalid_edge_id",
+                "flow.mermaid.security.duplicate_edge_id",
+            ),
+        )
+        duplicate = _diagnostic(
+            result,
+            "flow.mermaid.security.duplicate_edge_id",
+        )
+        self.assertEqual(duplicate.source_span, second_span)
+        self.assertEqual(duplicate.related_spans, (first_span,))
+        public = str(result.public_diagnostics)
+        self.assertNotIn("-private-route", public)
+        self.assertNotIn("/private/customer", public)
 
     def test_import_validation_result_is_frozen_and_validated(self) -> None:
         parse_result = parse_mermaid("graph TD\nA --> B")
