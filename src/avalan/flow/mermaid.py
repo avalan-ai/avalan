@@ -34,6 +34,7 @@ class MermaidTokenType(StrEnum):
     QUOTED_LABEL = "quoted_label"
     MARKDOWN_LABEL = "markdown_label"
     SHAPE_DELIMITER = "shape_delimiter"
+    EDGE_ID = "edge_id"
     ARROW = "arrow"
     EDGE_LABEL = "edge_label"
     SUBGRAPH = "subgraph"
@@ -188,15 +189,21 @@ class MermaidAstEdge:
     source: str
     target: str
     arrow: str
+    explicit_id: str | None = None
     label: str | None = None
+    explicit_id_source_span: FlowSourceSpan | None = None
     source_span: FlowSourceSpan | None = None
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.source, "source")
         _assert_non_empty_string(self.target, "target")
         _assert_non_empty_string(self.arrow, "arrow")
+        if self.explicit_id is not None:
+            _assert_non_empty_string(self.explicit_id, "explicit_id")
         if self.label is not None:
             _assert_non_empty_string(self.label, "label")
+        if self.explicit_id_source_span is not None:
+            assert isinstance(self.explicit_id_source_span, FlowSourceSpan)
         if self.source_span is not None:
             assert isinstance(self.source_span, FlowSourceSpan)
 
@@ -449,11 +456,15 @@ class _MermaidTokenizer:
                 continue
             if self._consume_edge_label():
                 continue
+            if self._consume_explicit_edge_id():
+                continue
             if self._consume_arrow():
                 continue
             if self._consume_single_character_token():
                 continue
             if self._consume_identifier_or_directive():
+                continue
+            if self._consume_malformed_edge_id_marker():
                 continue
 
             _, start_line, start_column = self._position()
@@ -664,34 +675,80 @@ class _MermaidTokenizer:
         )
         return True
 
+    def _consume_explicit_edge_id(self) -> bool:
+        if not _is_identifier_start(self._peek()):
+            return False
+
+        start_index, start_line, start_column = self._position()
+        edge_id_end = self.index
+        while edge_id_end < len(self.text) and _is_identifier_part(
+            self.text[edge_id_end]
+        ):
+            edge_id_end += 1
+        if edge_id_end >= len(self.text) or self.text[edge_id_end] != "@":
+            return False
+
+        arrow_start = edge_id_end + 1
+        if _arrow_end_at(self.text, arrow_start) is None:
+            while self.index <= edge_id_end:
+                self._advance()
+            self._diagnose(
+                "flow.mermaid.parser.malformed_edge_id",
+                "Explicit Mermaid edge ID must immediately precede an arrow.",
+                start_line,
+                start_column,
+                self.line,
+                self.column,
+            )
+            return True
+
+        while self.index < edge_id_end:
+            self._advance()
+        edge_id_span = self._span(
+            start_line,
+            start_column,
+            self.line,
+            self.column,
+        )
+        self.tokens.append(
+            MermaidToken(
+                type=MermaidTokenType.EDGE_ID,
+                value=self.text[start_index:edge_id_end],
+                source_span=edge_id_span,
+            )
+        )
+        self._advance()
+        return True
+
     def _consume_arrow(self) -> bool:
         start_index, start_line, start_column = self._position()
-        character = self._peek()
-        if character == "<":
-            self._advance()
-        if self.index >= len(self.text):
-            self._restore(start_index, start_line, start_column)
+        arrow_end = _arrow_end_at(self.text, self.index)
+        if arrow_end is None:
             return False
-
-        shaft_start = self.index
-        while self.index < len(self.text) and self._peek() in "-=.":
+        while self.index < arrow_end:
             self._advance()
-        has_shaft = self.index > shaft_start
-        if not has_shaft:
-            self._restore(start_index, start_line, start_column)
-            return False
-
-        if self.index < len(self.text) and self._peek() in ">ox":
-            self._advance()
-        if self.index == shaft_start + 1 and self.text[shaft_start] == ".":
-            self._restore(start_index, start_line, start_column)
-            return False
 
         self._add_token(
             MermaidTokenType.ARROW,
             start_index,
             start_line,
             start_column,
+        )
+        return True
+
+    def _consume_malformed_edge_id_marker(self) -> bool:
+        if self._peek() != "@":
+            return False
+
+        _, start_line, start_column = self._position()
+        self._advance()
+        self._diagnose(
+            "flow.mermaid.parser.malformed_edge_id",
+            "Explicit Mermaid edge ID must immediately precede an arrow.",
+            start_line,
+            start_column,
+            self.line,
+            self.column,
         )
         return True
 
@@ -807,16 +864,6 @@ class _MermaidTokenizer:
 
     def _position(self) -> tuple[int, int, int]:
         return self.index, self.line, self.column
-
-    def _restore(
-        self,
-        index: int,
-        line: int,
-        column: int,
-    ) -> None:
-        self.index = index
-        self.line = line
-        self.column = column
 
     def _at_line_start(self) -> bool:
         return self.column == 1
@@ -1051,9 +1098,13 @@ class _MermaidAstParser:
         nodes.extend(source_group)
         current_sources = source_group
         while position < len(tokens):
+            edge_id_token: MermaidToken | None = None
             arrow_position = position
-            arrow = tokens[position]
-            if arrow.type != MermaidTokenType.ARROW:
+            if tokens[position].type == MermaidTokenType.EDGE_ID:
+                edge_id_token = tokens[position]
+                position += 1
+            arrow = tokens[position] if position < len(tokens) else None
+            if arrow is None or arrow.type != MermaidTokenType.ARROW:
                 break
             position += 1
             label: str | None = None
@@ -1075,10 +1126,24 @@ class _MermaidAstParser:
                             source=source.id,
                             target=target.id,
                             arrow=arrow.value,
+                            explicit_id=(
+                                edge_id_token.value
+                                if edge_id_token is not None
+                                else None
+                            ),
                             label=label,
                             source_span=_combine_spans(
-                                arrow.source_span,
+                                (
+                                    edge_id_token.source_span
+                                    if edge_id_token is not None
+                                    else arrow.source_span
+                                ),
                                 target.source_span,
+                            ),
+                            explicit_id_source_span=(
+                                edge_id_token.source_span
+                                if edge_id_token is not None
+                                else None
                             ),
                         )
                     )
@@ -1560,6 +1625,9 @@ class _MermaidFlowViewNormalizer:
 
     def _record_edge(self, edge: MermaidAstEdge) -> None:
         edge_id = self._next_edge_id(edge.source, edge.target)
+        mermaid_metadata: dict[str, object] = {"arrow": edge.arrow}
+        if edge.explicit_id is not None:
+            mermaid_metadata["explicit_id"] = edge.explicit_id
         self.edges.append(
             FlowViewEdge(
                 id=edge_id,
@@ -1567,7 +1635,7 @@ class _MermaidFlowViewNormalizer:
                 target=edge.target,
                 label=edge.label,
                 style=_edge_style(edge.arrow),
-                metadata={"mermaid": {"arrow": edge.arrow}},
+                metadata={"mermaid": mermaid_metadata},
                 source_span=edge.source_span,
                 bidirectional=_is_bidirectional_arrow(edge.arrow),
             )
@@ -2057,6 +2125,28 @@ def _is_script_like_label(value: str) -> bool:
 def _is_external_link_token(value: str) -> bool:
     lowered = value.lower()
     return lowered.startswith(("http://", "https://", "mailto:"))
+
+
+def _arrow_end_at(text: str, position: int) -> int | None:
+    if position >= len(text):
+        return None
+    index = position
+    if text[index] == "<":
+        index += 1
+    if index >= len(text):
+        return None
+
+    shaft_start = index
+    while index < len(text) and text[index] in "-=.":
+        index += 1
+    if index == shaft_start:
+        return None
+
+    if index < len(text) and text[index] in ">ox":
+        index += 1
+    if index == shaft_start + 1 and text[shaft_start] == ".":
+        return None
+    return index
 
 
 def _has_token_type(

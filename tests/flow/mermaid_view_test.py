@@ -132,6 +132,36 @@ class MermaidFlowViewNormalizerTestCase(TestCase):
             "flow.mermaid.security.ambiguous_shorthand",
         )
 
+    def test_normalize_mermaid_flow_view_keeps_explicit_edge_ids_in_metadata(
+        self,
+    ) -> None:
+        result = normalize_mermaid_flow_view(
+            "graph TD\nA route_1@--> B route_2@-.-> C",
+            import_mode=FlowViewImportMode.PRESENTATION,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            [edge.id for edge in result.view.edges],
+            ["A_to_B", "B_to_C"],
+        )
+        self.assertEqual(
+            [
+                cast(dict[str, object], edge.metadata["mermaid"])[
+                    "explicit_id"
+                ]
+                for edge in result.view.edges
+            ],
+            ["route_1", "route_2"],
+        )
+        self.assertEqual(
+            [
+                cast(dict[str, object], edge.metadata["mermaid"])["arrow"]
+                for edge in result.view.edges
+            ],
+            ["-->", "-.->"],
+        )
+
     def test_normalize_mermaid_flow_view_preserves_nested_groups(
         self,
     ) -> None:
