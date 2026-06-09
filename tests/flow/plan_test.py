@@ -48,6 +48,7 @@ from avalan.flow import (
     FlowTimeoutPolicy,
     compile_flow_definition,
     default_flow_node_registry,
+    loads_flow_definition_result,
     parse_flow_selector,
     tool_flow_node_registry,
 )
@@ -268,6 +269,84 @@ class FlowExecutionPlanTestCase(TestCase):
         result = compile_flow_definition(self._definition(), registry)
 
         self.assertTrue(result.ok, result.public_diagnostics)
+
+    def test_compile_graph_authored_definition_uses_strict_edges(
+        self,
+    ) -> None:
+        load_result = loads_flow_definition_result("""
+            [flow]
+            name = "strict-plan"
+            version = "2026-06-09"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.value"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@-->|Private authoring label| finish
+            start -.-> note
+            '''
+
+            [graph.edges.route_1]
+            label = "approved"
+            kind = "finally"
+            priority = 3
+
+            [nodes.start]
+            type = "echo"
+
+            [nodes.finish]
+            type = "echo"
+            """)
+
+        self.assertTrue(load_result.ok, load_result.public_diagnostics)
+        assert load_result.definition is not None
+        self.assertEqual(
+            [
+                (edge.source, edge.target)
+                for edge in load_result.definition.edges
+            ],
+            [("start", "finish")],
+        )
+        self.assertNotIn(
+            "Private authoring label",
+            str(load_result.definition),
+        )
+
+        result = compile_flow_definition(load_result.definition)
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        assert result.plan is not None
+        self.assertEqual(len(result.plan.edges), 1)
+        edge = result.plan.edges[0]
+        self.assertEqual(edge.index, 0)
+        self.assertEqual(edge.source, "start")
+        self.assertEqual(edge.target, "finish")
+        self.assertEqual(edge.label, "approved")
+        self.assertEqual(edge.kind, FlowEdgeKind.FINALLY)
+        self.assertEqual(edge.priority, 3)
+        self.assertFalse(hasattr(result.plan, "graph"))
+        self.assertFalse(hasattr(edge, "edge_id"))
+        self.assertNotIn("Private authoring label", str(result.plan))
 
     def test_compile_flow_definition_adds_tool_descriptor_metadata(
         self,
