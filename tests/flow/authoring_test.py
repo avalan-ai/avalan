@@ -1,3 +1,4 @@
+from ast import AST, Attribute, Call, ImportFrom, Name, parse, walk
 from asyncio import run as asyncio_run
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -11,8 +12,13 @@ from avalan.flow import (
     FlowDefinition,
     FlowDefinitionCompileResult,
     FlowDefinitionSkeletonResult,
+    FlowDiagnostic,
+    FlowDiagnosticCategory,
+    FlowDiagnosticSeverity,
     FlowEdgeDefinition,
     FlowEntryBehavior,
+    FlowGraphDiagnosticCode,
+    FlowGraphInspection,
     FlowGraphInspectionResult,
     FlowInputDefinition,
     FlowInputType,
@@ -35,6 +41,73 @@ from avalan.flow import (
     skeleton_from_mermaid_view,
     validate_flow_definition,
 )
+
+_FLOW_SOURCE_ROOT = (
+    Path(__file__).resolve().parents[2] / "src" / "avalan" / "flow"
+)
+_FORBIDDEN_ASYNCIO_IMPORTS = frozenset({"run", "to_thread"})
+_FORBIDDEN_ASYNCIO_METHODS = frozenset({"run", "to_thread"})
+_FORBIDDEN_LOOP_METHODS = frozenset({"run_until_complete"})
+_FORBIDDEN_SYNC_FILE_METHODS = frozenset(
+    {
+        "read_bytes",
+        "read_text",
+        "write_bytes",
+        "write_text",
+    }
+)
+
+
+def _flow_async_boundary_violations(
+    path: Path,
+    source: str,
+) -> tuple[str, ...]:
+    tree = parse(source, filename=str(path))
+    violations: list[str] = []
+    for node in walk(tree):
+        if isinstance(node, ImportFrom):
+            violations.extend(_asyncio_import_violations(path, node))
+            continue
+        if isinstance(node, Call):
+            violations.extend(_call_boundary_violations(path, node))
+    return tuple(sorted(violations))
+
+
+def _asyncio_import_violations(
+    path: Path,
+    node: ImportFrom,
+) -> tuple[str, ...]:
+    if node.module != "asyncio":
+        return ()
+    return tuple(
+        f"{_node_location(path, node)} imports asyncio.{alias.name}"
+        for alias in node.names
+        if alias.name in _FORBIDDEN_ASYNCIO_IMPORTS
+    )
+
+
+def _call_boundary_violations(path: Path, node: Call) -> tuple[str, ...]:
+    func = node.func
+    if not isinstance(func, Attribute):
+        return ()
+    violations: list[str] = []
+    if func.attr in _FORBIDDEN_SYNC_FILE_METHODS:
+        violations.append(f"{_node_location(path, node)} calls {func.attr}")
+    if func.attr in _FORBIDDEN_LOOP_METHODS:
+        violations.append(f"{_node_location(path, node)} calls {func.attr}")
+    if (
+        isinstance(func.value, Name)
+        and func.value.id == "asyncio"
+        and func.attr in _FORBIDDEN_ASYNCIO_METHODS
+    ):
+        violations.append(
+            f"{_node_location(path, node)} calls asyncio.{func.attr}"
+        )
+    return tuple(violations)
+
+
+def _node_location(path: Path, node: AST) -> str:
+    return f"{path}:{getattr(node, 'lineno', 0)}"
 
 
 class FlowAuthoringTestCase(TestCase):
@@ -209,6 +282,8 @@ class FlowAuthoringTestCase(TestCase):
         assert result.definition is not None
         assert result.canonical_source is not None
         self.assertEqual(result.definition.name, "graph_sdk")
+        self.assertIsNone(result.definition.definition_base)
+        self.assertNotIn("/private/customer", str(result.definition))
         self.assertEqual(
             [
                 (edge.source, edge.target, edge.label)
@@ -234,8 +309,57 @@ class FlowAuthoringTestCase(TestCase):
             public["canonical_source"],
             {"format": "toml", "strict": True},
         )
+        self.assertEqual(public["diagnostics"], ())
         self.assertNotIn("Private customer", str(public))
         self.assertNotIn("/private/customer", str(public))
+
+    def test_compile_flow_source_revalidates_canonical_output_safely(
+        self,
+    ) -> None:
+        with patch(
+            "avalan.flow.authoring.serialize_flow_definition",
+            return_value="[flow\nprivate = 'customer-token'",
+        ):
+            result = asyncio_run(
+                compile_flow_source(
+                    """
+                    [flow]
+                    name = "graph_sdk"
+                    entrypoint = "start"
+                    output_node = "finish"
+
+                    [graph]
+                    format = "mermaid"
+                    source = "inline"
+                    mode = "executable"
+                    diagram = '''
+                    flowchart LR
+                    start route_1@-->|Private customer route| finish
+                    '''
+
+                    [nodes.start]
+                    type = "input"
+
+                    [nodes.finish]
+                    type = "echo"
+                    """,
+                    source_path="/private/customer/flow.toml",
+                )
+            )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.authoring_graph)
+        self.assertIsNone(result.definition)
+        self.assertIsNone(result.canonical_source)
+        self.assertIsNotNone(result.graph_inspection)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.malformed_toml"],
+        )
+        public = str(result.as_public_dict())
+        self.assertNotIn("Private customer route", public)
+        self.assertNotIn("customer-token", public)
+        self.assertNotIn("/private/customer", public)
 
     def test_compile_and_inspect_flow_file_share_graph_projection(
         self,
@@ -281,6 +405,11 @@ class FlowAuthoringTestCase(TestCase):
 
         self.assertTrue(compiled.ok, compiled.public_diagnostics)
         self.assertTrue(inspected.ok, inspected.public_diagnostics)
+        self.assertEqual(compiled.as_public_dict()["diagnostics"], ())
+        self.assertEqual(inspected.as_public_dict()["diagnostics"], ())
+        assert compiled.definition is not None
+        self.assertIsNone(compiled.definition.definition_base)
+        self.assertNotIn(str(root), str(compiled.definition))
         assert compiled.graph_inspection is not None
         assert inspected.inspection is not None
         self.assertEqual(
@@ -343,6 +472,42 @@ class FlowAuthoringTestCase(TestCase):
             ["flow.graph.read_failure"],
         )
         self.assertTrue(latin_result.ok, latin_result.public_diagnostics)
+
+    def test_compile_and_inspect_flow_file_report_read_failures_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            missing_path = root / "private-missing.flow.toml"
+            invalid_path = root / "private-decode.flow.toml"
+            invalid_path.write_bytes(b"[flow]\nname = '\xff'\n")
+
+            missing_compile = asyncio_run(compile_flow_file(missing_path))
+            missing_inspect = asyncio_run(
+                inspect_flow_graph_file(missing_path)
+            )
+            decode_compile = asyncio_run(compile_flow_file(invalid_path))
+            decode_inspect = asyncio_run(inspect_flow_graph_file(invalid_path))
+
+        for result in (
+            missing_compile,
+            missing_inspect,
+            decode_compile,
+            decode_inspect,
+        ):
+            with self.subTest(result=result):
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    [
+                        diagnostic["code"]
+                        for diagnostic in result.public_diagnostics
+                    ],
+                    ["file.read"],
+                )
+                public = str(result.as_public_dict())
+                self.assertNotIn("private-missing.flow.toml", public)
+                self.assertNotIn("private-decode.flow.toml", public)
+                self.assertNotIn(str(root), public)
 
     def test_compile_flow_source_reports_malformed_toml_safely(self) -> None:
         result = asyncio_run(
@@ -431,6 +596,65 @@ class FlowAuthoringTestCase(TestCase):
         self.assertNotIn("Private customer route", public)
         self.assertNotIn("/private/customer", public)
 
+    def test_graph_inspection_result_reports_nested_errors(self) -> None:
+        diagnostic = FlowDiagnostic(
+            code=FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE.value,
+            path="graph.edges",
+            category=FlowDiagnosticCategory.GRAPH_COMPILER,
+            severity=FlowDiagnosticSeverity.ERROR,
+            message="Graph edge is not supported for execution.",
+            hint="Use explicit directed graph edges.",
+        )
+        result = FlowGraphInspectionResult(
+            inspection=FlowGraphInspection(diagnostics=(diagnostic,)),
+            authoring_graph=True,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [item["code"] for item in result.public_diagnostics],
+            [FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE.value],
+        )
+        public = result.as_public_dict()
+        self.assertEqual(public["diagnostics"], result.public_diagnostics)
+        self.assertEqual(public["authoring_graph"], True)
+        self.assertIn("inspection", public)
+
+    def test_graph_inspection_result_merges_distinct_errors(self) -> None:
+        load_diagnostic = FlowDiagnostic(
+            code="flow.definition.invalid",
+            path="flow.name",
+            category=FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+            severity=FlowDiagnosticSeverity.ERROR,
+            message="Flow definition is invalid.",
+            hint="Fix the flow definition.",
+        )
+        graph_diagnostic = FlowDiagnostic(
+            code=FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE.value,
+            path="graph.edges",
+            category=FlowDiagnosticCategory.GRAPH_COMPILER,
+            severity=FlowDiagnosticSeverity.ERROR,
+            message="Graph edge is not supported for execution.",
+            hint="Use explicit directed graph edges.",
+        )
+        result = FlowGraphInspectionResult(
+            inspection=FlowGraphInspection(diagnostics=(graph_diagnostic,)),
+            diagnostics=(load_diagnostic, graph_diagnostic),
+            authoring_graph=True,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [item["code"] for item in result.public_diagnostics],
+            [
+                "flow.definition.invalid",
+                FlowGraphDiagnosticCode.UNSUPPORTED_EXECUTABLE_EDGE.value,
+            ],
+        )
+        public = result.as_public_dict()
+        self.assertEqual(public["diagnostics"], result.public_diagnostics)
+        self.assertIn("inspection", public)
+
     def test_compile_and_inspect_sdk_results_reject_invalid_values(
         self,
     ) -> None:
@@ -515,6 +739,44 @@ class FlowAuthoringTestCase(TestCase):
             asyncio_run(
                 inspect_flow_graph_file(Path("missing.toml"), encoding="")
             )
+
+    def test_flow_sdk_internals_keep_async_file_boundaries(self) -> None:
+        violations = tuple(
+            violation
+            for path in sorted(_FLOW_SOURCE_ROOT.rglob("*.py"))
+            for violation in _flow_async_boundary_violations(
+                path.relative_to(_FLOW_SOURCE_ROOT),
+                path.read_text(encoding="utf-8"),
+            )
+        )
+
+        self.assertEqual(violations, ())
+
+    def test_flow_sdk_boundary_audit_rejects_sync_calls(self) -> None:
+        violations = _flow_async_boundary_violations(
+            Path("flow.py"),
+            """
+from asyncio import gather, run, to_thread, wait_for
+
+async def bad(path, loop, task):
+    path.read_text()
+    path.write_bytes(b"private")
+    asyncio.run(task())
+    loop.run_until_complete(task())
+""",
+        )
+
+        self.assertEqual(
+            violations,
+            (
+                "flow.py:2 imports asyncio.run",
+                "flow.py:2 imports asyncio.to_thread",
+                "flow.py:5 calls read_text",
+                "flow.py:6 calls write_bytes",
+                "flow.py:7 calls asyncio.run",
+                "flow.py:8 calls run_until_complete",
+            ),
+        )
 
     def test_private_parser_internals_are_not_exported_from_package(
         self,

@@ -5,7 +5,11 @@ from .binding import (
     create_flow_definition_skeleton,
 )
 from .definition import FlowDefinition
-from .diagnostics import FlowDiagnostic, FlowDiagnosticSeverity
+from .diagnostics import (
+    FlowDiagnostic,
+    FlowDiagnosticCategory,
+    FlowDiagnosticSeverity,
+)
 from .graph import (
     FlowGraphDiagnosticCode,
     FlowGraphInspection,
@@ -23,6 +27,7 @@ from .serializer import serialize_flow_definition
 from .view import FlowView, FlowViewImportMode
 
 from dataclasses import dataclass
+from os import strerror
 from pathlib import Path
 
 
@@ -30,6 +35,48 @@ def _has_error(diagnostics: tuple[FlowDiagnostic, ...]) -> bool:
     return any(
         diagnostic.severity == FlowDiagnosticSeverity.ERROR
         for diagnostic in diagnostics
+    )
+
+
+def _combine_diagnostics(
+    diagnostics: tuple[FlowDiagnostic, ...],
+    inspection: FlowGraphInspection | None,
+) -> tuple[FlowDiagnostic, ...]:
+    if inspection is None:
+        return diagnostics
+    combined = list(diagnostics)
+    seen = {_diagnostic_identity(diagnostic) for diagnostic in combined}
+    for diagnostic in inspection.diagnostics:
+        identity = _diagnostic_identity(diagnostic)
+        if identity in seen:
+            continue
+        combined.append(diagnostic)
+        seen.add(identity)
+    return tuple(combined)
+
+
+def _diagnostic_identity(
+    diagnostic: FlowDiagnostic,
+) -> tuple[tuple[str, str], ...]:
+    assert isinstance(diagnostic, FlowDiagnostic)
+    return tuple(
+        (key, repr(value))
+        for key, value in sorted(diagnostic.as_public_dict().items())
+    )
+
+
+def _file_read_diagnostic(exc: OSError | UnicodeDecodeError) -> FlowDiagnostic:
+    if isinstance(exc, OSError):
+        message = strerror(exc.errno) if exc.errno else "Unable to read file."
+    else:
+        message = str(exc) or "Unable to read file."
+    return FlowDiagnostic(
+        code="file.read",
+        path="file",
+        category=FlowDiagnosticCategory.PRIVACY,
+        severity=FlowDiagnosticSeverity.ERROR,
+        message=message,
+        hint="Use a readable local file.",
     )
 
 
@@ -83,19 +130,24 @@ class FlowDefinitionCompileResult:
         return (
             self.definition is not None
             and self.canonical_source is not None
-            and not _has_error(self.diagnostics)
+            and not _has_error(self.all_diagnostics)
         )
+
+    @property
+    def all_diagnostics(self) -> tuple[FlowDiagnostic, ...]:
+        return _combine_diagnostics(self.diagnostics, self.graph_inspection)
 
     @property
     def public_diagnostics(self) -> tuple[dict[str, object], ...]:
         return tuple(
-            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+            diagnostic.as_public_dict() for diagnostic in self.all_diagnostics
         )
 
     def as_public_dict(self) -> dict[str, object]:
         value: dict[str, object] = {
             "ok": self.ok,
             "authoring_graph": self.authoring_graph,
+            "diagnostics": self.public_diagnostics,
         }
         if self.definition is not None:
             value["definition"] = {
@@ -110,8 +162,6 @@ class FlowDefinitionCompileResult:
             }
         if self.graph_inspection is not None:
             value["graph_inspection"] = self.graph_inspection.as_public_dict()
-        if self.diagnostics:
-            value["diagnostics"] = self.public_diagnostics
         return value
 
 
@@ -131,26 +181,28 @@ class FlowGraphInspectionResult:
 
     @property
     def ok(self) -> bool:
-        diagnostics = self.diagnostics
-        if self.inspection is not None:
-            diagnostics += self.inspection.diagnostics
-        return self.inspection is not None and not _has_error(diagnostics)
+        return self.inspection is not None and not _has_error(
+            self.all_diagnostics
+        )
+
+    @property
+    def all_diagnostics(self) -> tuple[FlowDiagnostic, ...]:
+        return _combine_diagnostics(self.diagnostics, self.inspection)
 
     @property
     def public_diagnostics(self) -> tuple[dict[str, object], ...]:
         return tuple(
-            diagnostic.as_public_dict() for diagnostic in self.diagnostics
+            diagnostic.as_public_dict() for diagnostic in self.all_diagnostics
         )
 
     def as_public_dict(self) -> dict[str, object]:
         value: dict[str, object] = {
             "ok": self.ok,
             "authoring_graph": self.authoring_graph,
+            "diagnostics": self.public_diagnostics,
         }
         if self.inspection is not None:
             value["inspection"] = self.inspection.as_public_dict()
-        if self.diagnostics:
-            value["diagnostics"] = self.public_diagnostics
         return value
 
 
@@ -221,9 +273,25 @@ async def compile_flow_source(
             authoring_graph=result.authoring_graph,
             graph_inspection=result.graph_inspection,
         )
+    canonical_source = serialize_flow_definition(result.definition)
+    canonical_result = await FlowDefinitionLoader(
+        registry,
+        encoding=encoding,
+    ).loads_validation_result(
+        canonical_source,
+        encoding=encoding,
+    )
+    if not canonical_result.ok:
+        return FlowDefinitionCompileResult(
+            diagnostics=result.diagnostics + canonical_result.diagnostics,
+            authoring_graph=result.authoring_graph,
+            graph_inspection=result.graph_inspection,
+        )
+    canonical_definition = canonical_result.definition
+    assert canonical_definition is not None
     return FlowDefinitionCompileResult(
-        definition=result.definition,
-        canonical_source=serialize_flow_definition(result.definition),
+        definition=canonical_definition,
+        canonical_source=canonical_source,
         diagnostics=result.diagnostics,
         authoring_graph=result.authoring_graph,
         graph_inspection=result.graph_inspection,
@@ -241,8 +309,14 @@ async def compile_flow_file(
         assert isinstance(registry, FlowNodeRegistry)
     assert_text_encoding(encoding)
     source_path = Path(path)
+    try:
+        source = await read_text(source_path, encoding=encoding)
+    except (OSError, UnicodeDecodeError) as exc:
+        return FlowDefinitionCompileResult(
+            diagnostics=(_file_read_diagnostic(exc),),
+        )
     return await compile_flow_source(
-        await read_text(source_path, encoding=encoding),
+        source,
         source_path=source_path,
         registry=registry,
         encoding=encoding,
@@ -300,8 +374,14 @@ async def inspect_flow_graph_file(
         assert isinstance(registry, FlowNodeRegistry)
     assert_text_encoding(encoding)
     source_path = Path(path)
+    try:
+        source = await read_text(source_path, encoding=encoding)
+    except (OSError, UnicodeDecodeError) as exc:
+        return FlowGraphInspectionResult(
+            diagnostics=(_file_read_diagnostic(exc),),
+        )
     return await inspect_flow_graph_source(
-        await read_text(source_path, encoding=encoding),
+        source,
         source_path=source_path,
         registry=registry,
         encoding=encoding,

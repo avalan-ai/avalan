@@ -97,6 +97,48 @@ class FlowDefinitionSerializerTestCase(TestCase):
         self.assertIn('"1bad" = "quoted"', source)
         self.assertIn('"with.dot" = "quoted"', source)
 
+    def test_serializes_non_ascii_keys_as_quoted_toml_keys(self) -> None:
+        registry = self._registry()
+        definition = self._strict_definition()
+        definition = FlowDefinition(
+            name=definition.name,
+            version=definition.version,
+            revision=definition.revision,
+            description=definition.description,
+            inputs=definition.inputs,
+            outputs=definition.outputs,
+            entry_behavior=definition.entry_behavior,
+            output_behavior=definition.output_behavior,
+            runtime_limits=definition.runtime_limits,
+            privacy_policy=definition.privacy_policy,
+            observability_policy=definition.observability_policy,
+            tags=definition.tags,
+            ownership=definition.ownership,
+            variables={
+                **definition.variables,
+                "café": "quoted",
+                "settings": {
+                    "año": 2026,
+                    "locale": "es",
+                },
+            },
+            nodes=definition.nodes,
+            edges=definition.edges,
+        )
+
+        source = serialize_flow_definition(definition)
+        result = FlowDefinitionLoader(registry).loads_validation_result(source)
+
+        self.assertIn('"caf\\u00e9" = "quoted"', source)
+        self.assertIn('"a\\u00f1o" = 2026', source)
+        self.assertTrue(result.ok, result.public_diagnostics)
+        assert result.definition is not None
+        self.assertEqual(result.definition.variables["café"], "quoted")
+        settings = result.definition.variables["settings"]
+        self.assertIsInstance(settings, Mapping)
+        self.assertEqual(settings["año"], 2026)
+        self.assertEqual(serialize_flow_definition(result.definition), source)
+
     def test_serialized_strict_definition_round_trips_to_same_plan(
         self,
     ) -> None:
@@ -482,6 +524,33 @@ class FlowDefinitionSerializerTestCase(TestCase):
 
         with self.assertRaises(AssertionError):
             serialize_flow_definition("invalid")  # type: ignore[arg-type]
+
+    def test_rejects_empty_toml_keys(self) -> None:
+        definition = FlowDefinition(
+            name="invalid",
+            version="1",
+            entry_behavior=FlowEntryBehavior(node="start"),
+            output_behavior=FlowOutputBehavior(
+                outputs={"answer": "start.value"},
+            ),
+            inputs=(
+                FlowInputDefinition(
+                    name="payload",
+                    type=FlowInputType.OBJECT,
+                ),
+            ),
+            outputs=(
+                FlowOutputDefinition(
+                    name="answer",
+                    type=FlowOutputType.OBJECT,
+                ),
+            ),
+            variables={"": "invalid"},
+            nodes=(FlowNodeDefinition(name="start", type="echo"),),
+        )
+
+        with self.assertRaises(AssertionError):
+            serialize_flow_definition(definition)
 
     def test_rejects_non_finite_toml_numbers(self) -> None:
         definition = FlowDefinition(

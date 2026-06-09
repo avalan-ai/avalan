@@ -29,6 +29,7 @@ from avalan.entities import (
 )
 from avalan.flow import (
     FlowDefinition,
+    FlowDefinitionCompileResult,
     FlowDefinitionLoader,
     FlowDiagnostic,
     FlowDiagnosticCategory,
@@ -324,18 +325,30 @@ class FlowRunCommandTestCase(TestCase):
         self.assertTrue(result)
         self.assertTrue(json_result)
         self.assertEqual(stream.getvalue(), sdk_result.canonical_source)
+        self.assertEqual(
+            payload,
+            flow_cmds._flow_public_value(sdk_result.as_public_dict()),
+        )
         self.assertTrue(payload["ok"])
         self.assertEqual(
             payload["canonical_source"],
             {"format": "toml", "strict": True},
         )
+        self.assertEqual(payload["diagnostics"], [])
+        self.assertEqual(
+            payload["graph_inspection"]["schema_version"],
+            "flow.graph.inspection.v1",
+        )
         self.assertIn("[[edges]]", stream.getvalue())
         self.assertNotIn("[graph]", stream.getvalue())
         self.assertNotIn("Private graph label", stream.getvalue())
+        self.assertNotIn("Private graph label", json_stream.getvalue())
 
     def test_flow_compile_writes_output_and_reports_json(self) -> None:
         stream = StringIO()
         console = Console(file=stream, width=160)
+        run_stream = StringIO()
+        run_console = Console(file=run_stream, width=160)
 
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -351,10 +364,28 @@ class FlowRunCommandTestCase(TestCase):
                 self.theme,
             )
             output = output_path.read_text(encoding="utf-8")
+            loaded = asyncio_run(
+                FlowDefinitionLoader().load_validation_result(output_path)
+            )
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                compiled_run = flow_cmds.flow_run(
+                    _args(
+                        flow=output_path,
+                        task_input_json='{"ignored":true}',
+                        task_run_json=True,
+                    ),
+                    run_console,
+                    self.theme,
+                )
 
         payload = loads(stream.getvalue())
         self.assertTrue(result)
+        self.assertTrue(loaded.ok, loaded.public_diagnostics)
+        self.assertFalse(loaded.authoring_graph)
+        self.assertTrue(compiled_run)
+        self.assertEqual(loads(run_stream.getvalue()), {"answer": "ok"})
         self.assertTrue(payload["ok"])
+        self.assertEqual(payload["diagnostics"], [])
         self.assertTrue(payload["authoring_graph"])
         self.assertEqual(payload["definition"]["edge_count"], 1)
         self.assertEqual(
@@ -388,6 +419,7 @@ class FlowRunCommandTestCase(TestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             flow_path = _write_strict_graph_constant_flow(root)
+            sdk_result = asyncio_run(compile_flow_file(flow_path))
             human_result = flow_cmds.flow_compile(
                 _args(flow=flow_path, check=True),
                 human_console,
@@ -406,7 +438,10 @@ class FlowRunCommandTestCase(TestCase):
             "Flow definition compiles: strict_graph 1",
             human_console.export_text(),
         )
-        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            payload,
+            flow_cmds._flow_public_value(sdk_result.as_public_dict()),
+        )
         self.assertEqual(payload["diagnostics"], [])
 
     def test_flow_compile_reports_compile_failures_safely(self) -> None:
@@ -417,6 +452,7 @@ class FlowRunCommandTestCase(TestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             flow_path = _write_strict_graph_constant_flow(root, valid=False)
+            sdk_result = asyncio_run(compile_flow_file(flow_path))
             human_result = flow_cmds.flow_compile(
                 _args(flow=flow_path),
                 human_console,
@@ -435,11 +471,52 @@ class FlowRunCommandTestCase(TestCase):
         self.assertFalse(json_result)
         self.assertIn("Flow definition could not be compiled.", human_output)
         self.assertEqual(
+            payload,
+            flow_cmds._flow_public_value(sdk_result.as_public_dict()),
+        )
+        self.assertEqual(
             payload["diagnostics"][0]["code"],
             "flow.graph.unsupported_executable_edge",
         )
+        self.assertIn("graph_inspection", payload)
         self.assertNotIn("Private graph label", human_output)
         self.assertNotIn("Private graph label", json_output)
+
+    def test_flow_compile_human_failure_prints_nested_graph_diagnostics(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+        diagnostic = FlowDiagnostic(
+            code="flow.graph.unsupported_executable_edge",
+            path="graph.edges",
+            category=FlowDiagnosticCategory.GRAPH_COMPILER,
+            severity=FlowDiagnosticSeverity.ERROR,
+            message="Graph edge is not supported for execution.",
+            hint="Use explicit directed graph edges.",
+        )
+        result = FlowDefinitionCompileResult(
+            authoring_graph=True,
+            graph_inspection=FlowGraphInspection(
+                diagnostics=(diagnostic,),
+            ),
+        )
+
+        with patch.object(
+            flow_cmds,
+            "compile_flow_file",
+            new=AsyncMock(return_value=result),
+        ):
+            compiled = flow_cmds.flow_compile(
+                _args(flow="graph.flow.toml"),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(compiled)
+        self.assertIn("Flow definition could not be compiled.", output)
+        self.assertIn("flow.graph.unsupported_executable_edge", output)
+        self.assertIn("Use explicit directed graph edges.", output)
 
     def test_flow_compile_reports_read_failure_as_json_safely(self) -> None:
         stream = StringIO()
@@ -448,6 +525,7 @@ class FlowRunCommandTestCase(TestCase):
 
         with TemporaryDirectory() as temporary_directory:
             flow_path = Path(temporary_directory) / "private.flow.toml"
+            sdk_result = asyncio_run(compile_flow_file(flow_path))
             result = flow_cmds.flow_compile(
                 _args(flow=flow_path, flow_json=True),
                 console,
@@ -463,6 +541,10 @@ class FlowRunCommandTestCase(TestCase):
         self.assertFalse(result)
         self.assertFalse(human_result)
         self.assertFalse(payload["ok"])
+        self.assertEqual(
+            payload,
+            flow_cmds._flow_public_value(sdk_result.as_public_dict()),
+        )
         self.assertEqual(payload["diagnostics"][0]["code"], "file.read")
         self.assertIn(
             "Flow definition could not be read.",
@@ -470,6 +552,54 @@ class FlowRunCommandTestCase(TestCase):
         )
         self.assertNotIn("private.flow.toml", stream.getvalue())
         self.assertNotIn("private.flow.toml", human_console.export_text())
+
+    def test_flow_compile_and_graph_inspect_report_decode_failures_safely(
+        self,
+    ) -> None:
+        compile_stream = StringIO()
+        compile_console = Console(file=compile_stream, width=160)
+        graph_stream = StringIO()
+        graph_console = Console(file=graph_stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            flow_path = Path(temporary_directory) / "private.flow.toml"
+            flow_path.write_bytes(b"[flow]\nname = '\xff'\n")
+            sdk_compile = asyncio_run(compile_flow_file(flow_path))
+            sdk_graph = asyncio_run(inspect_flow_graph_file(flow_path))
+            compile_result = flow_cmds.flow_compile(
+                _args(flow=flow_path, flow_json=True),
+                compile_console,
+                self.theme,
+            )
+            graph_result = flow_cmds.flow_graph(
+                _args(
+                    flow=flow_path,
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                    flow_json=True,
+                ),
+                graph_console,
+                self.theme,
+            )
+
+        compile_payload = loads(compile_stream.getvalue())
+        graph_payload = loads(graph_stream.getvalue())
+        self.assertFalse(compile_result)
+        self.assertFalse(graph_result)
+        self.assertEqual(
+            compile_payload,
+            flow_cmds._flow_public_value(sdk_compile.as_public_dict()),
+        )
+        self.assertEqual(
+            graph_payload,
+            flow_cmds._flow_public_value(sdk_graph.as_public_dict()),
+        )
+        self.assertEqual(
+            compile_payload["diagnostics"][0]["code"], "file.read"
+        )
+        self.assertEqual(graph_payload["diagnostics"][0]["code"], "file.read")
+        self.assertNotIn("private.flow.toml", compile_stream.getvalue())
+        self.assertNotIn("private.flow.toml", graph_stream.getvalue())
 
     def test_flow_compile_reports_write_failures_safely(self) -> None:
         human_console = Console(record=True, width=160)
@@ -481,6 +611,10 @@ class FlowRunCommandTestCase(TestCase):
             flow_path = _write_strict_graph_constant_flow(root)
             human_output = root / "human.flow.toml"
             json_output = root / "json.flow.toml"
+            human_sentinel = root / ".human.flow.toml.tmp"
+            json_sentinel = root / ".json.flow.toml.tmp"
+            human_sentinel.write_text("keep", encoding="utf-8")
+            json_sentinel.write_text("keep", encoding="utf-8")
             with patch.object(
                 Path,
                 "replace",
@@ -501,8 +635,12 @@ class FlowRunCommandTestCase(TestCase):
                     self.theme,
                 )
 
-            self.assertFalse((root / ".human.flow.toml.tmp").exists())
-            self.assertFalse((root / ".json.flow.toml.tmp").exists())
+            self.assertEqual(
+                human_sentinel.read_text(encoding="utf-8"), "keep"
+            )
+            self.assertEqual(json_sentinel.read_text(encoding="utf-8"), "keep")
+            self.assertEqual(tuple(root.glob(".human.flow.toml.*.tmp")), ())
+            self.assertEqual(tuple(root.glob(".json.flow.toml.*.tmp")), ())
 
         payload = loads(json_stream.getvalue())
         self.assertFalse(human_result)
@@ -514,6 +652,47 @@ class FlowRunCommandTestCase(TestCase):
         self.assertEqual(payload["diagnostics"][0]["code"], "file.write")
         self.assertNotIn("human.flow.toml", human_console.export_text())
         self.assertNotIn("json.flow.toml", json_stream.getvalue())
+
+    def test_flow_compile_removes_partial_temp_write_failure(self) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        async def fail_after_partial_write(
+            path: str | Path,
+            data: str,
+            *,
+            encoding: str = "utf-8",
+        ) -> int:
+            _ = data
+            Path(path).write_text("partial", encoding=encoding)
+            raise OSError(EACCES, "private path")
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root)
+            output_path = root / "compiled.flow.toml"
+            with patch.object(
+                flow_cmds,
+                "write_text",
+                side_effect=fail_after_partial_write,
+            ):
+                result = flow_cmds.flow_compile(
+                    _args(
+                        flow=flow_path,
+                        flow_json=True,
+                        output=str(output_path),
+                    ),
+                    console,
+                    self.theme,
+                )
+
+            self.assertFalse(output_path.exists())
+            self.assertEqual(tuple(root.glob(".compiled.flow.toml.*.tmp")), ())
+
+        payload = loads(stream.getvalue())
+        self.assertFalse(result)
+        self.assertEqual(payload["diagnostics"][0]["code"], "file.write")
+        self.assertNotIn("compiled.flow.toml", stream.getvalue())
 
     def test_flow_graph_inspect_json_matches_sdk_and_is_safe(self) -> None:
         stream = StringIO()
@@ -536,6 +715,7 @@ class FlowRunCommandTestCase(TestCase):
 
         payload = loads(stream.getvalue())
         self.assertTrue(result)
+        self.assertEqual(payload["diagnostics"], [])
         self.assertEqual(
             payload,
             flow_cmds._flow_public_value(sdk_result.as_public_dict()),
@@ -673,6 +853,76 @@ class FlowRunCommandTestCase(TestCase):
             "flow.graph.missing_source",
         )
 
+    def test_flow_graph_inspect_reports_mixed_diagnostics(self) -> None:
+        json_stream = StringIO()
+        json_console = Console(file=json_stream, width=160)
+        human_console = Console(record=True, width=160)
+        load_diagnostic = FlowDiagnostic(
+            code="flow.definition.invalid",
+            path="flow.name",
+            category=FlowDiagnosticCategory.FLOW_DEFINITION_VALIDATION,
+            severity=FlowDiagnosticSeverity.ERROR,
+            message="Flow definition is invalid.",
+            hint="Fix the flow definition.",
+        )
+        graph_diagnostic = FlowDiagnostic(
+            code="flow.graph.unsupported_executable_edge",
+            path="graph.edges",
+            category=FlowDiagnosticCategory.GRAPH_COMPILER,
+            severity=FlowDiagnosticSeverity.ERROR,
+            message="Graph edge is not supported for execution.",
+            hint="Use explicit directed graph edges.",
+        )
+        result = FlowGraphInspectionResult(
+            inspection=FlowGraphInspection(diagnostics=(graph_diagnostic,)),
+            diagnostics=(load_diagnostic, graph_diagnostic),
+            authoring_graph=True,
+        )
+
+        with patch.object(
+            flow_cmds,
+            "inspect_flow_graph_file",
+            new=AsyncMock(return_value=result),
+        ):
+            json_result = flow_cmds.flow_graph(
+                _args(
+                    flow="private.flow.toml",
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                    flow_json=True,
+                ),
+                json_console,
+                self.theme,
+            )
+            human_result = flow_cmds.flow_graph(
+                _args(
+                    flow="private.flow.toml",
+                    flow_command="graph",
+                    flow_graph_command="inspect",
+                ),
+                human_console,
+                self.theme,
+            )
+
+        payload = loads(json_stream.getvalue())
+        human_output = human_console.export_text()
+        self.assertFalse(json_result)
+        self.assertFalse(human_result)
+        self.assertEqual(
+            [item["code"] for item in payload["diagnostics"]],
+            [
+                "flow.definition.invalid",
+                "flow.graph.unsupported_executable_edge",
+            ],
+        )
+        self.assertEqual(human_output.count("flow.definition.invalid"), 1)
+        self.assertEqual(
+            human_output.count("flow.graph.unsupported_executable_edge"),
+            1,
+        )
+        self.assertNotIn("private.flow.toml", json_stream.getvalue())
+        self.assertNotIn("private.flow.toml", human_output)
+
     def test_flow_graph_private_helpers_cover_branches(self) -> None:
         console = Console(record=True, width=160)
         diagnostic = FlowDiagnostic(
@@ -699,12 +949,19 @@ class FlowRunCommandTestCase(TestCase):
         inspection_diagnostics = flow_cmds._flow_graph_inspect_diagnostics(
             FlowGraphInspectionResult(inspection=inspection)
         )
+        mixed_diagnostics = flow_cmds._flow_graph_inspect_diagnostics(
+            FlowGraphInspectionResult(
+                inspection=inspection,
+                diagnostics=(diagnostic,),
+            )
+        )
 
         output = console.export_text()
         self.assertIn("Flow graph diagnostics.", output)
         self.assertEqual(counts, {"actual": 1})
         self.assertEqual(empty_diagnostics, ())
         self.assertEqual(inspection_diagnostics, (diagnostic,))
+        self.assertEqual(mixed_diagnostics, (diagnostic,))
 
     def test_flow_graph_dispatch_rejects_unknown_command(self) -> None:
         console = Console(record=True, width=160)
@@ -2545,19 +2802,32 @@ class FlowRunCommandTestCase(TestCase):
 
     def test_flow_run_reports_read_failure_without_private_path(self) -> None:
         console = Console(record=True, width=160)
+        decode_console = Console(record=True, width=160)
 
         with TemporaryDirectory() as temporary_directory:
-            flow_path = Path(temporary_directory) / "missing.flow.toml"
+            root = Path(temporary_directory)
+            flow_path = root / "missing.flow.toml"
+            invalid_path = root / "private.flow.toml"
+            invalid_path.write_bytes(b"[flow]\nname = '\xff'\n")
             result = flow_cmds.flow_run(
                 _args(flow=flow_path),
                 console,
                 self.theme,
             )
+            decode_result = flow_cmds.flow_run(
+                _args(flow=invalid_path),
+                decode_console,
+                self.theme,
+            )
 
         output = console.export_text()
+        decode_output = decode_console.export_text()
         self.assertFalse(result)
+        self.assertFalse(decode_result)
         self.assertIn("file.read", output)
+        self.assertIn("file.read", decode_output)
         self.assertNotIn("missing.flow.toml", output)
+        self.assertNotIn("private.flow.toml", decode_output)
 
     def test_flow_run_reports_input_and_output_failures(self) -> None:
         cases = (
