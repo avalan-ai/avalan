@@ -11,6 +11,7 @@ class FlowDiagnosticSeverity(StrEnum):
 
 
 class FlowDiagnosticCategory(StrEnum):
+    GRAPH_COMPILER = "graph_compiler"
     MERMAID_PARSER = "mermaid_parser"
     MERMAID_SECURITY = "mermaid_security"
     FLOW_VIEW_BINDING = "flow_view_binding"
@@ -21,6 +22,7 @@ class FlowDiagnosticCategory(StrEnum):
 
 
 class FlowDiagnosticCodePrefix(StrEnum):
+    GRAPH_COMPILER = "flow.graph"
     MERMAID_PARSER = "flow.mermaid.parser"
     MERMAID_SECURITY = "flow.mermaid.security"
     FLOW_VIEW_BINDING = "flow.view.binding"
@@ -32,6 +34,9 @@ class FlowDiagnosticCodePrefix(StrEnum):
 
 _FLOW_DIAGNOSTIC_CODE_PREFIXES = MappingProxyType(
     {
+        FlowDiagnosticCategory.GRAPH_COMPILER: (
+            FlowDiagnosticCodePrefix.GRAPH_COMPILER,
+        ),
         FlowDiagnosticCategory.MERMAID_PARSER: (
             FlowDiagnosticCodePrefix.MERMAID_PARSER,
         ),
