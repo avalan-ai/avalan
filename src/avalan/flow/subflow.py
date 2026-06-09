@@ -10,7 +10,7 @@ from .definition import (
     FlowNodeMetadata,
     FlowOutputType,
 )
-from .loader import FlowDefinitionLoader
+from .loader import FlowDefinitionLoader, FlowLoadIssue
 from .node import Node
 from .plan import compile_flow_definition
 from .registry import (
@@ -80,13 +80,20 @@ class LocalFlowSubflowResolver:
         registry: FlowNodeRegistry,
         output_mapping: Mapping[str, str],
     ) -> Mapping[str, object]:
-        load_result = FlowDefinitionLoader(registry).load_result(path)
+        loader = FlowDefinitionLoader(registry)
+        load_result = loader.load_validation_result(path)
+        if (
+            load_result.definition is not None
+            and not load_result.authoring_graph
+        ):
+            load_result = loader.load_result(path)
         if load_result.definition is None:
+            assert load_result.issues
             raise _configuration_error(
                 code="flow.invalid_subflow",
                 path=f"nodes.{node.name}.ref",
                 message="Subflow definition cannot be loaded.",
-                hint="Reference a valid strict flow definition.",
+                hint=_invalid_subflow_load_hint(load_result.issues),
             )
         _validate_expectations(load_result.definition, node)
         _validate_input_mapping(load_result.definition, node)
@@ -212,6 +219,17 @@ def _subflow_node(definition: FlowNodeDefinition) -> Node:
         )
 
     return Node(definition.name, func=run, async_only=True)
+
+
+def _invalid_subflow_load_hint(
+    issues: tuple[FlowLoadIssue, ...],
+) -> str:
+    assert issues
+    issue = issues[0]
+    return (
+        "Reference a valid flow definition; first load issue is "
+        f"{issue.code} at {issue.path}."
+    )
 
 
 def _subflow_validator(

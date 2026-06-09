@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
 from avalan.flow import (
+    FlowDefinition,
     FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
@@ -401,6 +402,92 @@ class FlowRouterTestCase(TestCase):
             "flow.task.run_not_found",
         )
 
+    def test_validate_and_run_compile_graph_source_before_executor(
+        self,
+    ) -> None:
+        executor = _CapturingDiagnosticExecutor()
+        self.app.state.flow_executor = executor
+
+        validated = self.client.post(
+            "/flows/validate",
+            json={"source": _graph_flow_source()},
+        )
+        run = self.client.post(
+            "/flows/run",
+            json={
+                "source": _graph_flow_source(),
+                "inputs": {"payload": "safe"},
+            },
+        )
+
+        self.assertEqual(validated.status_code, 200)
+        self.assertTrue(validated.json()["ok"], validated.text)
+        self.assertEqual(
+            validated.json()["definition"]["name"],
+            "server-graph-flow",
+        )
+        self.assertNotIn("Private graph label", validated.text)
+        self.assertEqual(run.status_code, 200)
+        self.assertFalse(run.json()["ok"])
+        self.assertIsInstance(executor.seen_flow, FlowDefinition)
+        assert isinstance(executor.seen_flow, FlowDefinition)
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in executor.seen_flow.edges],
+            [("echo", "finish")],
+        )
+        self.assertNotIn("Private graph label", str(executor.seen_flow))
+        self.assertFalse(hasattr(executor.seen_flow, "graph"))
+
+    def test_run_rejects_invalid_graph_source_before_executor(self) -> None:
+        executor = _CapturingDiagnosticExecutor()
+        self.app.state.flow_executor = executor
+
+        run = self.client.post(
+            "/flows/run",
+            json={"source": _invalid_graph_flow_source()},
+        )
+
+        self.assertEqual(run.status_code, 200)
+        self.assertFalse(run.json()["ok"])
+        self.assertEqual(
+            run.json()["diagnostics"][0]["code"],
+            "flow.graph.unsupported_executable_edge",
+        )
+        self.assertIsNone(executor.seen_flow)
+        self.assertNotIn("Private graph label", run.text)
+
+    def test_raw_source_rejects_file_graph_reference_before_executor(
+        self,
+    ) -> None:
+        executor = _CapturingDiagnosticExecutor()
+        self.app.state.flow_executor = executor
+
+        validated = self.client.post(
+            "/flows/validate",
+            json={"source": _file_graph_flow_source()},
+        )
+        run = self.client.post(
+            "/flows/run",
+            json={"source": _file_graph_flow_source()},
+        )
+
+        self.assertEqual(validated.status_code, 200)
+        self.assertFalse(validated.json()["ok"])
+        self.assertEqual(run.status_code, 200)
+        self.assertFalse(run.json()["ok"])
+        for response in (validated, run):
+            self.assertEqual(
+                response.json()["diagnostics"][0]["code"],
+                "flow.graph.read_failure",
+            )
+            self.assertEqual(
+                response.json()["diagnostics"][0]["path"],
+                "graph.source",
+            )
+            self.assertNotIn("customer-token", response.text)
+            self.assertNotIn("private", response.text)
+        self.assertIsNone(executor.seen_flow)
+
     def test_resume_with_executor_diagnostics_skips_state_update(self) -> None:
         self.app.state.flow_state_store = InMemoryFlowStateStore()
         run = self.client.post(
@@ -559,6 +646,19 @@ class _DiagnosticOnlyExecutor(FlowExecutor):
         return FlowExecutorRunResult(diagnostics=(_diagnostic(),))
 
 
+class _CapturingDiagnosticExecutor(FlowExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_flow: object | None = None
+
+    async def run(
+        self, *args: object, **kwargs: object
+    ) -> FlowExecutorRunResult:
+        _ = kwargs
+        self.seen_flow = args[0] if args else None
+        return FlowExecutorRunResult(diagnostics=(_diagnostic(),))
+
+
 def _diagnostic() -> FlowDiagnostic:
     return FlowDiagnostic(
         code="flow.execution.test_diagnostic",
@@ -599,4 +699,130 @@ type = "pass-through"
 
 [nodes.echo.mapping]
 value = "input.payload"
+"""
+
+
+def _graph_flow_source() -> str:
+    return """
+[flow]
+name = "server-graph-flow"
+version = "1"
+
+[[inputs]]
+name = "payload"
+type = "string"
+
+[[outputs]]
+name = "answer"
+type = "text"
+
+[entry]
+type = "node"
+node = "echo"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "finish.value"
+
+[graph]
+format = "mermaid"
+source = "inline"
+mode = "executable"
+diagram = '''
+flowchart LR
+echo route_1@-->|Private graph label| finish
+'''
+
+[nodes.echo]
+type = "pass-through"
+
+[nodes.echo.mapping]
+value = "input.payload"
+
+[nodes.finish]
+type = "pass-through"
+
+[nodes.finish.mapping]
+value = "echo.value"
+"""
+
+
+def _invalid_graph_flow_source() -> str:
+    return """
+[flow]
+name = "server-graph-flow"
+version = "1"
+
+[[inputs]]
+name = "payload"
+type = "string"
+
+[[outputs]]
+name = "answer"
+type = "text"
+
+[entry]
+type = "node"
+node = "echo"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "finish.value"
+
+[graph]
+format = "mermaid"
+source = "inline"
+mode = "executable"
+diagram = '''
+flowchart LR
+echo -->|Private graph label| finish
+'''
+
+[nodes.echo]
+type = "pass-through"
+
+[nodes.finish]
+type = "pass-through"
+"""
+
+
+def _file_graph_flow_source() -> str:
+    return """
+[flow]
+name = "server-file-graph-flow"
+version = "1"
+
+[[inputs]]
+name = "payload"
+type = "string"
+
+[[outputs]]
+name = "answer"
+type = "text"
+
+[entry]
+type = "node"
+node = "echo"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "finish.value"
+
+[graph]
+format = "mermaid"
+source = "file"
+mode = "executable"
+path = "private/customer-token.mmd"
+
+[nodes.echo]
+type = "pass-through"
+
+[nodes.finish]
+type = "pass-through"
 """

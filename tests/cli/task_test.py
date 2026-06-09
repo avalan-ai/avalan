@@ -663,6 +663,167 @@ class CliTaskValidateTestCase(TestCase):
         self.assertIn("flow.converter_unsupported", output)
         self.assertNotIn("private_converter", output)
 
+    def test_validate_reports_graph_load_issues_without_runtime_build(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            definition = root / "task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "flow-task"
+                version = "1"
+
+                [input]
+                type = "object"
+                schema = {type = "object", additionalProperties = true}
+
+                [output]
+                type = "object"
+                schema = {type = "object", additionalProperties = true}
+
+                [execution]
+                type = "flow"
+                ref = "flow.toml"
+                """,
+                encoding="utf-8",
+            )
+            (root / "flow.toml").write_text(
+                """
+                [flow]
+                name = "graph-task-flow"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "answer"
+                type = "text"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                answer = "finish.value"
+
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start -->|Private customer route| finish
+                '''
+
+                [nodes.start]
+                type = "constant"
+                value = "ok"
+
+                [nodes.finish]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+
+            with (
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+                patch(
+                    "avalan.flow.loader.build_flow",
+                    side_effect=AssertionError("runtime build not expected"),
+                ),
+            ):
+                result = task_cmds.task_validate(
+                    Namespace(definition=str(definition)),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task definition is invalid.", output)
+        self.assertIn("flow.graph.unsupported_executable_edge", output)
+        self.assertNotIn("Private customer route", output)
+
+    def test_validate_reports_graph_flow_node_issues_without_runtime_build(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            definition = root / "task.toml"
+            definition.write_text(
+                """
+                [task]
+                name = "flow-task"
+                version = "1"
+
+                [input]
+                type = "file"
+                mime_types = ["application/pdf"]
+
+                [output]
+                type = "object"
+                schema = {type = "object", additionalProperties = true}
+
+                [execution]
+                type = "flow"
+                ref = "flow.toml"
+                """,
+                encoding="utf-8",
+            )
+            (root / "flow.toml").write_text(
+                """
+                [flow]
+                name = "graph-render"
+                entrypoint = "render"
+                output_node = "render"
+
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                render
+                '''
+
+                [nodes.render]
+                type = "file_convert"
+
+                [nodes.render.config]
+                converter = "private_converter"
+                """,
+                encoding="utf-8",
+            )
+
+            with (
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+                patch(
+                    "avalan.flow.loader.build_flow",
+                    side_effect=AssertionError("runtime build not expected"),
+                ) as build_flow,
+            ):
+                result = task_cmds.task_validate(
+                    Namespace(definition=str(definition)),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("Task definition is invalid.", output)
+        self.assertIn("flow.converter_unsupported", output)
+        self.assertNotIn("private_converter", output)
+        build_flow.assert_not_called()
+
     def test_validate_checks_readable_flow_reference(self) -> None:
         console = Console(record=True, width=160)
         with TemporaryDirectory() as tmpdir:
@@ -3872,6 +4033,245 @@ class CliTaskCommandShellTestCase(TestCase):
             context.exception.issues[0].code,
             "flow.missing_section",
         )
+
+    def test_flow_reference_validation_skips_graph_runtime_build(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "graph-task-flow"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "answer"
+                type = "text"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                answer = "finish.value"
+
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start route_1@--> finish
+                '''
+
+                [nodes.start]
+                type = "constant"
+                value = "ok"
+
+                [nodes.finish]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+
+            with patch(
+                "avalan.flow.loader.build_flow",
+                side_effect=AssertionError("runtime build not expected"),
+            ) as build_flow:
+                issues = task_cmds._validate_task_flow_reference(
+                    root / "task.toml",
+                    _flow_task_context(
+                        TaskExecutionTarget.flow(str(flow_path))
+                    ).definition,
+                )
+
+        self.assertEqual(issues, ())
+        build_flow.assert_not_called()
+
+    def test_flow_reference_validation_reports_native_full_load_issues(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "flow.toml"
+            flow_path.write_text("[flow]\nname = 'native'\n", encoding="utf-8")
+            issue = TaskValidationIssue(
+                code="flow.invalid_node",
+                path="nodes.secret",
+                message="Flow node configuration is invalid.",
+                hint="Use a supported node configuration.",
+                category=TaskValidationCategory.UNSUPPORTED,
+            )
+            loader = MagicMock()
+            loader.load_validation_result.return_value = SimpleNamespace(
+                definition=object(),
+                authoring_graph=False,
+                issues=(),
+            )
+            loader.load_result.return_value = SimpleNamespace(
+                definition=None,
+                authoring_graph=False,
+                issues=(issue,),
+            )
+
+            with patch(
+                "avalan.cli.commands.task.FlowDefinitionLoader",
+                return_value=loader,
+            ):
+                issues = task_cmds._validate_task_flow_reference(
+                    root / "task.toml",
+                    _flow_task_context(
+                        TaskExecutionTarget.flow(str(flow_path))
+                    ).definition,
+                )
+
+        self.assertEqual(issues, (issue,))
+        loader.load_validation_result.assert_called_once_with(flow_path)
+        loader.load_result.assert_called_once_with(flow_path)
+
+    def test_strict_flow_resolver_compiles_graph_without_runtime_build(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "strict.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "graph-strict"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "answer"
+                type = "text"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                answer = "finish.value"
+
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start route_1@--> finish
+                '''
+
+                [nodes.start]
+                type = "constant"
+                value = "ok"
+
+                [nodes.finish]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+            resolver = task_cmds._task_strict_flow_resolver(root)
+
+            with patch(
+                "avalan.flow.loader.build_flow",
+                side_effect=AssertionError("runtime build not expected"),
+            ):
+                definition = resolver(
+                    _flow_task_context(TaskExecutionTarget.flow("strict.toml"))
+                )
+
+        self.assertEqual(definition.name, "graph-strict")
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in definition.edges],
+            [("start", "finish")],
+        )
+
+    def test_strict_flow_resolver_reports_graph_issues_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = root / "strict.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "graph-strict"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "answer"
+                type = "text"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                answer = "finish.value"
+
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start -->|Private customer route| finish
+                '''
+
+                [nodes.start]
+                type = "constant"
+                value = "ok"
+
+                [nodes.finish]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+            resolver = task_cmds._task_strict_flow_resolver(root)
+
+            with (
+                patch(
+                    "avalan.flow.loader.build_flow",
+                    side_effect=AssertionError("runtime build not expected"),
+                ),
+                self.assertRaises(TaskValidationError) as context,
+            ):
+                resolver(
+                    _flow_task_context(TaskExecutionTarget.flow("strict.toml"))
+                )
+
+        self.assertEqual(
+            context.exception.issues[0].code,
+            "flow.graph.unsupported_executable_edge",
+        )
+        self.assertEqual(context.exception.issues[0].path, "graph.edges")
+        rendered = " ".join(
+            issue.message for issue in context.exception.issues
+        )
+        self.assertNotIn("Private customer route", rendered)
 
     def test_low_level_helpers_cover_safe_branches(self) -> None:
         console = Console(record=True, width=160)
