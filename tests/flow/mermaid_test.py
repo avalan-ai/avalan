@@ -118,6 +118,70 @@ class MermaidTokenizerTestCase(TestCase):
             ["<==>", "---", "--x"],
         )
 
+    def test_tokenize_mermaid_recognizes_explicit_edge_ids(self) -> None:
+        result = tokenize_mermaid(
+            "graph TD\nA route_1@-->|ok| B next.route@-.-> C",
+            source="/private/customer/diagram.mmd",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            [
+                token.value
+                for token in result.tokens
+                if token.type == MermaidTokenType.EDGE_ID
+            ],
+            ["route_1", "next.route"],
+        )
+        self.assertEqual(
+            [
+                token.value
+                for token in result.tokens
+                if token.type == MermaidTokenType.ARROW
+            ],
+            ["-->", "-.->"],
+        )
+        edge_id = [
+            token
+            for token in result.tokens
+            if token.type == MermaidTokenType.EDGE_ID
+        ][0]
+        self.assertEqual(edge_id.source_span.start_line, 2)
+        self.assertEqual(edge_id.source_span.start_column, 3)
+        self.assertEqual(edge_id.source_span.end_column, 10)
+        self.assertNotIn("@", edge_id.value)
+        self.assertNotIn("/private/customer", str(result.public_diagnostics))
+
+    def test_tokenize_mermaid_reports_malformed_edge_ids(self) -> None:
+        cases = (
+            ("graph TD\nA @--> B", 2, 3),
+            ("graph TD\nA route@ B", 2, 3),
+            ("graph TD\nA route@", 2, 3),
+        )
+
+        for text, line, column in cases:
+            with self.subTest(text=text):
+                result = tokenize_mermaid(
+                    text,
+                    source="/private/customer/diagram.mmd",
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    result.diagnostics[0].code,
+                    "flow.mermaid.parser.malformed_edge_id",
+                )
+                self.assertEqual(
+                    result.diagnostics[0].source_span.start_line, line
+                )
+                self.assertEqual(
+                    result.diagnostics[0].source_span.start_column,
+                    column,
+                )
+                self.assertNotIn(
+                    "/private/customer", str(result.public_diagnostics)
+                )
+
     def test_tokenize_mermaid_recognizes_unsafe_and_unsupported_directives(
         self,
     ) -> None:
@@ -202,7 +266,7 @@ class MermaidTokenizerTestCase(TestCase):
                 self.assertEqual(result.diagnostics[0].code, code)
 
     def test_tokenize_mermaid_reports_unrecognized_character(self) -> None:
-        result = tokenize_mermaid("graph TD\nA @ B")
+        result = tokenize_mermaid("graph TD\nA $ B")
 
         self.assertFalse(result.ok)
         self.assertEqual(
@@ -389,6 +453,47 @@ class MermaidParserTestCase(TestCase):
         )
         self.assertEqual(result.public_diagnostics, ())
 
+    def test_parse_mermaid_preserves_explicit_edge_ids(self) -> None:
+        result = parse_mermaid(
+            "\n".join(
+                (
+                    "flowchart LR",
+                    "A route_1@-->|ok| B next@-.-> C",
+                )
+            )
+        )
+
+        self.assertTrue(result.ok)
+        statement = result.ast.statements[0]
+        self.assertIsInstance(statement, MermaidAstEdgeStatement)
+        assert isinstance(statement, MermaidAstEdgeStatement)
+        self.assertEqual(
+            [
+                (
+                    edge.source,
+                    edge.target,
+                    edge.explicit_id,
+                    edge.label,
+                    edge.arrow,
+                )
+                for edge in statement.edges
+            ],
+            [
+                ("A", "B", "route_1", "ok", "-->"),
+                ("B", "C", "next", None, "-.->"),
+            ],
+        )
+        self.assertEqual(
+            statement.edges[0].explicit_id_source_span.start_column,
+            3,
+        )
+        self.assertEqual(
+            statement.edges[1].explicit_id_source_span.start_column,
+            21,
+        )
+        self.assertEqual(statement.edges[0].source_span.start_column, 3)
+        self.assertEqual(statement.edges[0].source_span.end_column, 20)
+
     def test_parse_mermaid_supports_node_only_and_comments(self) -> None:
         result = parse_mermaid("graph TD\n%% keep\nA[`Only node`]")
 
@@ -562,6 +667,8 @@ class MermaidParserTestCase(TestCase):
             source="A",
             target="B",
             arrow="-->",
+            explicit_id="route",
+            explicit_id_source_span=span,
             source_span=span,
         )
         edge_without_span = MermaidAstEdge(
@@ -606,6 +713,8 @@ class MermaidParserTestCase(TestCase):
         self.assertEqual(result.public_diagnostics[0]["code"], diagnostic.code)
         self.assertIsNone(node_without_span.source_span)
         self.assertIsNone(edge_without_span.source_span)
+        self.assertEqual(edge.explicit_id, "route")
+        self.assertEqual(edge.explicit_id_source_span, span)
         with self.assertRaises(FrozenInstanceError):
             node.id = "B"  # type: ignore[misc]
 
@@ -648,7 +757,25 @@ class MermaidParserTestCase(TestCase):
             (MermaidAstEdge, {"source": "A", "target": "B", "arrow": ""}),
             (
                 MermaidAstEdge,
+                {
+                    "source": "A",
+                    "target": "B",
+                    "arrow": "-->",
+                    "explicit_id": "",
+                },
+            ),
+            (
+                MermaidAstEdge,
                 {"source": "A", "target": "B", "arrow": "-->", "label": ""},
+            ),
+            (
+                MermaidAstEdge,
+                {
+                    "source": "A",
+                    "target": "B",
+                    "arrow": "-->",
+                    "explicit_id_source_span": object(),
+                },
             ),
             (
                 MermaidAstEdgeStatement,
