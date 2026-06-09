@@ -20,6 +20,7 @@ The CLI offers the following commands, some of them with multiple subcommands:
   * [avalan flow run](#avalan-flow-run)
   * [avalan flow validate](#avalan-flow-validate)
   * [avalan flow compile](#avalan-flow-compile)
+  * [avalan flow graph inspect](#avalan-flow-graph-inspect)
   * [avalan flow mermaid](#avalan-flow-mermaid)
   * [avalan flow inspect](#avalan-flow-inspect)
   * [avalan flow trace](#avalan-flow-trace)
@@ -1529,6 +1530,7 @@ not execute nodes.
 ```bash
 avalan flow validate flow.toml
 avalan flow compile flow.toml --output strict.flow.toml
+avalan flow graph inspect flow.toml --json
 avalan flow mermaid parse topology.mmd --mode presentation --json
 avalan flow run flow.toml --input-json '{"name":"Ada"}' --json
 ```
@@ -1540,6 +1542,7 @@ Flow subcommands:
 | `run` | Execute a local strict flow or a compatible native flow. |
 | `validate` | Validate a flow definition without node execution. |
 | `compile` | Compile a flow definition to canonical strict TOML. |
+| `graph inspect` | Inspect static graph authoring classifications and bindings. |
 | `mermaid parse` | Parse Mermaid into an inert Flow View. |
 | `mermaid render` | Render a safe Mermaid view. |
 | `mermaid compare` | Compare Mermaid topology with a flow definition. |
@@ -1611,6 +1614,22 @@ Without `--output` or `--check`, canonical strict TOML is printed to stdout.
 `--output PATH` writes the canonical strict TOML atomically. `--check`
 compiles and validates without writing. `--json` prints compact status and
 public diagnostics instead of TOML.
+
+### avalan flow graph inspect
+
+Inspect static graph authoring data without reading durable runtime state:
+
+```bash
+avalan flow graph inspect flow.toml
+avalan flow graph inspect flow.toml --json
+```
+
+JSON output includes `schema_version`, actual and decorative nodes,
+executable and decorative edges, explicit edge IDs, binding state, generated
+strict edges, source spans, and public diagnostics. The command is separate
+from `avalan flow inspect`, which reads durable task-backed flow runs. Public
+output omits raw Mermaid source, graph labels, private file paths, prompts,
+file bytes, provider payloads, model output, and token text.
 
 ### avalan flow mermaid
 
