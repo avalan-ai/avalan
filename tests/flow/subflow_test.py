@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase, main
@@ -16,6 +16,7 @@ from avalan.flow import (
     FlowNodeContract,
     FlowNodeDefinition,
     FlowNodeKind,
+    FlowNodeMetadata,
     FlowNodePlan,
     FlowNodeRegistry,
     FlowOutputBehavior,
@@ -23,6 +24,7 @@ from avalan.flow import (
     FlowOutputType,
     FlowPlanCompileResult,
     LocalFlowSubflowResolver,
+    Node,
     compile_flow_definition,
     execute_flow_plan,
     flow_node_registry_runner,
@@ -47,6 +49,108 @@ class FlowSubflowValidationTestCase(TestCase):
 
             self.assertTrue(result.ok, result.public_diagnostics)
             self.assertTrue(registry.supports_subflow_resolution("subflow"))
+
+    def test_validate_accepts_graph_subflow_without_building_nodes(
+        self,
+    ) -> None:
+        build_calls = 0
+
+        def factory(definition: FlowNodeDefinition) -> Node:
+            nonlocal build_calls
+            build_calls += 1
+            raise AssertionError(definition.name)
+
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            _write_graph_child_flow(base / "child.toml")
+            registry = subflow_node_registry(
+                base_registry=_external_node_registry(factory)
+            )
+
+            result = validate_flow_definition(
+                _parent_definition(base),
+                registry,
+            )
+
+            self.assertTrue(result.ok, result.public_diagnostics)
+            self.assertEqual(build_calls, 0)
+
+    def test_validate_rejects_bad_graph_subflow_without_building_nodes(
+        self,
+    ) -> None:
+        build_calls = 0
+
+        def factory(definition: FlowNodeDefinition) -> Node:
+            nonlocal build_calls
+            build_calls += 1
+            raise AssertionError(definition.name)
+
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            _write_graph_child_flow(base / "child.toml", valid=False)
+            registry = subflow_node_registry(
+                base_registry=_external_node_registry(factory)
+            )
+
+            result = validate_flow_definition(
+                _parent_definition(base),
+                registry,
+            )
+
+            self.assertFalse(result.ok)
+            self.assertEqual(
+                result.diagnostics[0].code,
+                "flow.invalid_subflow",
+            )
+            self.assertEqual(
+                result.diagnostics[0].hint,
+                "Reference a valid flow definition; first load issue is "
+                "flow.graph.unsupported_executable_edge at graph.edges.",
+            )
+            self.assertEqual(build_calls, 0)
+            self.assertNotIn(
+                "Private child route",
+                str(result.public_diagnostics),
+            )
+
+    def test_validate_rejects_native_subflow_runtime_config(
+        self,
+    ) -> None:
+        build_calls = 0
+
+        def factory(definition: FlowNodeDefinition) -> Node:
+            nonlocal build_calls
+            build_calls += 1
+            raise FlowNodeConfigurationError(
+                code="flow.invalid_node_config",
+                path=f"nodes.{definition.name}.config",
+                message="Flow node configuration is invalid.",
+                hint="Use supported runtime configuration.",
+            )
+
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            _write_child_flow(base / "child.toml", node_type="external")
+            registry = subflow_node_registry(
+                base_registry=_external_node_registry(factory)
+            )
+
+            result = validate_flow_definition(
+                _parent_definition(base),
+                registry,
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            result.diagnostics[0].code,
+            "flow.invalid_subflow",
+        )
+        self.assertEqual(
+            result.diagnostics[0].hint,
+            "Reference a valid flow definition; first load issue is "
+            "flow.invalid_node_config at nodes.start.config.",
+        )
+        self.assertEqual(build_calls, 1)
 
     def test_validate_flow_definition_rejects_subflow_without_registry(
         self,
@@ -561,6 +665,7 @@ def _write_child_flow(
     revision: str | None = None,
     input_type: FlowInputType = FlowInputType.OBJECT,
     extra_output: bool = False,
+    node_type: str = "echo",
 ) -> None:
     revision_line = f'revision = "{revision}"' if revision is not None else ""
     extra_output_toml = (
@@ -607,13 +712,93 @@ def _write_child_flow(
         {extra_output_mapping}
 
         [nodes.start]
-        type = "echo"
+        type = "{node_type}"
 
         [nodes.start.mapping.value]
         type = "select"
         source = "input.payload"
         """,
         encoding="utf-8",
+    )
+
+
+def _write_graph_child_flow(path: Path, *, valid: bool = True) -> None:
+    edge = (
+        "start route_1@-->|Private child route| finish"
+        if valid
+        else "start -->|Private child route| finish"
+    )
+    path.write_text(
+        f"""
+        [flow]
+        name = "child"
+        version = "2026-06-07"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "start"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "finish.value"
+
+        [graph]
+        format = "mermaid"
+        source = "inline"
+        mode = "executable"
+        diagram = '''
+        flowchart LR
+        {edge}
+        '''
+
+        [nodes.start]
+        type = "external"
+
+        [nodes.start.mapping.value]
+        type = "select"
+        source = "input.payload"
+
+        [nodes.finish]
+        type = "external"
+
+        [nodes.finish.mapping.value]
+        type = "select"
+        source = "start.value"
+        """,
+        encoding="utf-8",
+    )
+
+
+def _external_node_registry(
+    factory: Callable[[FlowNodeDefinition], Node],
+) -> FlowNodeRegistry:
+    return FlowNodeRegistry(
+        {"external": factory},
+        {
+            "external": FlowNodeMetadata(
+                kind=FlowNodeKind.PASS_THROUGH,
+                input_contract=FlowNodeContract(
+                    name="value",
+                    type=FlowInputType.OBJECT,
+                    metadata={"dynamic": True},
+                ),
+                output_contract=FlowNodeContract(
+                    name="value",
+                    type=FlowOutputType.OBJECT,
+                    metadata={"dynamic": True},
+                ),
+            ),
+        },
     )
 
 

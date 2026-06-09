@@ -1417,6 +1417,215 @@ class FlowRunCommandTestCase(TestCase):
         self.assertTrue(result)
         self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
 
+    def test_flow_run_strict_graph_uses_task_context_without_runtime_build(
+        self,
+    ) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root)
+            with (
+                patch(
+                    "avalan.flow.loader.build_flow",
+                    side_effect=AssertionError("runtime build not expected"),
+                ) as build_flow,
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            ):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"private":"customer"}',
+                        task_run_json=True,
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
+        build_flow.assert_not_called()
+        self.assertNotIn("Private graph label", stream.getvalue())
+
+    def test_flow_run_strict_file_graph_uses_task_context_safely(
+        self,
+    ) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_file_graph_constant_flow(root)
+            with (
+                patch(
+                    "avalan.flow.loader.build_flow",
+                    side_effect=AssertionError("runtime build not expected"),
+                ) as build_flow,
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            ):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"private":"customer"}',
+                        task_run_json=True,
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
+        build_flow.assert_not_called()
+        self.assertNotIn("Private graph label", stream.getvalue())
+
+    def test_flow_run_strict_graph_agent_uses_task_context_safely(
+        self,
+    ) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        output = {"answer": "ok"}
+        orchestrator = _FlowCliAgentOrchestrator(output)
+
+        async def from_settings(
+            loader: object,
+            settings: object,
+            *,
+            tool_settings: object | None = None,
+            tool_format: object | None = None,
+        ) -> _FlowCliAgentOrchestrator:
+            _ = loader, settings, tool_settings, tool_format
+            return orchestrator
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_agent_flow(root)
+            with (
+                patch.object(
+                    task_cmds.OrchestratorLoader,
+                    "from_settings",
+                    new=from_settings,
+                ),
+                patch(
+                    "avalan.flow.loader.build_flow",
+                    side_effect=AssertionError("runtime build not expected"),
+                ) as build_flow,
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            ):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"question":"ready"}',
+                        task_run_json=True,
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        self.assertTrue(result)
+        self.assertEqual(stream.getvalue(), '{"answer":"ok"}\n')
+        self.assertEqual(len(orchestrator.inputs), 1)
+        payload = orchestrator.inputs[0]
+        self.assertIsInstance(payload, str)
+        self.assertEqual(loads(payload), {"question": "ready"})
+        self.assertNotIn("Private graph label", stream.getvalue())
+        build_flow.assert_not_called()
+
+    def test_flow_run_invalid_strict_graph_agent_skips_task_context_safely(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_agent_flow(root, valid=False)
+            with (
+                patch.object(
+                    task_cmds.OrchestratorLoader,
+                    "from_settings",
+                    side_effect=AssertionError(
+                        "task context not expected",
+                    ),
+                ) as from_settings,
+                patch(
+                    "avalan.flow.loader.build_flow",
+                    side_effect=AssertionError("runtime build not expected"),
+                ) as build_flow,
+            ):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"private":"customer"}',
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("flow.graph.unsupported_executable_edge", output)
+        self.assertNotIn("Private graph label", output)
+        self.assertNotIn("customer", output)
+        build_flow.assert_not_called()
+        from_settings.assert_not_called()
+
+    def test_flow_run_invalid_graph_skips_runtime_build_safely(self) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_graph_constant_flow(root, valid=False)
+            with patch(
+                "avalan.flow.loader.build_flow",
+                side_effect=AssertionError("runtime build not expected"),
+            ) as build_flow:
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"private":"customer"}',
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("flow.graph.unsupported_executable_edge", output)
+        self.assertNotIn("Private graph label", output)
+        self.assertNotIn("customer", output)
+        build_flow.assert_not_called()
+
+    def test_flow_run_invalid_file_graph_skips_runtime_build_safely(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_file_graph_constant_flow(
+                root,
+                valid=False,
+            )
+            with patch(
+                "avalan.flow.loader.build_flow",
+                side_effect=AssertionError("runtime build not expected"),
+            ) as build_flow:
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"private":"customer"}',
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("flow.graph.unsupported_executable_edge", output)
+        self.assertNotIn("Private graph label", output)
+        self.assertNotIn("customer", output)
+        build_flow.assert_not_called()
+
     def test_flow_run_strict_file_flow_uses_flow_privacy(self) -> None:
         stream = StringIO()
         console = Console(file=stream, width=160)
@@ -1612,6 +1821,53 @@ class FlowRunCommandTestCase(TestCase):
         self.assertIn("flow.malformed_toml", output)
         self.assertNotIn("private customer prompt", output)
         self.assertNotIn("broken.flow.toml", output)
+
+    def test_flow_run_reports_full_load_failure_after_validation(
+        self,
+    ) -> None:
+        console = Console(record=True, width=160)
+        issue = FlowLoadIssue(
+            code="flow.invalid_node",
+            path="nodes.private",
+            message="Flow node configuration is invalid.",
+            hint="Use only supported built-in node configuration.",
+            category=FlowLoadIssueCategory.VALUE,
+        )
+        validation_result = SimpleNamespace(
+            definition=FlowDefinition(
+                name="legacy",
+                entrypoint="start",
+                output_node="start",
+                nodes=(),
+            ),
+            issues=(),
+            flow=None,
+        )
+        load_result = SimpleNamespace(
+            definition=None,
+            issues=(issue,),
+            flow=None,
+        )
+        loader = SimpleNamespace(
+            load_validation_result=lambda _: validation_result,
+            load_result=lambda _: load_result,
+        )
+
+        with patch.object(
+            flow_cmds,
+            "FlowDefinitionLoader",
+            return_value=loader,
+        ):
+            result = flow_cmds.flow_run(
+                _args(flow="private.flow.toml"),
+                console,
+                self.theme,
+            )
+
+        output = console.export_text()
+        self.assertFalse(result)
+        self.assertIn("flow.invalid_node", output)
+        self.assertNotIn("private.flow.toml", output)
 
     def test_flow_run_reports_read_failure_without_private_path(self) -> None:
         console = Console(record=True, width=160)
@@ -3536,6 +3792,204 @@ def _write_strict_constant_flow(root: Path) -> Path:
         [nodes.start]
         type = "constant"
         value = {answer = "ok"}
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _write_strict_graph_constant_flow(
+    root: Path,
+    *,
+    valid: bool = True,
+) -> Path:
+    edge = (
+        "start route_1@-->|Private graph label| finish"
+        if valid
+        else "start -->|Private graph label| finish"
+    )
+    flow_path = root / "strict_graph.flow.toml"
+    flow_path.write_text(
+        f"""
+        [flow]
+        name = "strict_graph"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "result"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "start"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        result = "finish.value"
+
+        [graph]
+        format = "mermaid"
+        source = "inline"
+        mode = "executable"
+        diagram = '''
+        flowchart LR
+        {edge}
+        '''
+
+        [nodes.start]
+        type = "constant"
+        value = {{answer = "ok"}}
+
+        [nodes.finish]
+        type = "pass-through"
+
+        [nodes.finish.mapping.value]
+        type = "select"
+        source = "start.value"
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _write_strict_file_graph_constant_flow(
+    root: Path,
+    *,
+    valid: bool = True,
+) -> Path:
+    graph_directory = root / "graphs"
+    graph_directory.mkdir()
+    edge = (
+        "start route_1@-->|Private graph label| finish"
+        if valid
+        else "start -->|Private graph label| finish"
+    )
+    (graph_directory / "strict_graph.mmd").write_text(
+        f"""
+        flowchart LR
+        {edge}
+        """,
+        encoding="utf-8",
+    )
+    flow_path = root / "strict_file_graph.flow.toml"
+    flow_path.write_text(
+        """
+        [flow]
+        name = "strict_file_graph"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "result"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "start"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        result = "finish.value"
+
+        [graph]
+        format = "mermaid"
+        source = "file"
+        mode = "executable"
+        path = "graphs/strict_graph.mmd"
+
+        [nodes.start]
+        type = "constant"
+        value = {answer = "ok"}
+
+        [nodes.finish]
+        type = "pass-through"
+
+        [nodes.finish.mapping.value]
+        type = "select"
+        source = "start.value"
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
+def _write_strict_graph_agent_flow(
+    root: Path,
+    *,
+    valid: bool = True,
+) -> Path:
+    (root / "agent.toml").write_text(
+        """
+        [agent]
+        name = "Flow Agent"
+        task = "Return a JSON object."
+        user = "Return the answer."
+
+        [engine]
+        uri = "ai://env:KEY@openai/gpt-4o-mini"
+        """,
+        encoding="utf-8",
+    )
+    graph_body = (
+        """
+        extract
+        private_note["Private graph label"]
+        """
+        if valid
+        else "extract -->|Private graph label| extract"
+    )
+    flow_path = root / "strict_graph_agent.flow.toml"
+    flow_path.write_text(
+        f"""
+        [flow]
+        name = "strict_graph_agent"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "result"
+        type = "object"
+
+        [entry]
+        type = "node"
+        node = "extract"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        result = "extract.result"
+
+        [graph]
+        format = "mermaid"
+        source = "inline"
+        mode = "executable"
+        diagram = '''
+        flowchart LR
+        {graph_body}
+        '''
+
+        [nodes.extract]
+        type = "agent"
+        ref = "agent.toml"
+        input = "input"
+
+        [nodes.extract.mapping]
+        input = "input.payload"
         """,
         encoding="utf-8",
     )

@@ -188,6 +188,7 @@ _ALLOWED_GRAPH_FIELDS = frozenset(
     }
 )
 _ALLOWED_GRAPH_EDGE_FIELDS = _ALLOWED_EDGE_FIELDS - {"source", "target"}
+_GRAPH_EDGE_METADATA_PATH = "graph.edges.metadata"
 _ALLOWED_CONDITION_FIELDS = frozenset(
     {
         "condition",
@@ -265,6 +266,7 @@ class FlowLoadResult:
     definition: FlowDefinition | None
     flow: Flow | None = None
     issues: tuple[FlowLoadIssue, ...] = ()
+    authoring_graph: bool = False
 
     @property
     def ok(self) -> bool:
@@ -279,6 +281,9 @@ class FlowLoadResult:
         return tuple(
             diagnostic.as_public_dict() for diagnostic in self.diagnostics
         )
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.authoring_graph, bool)
 
 
 class FlowLoadError(ValueError):
@@ -485,6 +490,7 @@ def _build_result(
     flow_raw = _section(raw, "flow", issues, required=True)
     nodes_raw = _section(raw, "nodes", issues, required=True)
     graph_raw = _section(raw, "graph", issues, required=False)
+    authoring_graph = "graph" in raw
     _validate_graph_section(graph_raw, issues)
     has_graph_edge_conflict = _validate_graph_edge_conflict(
         raw,
@@ -492,7 +498,11 @@ def _build_result(
         issues,
     )
     if flow_raw is None or nodes_raw is None:
-        return FlowLoadResult(definition=None, issues=tuple(issues))
+        return FlowLoadResult(
+            definition=None,
+            issues=tuple(issues),
+            authoring_graph=authoring_graph,
+        )
 
     _validate_unknown_fields(
         flow_raw,
@@ -584,9 +594,17 @@ def _build_result(
     if name is None or (
         not is_strict and (entrypoint is None or output_node is None)
     ):
-        return FlowLoadResult(definition=None, issues=tuple(issues))
+        return FlowLoadResult(
+            definition=None,
+            issues=tuple(issues),
+            authoring_graph=authoring_graph,
+        )
     if has_graph_edge_conflict:
-        return FlowLoadResult(definition=None, issues=tuple(issues))
+        return FlowLoadResult(
+            definition=None,
+            issues=tuple(issues),
+            authoring_graph=authoring_graph,
+        )
     if graph_raw is not None:
         graph_edges = _compile_graph_edges(
             graph_raw,
@@ -596,7 +614,11 @@ def _build_result(
             source_path=source_path,
         )
         if graph_edges is None:
-            return FlowLoadResult(definition=None, issues=tuple(issues))
+            return FlowLoadResult(
+                definition=None,
+                issues=tuple(issues),
+                authoring_graph=authoring_graph,
+            )
         edges = graph_edges
     definition = FlowDefinition(
         name=name,
@@ -627,9 +649,16 @@ def _build_result(
         for diagnostic in validation_result.diagnostics
     )
     if issues:
-        return FlowLoadResult(definition=None, issues=tuple(issues))
+        return FlowLoadResult(
+            definition=None,
+            issues=tuple(issues),
+            authoring_graph=authoring_graph,
+        )
     if not build_runtime:
-        return FlowLoadResult(definition=definition)
+        return FlowLoadResult(
+            definition=definition,
+            authoring_graph=authoring_graph,
+        )
     try:
         flow = build_flow(definition, registry)
     except FlowNodeConfigurationError as error:
@@ -644,6 +673,7 @@ def _build_result(
                     category=FlowLoadIssueCategory.VALUE,
                 ),
             ),
+            authoring_graph=authoring_graph,
         )
     except (AssertionError, KeyError, TypeError, ValueError):
         return FlowLoadResult(
@@ -657,8 +687,13 @@ def _build_result(
                     category=FlowLoadIssueCategory.VALUE,
                 ),
             ),
+            authoring_graph=authoring_graph,
         )
-    return FlowLoadResult(definition=definition, flow=flow)
+    return FlowLoadResult(
+        definition=definition,
+        flow=flow,
+        authoring_graph=authoring_graph,
+    )
 
 
 def _validate_top_level_sections(
@@ -813,14 +848,13 @@ def _validate_graph_edges_section(
                 _invalid_type("graph.edges", "Use named edge tables.")
             )
             continue
-        path = f"graph.edges.{edge_id}"
         if not isinstance(raw, Mapping):
-            issues.append(_invalid_section_type(path))
+            issues.append(_invalid_section_type(_GRAPH_EDGE_METADATA_PATH))
             continue
         _validate_unknown_fields(
             raw,
             allowed=_ALLOWED_GRAPH_EDGE_FIELDS,
-            path=path,
+            path=_GRAPH_EDGE_METADATA_PATH,
             issues=issues,
             hint="Remove unsupported fields from graph edge metadata.",
         )
@@ -909,6 +943,16 @@ def _graph_source(
     match source_kind:
         case FlowGraphSourceKind.INLINE:
             if diagram is None:
+                if graph_path is not None:
+                    issues.append(
+                        _issue_from_diagnostic(
+                            flow_graph_diagnostic(
+                                FlowGraphDiagnosticCode.SOURCE_CONFLICT,
+                                "graph.source",
+                            )
+                        )
+                    )
+                    return None
                 issues.append(_missing_graph_source())
                 return None
             return FlowGraphSource(
@@ -920,6 +964,16 @@ def _graph_source(
             )
         case FlowGraphSourceKind.FILE:
             if graph_path is None:
+                if diagram is not None:
+                    issues.append(
+                        _issue_from_diagnostic(
+                            flow_graph_diagnostic(
+                                FlowGraphDiagnosticCode.SOURCE_CONFLICT,
+                                "graph.source",
+                            )
+                        )
+                    )
+                    return None
                 issues.append(_missing_graph_source())
                 return None
             return FlowGraphSource(
@@ -942,7 +996,7 @@ def _graph_edge_bindings(
     for edge_id, edge_raw in value.items():
         assert isinstance(edge_id, str) and edge_id.strip()
         assert isinstance(edge_raw, Mapping)
-        path = f"graph.edges.{edge_id}"
+        path = _GRAPH_EDGE_METADATA_PATH
         label = _optional_str(edge_raw, f"{path}.label", "label", issues)
         kind = _optional_enum_value(
             edge_raw,

@@ -27,6 +27,7 @@ from avalan.flow import (
     FlowJoinPolicyType,
     FlowLoadError,
     FlowLoadIssueCategory,
+    FlowLoadResult,
     FlowLoopPolicy,
     FlowNodeContract,
     FlowNodeDefinition,
@@ -1326,6 +1327,107 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(build_calls, 0)
 
+    def test_load_validation_result_compiles_file_graph_without_building_nodes(
+        self,
+    ) -> None:
+        build_calls = 0
+
+        def factory(definition: FlowNodeDefinition) -> Node:
+            nonlocal build_calls
+            _ = definition
+            build_calls += 1
+            raise AssertionError("factory should not build")
+
+        loader = FlowDefinitionLoader(
+            FlowNodeRegistry(
+                {"external": factory},
+                {"external": FlowNodeMetadata()},
+            )
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            graph_directory = root / "graphs"
+            graph_directory.mkdir()
+            (graph_directory / "flow.mmd").write_text(
+                """
+                flowchart LR
+                start route_1@-->|Private customer route| finish
+                """,
+                encoding="utf-8",
+            )
+            flow_path = root / "flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "graph_file_validation"
+                entrypoint = "start"
+                output_node = "finish"
+
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                path = "graphs/flow.mmd"
+
+                [nodes.start]
+                type = "external"
+
+                [nodes.finish]
+                type = "external"
+                """,
+                encoding="utf-8",
+            )
+
+            result = loader.load_validation_result(flow_path)
+
+        self.assertTrue(result.ok, result.issues)
+        self.assertIsNone(result.flow)
+        assert result.definition is not None
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in result.definition.edges],
+            [("start", "finish")],
+        )
+        self.assertNotIn("Private customer route", str(result.definition))
+        self.assertEqual(build_calls, 0)
+
+    def test_load_result_marks_graph_authoring_only_when_present(
+        self,
+    ) -> None:
+        native = loads_flow_definition_result(VALID_FLOW)
+        graph = FlowDefinitionLoader().loads_validation_result("""
+            [flow]
+            name = "graph_marker"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@--> finish
+            '''
+
+            [nodes.start]
+            type = "constant"
+            value = "ok"
+
+            [nodes.finish]
+            type = "echo"
+            """)
+
+        self.assertTrue(native.ok, native.public_diagnostics)
+        self.assertFalse(native.authoring_graph)
+        self.assertTrue(graph.ok, graph.public_diagnostics)
+        self.assertTrue(graph.authoring_graph)
+        with self.assertRaises(AssertionError):
+            FlowLoadResult(
+                definition=None,
+                authoring_graph="yes",  # type: ignore[arg-type]
+            )
+
     def test_native_edges_load_without_graph_section(self) -> None:
         result = loads_flow_definition_result(VALID_FLOW)
 
@@ -1543,6 +1645,28 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             (
                 """
                 [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                path = "private/graph.mmd"
+                """,
+                "flow.graph.source_conflict",
+                "graph.source",
+            ),
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                diagram = "flowchart LR\\nprivate_start"
+                """,
+                "flow.graph.source_conflict",
+                "graph.source",
+            ),
+            (
+                """
+                [graph]
                 format = 3
                 source = "inline"
                 mode = "executable"
@@ -1658,19 +1782,36 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             ),
             (
                 """
-                [graph.edges.route_1]
+                [graph.edges.private_customer_route]
                 source = "private"
                 """,
                 "flow.unsupported_field",
-                "graph.edges.route_1.source",
+                "graph.edges.metadata.source",
             ),
             (
                 """
                 [graph.edges]
-                route_1 = "private graph route"
+                private_customer_route = "private graph route"
                 """,
                 "flow.invalid_section",
-                "graph.edges.route_1",
+                "graph.edges.metadata",
+            ),
+            (
+                """
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start private_customer_route@--> start
+                '''
+
+                [graph.edges.private_customer_route]
+                condition = "private graph route"
+                """,
+                "flow.invalid_type",
+                "graph.edges.metadata.condition",
             ),
             (
                 """

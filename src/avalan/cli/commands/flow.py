@@ -1104,8 +1104,9 @@ async def _flow_run(
 ) -> bool:
     diagnostic_console = _task_diagnostic_console(args, console)
     flow_path = Path(args.flow)
+    loader = FlowDefinitionLoader()
     try:
-        load_result = FlowDefinitionLoader().load_result(flow_path)
+        load_result = loader.load_validation_result(flow_path)
     except OSError as exc:
         message = strerror(exc.errno) if exc.errno else "Unable to read file."
         diagnostic_console.print(
@@ -1122,7 +1123,7 @@ async def _flow_run(
             hub=hub,
             logger=logger,
         )
-    if load_result.definition is None or load_result.flow is None:
+    if load_result.definition is None:
         if _flow_needs_task_context(load_result.issues):
             return await _flow_run_with_task_context(
                 args,
@@ -1131,6 +1132,14 @@ async def _flow_run(
                 hub=hub,
                 logger=logger,
             )
+        _print_issues(
+            diagnostic_console,
+            "Flow definition could not be loaded.",
+            _flow_load_task_issues(load_result.issues),
+        )
+        return False
+    load_result = loader.load_result(flow_path)
+    if load_result.definition is None or load_result.flow is None:
         _print_issues(
             diagnostic_console,
             "Flow definition could not be loaded.",
@@ -1208,7 +1217,7 @@ async def _flow_run_with_task_context(
     logger: Logger | None,
 ) -> bool:
     diagnostic_console = _task_diagnostic_console(args, console)
-    load_result = _flow_metadata_loader().load_result(flow_path)
+    load_result = _flow_metadata_loader().load_validation_result(flow_path)
     if load_result.definition is None:
         _print_issues(
             diagnostic_console,

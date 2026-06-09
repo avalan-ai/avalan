@@ -300,14 +300,17 @@ def _validate_task_flow_reference(
         logger=getLogger("avalan.task"),
         stack=AsyncExitStack(),
     )
+    loader = FlowDefinitionLoader(
+        registry=task_flow_node_registry(
+            context,
+            agent_runner=agent_target,
+            execution_roots=(definition_path.parent,),
+        )
+    )
     try:
-        result = FlowDefinitionLoader(
-            registry=task_flow_node_registry(
-                context,
-                agent_runner=agent_target,
-                execution_roots=(definition_path.parent,),
-            )
-        ).load_result(path)
+        result = loader.load_validation_result(path)
+        if result.definition is not None and not result.authoring_graph:
+            result = loader.load_result(path)
     except OSError:
         return (
             TaskValidationIssue(
@@ -1235,7 +1238,7 @@ def _task_strict_flow_resolver(
                 execution_roots=(ref_base,),
                 tool_resolver=tool_resolver,
             )
-        ).load_result(path)
+        ).load_validation_result(path)
         if result.definition is None:
             raise TaskValidationError(
                 tuple(
