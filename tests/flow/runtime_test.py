@@ -262,6 +262,193 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(durations["terminal"])
         self.assertNotIn("customer-secret", str(result.public_diagnostics))
 
+    async def test_execute_flow_plan_preserves_tool_envelope_outputs(
+        self,
+    ) -> None:
+        envelope: Mapping[str, object] = {
+            "status": "diagnostic",
+            "call_id": "call-1",
+            "canonical_name": "flow_adder",
+            "result": None,
+            "error": None,
+            "diagnostic": {
+                "code": "tool.invalid_arguments",
+                "retryable": False,
+            },
+        }
+        node = FlowNodePlan(
+            name="tool",
+            type="tool",
+            kind=FlowNodeKind.TOOL,
+            config={"output_mode": "envelope"},
+            output_contracts=(
+                FlowNodeContract(name="result", type=FlowOutputType.JSON),
+            ),
+        )
+        plan = self._plan(
+            entry_node="tool",
+            outputs={
+                "status": "tool.status",
+                "diagnostic_code": "tool.diagnostic.code",
+                "result": "tool.result",
+            },
+            nodes=(node,),
+        )
+
+        result = await execute_flow_plan(
+            plan,
+            lambda _node, _inputs: dict(envelope),
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(
+            result.outputs,
+            {
+                "status": "diagnostic",
+                "diagnostic_code": "tool.invalid_arguments",
+                "result": None,
+            },
+        )
+        self.assertEqual(result.node_outputs["tool"]["status"], "diagnostic")
+        self.assertEqual(
+            result.node_outputs["tool"]["diagnostic"],
+            {"code": "tool.invalid_arguments", "retryable": False},
+        )
+
+    async def test_execute_flow_plan_keeps_raw_tool_contract_pruning(
+        self,
+    ) -> None:
+        node = FlowNodePlan(
+            name="tool",
+            type="tool",
+            kind=FlowNodeKind.TOOL,
+            config={"output_mode": "raw"},
+            output_contracts=(
+                FlowNodeContract(name="result", type=FlowOutputType.JSON),
+            ),
+        )
+        plan = self._plan(
+            entry_node="tool",
+            outputs={"result": "tool.result"},
+            nodes=(node,),
+        )
+
+        result = await execute_flow_plan(
+            plan,
+            lambda _node, _inputs: {
+                "status": "diagnostic",
+                "result": "raw value",
+            },
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"result": "raw value"})
+        self.assertEqual(result.node_outputs["tool"], {"result": "raw value"})
+
+    async def test_execute_flow_plan_propagates_subflow_cancellation_context(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        cancellation_checks = 0
+        child_plan = replace(
+            self._plan(
+                entry_node="first",
+                outputs={"answer": "second.value"},
+                nodes=(
+                    FlowNodePlan(
+                        name="first",
+                        type="echo",
+                        kind=FlowNodeKind.PASS_THROUGH,
+                        output_contracts=(
+                            FlowNodeContract(
+                                name="value",
+                                type=FlowOutputType.JSON,
+                            ),
+                        ),
+                    ),
+                    FlowNodePlan(
+                        name="second",
+                        type="echo",
+                        kind=FlowNodeKind.PASS_THROUGH,
+                        output_contracts=(
+                            FlowNodeContract(
+                                name="value",
+                                type=FlowOutputType.JSON,
+                            ),
+                        ),
+                    ),
+                ),
+                edges=(
+                    FlowEdgePlan(
+                        index=0,
+                        source="first",
+                        target="second",
+                        kind=FlowEdgeKind.SUCCESS,
+                    ),
+                ),
+            ),
+            name="child-runtime",
+        )
+        node = FlowNodePlan(
+            name="child",
+            type="subflow",
+            kind=FlowNodeKind.SUBFLOW,
+            output_contracts=(
+                FlowNodeContract(name="result", type=FlowOutputType.JSON),
+            ),
+            metadata={
+                "subflow": {
+                    "plan": child_plan,
+                    "output_mapping": {"result": "answer"},
+                }
+            },
+        )
+        plan = self._plan(
+            entry_node="child",
+            outputs={"answer": "child.result"},
+            nodes=(node,),
+        )
+
+        async def check_cancelled() -> None:
+            nonlocal cancellation_checks
+            cancellation_checks += 1
+            if cancellation_checks >= 3:
+                raise CancelledError("stop inside child")
+
+        result = await execute_flow_plan(
+            plan,
+            FlowNodeRegistryRunner(),
+            cancellation_checker=check_cancelled,
+            event_listener=events.append,
+        )
+        child_events = [
+            event
+            for event in events
+            if cast(Mapping[str, object], event.payload)["flow_id"]
+            == "child-runtime"
+        ]
+        child_started_nodes = [
+            cast(Mapping[str, object], event.payload)["node"]
+            for event in child_events
+            if event.type == EventType.FLOW_NODE_STARTED
+        ]
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            self._node_states(result)["child"], FlowNodeState.CANCELLED
+        )
+        self.assertIn(
+            "flow.execution.node_cancelled",
+            [diagnostic.code for diagnostic in result.diagnostics],
+        )
+        self.assertIn("first", child_started_nodes)
+        self.assertNotIn("second", child_started_nodes)
+        self.assertIn(
+            EventType.FLOW_CANCELLED,
+            [event.type for event in child_events],
+        )
+        self.assertGreaterEqual(cancellation_checks, 3)
+
     async def test_execute_flow_plan_emits_branch_events_safely(self) -> None:
         events: list[Event] = []
 
