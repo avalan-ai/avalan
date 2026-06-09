@@ -1422,10 +1422,16 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         self.assertFalse(native.authoring_graph)
         self.assertTrue(graph.ok, graph.public_diagnostics)
         self.assertTrue(graph.authoring_graph)
+        self.assertIsNotNone(graph.graph_inspection)
         with self.assertRaises(AssertionError):
             FlowLoadResult(
                 definition=None,
                 authoring_graph="yes",  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            FlowLoadResult(
+                definition=None,
+                graph_inspection=object(),  # type: ignore[arg-type]
             )
 
     def test_native_edges_load_without_graph_section(self) -> None:
