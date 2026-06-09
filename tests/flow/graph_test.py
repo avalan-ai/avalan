@@ -8,6 +8,7 @@ from unittest.mock import patch
 from avalan.flow import (
     FlowCondition,
     FlowConditionOperator,
+    FlowDefinition,
     FlowDiagnostic,
     FlowDiagnosticCategory,
     FlowDiagnosticSeverity,
@@ -33,6 +34,7 @@ from avalan.flow import (
     compile_flow_graph,
     flow_graph_diagnostic,
     flow_graph_diagnostic_load_category,
+    validate_flow_definition,
 )
 
 _GRAPH_DIAGNOSTIC_CASES = (
@@ -279,6 +281,142 @@ class FlowGraphCompilerTestCase(TestCase):
         public = str(result.inspection.as_public_dict())
         self.assertNotIn("Private visual label", public)
         self.assertNotIn("private metadata label", public)
+        self.assertNotIn("/private/customer", public)
+
+    def test_compile_flow_graph_emits_strict_edges_that_validate(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    "start route_1@--> review",
+                    "review route_2@-->|Private visual label| finish",
+                )
+            ),
+            source_identity="/private/customer/flow.toml",
+        )
+        nodes = (
+            FlowNodeDefinition(name="start", type="input"),
+            FlowNodeDefinition(name="review", type="echo"),
+            FlowNodeDefinition(name="finish", type="echo"),
+        )
+
+        result = compile_flow_graph(
+            source,
+            nodes,
+            edge_bindings={
+                "route_1": FlowGraphEdgeBinding(
+                    edge_id="route_1",
+                    label="accepted",
+                )
+            },
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            [
+                (
+                    edge.source,
+                    edge.target,
+                    edge.kind,
+                    edge.label,
+                    edge.priority,
+                    edge.default,
+                    edge.routing_policy,
+                )
+                for edge in result.edges
+            ],
+            [
+                (
+                    "start",
+                    "review",
+                    FlowEdgeKind.SUCCESS,
+                    "accepted",
+                    0,
+                    False,
+                    FlowRouteMatchPolicy.EXCLUSIVE,
+                ),
+                (
+                    "review",
+                    "finish",
+                    FlowEdgeKind.SUCCESS,
+                    None,
+                    0,
+                    False,
+                    FlowRouteMatchPolicy.EXCLUSIVE,
+                ),
+            ],
+        )
+        validation = validate_flow_definition(
+            FlowDefinition(
+                name="compiled",
+                entrypoint="start",
+                output_node="finish",
+                nodes=nodes,
+                edges=result.edges,
+            )
+        )
+        self.assertTrue(validation.ok, validation.diagnostics)
+        self.assertEqual(validation.diagnostics, ())
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertNotIn(
+            "Private visual label",
+            str(result.inspection.as_public_dict()),
+        )
+
+    def test_compile_flow_graph_rejects_executable_edges_without_id_safely(
+        self,
+    ) -> None:
+        source = FlowGraphSource(
+            source_kind=FlowGraphSourceKind.INLINE,
+            diagram="\n".join(
+                (
+                    "flowchart LR",
+                    "start -->|Private customer label| review",
+                    "review route_2@--> finish",
+                )
+            ),
+            source_identity="/private/customer/flow.toml",
+        )
+
+        result = compile_flow_graph(
+            source,
+            (
+                FlowNodeDefinition(name="start", type="input"),
+                FlowNodeDefinition(name="review", type="pass-through"),
+                FlowNodeDefinition(name="finish", type="pass-through"),
+            ),
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.edges, ())
+        self.assertEqual(
+            [diagnostic.code for diagnostic in result.diagnostics],
+            ["flow.graph.unsupported_executable_edge"],
+        )
+        self.assertEqual(result.diagnostics[0].path, "graph.edges")
+        self.assertIsNotNone(result.diagnostics[0].source_span)
+        self.assertIsNotNone(result.inspection)
+        assert result.inspection is not None
+        self.assertEqual(
+            [
+                (edge.source, edge.target)
+                for edge in result.inspection.generated_edges
+            ],
+            [("review", "finish")],
+        )
+        self.assertEqual(
+            [
+                (binding.edge_id, binding.state)
+                for binding in result.inspection.bindings
+            ],
+            [("route_2", FlowGraphBindingState.UNBOUND)],
+        )
+        public = str(result.as_public_dict())
+        self.assertNotIn("Private customer label", public)
         self.assertNotIn("/private/customer", public)
 
     def test_compile_flow_graph_rejects_missing_edge_metadata_target(
