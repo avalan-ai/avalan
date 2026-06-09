@@ -1,4 +1,3 @@
-from ..filesystem import run_awaitable
 from .definition import (
     FlowDefinition,
     FlowInputMapping,
@@ -36,7 +35,7 @@ class LocalFlowSubflowResolver:
         self._cache: dict[Path, Mapping[str, object]] = {}
         self._compiling: set[Path] = set()
 
-    def compile_subflow(
+    async def compile_subflow(
         self,
         ref: str,
         *,
@@ -62,7 +61,7 @@ class LocalFlowSubflowResolver:
             )
         self._compiling.add(path)
         try:
-            metadata = self._compile_path(
+            metadata = await self._compile_path(
                 path,
                 node=node,
                 registry=registry,
@@ -73,7 +72,7 @@ class LocalFlowSubflowResolver:
         self._cache[path] = metadata
         return metadata
 
-    def _compile_path(
+    async def _compile_path(
         self,
         path: Path,
         *,
@@ -82,12 +81,12 @@ class LocalFlowSubflowResolver:
         output_mapping: Mapping[str, str],
     ) -> Mapping[str, object]:
         loader = FlowDefinitionLoader(registry)
-        load_result = run_awaitable(loader.load_validation_result(path))
+        load_result = await loader.load_validation_result(path)
         if (
             load_result.definition is not None
             and not load_result.authoring_graph
         ):
-            load_result = run_awaitable(loader.load_result(path))
+            load_result = await loader.load_result(path)
         if load_result.definition is None:
             assert load_result.issues
             raise _configuration_error(
@@ -99,7 +98,7 @@ class LocalFlowSubflowResolver:
         _validate_expectations(load_result.definition, node)
         _validate_input_mapping(load_result.definition, node)
         _validate_output_mapping(load_result.definition, node, output_mapping)
-        compile_result = compile_flow_definition(
+        compile_result = await compile_flow_definition(
             load_result.definition,
             registry,
         )
@@ -246,20 +245,46 @@ def _subflow_validator(
         definition: FlowDefinition,
         node: FlowNodeDefinition,
     ) -> tuple[FlowNodeConfigurationError, ...]:
-        if node.ref is None or _is_path_escape_ref(node.ref):
-            return ()
         try:
-            resolver.compile_subflow(
-                node.ref,
-                parent_definition=definition,
-                node=node,
-                registry=registry,
-            )
+            _validate_subflow_ref_shape(definition, node)
         except FlowNodeConfigurationError as error:
             return (error,)
         return ()
 
     return validate
+
+
+def _validate_subflow_ref_shape(
+    definition: FlowDefinition,
+    node: FlowNodeDefinition,
+) -> None:
+    if node.ref is None:
+        return
+    if _is_untrusted_ref(node.ref):
+        raise _configuration_error(
+            code="flow.path_escape",
+            path=f"nodes.{node.name}.ref",
+            message="Subflow reference escapes the flow directory.",
+            hint="Use a safe relative reference inside the flow directory.",
+        )
+    if Path(node.ref).suffix != ".toml":
+        raise _configuration_error(
+            code="flow.invalid_ref",
+            path=f"nodes.{node.name}.ref",
+            message="Subflow node ref must be a local TOML file.",
+            hint="Use a relative .toml file path.",
+        )
+    if definition.definition_base is None:
+        return
+    base_path = Path(definition.definition_base).resolve()
+    path = (base_path / node.ref).resolve()
+    if not _is_relative_to(path, base_path):
+        raise _configuration_error(
+            code="flow.path_escape",
+            path=f"nodes.{node.name}.ref",
+            message="Subflow reference escapes the flow directory.",
+            hint="Use a safe relative reference inside the flow directory.",
+        )
 
 
 def _subflow_output_mapping(

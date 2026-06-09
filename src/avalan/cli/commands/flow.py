@@ -1334,7 +1334,7 @@ async def _flow_run(
         )
         return False
     definition = load_result.definition
-    task_definition = _flow_task_definition_or_report(
+    task_definition = await _flow_task_definition_or_report(
         definition,
         flow_path,
         diagnostic_console,
@@ -1342,7 +1342,7 @@ async def _flow_run(
     if task_definition is None:
         return False
     try:
-        flow_input = task_cli_input(args, task_definition)
+        flow_input = await task_cli_input(args, task_definition)
     except TaskCliInputError as exc:
         _print_task_cli_input_error(diagnostic_console, exc)
         return False
@@ -1415,7 +1415,7 @@ async def _flow_run_with_task_context(
         )
         return False
     definition = load_result.definition
-    task_definition = _flow_task_definition_or_report(
+    task_definition = await _flow_task_definition_or_report(
         definition,
         flow_path,
         diagnostic_console,
@@ -1423,7 +1423,7 @@ async def _flow_run_with_task_context(
     if task_definition is None:
         return False
     try:
-        flow_input = task_cli_input(args, task_definition)
+        flow_input = await task_cli_input(args, task_definition)
     except TaskCliInputError as exc:
         _print_task_cli_input_error(diagnostic_console, exc)
         return False
@@ -1743,7 +1743,7 @@ def _flow_enabled_tools(args: Namespace) -> list[str]:
     return tools
 
 
-def _flow_task_definition(
+async def _flow_task_definition(
     definition: FlowDefinition,
     flow_path: Path,
 ) -> TaskDefinition:
@@ -1752,7 +1752,7 @@ def _flow_task_definition(
             name=definition.name, version=definition.version or "1"
         ),
         input=_flow_task_input(definition),
-        output=_flow_task_output(definition),
+        output=await _flow_task_output(definition),
         execution=TaskExecutionTarget(
             type=TaskTargetType.FLOW,
             ref=flow_path.name,
@@ -1762,13 +1762,13 @@ def _flow_task_definition(
     )
 
 
-def _flow_task_definition_or_report(
+async def _flow_task_definition_or_report(
     definition: FlowDefinition,
     flow_path: Path,
     console: Console,
 ) -> TaskDefinition | None:
     try:
-        return _flow_task_definition(definition, flow_path)
+        return await _flow_task_definition(definition, flow_path)
     except TaskSchemaResolutionError:
         _print_issues(
             console,
@@ -1873,11 +1873,11 @@ def _flow_task_file_property_schema(
     }
 
 
-def _flow_task_output(definition: FlowDefinition) -> TaskOutputContract:
+async def _flow_task_output(definition: FlowDefinition) -> TaskOutputContract:
     output_definition = _flow_primary_output(definition)
     if output_definition is None:
         return TaskOutputContract.json({})
-    schema = _flow_output_schema(definition)
+    schema = await _flow_output_schema(definition)
     match output_definition.type:
         case FlowOutputType.TEXT:
             return TaskOutputContract.text()
@@ -1906,7 +1906,7 @@ def _flow_task_privacy(definition: FlowDefinition) -> TaskPrivacyPolicy:
     return privacy_policy_with_defaults(overrides or None)
 
 
-def _flow_output_schema(
+async def _flow_output_schema(
     definition: FlowDefinition,
 ) -> Mapping[str, object] | None:
     output_definition = _flow_primary_output(definition)
@@ -1915,7 +1915,7 @@ def _flow_output_schema(
     schema = _plain_mapping(output_definition.schema)
     if schema is not None or output_definition.schema_ref is None:
         return schema
-    resolved = resolve_schema_ref(
+    resolved = await resolve_schema_ref(
         output_definition.schema_ref,
         schema_base_path=definition.definition_base,
         path="flow.output.schema_ref",

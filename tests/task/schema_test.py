@@ -3,6 +3,8 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 from unittest.mock import patch
 
+from async_helpers import run_async
+
 from avalan.task import (
     TaskDefinition,
     TaskExecutionTarget,
@@ -14,6 +16,20 @@ from avalan.task import (
     resolve_schema_ref,
     resolve_task_definition_schemas,
 )
+
+_async_resolve_schema_ref = resolve_schema_ref
+_async_resolve_task_definition_schemas = resolve_task_definition_schemas
+
+
+def resolve_schema_ref(*args: object, **kwargs: object) -> object:
+    return run_async(_async_resolve_schema_ref(*args, **kwargs))
+
+
+def resolve_task_definition_schemas(
+    *args: object,
+    **kwargs: object,
+) -> object:
+    return run_async(_async_resolve_task_definition_schemas(*args, **kwargs))
 
 
 class TaskSchemaResolutionTest(TestCase):

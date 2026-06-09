@@ -2,7 +2,6 @@ from ..filesystem import (
     DEFAULT_TEXT_ENCODING,
     assert_text_encoding,
     read_text,
-    run_awaitable,
 )
 from .condition import (
     FlowCondition,
@@ -340,7 +339,7 @@ class FlowDefinitionLoader:
         source_path = Path(path)
         text_encoding = self._text_encoding(encoding)
         source = await read_text(source_path, encoding=text_encoding)
-        return self.loads_result(
+        return await self.loads_result(
             source,
             source_path=source_path,
             encoding=text_encoding,
@@ -355,20 +354,20 @@ class FlowDefinitionLoader:
         source_path = Path(path)
         text_encoding = self._text_encoding(encoding)
         source = await read_text(source_path, encoding=text_encoding)
-        return self.loads_validation_result(
+        return await self.loads_validation_result(
             source,
             source_path=source_path,
             encoding=text_encoding,
         )
 
-    def loads(
+    async def loads(
         self,
         source: str,
         *,
         source_path: str | Path | None = None,
         encoding: str | None = None,
     ) -> FlowDefinition:
-        result = self.loads_result(
+        result = await self.loads_result(
             source,
             source_path=source_path,
             encoding=encoding,
@@ -377,7 +376,7 @@ class FlowDefinitionLoader:
             raise FlowLoadError(result.issues)
         return result.definition
 
-    def loads_result(
+    async def loads_result(
         self,
         source: str,
         *,
@@ -401,17 +400,15 @@ class FlowDefinitionLoader:
                     ),
                 ),
             )
-        return run_awaitable(
-            _build_result(
-                raw,
-                registry=self._registry,
-                source_path=source_path,
-                build_runtime=True,
-                encoding=text_encoding,
-            )
+        return await _build_result(
+            raw,
+            registry=self._registry,
+            source_path=source_path,
+            build_runtime=True,
+            encoding=text_encoding,
         )
 
-    def loads_validation_result(
+    async def loads_validation_result(
         self,
         source: str,
         *,
@@ -435,14 +432,12 @@ class FlowDefinitionLoader:
                     ),
                 ),
             )
-        return run_awaitable(
-            _build_result(
-                raw,
-                registry=self._registry,
-                source_path=source_path,
-                build_runtime=False,
-                encoding=text_encoding,
-            )
+        return await _build_result(
+            raw,
+            registry=self._registry,
+            source_path=source_path,
+            build_runtime=False,
+            encoding=text_encoding,
         )
 
     def _text_encoding(self, encoding: str | None) -> str:
@@ -468,25 +463,25 @@ async def load_flow_definition_result(
     return await FlowDefinitionLoader(encoding=encoding).load_result(path)
 
 
-def loads_flow_definition(
+async def loads_flow_definition(
     source: str,
     *,
     source_path: str | Path | None = None,
     encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> FlowDefinition:
-    return FlowDefinitionLoader(encoding=encoding).loads(
+    return await FlowDefinitionLoader(encoding=encoding).loads(
         source,
         source_path=source_path,
     )
 
 
-def loads_flow_definition_result(
+async def loads_flow_definition_result(
     source: str,
     *,
     source_path: str | Path | None = None,
     encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> FlowLoadResult:
-    return FlowDefinitionLoader(encoding=encoding).loads_result(
+    return await FlowDefinitionLoader(encoding=encoding).loads_result(
         source,
         source_path=source_path,
     )

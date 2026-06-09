@@ -58,7 +58,7 @@ class FlowToolResolver(Protocol):
 
 
 class FlowSubflowResolver(Protocol):
-    def compile_subflow(
+    async def compile_subflow(
         self,
         ref: str,
         *,
@@ -241,14 +241,14 @@ class FlowNodeRegistry:
         assert isinstance(node_type, str) and node_type.strip()
         return node_type in self._subflow_resolvers
 
-    def subflow_metadata(
+    async def subflow_metadata(
         self,
         definition: FlowDefinition,
         node: FlowNodeDefinition,
     ) -> Mapping[str, object]:
         assert isinstance(definition, FlowDefinition)
         assert isinstance(node, FlowNodeDefinition)
-        return self._subflow_resolvers[node.type].compile_subflow(
+        return await self._subflow_resolvers[node.type].compile_subflow(
             node.ref or "",
             parent_definition=definition,
             node=node,

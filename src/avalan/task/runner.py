@@ -97,6 +97,7 @@ from asyncio import sleep as asyncio_sleep
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from inspect import isawaitable
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -663,7 +664,9 @@ class DirectTaskRunner:
         artifact_store: ArtifactStore | None = None,
         file_converters: Mapping[str, FileConverter] | None = None,
         finalizer: TaskRunFinalizer | None = None,
-        definition_hash: Callable[[TaskDefinition], str] | None = None,
+        definition_hash: (
+            Callable[[TaskDefinition], str | Awaitable[str]] | None
+        ) = None,
         execution_roots: Iterable[str | Path] = (),
         input_roots: Iterable[str | Path] | None = None,
         remote_url_policy: TaskRemoteUrlPolicy | None = None,
@@ -717,11 +720,11 @@ class DirectTaskRunner:
             assert isinstance(file, TaskInputFile)
         if definition.run.mode != RunMode.DIRECT:
             raise TaskRunnerError("direct runner requires direct run mode")
+        definition = await self._resolve_definition_schemas(definition)
         self._validate(definition, input_value)
-        definition = self._resolve_definition_schemas(definition)
         await self._validate_target(definition)
         sanitizer = self._sanitizer(definition)
-        definition_id = self._definition_hash(definition)
+        definition_id = await self._definition_hash_value(definition)
         await self._store.register_definition(
             definition,
             definition_hash=definition_id,
@@ -1068,12 +1071,12 @@ class DirectTaskRunner:
         if issues:
             raise TaskValidationError(tuple(issues))
 
-    def _resolve_definition_schemas(
+    async def _resolve_definition_schemas(
         self,
         definition: TaskDefinition,
     ) -> TaskDefinition:
         try:
-            return resolve_task_definition_schemas(
+            return await resolve_task_definition_schemas(
                 definition,
                 schema_base_path=None,
             )
@@ -1081,6 +1084,16 @@ class DirectTaskRunner:
             raise TaskValidationError(
                 (_schema_resolution_issue(error),)
             ) from error
+
+    async def _definition_hash_value(
+        self,
+        definition: TaskDefinition,
+    ) -> str:
+        value = self._definition_hash(definition)
+        if isawaitable(value):
+            value = await value
+        assert isinstance(value, str) and value.strip()
+        return value
 
     async def _validate_target(self, definition: TaskDefinition) -> None:
         issues = await self._target.validate_definition(

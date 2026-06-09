@@ -2737,14 +2737,14 @@ def _strict_vendor_edges() -> tuple[FlowEdgePlan, ...]:
     )
 
 
-def _strict_matrix_subflow_plan(
+async def _strict_matrix_subflow_plan(
     *,
     failing: bool = False,
 ) -> FlowExecutionPlan:
     child_plan = (
         _failing_matrix_child_plan()
         if failing
-        else _strict_matrix_child_plan()
+        else await _strict_matrix_child_plan()
     )
     return FlowExecutionPlan(
         name="matrix-subflow",
@@ -2794,8 +2794,8 @@ def _strict_matrix_subflow_plan(
     )
 
 
-def _strict_matrix_child_plan() -> FlowExecutionPlan:
-    result = compile_flow_definition(
+async def _strict_matrix_child_plan() -> FlowExecutionPlan:
+    result = await compile_flow_definition(
         FlowDefinition(
             name="matrix-child",
             version="1",

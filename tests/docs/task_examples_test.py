@@ -61,11 +61,25 @@ INVALID_EXAMPLES = {
 }
 
 
+def _load_task_definition(path: Path) -> TaskDefinition:
+    return asyncio_run(load_task_definition(path))
+
+
+def _canonical_json(
+    definition: TaskDefinition, *, schema_base_path: Path
+) -> str:
+    return asyncio_run(
+        canonical_json(definition, schema_base_path=schema_base_path)
+    )
+
+
 class TaskExamplesTest(TestCase):
     def test_valid_task_examples_load_validate_and_canonicalize(self) -> None:
         for relative_path in VALID_EXAMPLES:
             with self.subTest(example=relative_path):
-                definition = load_task_definition(EXAMPLE_ROOT / relative_path)
+                definition = _load_task_definition(
+                    EXAMPLE_ROOT / relative_path
+                )
 
                 self.assertEqual(
                     validate_task_definition(
@@ -75,7 +89,7 @@ class TaskExamplesTest(TestCase):
                     (),
                 )
                 self.assertNotEqual(
-                    canonical_json(
+                    _canonical_json(
                         definition,
                         schema_base_path=EXAMPLE_ROOT / relative_path,
                     ),
@@ -83,7 +97,7 @@ class TaskExamplesTest(TestCase):
                 )
 
     def test_structured_json_example_validates_sample_values(self) -> None:
-        definition = load_task_definition(
+        definition = _load_task_definition(
             EXAMPLE_ROOT / "structured_json.task.toml"
         )
 
@@ -113,7 +127,9 @@ class TaskExamplesTest(TestCase):
     def test_invalid_task_examples_fail_with_documented_codes(self) -> None:
         for relative_path, expected_codes in INVALID_EXAMPLES.items():
             with self.subTest(example=relative_path):
-                definition = load_task_definition(EXAMPLE_ROOT / relative_path)
+                definition = _load_task_definition(
+                    EXAMPLE_ROOT / relative_path
+                )
 
                 issues = validate_task_definition(
                     definition,
@@ -130,7 +146,7 @@ class TaskExamplesTest(TestCase):
                 self.assertNotIn("OPENAI_API_KEY", rendered)
 
     def test_sdk_definition_matches_structured_json_toml(self) -> None:
-        toml_definition = load_task_definition(
+        toml_definition = _load_task_definition(
             EXAMPLE_ROOT / "structured_json.task.toml"
         )
         sdk_definition = _load_sdk_module(
@@ -139,11 +155,11 @@ class TaskExamplesTest(TestCase):
 
         self.assertIsInstance(sdk_definition, TaskDefinition)
         self.assertEqual(
-            canonical_json(
+            _canonical_json(
                 sdk_definition,
                 schema_base_path=EXAMPLE_ROOT / "structured_json.task.toml",
             ),
-            canonical_json(
+            _canonical_json(
                 toml_definition,
                 schema_base_path=EXAMPLE_ROOT / "structured_json.task.toml",
             ),
@@ -190,9 +206,9 @@ class TaskExamplesTest(TestCase):
     def test_poc_extraction_fixture_contract_and_provenance(self) -> None:
         root = EXAMPLE_ROOT / "poc_extraction"
         task_path = root / "task.toml"
-        definition = load_task_definition(task_path)
-        flow_definition = load_task_definition(root / "flow_task.toml")
-        image_definition = load_task_definition(root / "image_flow_task.toml")
+        definition = _load_task_definition(task_path)
+        flow_definition = _load_task_definition(root / "flow_task.toml")
+        image_definition = _load_task_definition(root / "image_flow_task.toml")
         flow_loader = _poc_flow_loader()
         native_flow = asyncio_run(flow_loader.load(root / "flow.toml"))
         image_flow = asyncio_run(flow_loader.load(root / "image_flow.toml"))

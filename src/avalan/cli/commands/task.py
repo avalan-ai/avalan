@@ -1,6 +1,6 @@
 from ...agent.loader import OrchestratorLoader
 from ...cli.theme import Theme
-from ...filesystem import read_text, run_awaitable
+from ...filesystem import read_text
 from ...flow import (
     Flow,
     FlowDefinition,
@@ -220,7 +220,7 @@ async def _task_validate(
     _ = theme
     definition_path = Path(args.definition)
     try:
-        load_result = TaskDefinitionLoader().load_result(definition_path)
+        load_result = await TaskDefinitionLoader().load_result(definition_path)
     except OSError as exc:
         message = strerror(exc.errno) if exc.errno else "Unable to read file."
         console.print("Task definition could not be read.", markup=False)
@@ -255,7 +255,7 @@ async def _task_validate(
     task_input: TaskCliInput | None = None
     if _task_cli_input_provided(args):
         try:
-            task_input = task_cli_input(args, load_result.definition)
+            task_input = await task_cli_input(args, load_result.definition)
         except TaskCliInputError as exc:
             _print_task_cli_input_error(console, exc)
             return False
@@ -607,7 +607,7 @@ async def _task_run(
     logger: Logger | None,
 ) -> bool:
     diagnostic_console = _task_diagnostic_console(args, console)
-    loaded = _load_definition_for_execution(args, diagnostic_console)
+    loaded = await _load_definition_for_execution(args, diagnostic_console)
     if loaded is None:
         return False
     definition_path, definition, task_input = loaded
@@ -687,7 +687,7 @@ async def _task_enqueue(
     hub: object | None,
     logger: Logger | None,
 ) -> bool:
-    loaded = _load_definition_for_execution(args, console)
+    loaded = await _load_definition_for_execution(args, console)
     if loaded is None:
         return False
     definition_path, definition, task_input = loaded
@@ -1010,13 +1010,13 @@ async def _task_worker(
     return not lease_lost
 
 
-def _load_definition_for_execution(
+async def _load_definition_for_execution(
     args: Namespace,
     console: Console,
 ) -> tuple[Path, TaskDefinition, TaskCliInput] | None:
     definition_path = Path(args.definition)
     try:
-        load_result = TaskDefinitionLoader().load_result(definition_path)
+        load_result = await TaskDefinitionLoader().load_result(definition_path)
     except OSError as exc:
         message = strerror(exc.errno) if exc.errno else "Unable to read file."
         console.print("Task definition could not be read.", markup=False)
@@ -1031,7 +1031,7 @@ def _load_definition_for_execution(
         return None
     definition = load_result.definition
     try:
-        task_input = task_cli_input(args, definition)
+        task_input = await task_cli_input(args, definition)
     except TaskCliInputError as exc:
         _print_task_cli_input_error(console, exc)
         return None
@@ -1746,7 +1746,7 @@ def _run_awaitable(
     return result
 
 
-def task_cli_input(
+async def task_cli_input(
     args: Namespace,
     definition: TaskDefinition,
 ) -> TaskCliInput:
@@ -1802,7 +1802,7 @@ def task_cli_input(
                         field=field,
                         descriptor=descriptor,
                     ),
-                    *_task_cli_file_specs(args),
+                    *(await _task_cli_file_specs(args)),
                 ),
                 definition=definition,
             )
@@ -1812,7 +1812,7 @@ def task_cli_input(
                 "--pdf requires a single top-level file input."
             )
         return TaskCliInput(value=value, provided=True)
-    task_files = _task_cli_file_specs(args)
+    task_files = await _task_cli_file_specs(args)
     provided = (
         raw_input is not None
         or raw_json is not None
@@ -1836,7 +1836,7 @@ def task_cli_input(
         )
 
     if raw_json is not None:
-        json_value = _load_task_cli_json(raw_json)
+        json_value = await _load_task_cli_json(raw_json)
         if input_fields or task_files or file_options_provided:
             if not isinstance(json_value, Mapping):
                 raise _task_cli_input_error(
@@ -1874,7 +1874,7 @@ def task_cli_input(
     return TaskCliInput(value=object_input, provided=True)
 
 
-def _validate_task_cli_input_for_command(
+async def _validate_task_cli_input_for_command(
     args: Namespace,
     console: Console,
 ) -> bool:
@@ -1885,7 +1885,7 @@ def _validate_task_cli_input_for_command(
         return True
     definition_path = Path(definition_path_value)
     try:
-        load_result = TaskDefinitionLoader().load_result(definition_path)
+        load_result = await TaskDefinitionLoader().load_result(definition_path)
     except OSError as exc:
         message = strerror(exc.errno) if exc.errno else "Unable to read file."
         console.print("Task definition could not be read.", markup=False)
@@ -1899,7 +1899,7 @@ def _validate_task_cli_input_for_command(
         )
         return False
     try:
-        task_input = task_cli_input(args, load_result.definition)
+        task_input = await task_cli_input(args, load_result.definition)
     except TaskCliInputError as exc:
         _print_task_cli_input_error(console, exc)
         return False
@@ -1957,7 +1957,9 @@ def _task_cli_input_fields(args: Namespace) -> tuple[tuple[str, str], ...]:
     return tuple(fields)
 
 
-def _task_cli_file_specs(args: Namespace) -> tuple[_TaskCliFileSpec, ...]:
+async def _task_cli_file_specs(
+    args: Namespace,
+) -> tuple[_TaskCliFileSpec, ...]:
     specs: list[_TaskCliFileSpec] = []
     specs.extend(
         _TaskCliFileSpec(
@@ -1966,7 +1968,7 @@ def _task_cli_file_specs(args: Namespace) -> tuple[_TaskCliFileSpec, ...]:
         )
         for field, reference in _task_cli_file_fields(args)
     )
-    specs.extend(_task_cli_descriptor_specs(args))
+    specs.extend(await _task_cli_descriptor_specs(args))
     specs.extend(
         _task_cli_provider_reference_specs(
             args,
@@ -2008,7 +2010,7 @@ def _task_cli_file_fields(args: Namespace) -> tuple[tuple[str, str], ...]:
     return tuple(fields)
 
 
-def _task_cli_descriptor_specs(
+async def _task_cli_descriptor_specs(
     args: Namespace,
 ) -> tuple[_TaskCliFileSpec, ...]:
     values = getattr(args, "task_file_descriptors", ()) or ()
@@ -2023,7 +2025,7 @@ def _task_cli_descriptor_specs(
             or not raw_descriptor.strip()
         ):
             raise _task_cli_input_error("Task file descriptor is invalid.")
-        descriptor = _load_task_cli_json(raw_descriptor)
+        descriptor = await _load_task_cli_json(raw_descriptor)
         if not isinstance(descriptor, Mapping):
             raise _task_cli_input_error("Task file descriptor is invalid.")
         specs.append(
@@ -2119,14 +2121,14 @@ def _parse_task_cli_scalar(
     raise _task_cli_input_error("Task input type is not supported.")
 
 
-def _load_task_cli_json(value: str) -> object:
+async def _load_task_cli_json(value: str) -> object:
     assert isinstance(value, str)
     if value.startswith("@"):
         path_value = value[1:]
         if not path_value:
             raise _task_cli_input_error("Task input JSON file is invalid.")
         try:
-            value = run_awaitable(read_text(path_value))
+            value = await read_text(path_value)
         except OSError as exc:
             message = strerror(exc.errno) if exc.errno else "Unable to read."
             raise TaskCliInputError(

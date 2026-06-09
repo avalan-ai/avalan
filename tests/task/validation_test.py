@@ -1,3 +1,4 @@
+from asyncio import run as asyncio_run
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from math import inf
@@ -36,12 +37,14 @@ from avalan.task import (
     TaskPrivacyPolicy,
     TaskProviderReferenceKind,
     TaskRemoteUrlPolicy,
+    TaskSchemaResolutionError,
     TaskTargetType,
     TaskValidationCategory,
     TaskValidationError,
     TaskValidationIssue,
     TaskValidationSeverity,
     raise_task_validation_error,
+    resolve_task_definition_schemas,
     validate_task_definition,
     validate_task_input,
     validate_task_output,
@@ -869,9 +872,15 @@ class TaskValidationTest(TestCase):
                 ),
                 (),
             )
+            resolved = asyncio_run(
+                resolve_task_definition_schemas(
+                    definition,
+                    schema_base_path=root,
+                )
+            )
             self.assertEqual(
                 validate_task_input(
-                    definition,
+                    resolved,
                     {"question": "status"},
                     schema_base_path=root,
                 ),
@@ -879,7 +888,7 @@ class TaskValidationTest(TestCase):
             )
             self.assertEqual(
                 validate_task_output(
-                    definition,
+                    resolved,
                     {"answer": "ok"},
                     schema_base_path=root,
                 ),
@@ -889,7 +898,7 @@ class TaskValidationTest(TestCase):
                 [
                     issue.code
                     for issue in validate_task_input(
-                        definition,
+                        resolved,
                         {"question": 1},
                         schema_base_path=root,
                     )
@@ -900,7 +909,7 @@ class TaskValidationTest(TestCase):
                 [
                     issue.code
                     for issue in validate_task_output(
-                        definition,
+                        resolved,
                         {"answer": 1},
                         schema_base_path=root,
                     )
@@ -956,19 +965,15 @@ class TaskValidationTest(TestCase):
             )
 
             for definition in definitions:
-                issues = validate_task_definition(
-                    definition,
-                    schema_base_path=root,
-                )
-                self.assertEqual(
-                    [(issue.code, issue.path) for issue in issues],
-                    [("output.invalid_schema", "output.schema_ref")],
-                )
-                rendered = " ".join(
-                    value
-                    for issue in issues
-                    for value in issue.as_dict().values()
-                )
+                with self.assertRaises(TaskSchemaResolutionError) as error:
+                    asyncio_run(
+                        resolve_task_definition_schemas(
+                            definition,
+                            schema_base_path=root,
+                        )
+                    )
+                self.assertEqual(error.exception.path, "output.schema_ref")
+                rendered = str(error.exception)
                 self.assertNotIn("secret.json", rendered)
                 self.assertNotIn("example.test", rendered)
 
@@ -978,18 +983,12 @@ class TaskValidationTest(TestCase):
             )
         )
         self.assertEqual(
-            [
-                (issue.code, issue.path)
-                for issue in validate_task_definition(unresolved)
-            ],
-            [("output.invalid_schema", "output.schema_ref")],
+            validate_task_definition(unresolved),
+            (),
         )
         self.assertEqual(
-            [
-                (issue.code, issue.path)
-                for issue in validate_task_output(unresolved, {})
-            ],
-            [("output.invalid_schema", "output.schema_ref")],
+            validate_task_output(unresolved, {}),
+            (),
         )
 
     def test_structured_input_validates_nested_file_descriptors(

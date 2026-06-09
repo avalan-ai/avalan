@@ -12,7 +12,7 @@ from ..entities import (
 )
 from ..event import Event, EventType
 from ..event.manager import EventManager
-from ..filesystem import read_text, run_awaitable
+from ..filesystem import read_text
 from ..memory.manager import MemoryManager
 from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
@@ -243,8 +243,11 @@ class OrchestratorLoader:
         return selection
 
     @classmethod
-    def _load_serve_protocol_strings(cls, path: str) -> list[str] | None:
-        config = toml_loads(run_awaitable(read_text(path)))
+    async def _load_serve_protocol_strings(
+        cls,
+        path: str,
+    ) -> list[str] | None:
+        config = toml_loads(await read_text(path))
 
         serve_section = config.get("serve")
         if serve_section is None:
@@ -272,7 +275,7 @@ class OrchestratorLoader:
         return parsed_protocols
 
     @classmethod
-    def resolve_serve_protocols(
+    async def resolve_serve_protocols(
         cls,
         *,
         specs_path: str | None,
@@ -285,7 +288,7 @@ class OrchestratorLoader:
         if not specs_path:
             return None
 
-        config_protocols = cls._load_serve_protocol_strings(specs_path)
+        config_protocols = await cls._load_serve_protocol_strings(specs_path)
         return cls._parse_serve_protocols(config_protocols)
 
     @property
@@ -297,15 +300,18 @@ class OrchestratorLoader:
         return self._participant_id
 
     @classmethod
-    def validate_agent_file(cls, path: str) -> dict[str, Any]:
+    async def validate_agent_file(cls, path: str) -> dict[str, Any]:
         if not exists(path):
             raise FileNotFoundError(path)
         if not access(path, R_OK):
             raise PermissionError(path)
 
-        config = toml_loads(run_awaitable(read_text(path)))
+        config = toml_loads(await read_text(path))
 
-        config = cls._resolve_agent_config_schema_refs(config, path=path)
+        config = await cls._resolve_agent_config_schema_refs(
+            config,
+            path=path,
+        )
         cls.validate_agent_config(config)
         return config
 
@@ -353,7 +359,7 @@ class OrchestratorLoader:
         _l("Loading agent from %s", path, is_debug=False)
 
         config = toml_loads(await read_text(path))
-        config = OrchestratorLoader._resolve_agent_config_schema_refs(
+        config = await OrchestratorLoader._resolve_agent_config_schema_refs(
             config,
             path=path,
         )
@@ -914,7 +920,7 @@ class OrchestratorLoader:
         }, "engine.file_delivery_profile is not supported"
 
     @staticmethod
-    def _resolve_agent_config_schema_refs(
+    async def _resolve_agent_config_schema_refs(
         config: object,
         *,
         path: str,
@@ -934,7 +940,7 @@ class OrchestratorLoader:
         ), "run.response_format must be a mapping"
         run_config = dict(run_config)
         run_config["response_format"] = (
-            OrchestratorLoader._resolved_response_format(
+            await OrchestratorLoader._resolved_response_format(
                 response_format,
                 schema_base_path=path,
             )
@@ -944,13 +950,13 @@ class OrchestratorLoader:
         return config
 
     @staticmethod
-    def _resolved_response_format(
+    async def _resolved_response_format(
         response_format: dict[str, Any],
         *,
         schema_base_path: str,
     ) -> dict[str, Any]:
         resolved = dict(response_format)
-        OrchestratorLoader._resolve_schema_ref_field(
+        await OrchestratorLoader._resolve_schema_ref_field(
             resolved,
             schema_base_path=schema_base_path,
             path="run.response_format.schema_ref",
@@ -961,7 +967,7 @@ class OrchestratorLoader:
                 nested, dict
             ), "run.response_format.json_schema must be a mapping"
             nested = dict(nested)
-            OrchestratorLoader._resolve_schema_ref_field(
+            await OrchestratorLoader._resolve_schema_ref_field(
                 nested,
                 schema_base_path=schema_base_path,
                 path="run.response_format.json_schema.schema_ref",
@@ -970,7 +976,7 @@ class OrchestratorLoader:
         return resolved
 
     @staticmethod
-    def _resolve_schema_ref_field(
+    async def _resolve_schema_ref_field(
         mapping: dict[str, Any],
         *,
         schema_base_path: str,
@@ -983,10 +989,12 @@ class OrchestratorLoader:
             "schema" not in mapping
         ), f"{path} cannot be used with an inline schema"
         try:
-            schema = resolve_schema_ref(
-                schema_ref,
-                schema_base_path=schema_base_path,
-                path=path,
+            schema = (
+                await resolve_schema_ref(
+                    schema_ref,
+                    schema_base_path=schema_base_path,
+                    path=path,
+                )
             ).schema
         except TaskSchemaResolutionError as error:
             raise AssertionError(str(error)) from error

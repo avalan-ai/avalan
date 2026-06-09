@@ -8,6 +8,8 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
+from async_helpers import run_async
+
 from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import (
     OrchestratorSettings,
@@ -96,7 +98,7 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             patch("avalan.agent.loader.access", return_value=False),
         ):
             with self.assertRaises(PermissionError):
-                OrchestratorLoader.validate_agent_file(path)
+                run_async(OrchestratorLoader.validate_agent_file(path))
 
     def test_validate_agent_file_returns_config_and_missing_file(self):
         with TemporaryDirectory() as tmp:
@@ -110,11 +112,13 @@ role = \"assistant\"
 uri = \"ai://local/model\"
 """)
 
-            config = OrchestratorLoader.validate_agent_file(path)
+            config = run_async(OrchestratorLoader.validate_agent_file(path))
 
         self.assertEqual(config["engine"]["uri"], "ai://local/model")
         with self.assertRaises(FileNotFoundError):
-            OrchestratorLoader.validate_agent_file("missing-agent.toml")
+            run_async(
+                OrchestratorLoader.validate_agent_file("missing-agent.toml")
+            )
 
     def test_validate_agent_config_rejects_conflicting_user_templates(self):
         with self.assertRaises(AssertionError):
@@ -1552,7 +1556,7 @@ file_delivery_profile = {raw_value}
                     with self.assertRaises(AssertionError):
                         await loader.from_file(path, agent_id=uuid4())
                     with self.assertRaises(AssertionError):
-                        OrchestratorLoader.validate_agent_file(path)
+                        run_async(OrchestratorLoader.validate_agent_file(path))
                     await stack.aclose()
 
     async def test_hosted_file_delivery_profile_hint_rejects(self):
@@ -1582,7 +1586,7 @@ file_delivery_profile = \"multimodal\"
             with self.assertRaisesRegex(AssertionError, "local models"):
                 await loader.from_file(path, agent_id=uuid4())
             with self.assertRaisesRegex(AssertionError, "local models"):
-                OrchestratorLoader.validate_agent_file(path)
+                run_async(OrchestratorLoader.validate_agent_file(path))
             await stack.aclose()
 
     async def test_run_chat_settings_from_file(self):

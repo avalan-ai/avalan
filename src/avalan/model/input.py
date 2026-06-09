@@ -5,7 +5,7 @@ from ..entities import (
     MessageContentText,
     MessageRole,
 )
-from ..filesystem import read_bytes, run_awaitable
+from ..filesystem import read_bytes
 
 from base64 import b64encode
 from mimetypes import guess_type
@@ -16,7 +16,7 @@ _MIME_TYPES_BY_SUFFIX = {
 }
 
 
-def input_files(
+async def input_files(
     input_text: str | None, file_paths: list[str] | None
 ) -> Message | str | None:
     """Build text-generation input from text and local file paths."""
@@ -40,9 +40,7 @@ def input_files(
                 type="file",
                 file={
                     "file_data": (
-                        b64encode(run_awaitable(read_bytes(path))).decode(
-                            "ascii"
-                        )
+                        b64encode(await read_bytes(path)).decode("ascii")
                     ),
                     "filename": path.name,
                     "mime_type": mime_type,

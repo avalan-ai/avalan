@@ -12,7 +12,7 @@ from ...entities import (
     MessageFile,
     MessageRole,
 )
-from ...filesystem import read_text, run_awaitable
+from ...filesystem import read_text
 from ...model.file_delivery import (
     FileDeliveryDecision,
     FileDeliveryMode,
@@ -149,7 +149,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             return (_agent_target_issue(path="execution.type"),)
 
         try:
-            config = OrchestratorLoader.validate_agent_file(
+            config = await OrchestratorLoader.validate_agent_file(
                 str(self._agent_path(definition))
             )
         except (
@@ -170,7 +170,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             issues.extend(
                 _validate_agent_file_input(
                     definition,
-                    self._agent_file_profile(definition),
+                    await self._agent_file_profile(definition),
                 )
             )
         issues.extend(_validate_agent_output_schema(definition, config))
@@ -180,8 +180,8 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         assert isinstance(context, TaskTargetContext)
         assert context.definition.execution.type == TaskTargetType.AGENT
         await context.check_cancelled()
-        profile = self._agent_file_profile(context.definition)
-        prompt = self._agent_prompt(context.definition)
+        profile = await self._agent_file_profile(context.definition)
+        prompt = await self._agent_prompt(context.definition)
         agent_input = await _agent_input(context, profile, prompt=prompt)
         agent_input, text_plan = _plan_local_text_delivery(
             agent_input,
@@ -227,27 +227,27 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             return self._ref_base / ref
         return ref
 
-    def _agent_uri(self, definition: TaskDefinition) -> str | None:
+    async def _agent_uri(self, definition: TaskDefinition) -> str | None:
         if self._uri is not None:
             return self._uri
-        engine = self._agent_engine_config(definition)
+        engine = await self._agent_engine_config(definition)
         if engine is None:
             return None
         uri = engine.get("uri")
         return uri if isinstance(uri, str) else None
 
-    def _agent_engine_config(
+    async def _agent_engine_config(
         self,
         definition: TaskDefinition,
     ) -> Mapping[str, object] | None:
-        config = self._agent_config(definition)
+        config = await self._agent_config(definition)
         if config is None:
             return None
         engine = config.get("engine")
         return engine if isinstance(engine, Mapping) else None
 
-    def _agent_prompt(self, definition: TaskDefinition) -> _AgentPrompt:
-        config = self._agent_config(definition)
+    async def _agent_prompt(self, definition: TaskDefinition) -> _AgentPrompt:
+        config = await self._agent_config(definition)
         if config is None:
             return _AgentPrompt()
         agent = config.get("agent")
@@ -263,22 +263,20 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             templates_path=self._agent_path(definition).parent,
         )
 
-    def _agent_config(
+    async def _agent_config(
         self,
         definition: TaskDefinition,
     ) -> Mapping[str, object] | None:
         try:
-            return toml_loads(
-                run_awaitable(read_text(self._agent_path(definition)))
-            )
+            return toml_loads(await read_text(self._agent_path(definition)))
         except (OSError, TOMLDecodeError):
             return None
 
-    def _agent_local_file_delivery_profile(
+    async def _agent_local_file_delivery_profile(
         self,
         definition: TaskDefinition,
     ) -> LocalFileDeliveryProfile:
-        engine = self._agent_engine_config(definition)
+        engine = await self._agent_engine_config(definition)
         if engine is None:
             return LocalFileDeliveryProfile.TEXT
         value = engine.get("file_delivery_profile")
@@ -289,12 +287,14 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         except ValueError:
             return LocalFileDeliveryProfile.TEXT
 
-    def _agent_file_profile(
+    async def _agent_file_profile(
         self,
         definition: TaskDefinition,
     ) -> FileDeliveryProfile:
-        uri = self._agent_uri(definition)
-        local_profile = self._agent_local_file_delivery_profile(definition)
+        uri = await self._agent_uri(definition)
+        local_profile = await self._agent_local_file_delivery_profile(
+            definition
+        )
         if self._file_delivery_resolver is resolve_file_delivery_profile:
             return resolve_file_delivery_profile(
                 uri,

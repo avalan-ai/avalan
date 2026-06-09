@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from async_helpers import run_async
 
 from avalan.agent.loader import OrchestratorLoader
 
@@ -55,7 +56,9 @@ protocols = [
         path = tmp_path / "config.toml"
         path.write_text(config, encoding="utf-8")
 
-        result = OrchestratorLoader._load_serve_protocol_strings(str(path))
+        result = run_async(
+            OrchestratorLoader._load_serve_protocol_strings(str(path))
+        )
 
         assert result == ["openai : Responses", "mcp"]
 
@@ -64,7 +67,10 @@ protocols = [
         path.write_text("[other]\nvalue = 1\n", encoding="utf-8")
 
         assert (
-            OrchestratorLoader._load_serve_protocol_strings(str(path)) is None
+            run_async(
+                OrchestratorLoader._load_serve_protocol_strings(str(path))
+            )
+            is None
         )
 
     def test_missing_protocols_key_returns_none(self, tmp_path: Path) -> None:
@@ -72,7 +78,10 @@ protocols = [
         path.write_text("[serve]\nvalue=1\n", encoding="utf-8")
 
         assert (
-            OrchestratorLoader._load_serve_protocol_strings(str(path)) is None
+            run_async(
+                OrchestratorLoader._load_serve_protocol_strings(str(path))
+            )
+            is None
         )
 
 
@@ -95,9 +104,11 @@ class TestResolveServeProtocols:
             ),
         )
 
-        result = OrchestratorLoader.resolve_serve_protocols(
-            specs_path="config.toml",
-            cli_protocols=["openai:responses"],
+        result = run_async(
+            OrchestratorLoader.resolve_serve_protocols(
+                specs_path="config.toml",
+                cli_protocols=["openai:responses"],
+            )
         )
 
         assert result is expected
@@ -106,18 +117,22 @@ class TestResolveServeProtocols:
         path = tmp_path / "config.toml"
         path.write_text('[serve]\nprotocols=["openai"]\n', encoding="utf-8")
 
-        result = OrchestratorLoader.resolve_serve_protocols(
-            specs_path=str(path),
-            cli_protocols=None,
+        result = run_async(
+            OrchestratorLoader.resolve_serve_protocols(
+                specs_path=str(path),
+                cli_protocols=None,
+            )
         )
 
         assert result == {"openai": {"completions", "responses"}}
 
     def test_returns_none_when_no_sources(self) -> None:
         assert (
-            OrchestratorLoader.resolve_serve_protocols(
-                specs_path=None,
-                cli_protocols=None,
+            run_async(
+                OrchestratorLoader.resolve_serve_protocols(
+                    specs_path=None,
+                    cli_protocols=None,
+                )
             )
             is None
         )

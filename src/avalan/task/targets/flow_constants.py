@@ -1,0 +1,1 @@
+FLOW_RESUME_DECISIONS_METADATA_KEY = "flow_resume_decisions"

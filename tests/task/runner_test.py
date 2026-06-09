@@ -3136,10 +3136,12 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(TaskValidationError) as error:
-            runner._resolve_definition_schemas(
-                definition(
-                    input_contract=TaskInputContract.object(
-                        schema_ref="schemas/private-input.json"
+            asyncio.run(
+                runner._resolve_definition_schemas(
+                    definition(
+                        input_contract=TaskInputContract.object(
+                            schema_ref="schemas/private-input.json"
+                        )
                     )
                 )
             )

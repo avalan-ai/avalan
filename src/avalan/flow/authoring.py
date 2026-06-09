@@ -207,7 +207,7 @@ async def compile_flow_source(
     if registry is not None:
         assert isinstance(registry, FlowNodeRegistry)
     assert_text_encoding(encoding)
-    result = FlowDefinitionLoader(
+    result = await FlowDefinitionLoader(
         registry,
         encoding=encoding,
     ).loads_validation_result(
@@ -262,7 +262,7 @@ async def inspect_flow_graph_source(
     if registry is not None:
         assert isinstance(registry, FlowNodeRegistry)
     assert_text_encoding(encoding)
-    result = FlowDefinitionLoader(
+    result = await FlowDefinitionLoader(
         registry,
         encoding=encoding,
     ).loads_validation_result(

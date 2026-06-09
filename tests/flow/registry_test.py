@@ -2,6 +2,8 @@ from asyncio import CancelledError
 from collections.abc import Mapping
 from unittest import IsolatedAsyncioTestCase, main
 
+from async_helpers import run_async
+
 from avalan.entities import (
     ToolCall,
     ToolCallContext,
@@ -564,7 +566,7 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
 
     def test_registry_tracks_subflow_resolver_metadata(self) -> None:
         class Resolver:
-            def compile_subflow(
+            async def compile_subflow(
                 self,
                 ref: str,
                 *,
@@ -590,24 +592,26 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
         )
         self.assertTrue(registry.supports_subflow_resolution("subflow"))
         self.assertEqual(
-            registry.subflow_metadata(
-                FlowDefinition(
-                    name="parent",
-                    entrypoint="child",
-                    output_node="child",
-                    nodes=(
-                        FlowNodeDefinition(
-                            name="child",
-                            type="subflow",
-                            ref="flows/child.toml",
+            run_async(
+                registry.subflow_metadata(
+                    FlowDefinition(
+                        name="parent",
+                        entrypoint="child",
+                        output_node="child",
+                        nodes=(
+                            FlowNodeDefinition(
+                                name="child",
+                                type="subflow",
+                                ref="flows/child.toml",
+                            ),
                         ),
                     ),
-                ),
-                FlowNodeDefinition(
-                    name="child",
-                    type="subflow",
-                    ref="flows/child.toml",
-                ),
+                    FlowNodeDefinition(
+                        name="child",
+                        type="subflow",
+                        ref="flows/child.toml",
+                    ),
+                )
             ),
             {
                 "ref": "flows/child.toml",
@@ -624,19 +628,25 @@ class FlowNodeRegistryTestCase(IsolatedAsyncioTestCase):
                 object(),  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
-            registry.subflow_metadata(
-                object(),  # type: ignore[arg-type]
-                FlowNodeDefinition(name="child", type="subflow"),
+            run_async(
+                registry.subflow_metadata(
+                    object(),  # type: ignore[arg-type]
+                    FlowNodeDefinition(name="child", type="subflow"),
+                )
             )
         with self.assertRaises(AssertionError):
-            registry.subflow_metadata(
-                FlowDefinition(
-                    name="parent",
-                    entrypoint="child",
-                    output_node="child",
-                    nodes=(FlowNodeDefinition(name="child", type="subflow"),),
-                ),
-                object(),  # type: ignore[arg-type]
+            run_async(
+                registry.subflow_metadata(
+                    FlowDefinition(
+                        name="parent",
+                        entrypoint="child",
+                        output_node="child",
+                        nodes=(
+                            FlowNodeDefinition(name="child", type="subflow"),
+                        ),
+                    ),
+                    object(),  # type: ignore[arg-type]
+                )
             )
 
     def test_registry_exposes_node_metadata(self) -> None:

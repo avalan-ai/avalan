@@ -2,6 +2,8 @@ from dataclasses import FrozenInstanceError
 from typing import cast
 from unittest import TestCase, main
 
+from async_helpers import run_async
+
 from avalan.flow import (
     FlowDefinition,
     FlowDiagnostic,
@@ -22,6 +24,12 @@ from avalan.flow import (
     FlowSourceSpan,
     compile_flow_definition,
 )
+
+_async_compile_flow_definition = compile_flow_definition
+
+
+def compile_flow_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_compile_flow_definition(*args, **kwargs))
 
 
 class FlowStateTestCase(TestCase):

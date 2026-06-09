@@ -5,6 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
 
+from async_helpers import run_async
+
 from avalan.flow import (
     FlowCondition,
     FlowConditionOperator,
@@ -38,6 +40,31 @@ from avalan.flow import (
     serialize_flow_definition,
 )
 from avalan.flow.node import Node
+
+_AsyncFlowDefinitionLoader = FlowDefinitionLoader
+_async_compile_flow_definition = compile_flow_definition
+
+
+class FlowDefinitionLoader(_AsyncFlowDefinitionLoader):  # type: ignore[no-redef]
+    async def load_validation_result(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        loader = _AsyncFlowDefinitionLoader(
+            self._registry,
+            encoding=self._encoding,
+        )
+        return await loader.load_validation_result(*args, **kwargs)
+
+    def loads_validation_result(
+        self, *args: object, **kwargs: object
+    ) -> object:
+        return run_async(super().loads_validation_result(*args, **kwargs))
+
+
+def compile_flow_definition(*args: object, **kwargs: object) -> object:
+    return run_async(_async_compile_flow_definition(*args, **kwargs))
 
 
 class SerializerMetadataEnum(Enum):

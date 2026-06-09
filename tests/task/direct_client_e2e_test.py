@@ -1342,7 +1342,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         )
         instructions = _fixture_agent_instructions(fixture)
         pdf_bytes = (fixture / "sample.pdf").read_bytes()
-        definition = TaskDefinitionLoader().load(fixture / "task.toml")
+        definition = await TaskDefinitionLoader().load(fixture / "task.toml")
         output = _extraction_output()
         orchestrator = ExtractionFakeOrchestrator(output)
         settings_values: list[Any] = []
@@ -1584,8 +1584,10 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         )
         instructions = _fixture_agent_instructions(fixture)
         pdf_bytes = (fixture / "sample.pdf").read_bytes()
-        direct_definition = TaskDefinitionLoader().load(fixture / "task.toml")
-        flow_definition = TaskDefinitionLoader().load(
+        direct_definition = await TaskDefinitionLoader().load(
+            fixture / "task.toml"
+        )
+        flow_definition = await TaskDefinitionLoader().load(
             fixture / "flow_task.toml"
         )
         output = _extraction_output()
@@ -1788,8 +1790,10 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         )
         instructions = _fixture_agent_instructions(fixture)
         pdf_bytes = (fixture / "sample.pdf").read_bytes()
-        direct_definition = TaskDefinitionLoader().load(fixture / "task.toml")
-        image_definition = TaskDefinitionLoader().load(
+        direct_definition = await TaskDefinitionLoader().load(
+            fixture / "task.toml"
+        )
+        image_definition = await TaskDefinitionLoader().load(
             fixture / "image_flow_task.toml"
         )
         output = _extraction_output()
@@ -2068,7 +2072,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             / "poc_extraction"
         )
         pdf_bytes = (fixture / "sample.pdf").read_bytes()
-        definition = TaskDefinitionLoader().load(fixture / "task.toml")
+        definition = await TaskDefinitionLoader().load(fixture / "task.toml")
         definition = replace(
             definition,
             privacy=replace(
@@ -2230,7 +2234,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             with self.subTest(provider=name):
                 with TemporaryDirectory() as root_name:
                     root = Path(root_name)
-                    definition = TaskDefinitionLoader().load(
+                    definition = await TaskDefinitionLoader().load(
                         _write_provider_task_workspace(
                             root,
                             provider_uri=uri,
@@ -2613,7 +2617,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
     async def test_provider_mismatch_failure_is_sanitized(self) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_provider_task_workspace(
                     root,
                     provider_uri="ai://env:KEY@anthropic/claude-3-5-sonnet",
@@ -2656,7 +2660,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
     ) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_provider_task_workspace(
                     root,
                     provider_uri="ai://env:KEY@unknown/model",
@@ -2704,7 +2708,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
     ) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_provider_task_workspace(
                     root,
                     provider_uri="ai://env:KEY@openai/gpt-4o-mini",
@@ -2795,7 +2799,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
     ) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_text_task_workspace(root)
             )
             store = InMemoryTaskStore(
@@ -2852,7 +2856,7 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
     ) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            toml_definition = TaskDefinitionLoader().load(
+            toml_definition = await TaskDefinitionLoader().load(
                 _write_text_task_workspace(root)
             )
             sdk_definition = TaskDefinition(
@@ -2890,7 +2894,10 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
             toml_inspection = await client.inspect(toml_result.run.run_id)
             sdk_inspection = await client.inspect(sdk_result.run.run_id)
 
-        self.assertEqual(spec_hash(toml_definition), spec_hash(sdk_definition))
+        self.assertEqual(
+            await spec_hash(toml_definition),
+            await spec_hash(sdk_definition),
+        )
         self.assertEqual(
             toml_result.run.definition_id,
             sdk_result.run.definition_id,
@@ -2915,7 +2922,9 @@ class DirectClientE2ETest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
             definition = replace(
-                TaskDefinitionLoader().load(_write_text_task_workspace(root)),
+                await TaskDefinitionLoader().load(
+                    _write_text_task_workspace(root)
+                ),
                 observability=TaskObservabilityPolicy(
                     metrics=True,
                     trace=False,
@@ -3019,7 +3028,7 @@ capture_events = false
 """,
                 encoding="utf-8",
             )
-            toml_definition = TaskDefinitionLoader().load(task_path)
+            toml_definition = await TaskDefinitionLoader().load(task_path)
             sdk_definition = TaskDefinition(
                 task=TaskMetadata(name="structured_schema_ref", version="1"),
                 input=TaskInputContract.string(),
@@ -3055,8 +3064,8 @@ capture_events = false
                 input_value="private question",
             )
             record = await store.get_definition(sdk_result.run.definition_id)
-            toml_hash = spec_hash(toml_definition)
-            sdk_hash = spec_hash(sdk_definition)
+            toml_hash = await spec_hash(toml_definition)
+            sdk_hash = await spec_hash(sdk_definition)
             root_text = str(root)
 
         self.assertEqual(toml_hash, sdk_hash)
@@ -3084,7 +3093,9 @@ capture_events = false
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
             definition = replace(
-                TaskDefinitionLoader().load(_write_text_task_workspace(root)),
+                await TaskDefinitionLoader().load(
+                    _write_text_task_workspace(root)
+                ),
                 retry=TaskRetryPolicy(
                     max_attempts=2,
                     backoff=RetryBackoff.LINEAR,
@@ -3176,7 +3187,9 @@ capture_events = false
             current_time = datetime(2026, 1, 1, tzinfo=UTC)
             expires_at = current_time + timedelta(seconds=1)
             definition = replace(
-                TaskDefinitionLoader().load(_write_text_task_workspace(root)),
+                await TaskDefinitionLoader().load(
+                    _write_text_task_workspace(root)
+                ),
                 retry=TaskRetryPolicy(
                     max_attempts=2,
                     backoff=RetryBackoff.LINEAR,
@@ -3250,7 +3263,7 @@ capture_events = false
     ) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_structured_task_workspace(root)
             )
             store = InMemoryTaskStore(
@@ -3318,7 +3331,7 @@ capture_events = false
     async def test_direct_run_cancellation_finalizes_safely(self) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_structured_task_workspace(root)
             )
             store = InMemoryTaskStore(
@@ -3379,7 +3392,7 @@ capture_events = false
     ) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_structured_task_workspace(root)
             )
             store = InMemoryTaskStore(
@@ -3421,7 +3434,7 @@ capture_events = false
     ) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_structured_task_workspace(root)
             )
             store = InMemoryTaskStore(
@@ -3486,7 +3499,7 @@ capture_events = false
                     "output-artifact",
                 )
             )
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_task_workspace(root)
             )
             store = InMemoryTaskStore(
@@ -3699,7 +3712,7 @@ capture_events = false
                     "output-artifact",
                 )
             )
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_task_workspace(root)
             )
             store = InMemoryTaskStore(
@@ -3882,7 +3895,7 @@ capture_events = false
                     "output-artifact",
                 )
             )
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_task_workspace(root)
             )
             store = InMemoryTaskStore(
@@ -3976,7 +3989,7 @@ capture_events = false
     ) -> None:
         with TemporaryDirectory() as root_name:
             root = Path(root_name)
-            definition = TaskDefinitionLoader().load(
+            definition = await TaskDefinitionLoader().load(
                 _write_task_workspace(root)
             )
             store = InMemoryTaskStore(

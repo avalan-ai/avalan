@@ -1,6 +1,8 @@
 from collections.abc import Mapping
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
+from async_helpers import run_async
+
 from avalan.event import Event
 from avalan.flow import (
     FlowDiagnostic,
@@ -28,6 +30,16 @@ from avalan.flow import (
     loads_flow_definition_result,
     parse_flow_selector,
 )
+
+_async_loads_flow_definition_result = loads_flow_definition_result
+
+
+def loads_flow_definition_result(
+    *args: object,
+    **kwargs: object,
+) -> object:
+    return run_async(_async_loads_flow_definition_result(*args, **kwargs))
+
 
 _SENSITIVE_VALUES = (
     "private-toml-password",

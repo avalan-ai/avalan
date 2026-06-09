@@ -97,7 +97,7 @@ async def validate_flow(
     request: Request,
 ) -> dict[str, object]:
     """Validate a flow definition without executing nodes."""
-    result = _loader(request).loads_validation_result(payload.source)
+    result = await _loader(request).loads_validation_result(payload.source)
     return _flow_result(
         ok=result.ok,
         diagnostics=result.diagnostics,
@@ -148,7 +148,7 @@ async def compare_mermaid(
         payload.diagram_source,
         import_mode=payload.mode,
     )
-    loaded = _loader(request).loads_validation_result(
+    loaded = await _loader(request).loads_validation_result(
         payload.definition_source
     )
     if parsed.ok and loaded.ok and loaded.definition is not None:
@@ -169,7 +169,7 @@ async def run_flow(
     request: Request,
 ) -> dict[str, object]:
     """Run a strict flow through the SDK executor."""
-    loaded = _loader(request).loads_validation_result(payload.source)
+    loaded = await _loader(request).loads_validation_result(payload.source)
     if loaded.definition is None or not loaded.ok:
         return _flow_result(ok=False, diagnostics=loaded.diagnostics)
     result = await _executor(request).run(
@@ -289,7 +289,7 @@ async def resume_run(
     request: Request,
 ) -> dict[str, object]:
     """Resume a paused flow from durable state."""
-    loaded = _loader(request).loads_validation_result(payload.source)
+    loaded = await _loader(request).loads_validation_result(payload.source)
     if loaded.definition is None or not loaded.ok:
         return _flow_result(ok=False, diagnostics=loaded.diagnostics)
     store = _flow_state_store(request)

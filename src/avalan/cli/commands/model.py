@@ -69,10 +69,10 @@ def _supports_optional_stdin(modality: Modality) -> bool:
     }
 
 
-def _text_generation_input(
+async def _text_generation_input(
     input_string: str | None, file_paths: list[str] | None
 ) -> Message | str | None:
-    return input_files(input_string, file_paths)
+    return await input_files(input_string, file_paths)
 
 
 def model_display(
@@ -256,7 +256,7 @@ async def model_run(
             if operation.modality == Modality.TEXT_GENERATION:
                 operation = replace(
                     operation,
-                    input=_text_generation_input(
+                    input=await _text_generation_input(
                         input_string, input_file_paths
                     ),
                 )

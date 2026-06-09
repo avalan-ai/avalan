@@ -10,6 +10,8 @@ from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
+from async_helpers import run_async
+
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator import OrchestratorResponse
 from avalan.cli.commands import (
@@ -50,6 +52,13 @@ from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.response.text import TextGenerationResponse
 from avalan.tool.parser import ToolCallParser
+
+
+def _text_generation_input(
+    prompt: str | None,
+    input_file: list[str] | None,
+) -> str | Message | None:
+    return run_async(model_cmds._text_generation_input(prompt, input_file))
 
 
 def _disable_mlx_model_import(test_case):
@@ -125,7 +134,7 @@ class CliModelTestCase(TestCase):
             tmp.write(b"%PDF-1.7")
             tmp.flush()
 
-            result = model_cmds._text_generation_input("Summarize", [tmp.name])
+            result = _text_generation_input("Summarize", [tmp.name])
 
         self.assertIsInstance(result, Message)
         self.assertEqual(result.role, MessageRole.USER)
@@ -151,7 +160,7 @@ class CliModelTestCase(TestCase):
             tmp.write(b"doc")
             tmp.flush()
 
-            result = model_cmds._text_generation_input(None, [tmp.name])
+            result = _text_generation_input(None, [tmp.name])
 
         self.assertIsInstance(result, Message)
         self.assertEqual(result.role, MessageRole.USER)
@@ -176,13 +185,11 @@ class CliModelTestCase(TestCase):
         with self.assertRaisesRegex(
             AssertionError, f"Input file not found: {missing}"
         ):
-            model_cmds._text_generation_input("Summarize", [str(missing)])
+            _text_generation_input("Summarize", [str(missing)])
 
     def test_text_generation_input_without_files_returns_input(self) -> None:
-        self.assertEqual(
-            model_cmds._text_generation_input("Hello", None), "Hello"
-        )
-        self.assertIsNone(model_cmds._text_generation_input(None, []))
+        self.assertEqual(_text_generation_input("Hello", None), "Hello")
+        self.assertIsNone(_text_generation_input(None, []))
 
     def test_supports_optional_stdin_only_for_encoder_decoder(self) -> None:
         self.assertTrue(

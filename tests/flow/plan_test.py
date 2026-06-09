@@ -1,6 +1,7 @@
+from asyncio import run as asyncio_run
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
-from typing import cast
+from typing import Any, cast
 from unittest import TestCase, main
 
 from avalan.entities import (
@@ -73,12 +74,30 @@ def _tool_manager() -> ToolManager:
     )
 
 
+_async_compile_flow_definition = compile_flow_definition
+_async_loads_flow_definition_result = loads_flow_definition_result
+
+
+def _compile_flow_definition(
+    *args: object,
+    **kwargs: object,
+) -> Any:
+    return asyncio_run(_async_compile_flow_definition(*args, **kwargs))
+
+
+def _loads_flow_definition_result(
+    *args: object,
+    **kwargs: object,
+) -> Any:
+    return asyncio_run(_async_loads_flow_definition_result(*args, **kwargs))
+
+
 class FlowExecutionPlanTestCase(TestCase):
     def test_compile_flow_definition_builds_immutable_plan(self) -> None:
         registry = self._registry()
         definition = self._definition()
 
-        result = compile_flow_definition(definition, registry)
+        result = _compile_flow_definition(definition, registry)
 
         self.assertTrue(result.ok, result.public_diagnostics)
         self.assertEqual(result.diagnostics, ())
@@ -209,7 +228,7 @@ class FlowExecutionPlanTestCase(TestCase):
             ] = "changed"
 
     def test_compile_flow_definition_refuses_invalid_definition(self) -> None:
-        result = compile_flow_definition(
+        result = _compile_flow_definition(
             FlowDefinition(
                 name="invalid",
                 version="2026-06-07",
@@ -239,7 +258,7 @@ class FlowExecutionPlanTestCase(TestCase):
         self.assertNotIn("SECRET", str(result.public_diagnostics))
 
     def test_compile_flow_definition_refuses_legacy_definition(self) -> None:
-        result = compile_flow_definition(
+        result = _compile_flow_definition(
             FlowDefinition(
                 name="legacy",
                 entrypoint="start",
@@ -266,14 +285,14 @@ class FlowExecutionPlanTestCase(TestCase):
     def test_compile_flow_definition_does_not_build_nodes(self) -> None:
         registry = self._registry()
 
-        result = compile_flow_definition(self._definition(), registry)
+        result = _compile_flow_definition(self._definition(), registry)
 
         self.assertTrue(result.ok, result.public_diagnostics)
 
     def test_compile_graph_authored_definition_uses_strict_edges(
         self,
     ) -> None:
-        load_result = loads_flow_definition_result("""
+        load_result = _loads_flow_definition_result("""
             [flow]
             name = "strict-plan"
             version = "2026-06-09"
@@ -332,7 +351,7 @@ class FlowExecutionPlanTestCase(TestCase):
             str(load_result.definition),
         )
 
-        result = compile_flow_definition(load_result.definition)
+        result = _compile_flow_definition(load_result.definition)
 
         self.assertTrue(result.ok, result.public_diagnostics)
         assert result.plan is not None
@@ -353,7 +372,7 @@ class FlowExecutionPlanTestCase(TestCase):
     ) -> None:
         registry = tool_flow_node_registry(_tool_manager())
 
-        result = compile_flow_definition(
+        result = _compile_flow_definition(
             FlowDefinition(
                 name="tool-plan",
                 version="2026-06-07",
@@ -417,7 +436,7 @@ class FlowExecutionPlanTestCase(TestCase):
             {"raw_tool": ToolDescriptor(name="raw_tool")},
         )
 
-        result = compile_flow_definition(
+        result = _compile_flow_definition(
             FlowDefinition(
                 name="tool-plan",
                 version="2026-06-07",
@@ -461,7 +480,7 @@ class FlowExecutionPlanTestCase(TestCase):
     ) -> None:
         registry = tool_flow_node_registry(_tool_manager())
 
-        result = compile_flow_definition(
+        result = _compile_flow_definition(
             FlowDefinition(
                 name="tool-plan",
                 version="2026-06-07",
@@ -555,7 +574,7 @@ class FlowExecutionPlanTestCase(TestCase):
             message="Flow execution test diagnostic.",
         )
 
-        result = compile_flow_definition(self._definition(), self._registry())
+        result = _compile_flow_definition(self._definition(), self._registry())
         manual = type(result)(diagnostics=(diagnostic,))
 
         self.assertFalse(manual.ok)

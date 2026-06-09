@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 
+from async_helpers import run_async
+
 from avalan.flow import (
     FlowDefinition,
     FlowDiagnosticCategory,
@@ -55,6 +57,15 @@ from avalan.task import (
 from avalan.task.store import TaskExecutionRequest
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets.flow import FLOW_RESUME_DECISIONS_METADATA_KEY
+
+_async_loads_flow_definition_result = loads_flow_definition_result
+
+
+def loads_flow_definition_result(
+    *args: object,
+    **kwargs: object,
+) -> object:
+    return run_async(_async_loads_flow_definition_result(*args, **kwargs))
 
 
 class FlowExecutorTestCase(IsolatedAsyncioTestCase):
