@@ -353,11 +353,17 @@ def compile_flow_graph(
         _mermaid_nodes(parsed.parse_result.ast.statements),
         strict_node_names,
     )
+    edge_inspections = _classify_mermaid_edges(
+        _mermaid_edges(parsed.parse_result.ast.statements),
+        strict_node_names,
+    )
     edges = tuple(
-        FlowEdgeDefinition(source=edge.source, target=edge.target)
-        for edge in _mermaid_edges(parsed.parse_result.ast.statements)
-        if edge.source in strict_node_names
-        and edge.target in strict_node_names
+        FlowEdgeDefinition(
+            source=edge.source,
+            target=edge.target,
+        )
+        for edge in edge_inspections
+        if edge.classification == FlowGraphEdgeClassification.EXECUTABLE
     )
     return FlowGraphCompileResult(
         source=source,
@@ -366,6 +372,7 @@ def compile_flow_graph(
         inspection=FlowGraphInspection(
             source=source,
             nodes=node_inspections,
+            edges=edge_inspections,
             generated_edges=edges,
         ),
     )
@@ -530,6 +537,37 @@ def _classify_mermaid_nodes(
                 )
             )
     return tuple(inspections)
+
+
+def _classify_mermaid_edges(
+    edges: tuple[MermaidAstEdge, ...],
+    strict_node_names: set[str],
+) -> tuple["FlowGraphEdgeInspection", ...]:
+    inspections: list[FlowGraphEdgeInspection] = []
+    for index, edge in enumerate(edges):
+        if (
+            edge.source in strict_node_names
+            and edge.target in strict_node_names
+        ):
+            classification = FlowGraphEdgeClassification.EXECUTABLE
+        else:
+            classification = FlowGraphEdgeClassification.DECORATIVE
+        inspections.append(
+            FlowGraphEdgeInspection(
+                index=index,
+                source=edge.source,
+                target=edge.target,
+                classification=classification,
+                edge_id=edge.explicit_id,
+                source_span=edge.source_span,
+                bidirectional=_is_bidirectional_mermaid_arrow(edge.arrow),
+            )
+        )
+    return tuple(inspections)
+
+
+def _is_bidirectional_mermaid_arrow(value: str) -> bool:
+    return value.startswith("<") and value.endswith(">")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
