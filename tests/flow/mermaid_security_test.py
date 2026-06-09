@@ -11,6 +11,9 @@ from avalan.flow import (
     MermaidAst,
     MermaidAstDirective,
     MermaidAstDirectiveKind,
+    MermaidAstEdge,
+    MermaidAstEdgeStatement,
+    MermaidAstNode,
     MermaidCst,
     MermaidImportValidationResult,
     MermaidParseResult,
@@ -136,7 +139,8 @@ class MermaidImportSecurityTestCase(TestCase):
             (
                 "flowchart LR",
                 "classDef active fill:#fff,stroke:#333",
-                'A(["Start"]) -->|yes| B{Check}',
+                "A route_1@-->|yes| B{Check}",
+                "B route-2@-.-> C",
                 "class A active",
                 "style B fill:#fff,stroke:#333",
                 "linkStyle 0 stroke:#f00",
@@ -158,6 +162,166 @@ class MermaidImportSecurityTestCase(TestCase):
                         if isinstance(statement, MermaidAstDirective)
                     },
                 )
+
+    def test_executable_import_rejects_invalid_explicit_edge_ids(
+        self,
+    ) -> None:
+        cases = {
+            "dotted": (
+                "flowchart LR\nA route.one@--> B",
+                (2, 3),
+            ),
+            "url_like": (
+                "flowchart LR\nA https://route@--> B",
+                (2, 3),
+            ),
+            "selector_like": (
+                "flowchart LR\nA #route@--> B",
+                (2, 3),
+            ),
+            "path_like": (
+                "flowchart LR\nA route/path@--> B",
+                (2, 3),
+            ),
+        }
+
+        for name, (text, position) in cases.items():
+            with self.subTest(name=name):
+                result = parse_mermaid_import(
+                    text,
+                    import_mode=FlowViewImportMode.EXECUTABLE,
+                    source="/private/customer/diagram.mmd",
+                )
+
+                self.assertFalse(result.ok)
+                codes = _codes(result)
+                self.assertIn(
+                    "flow.mermaid.security.invalid_edge_id",
+                    codes,
+                )
+                if name != "url_like":
+                    self.assertEqual(
+                        codes,
+                        ("flow.mermaid.security.invalid_edge_id",),
+                    )
+                diagnostic = _diagnostic(
+                    result,
+                    "flow.mermaid.security.invalid_edge_id",
+                )
+                self.assertEqual(
+                    diagnostic.source_span.start_line,
+                    position[0],
+                )
+                self.assertEqual(
+                    diagnostic.source_span.start_column,
+                    position[1],
+                )
+                self.assertNotIn("customer", str(result.public_diagnostics))
+                self.assertNotIn("route.one", str(result.public_diagnostics))
+                self.assertNotIn(
+                    "https://route", str(result.public_diagnostics)
+                )
+                self.assertNotIn("#route", str(result.public_diagnostics))
+                self.assertNotIn("route/path", str(result.public_diagnostics))
+
+    def test_executable_import_rejects_duplicate_explicit_edge_ids(
+        self,
+    ) -> None:
+        result = parse_mermaid_import(
+            "\n".join(
+                (
+                    "flowchart LR",
+                    "A route_1@--> B",
+                    "subgraph lane[Private customer label]",
+                    "B route_1@--> C",
+                    "end",
+                )
+            ),
+            import_mode=FlowViewImportMode.EXECUTABLE,
+            source="/private/customer/diagram.mmd",
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            _codes(result),
+            ("flow.mermaid.security.duplicate_edge_id",),
+        )
+        self.assertEqual(result.diagnostics[0].source_span.start_line, 4)
+        self.assertEqual(result.diagnostics[0].source_span.start_column, 3)
+        self.assertEqual(len(result.diagnostics[0].related_spans), 1)
+        self.assertEqual(
+            result.diagnostics[0].related_spans[0].start_line,
+            2,
+        )
+        self.assertNotIn("route_1", str(result.public_diagnostics))
+        self.assertNotIn(
+            "Private customer label",
+            str(result.public_diagnostics),
+        )
+        self.assertNotIn("customer", str(result.public_diagnostics))
+
+    def test_presentation_import_allows_non_executable_edge_ids(
+        self,
+    ) -> None:
+        result = parse_mermaid_import(
+            "flowchart LR\nA route.one@--> B route.one@--> C",
+            import_mode=FlowViewImportMode.PRESENTATION,
+            source="/private/customer/diagram.mmd",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
+
+    def test_malformed_empty_edge_id_marker_remains_parser_error(
+        self,
+    ) -> None:
+        result = parse_mermaid_import(
+            "flowchart LR\nA @--> B",
+            import_mode=FlowViewImportMode.EXECUTABLE,
+            source="/private/customer/diagram.mmd",
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            _codes(result),
+            ("flow.mermaid.parser.malformed_edge_id",),
+        )
+        self.assertNotIn("customer", str(result.public_diagnostics))
+
+    def test_spanless_hand_built_edge_id_is_ignored_by_security(
+        self,
+    ) -> None:
+        span = FlowSourceSpan(start_line=1, start_column=1)
+        parse_result = MermaidParseResult(
+            cst=MermaidCst(),
+            ast=MermaidAst(
+                statements=(
+                    MermaidAstEdgeStatement(
+                        nodes=(
+                            MermaidAstNode(id="A", source_span=span),
+                            MermaidAstNode(id="B", source_span=span),
+                        ),
+                        edges=(
+                            MermaidAstEdge(
+                                source="A",
+                                target="B",
+                                arrow="-->",
+                                explicit_id="route.one",
+                            ),
+                        ),
+                        source_span=span,
+                    ),
+                ),
+            ),
+        )
+
+        result = validate_mermaid_import(
+            parse_result,
+            import_mode=FlowViewImportMode.EXECUTABLE,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.diagnostics, ())
 
     def test_import_validation_result_is_frozen_and_validated(self) -> None:
         parse_result = parse_mermaid("graph TD\nA --> B")

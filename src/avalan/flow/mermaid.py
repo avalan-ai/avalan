@@ -1912,6 +1912,12 @@ def _import_security_diagnostics(
             import_mode,
         )
     )
+    diagnostics.extend(
+        _edge_id_security_diagnostics(
+            parse_result.ast.statements,
+            import_mode,
+        )
+    )
     return tuple(diagnostics)
 
 
@@ -2029,6 +2035,53 @@ def _label_security_diagnostics(
     return tuple(diagnostics)
 
 
+def _edge_id_security_diagnostics(
+    statements: tuple[MermaidAstStatement, ...],
+    import_mode: FlowViewImportMode,
+) -> tuple[FlowDiagnostic, ...]:
+    if import_mode != FlowViewImportMode.EXECUTABLE:
+        return ()
+
+    diagnostics: list[FlowDiagnostic] = []
+    seen: dict[str, FlowSourceSpan] = {}
+    for edge in _statement_edges(statements):
+        if edge.explicit_id is None:
+            continue
+        source_span = edge.explicit_id_source_span or edge.source_span
+        if source_span is None:
+            continue
+        if not _is_executable_edge_id(edge.explicit_id):
+            diagnostics.append(
+                _import_diagnostic(
+                    "invalid_edge_id",
+                    "Explicit Mermaid edge ID is not valid for "
+                    "executable import.",
+                    source_span,
+                    import_mode,
+                )
+            )
+            continue
+        first_span = seen.get(edge.explicit_id)
+        if first_span is not None:
+            diagnostics.append(
+                FlowDiagnostic(
+                    code="flow.mermaid.security.duplicate_edge_id",
+                    category=FlowDiagnosticCategory.MERMAID_SECURITY,
+                    source_span=source_span,
+                    severity=FlowDiagnosticSeverity.ERROR,
+                    message="Explicit Mermaid edge ID is duplicated.",
+                    hint=(
+                        "Use unique explicit Mermaid edge IDs for "
+                        "executable import."
+                    ),
+                    related_spans=(first_span,),
+                )
+            )
+            continue
+        seen[edge.explicit_id] = source_span
+    return tuple(diagnostics)
+
+
 def _statement_nodes(
     statement: MermaidAstStatement,
 ) -> tuple[MermaidAstNode, ...]:
@@ -2037,6 +2090,18 @@ def _statement_nodes(
     if isinstance(statement, MermaidAstEdgeStatement):
         return statement.nodes
     return ()
+
+
+def _statement_edges(
+    statements: tuple[MermaidAstStatement, ...],
+) -> tuple[MermaidAstEdge, ...]:
+    edges: list[MermaidAstEdge] = []
+    for statement in statements:
+        if isinstance(statement, MermaidAstEdgeStatement):
+            edges.extend(statement.edges)
+        elif isinstance(statement, MermaidAstSubgraph):
+            edges.extend(_statement_edges(statement.statements))
+    return tuple(edges)
 
 
 def _label_diagnostics(
@@ -2125,6 +2190,13 @@ def _is_script_like_label(value: str) -> bool:
 def _is_external_link_token(value: str) -> bool:
     lowered = value.lower()
     return lowered.startswith(("http://", "https://", "mailto:"))
+
+
+def _is_executable_edge_id(value: str) -> bool:
+    return bool(value) and all(
+        character.isascii() and (character.isalnum() or character in "_-")
+        for character in value
+    )
 
 
 def _arrow_end_at(text: str, position: int) -> int | None:
