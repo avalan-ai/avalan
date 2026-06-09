@@ -2050,23 +2050,25 @@ def _edge_id_security_diagnostics(
 
     diagnostics: list[FlowDiagnostic] = []
     seen: dict[str, FlowSourceSpan] = {}
+    invalid_seen: set[str] = set()
     for edge in _statement_edges(statements):
         if edge.explicit_id is None:
             continue
         source_span = edge.explicit_id_source_span or edge.source_span
         if source_span is None:
             continue
-        if not _is_executable_edge_id(edge.explicit_id):
-            diagnostics.append(
-                _import_diagnostic(
-                    "invalid_edge_id",
-                    "Explicit Mermaid edge ID is not valid for "
-                    "executable import.",
-                    source_span,
-                    import_mode,
+        if not is_executable_mermaid_edge_id(edge.explicit_id):
+            if edge.explicit_id not in invalid_seen:
+                diagnostics.append(
+                    _import_diagnostic(
+                        "invalid_edge_id",
+                        "Explicit Mermaid edge ID is not valid for "
+                        "executable import.",
+                        source_span,
+                        import_mode,
+                    )
                 )
-            )
-            continue
+                invalid_seen.add(edge.explicit_id)
         first_span = seen.get(edge.explicit_id)
         if first_span is not None:
             diagnostics.append(
@@ -2224,10 +2226,16 @@ def _is_external_link_token(value: str) -> bool:
     return lowered.startswith(("http://", "https://", "mailto:"))
 
 
-def _is_executable_edge_id(value: str) -> bool:
-    return bool(value) and all(
-        character.isascii() and (character.isalnum() or character in "_-")
-        for character in value
+def is_executable_mermaid_edge_id(value: str) -> bool:
+    assert isinstance(value, str), "value must be a string"
+    return (
+        bool(value)
+        and value[0].isascii()
+        and (value[0].isalnum() or value[0] == "_")
+        and all(
+            character.isascii() and (character.isalnum() or character in "_-")
+            for character in value
+        )
     )
 
 
