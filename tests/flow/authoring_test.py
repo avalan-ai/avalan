@@ -1,3 +1,4 @@
+from asyncio import run as asyncio_run
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -171,33 +172,35 @@ class FlowAuthoringTestCase(TestCase):
         self.assertEqual(result.public_diagnostics, ())
 
     def test_compile_flow_source_returns_canonical_strict_output(self) -> None:
-        result = compile_flow_source(
-            """
-            [flow]
-            name = "graph_sdk"
-            entrypoint = "start"
-            output_node = "finish"
+        result = asyncio_run(
+            compile_flow_source(
+                """
+                [flow]
+                name = "graph_sdk"
+                entrypoint = "start"
+                output_node = "finish"
 
-            [graph]
-            format = "mermaid"
-            source = "inline"
-            mode = "executable"
-            diagram = '''
-            flowchart LR
-            start route_1@-->|Private customer route| finish
-            start -.-> note["Private customer note"]
-            '''
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start route_1@-->|Private customer route| finish
+                start -.-> note["Private customer note"]
+                '''
 
-            [graph.edges.route_1]
-            label = "approved"
+                [graph.edges.route_1]
+                label = "approved"
 
-            [nodes.start]
-            type = "input"
+                [nodes.start]
+                type = "input"
 
-            [nodes.finish]
-            type = "echo"
-            """,
-            source_path="/private/customer/flow.toml",
+                [nodes.finish]
+                type = "echo"
+                """,
+                source_path="/private/customer/flow.toml",
+            )
         )
 
         self.assertIsInstance(result, FlowDefinitionCompileResult)
@@ -273,8 +276,8 @@ class FlowAuthoringTestCase(TestCase):
                 encoding="utf-8",
             )
 
-            compiled = compile_flow_file(flow_path)
-            inspected = inspect_flow_graph_file(flow_path)
+            compiled = asyncio_run(compile_flow_file(flow_path))
+            inspected = asyncio_run(inspect_flow_graph_file(flow_path))
 
         self.assertTrue(compiled.ok, compiled.public_diagnostics)
         self.assertTrue(inspected.ok, inspected.public_diagnostics)
@@ -293,10 +296,60 @@ class FlowAuthoringTestCase(TestCase):
         self.assertNotIn("private-route.mmd", public)
         self.assertNotIn(str(flow_path), public)
 
+    def test_compile_flow_file_uses_configurable_graph_encoding(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            graph_dir = root / "graphs"
+            graph_dir.mkdir()
+            (graph_dir / "latin.mmd").write_bytes(
+                (
+                    "flowchart LR\nstart route_1@-->|Café route| finish\n"
+                ).encode("latin-1")
+            )
+            flow_path = root / "flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "graph_file_encoding"
+                entrypoint = "start"
+                output_node = "finish"
+
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                path = "graphs/latin.mmd"
+
+                [nodes.start]
+                type = "input"
+
+                [nodes.finish]
+                type = "echo"
+                """,
+                encoding="utf-8",
+            )
+
+            default_result = asyncio_run(compile_flow_file(flow_path))
+            latin_result = asyncio_run(
+                compile_flow_file(flow_path, encoding="latin-1")
+            )
+
+        self.assertFalse(default_result.ok)
+        self.assertEqual(
+            [
+                diagnostic["code"]
+                for diagnostic in default_result.public_diagnostics
+            ],
+            ["flow.graph.read_failure"],
+        )
+        self.assertTrue(latin_result.ok, latin_result.public_diagnostics)
+
     def test_compile_flow_source_reports_malformed_toml_safely(self) -> None:
-        result = compile_flow_source(
-            '[flow]\nname = "private-token"\n[',
-            source_path="/private/customer/flow.toml",
+        result = asyncio_run(
+            compile_flow_source(
+                '[flow]\nname = "private-token"\n[',
+                source_path="/private/customer/flow.toml",
+            )
         )
 
         self.assertFalse(result.ok)
@@ -311,22 +364,22 @@ class FlowAuthoringTestCase(TestCase):
         self.assertNotIn("/private/customer", public)
 
     def test_inspect_flow_graph_source_reports_missing_graph(self) -> None:
-        result = inspect_flow_graph_source("""
-            [flow]
-            name = "strict_sdk"
-            entrypoint = "start"
-            output_node = "finish"
+        result = asyncio_run(inspect_flow_graph_source("""
+                [flow]
+                name = "strict_sdk"
+                entrypoint = "start"
+                output_node = "finish"
 
-            [nodes.start]
-            type = "input"
+                [nodes.start]
+                type = "input"
 
-            [nodes.finish]
-            type = "echo"
+                [nodes.finish]
+                type = "echo"
 
-            [[edges]]
-            source = "start"
-            target = "finish"
-            """)
+                [[edges]]
+                source = "start"
+                target = "finish"
+                """))
 
         self.assertIsInstance(result, FlowGraphInspectionResult)
         self.assertFalse(result.ok)
@@ -340,29 +393,31 @@ class FlowAuthoringTestCase(TestCase):
     def test_inspect_flow_graph_source_reports_graph_failure_safely(
         self,
     ) -> None:
-        result = inspect_flow_graph_source(
-            """
-            [flow]
-            name = "invalid_graph_sdk"
-            entrypoint = "start"
-            output_node = "finish"
+        result = asyncio_run(
+            inspect_flow_graph_source(
+                """
+                [flow]
+                name = "invalid_graph_sdk"
+                entrypoint = "start"
+                output_node = "finish"
 
-            [graph]
-            format = "mermaid"
-            source = "inline"
-            mode = "executable"
-            diagram = '''
-            flowchart LR
-            start -->|Private customer route| finish
-            '''
+                [graph]
+                format = "mermaid"
+                source = "inline"
+                mode = "executable"
+                diagram = '''
+                flowchart LR
+                start -->|Private customer route| finish
+                '''
 
-            [nodes.start]
-            type = "input"
+                [nodes.start]
+                type = "input"
 
-            [nodes.finish]
-            type = "echo"
-            """,
-            source_path="/private/customer/flow.toml",
+                [nodes.finish]
+                type = "echo"
+                """,
+                source_path="/private/customer/flow.toml",
+            )
         )
 
         self.assertFalse(result.ok)
@@ -414,33 +469,51 @@ class FlowAuthoringTestCase(TestCase):
         self,
     ) -> None:
         with self.assertRaises(AssertionError):
-            compile_flow_source(object())  # type: ignore[arg-type]
+            asyncio_run(compile_flow_source(object()))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
-            compile_flow_source("", source_path=object())  # type: ignore[arg-type]
-        with self.assertRaises(AssertionError):
-            compile_flow_source("", registry=object())  # type: ignore[arg-type]
-        with self.assertRaises(AssertionError):
-            compile_flow_file(object())  # type: ignore[arg-type]
-        with self.assertRaises(AssertionError):
-            compile_flow_file(
-                Path("missing.toml"),
-                registry=object(),  # type: ignore[arg-type]
+            asyncio_run(
+                compile_flow_source("", source_path=object())  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
-            inspect_flow_graph_source(object())  # type: ignore[arg-type]
-        with self.assertRaises(AssertionError):
-            inspect_flow_graph_source(
-                "",
-                source_path=object(),  # type: ignore[arg-type]
+            asyncio_run(
+                compile_flow_source("", registry=object())  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
-            inspect_flow_graph_source("", registry=object())  # type: ignore[arg-type]
+            asyncio_run(compile_flow_file(object()))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
-            inspect_flow_graph_file(object())  # type: ignore[arg-type]
+            asyncio_run(
+                compile_flow_file(
+                    Path("missing.toml"),
+                    registry=object(),  # type: ignore[arg-type]
+                )
+            )
         with self.assertRaises(AssertionError):
-            inspect_flow_graph_file(
-                Path("missing.toml"),
-                registry=object(),  # type: ignore[arg-type]
+            asyncio_run(compile_flow_file(Path("missing.toml"), encoding=""))
+        with self.assertRaises(AssertionError):
+            asyncio_run(inspect_flow_graph_source(object()))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(
+                inspect_flow_graph_source(
+                    "",
+                    source_path=object(),  # type: ignore[arg-type]
+                )
+            )
+        with self.assertRaises(AssertionError):
+            asyncio_run(
+                inspect_flow_graph_source("", registry=object())  # type: ignore[arg-type]
+            )
+        with self.assertRaises(AssertionError):
+            asyncio_run(inspect_flow_graph_file(object()))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(
+                inspect_flow_graph_file(
+                    Path("missing.toml"),
+                    registry=object(),  # type: ignore[arg-type]
+                )
+            )
+        with self.assertRaises(AssertionError):
+            asyncio_run(
+                inspect_flow_graph_file(Path("missing.toml"), encoding="")
             )
 
     def test_private_parser_internals_are_not_exported_from_package(

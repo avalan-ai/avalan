@@ -12,6 +12,7 @@ from ...entities import (
     MessageFile,
     MessageRole,
 )
+from ...filesystem import read_text, run_awaitable
 from ...model.file_delivery import (
     FileDeliveryDecision,
     FileDeliveryMode,
@@ -56,7 +57,8 @@ from json import JSONDecodeError, dumps, loads
 from mimetypes import guess_extension
 from pathlib import Path
 from sys import maxsize
-from tomllib import TOMLDecodeError, load
+from tomllib import TOMLDecodeError
+from tomllib import loads as toml_loads
 from typing import Protocol, cast
 from uuid import UUID
 
@@ -266,8 +268,9 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         definition: TaskDefinition,
     ) -> Mapping[str, object] | None:
         try:
-            with self._agent_path(definition).open("rb") as file:
-                return load(file)
+            return toml_loads(
+                run_awaitable(read_text(self._agent_path(definition)))
+            )
         except (OSError, TOMLDecodeError):
             return None
 

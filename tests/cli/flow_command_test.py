@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest import TestCase, main
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from rich.console import Console
 
@@ -183,6 +183,116 @@ class FlowRunCommandTestCase(TestCase):
         self.assertEqual(payload["diagnostics"][0]["code"], "file.read")
         self.assertNotIn("private.flow.toml", stream.getvalue())
 
+    def test_flow_async_helpers_return_false_when_loads_return_none(
+        self,
+    ) -> None:
+        def console() -> Console:
+            return Console(file=StringIO(), width=160)
+
+        with patch.object(
+            flow_cmds,
+            "_flow_read_text",
+            new=AsyncMock(return_value=None),
+        ):
+            parse = asyncio_run(
+                flow_cmds._flow_mermaid_parse(
+                    _args(
+                        diagram="missing.mmd",
+                        mode="presentation",
+                        flow_command="mermaid",
+                        flow_mermaid_command="parse",
+                    ),
+                    console(),
+                )
+            )
+            render = asyncio_run(
+                flow_cmds._flow_mermaid_render(
+                    _args(
+                        diagram="missing.mmd",
+                        mode="presentation",
+                        flow_command="mermaid",
+                        flow_mermaid_command="render",
+                    ),
+                    console(),
+                )
+            )
+            compare_source = asyncio_run(
+                flow_cmds._flow_mermaid_compare(
+                    _args(
+                        diagram="missing.mmd",
+                        flow="missing.flow.toml",
+                        mode="presentation",
+                        flow_command="mermaid",
+                        flow_mermaid_command="compare",
+                    ),
+                    console(),
+                )
+            )
+            skeleton = asyncio_run(
+                flow_cmds._flow_mermaid_skeleton(
+                    _args(
+                        diagram="missing.mmd",
+                        mode="presentation",
+                        name="topology",
+                        version=None,
+                        revision=None,
+                        flow_command="mermaid",
+                        flow_mermaid_command="skeleton",
+                    ),
+                    console(),
+                )
+            )
+
+        with (
+            patch.object(
+                flow_cmds,
+                "_flow_read_text",
+                new=AsyncMock(return_value="graph TD\nA --> B"),
+            ),
+            patch.object(
+                flow_cmds,
+                "_flow_load_validation_result",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            compare_flow = asyncio_run(
+                flow_cmds._flow_mermaid_compare(
+                    _args(
+                        diagram="topology.mmd",
+                        flow="missing.flow.toml",
+                        mode="presentation",
+                        flow_command="mermaid",
+                        flow_mermaid_command="compare",
+                    ),
+                    console(),
+                )
+            )
+
+        with patch.object(
+            flow_cmds,
+            "_flow_load_validation_result",
+            new=AsyncMock(return_value=None),
+        ):
+            validate = asyncio_run(
+                flow_cmds._flow_validate(
+                    _args(flow="missing.flow.toml"),
+                    console(),
+                )
+            )
+
+        self.assertFalse(parse)
+        self.assertFalse(render)
+        self.assertFalse(compare_source)
+        self.assertFalse(compare_flow)
+        self.assertFalse(skeleton)
+        self.assertFalse(validate)
+
+    def test_flow_text_encoding_defaults_when_none(self) -> None:
+        self.assertEqual(
+            flow_cmds._flow_text_encoding(_args(encoding=None)),
+            "utf-8",
+        )
+
     def test_flow_compile_prints_canonical_strict_toml(self) -> None:
         stream = StringIO()
         console = Console(file=stream, width=160)
@@ -193,7 +303,7 @@ class FlowRunCommandTestCase(TestCase):
             flow_path = _write_strict_graph_constant_flow(
                 Path(temporary_directory)
             )
-            sdk_result = compile_flow_file(flow_path)
+            sdk_result = asyncio_run(compile_flow_file(flow_path))
             result = flow_cmds.flow_compile(
                 _args(flow=flow_path),
                 console,
@@ -415,16 +525,16 @@ class FlowRunCommandTestCase(TestCase):
                 encoding="utf-8",
             )
 
-            sdk_valid = FlowDefinitionLoader().load_validation_result(
-                valid_path
+            sdk_valid = asyncio_run(
+                FlowDefinitionLoader().load_validation_result(valid_path)
             )
             cli_valid = flow_cmds.flow_validate(
                 _args(flow=valid_path, flow_json=True),
                 success_console,
                 self.theme,
             )
-            sdk_invalid = FlowDefinitionLoader().load_validation_result(
-                invalid_path
+            sdk_invalid = asyncio_run(
+                FlowDefinitionLoader().load_validation_result(invalid_path)
             )
             cli_invalid = flow_cmds.flow_validate(
                 _args(flow=invalid_path, flow_json=True),
@@ -613,8 +723,8 @@ class FlowRunCommandTestCase(TestCase):
                 "utf-8",
             )
             flow_path = _write_strict_topology_flow(root)
-            load_result = FlowDefinitionLoader().load_validation_result(
-                flow_path
+            load_result = asyncio_run(
+                FlowDefinitionLoader().load_validation_result(flow_path)
             )
             assert load_result.definition is not None
             source = diagram.read_text(encoding="utf-8")
@@ -1422,8 +1532,8 @@ class FlowRunCommandTestCase(TestCase):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             flow_path = _write_strict_constant_flow(root)
-            load_result = FlowDefinitionLoader().load_validation_result(
-                flow_path
+            load_result = asyncio_run(
+                FlowDefinitionLoader().load_validation_result(flow_path)
             )
             assert load_result.definition is not None
             sdk_executor = FlowExecutor()
@@ -2065,14 +2175,21 @@ class FlowRunCommandTestCase(TestCase):
             issues=(),
             flow=None,
         )
-        load_result = SimpleNamespace(
+        full_load_result = SimpleNamespace(
             definition=None,
             issues=(issue,),
             flow=None,
         )
+
+        async def load_validation_result(_: object) -> object:
+            return validation_result
+
+        async def load_result(_: object) -> object:
+            return full_load_result
+
         loader = SimpleNamespace(
-            load_validation_result=lambda _: validation_result,
-            load_result=lambda _: load_result,
+            load_validation_result=load_validation_result,
+            load_result=load_result,
         )
 
         with patch.object(
@@ -3226,7 +3343,9 @@ class FlowRunCommandTestCase(TestCase):
         for name, args, expected in invalid_cases:
             with self.subTest(case=name):
                 console = Console(record=True, width=160)
-                decisions = flow_cmds._flow_resume_decisions(args, console)
+                decisions = asyncio_run(
+                    flow_cmds._flow_resume_decisions(args, console)
+                )
 
                 output = console.export_text()
                 self.assertIsNone(decisions)
@@ -3240,9 +3359,11 @@ class FlowRunCommandTestCase(TestCase):
                 encoding="utf-8",
             )
 
-            decisions = flow_cmds._flow_resume_decisions(
-                _args(decision_json=f"@{decision_path}"),
-                Console(record=True, width=160),
+            decisions = asyncio_run(
+                flow_cmds._flow_resume_decisions(
+                    _args(decision_json=f"@{decision_path}"),
+                    Console(record=True, width=160),
+                )
             )
 
         self.assertEqual(

@@ -472,6 +472,16 @@ class TaskDefinitionLoaderTest(TestCase):
 
         self.assertEqual(error.exception.issues[0].path, "input")
 
+    def test_load_result_accepts_explicit_encoding_override(self) -> None:
+        result = TaskDefinitionLoader().load_result(
+            FIXTURE_ROOT / "minimal.task.toml",
+            encoding="utf-8",
+        )
+
+        self.assertIsNotNone(result.definition)
+        assert result.definition is not None
+        self.assertEqual(result.definition.task.name, "person_explainer")
+
     def test_non_table_section_returns_structure_issue(self) -> None:
         result = loads_task_definition_result("""
             task = "invalid"

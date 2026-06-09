@@ -1,3 +1,4 @@
+from ..filesystem import DEFAULT_TEXT_ENCODING, assert_text_encoding, read_text
 from .condition import FlowCondition
 from .definition import (
     FlowEdgeDefinition,
@@ -351,14 +352,16 @@ def flow_graph_diagnostic_load_category(
     return "value"
 
 
-def compile_flow_graph(
+async def compile_flow_graph(
     source: "FlowGraphSource",
     nodes: tuple[FlowNodeDefinition, ...],
     *,
     edge_bindings: Mapping[str, "FlowGraphEdgeBinding"] | None = None,
+    encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> "FlowGraphCompileResult":
     assert isinstance(source, FlowGraphSource)
     assert isinstance(nodes, tuple), "nodes must be a tuple"
+    assert_text_encoding(encoding)
     for node in nodes:
         assert isinstance(node, FlowNodeDefinition)
     bindings = (
@@ -366,7 +369,10 @@ def compile_flow_graph(
         if edge_bindings is not None
         else _empty_edge_bindings()
     )
-    diagram, source_identity, diagnostic = _load_graph_source(source)
+    diagram, source_identity, diagnostic = await _load_graph_source(
+        source,
+        encoding=encoding,
+    )
     if diagnostic is not None:
         return FlowGraphCompileResult(
             source=source,
@@ -423,19 +429,23 @@ def compile_flow_graph(
     )
 
 
-def _load_graph_source(
+async def _load_graph_source(
     source: "FlowGraphSource",
+    *,
+    encoding: str,
 ) -> tuple[str | None, str | None, FlowDiagnostic | None]:
     match source.source_kind:
         case FlowGraphSourceKind.INLINE:
             assert source.diagram is not None
             return source.diagram, source.source_identity, None
         case FlowGraphSourceKind.FILE:
-            return _load_graph_file_source(source)
+            return await _load_graph_file_source(source, encoding=encoding)
 
 
-def _load_graph_file_source(
+async def _load_graph_file_source(
     source: "FlowGraphSource",
+    *,
+    encoding: str,
 ) -> tuple[str | None, str | None, FlowDiagnostic | None]:
     assert source.path is not None
     if _is_untrusted_graph_path(source.path):
@@ -483,7 +493,7 @@ def _load_graph_file_source(
         )
     try:
         return (
-            path.read_text(encoding="utf-8"),
+            await read_text(path, encoding=encoding),
             source.source_identity or str(path),
             None,
         )

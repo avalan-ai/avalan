@@ -1,3 +1,4 @@
+from ...filesystem import read_bytes
 from ...types import assert_non_empty_string as _assert_non_empty_string
 from ..artifact import (
     ArtifactStoreConflictError,
@@ -134,7 +135,7 @@ class LocalArtifactStore:
                 size_bytes=ref.size_bytes,
                 sha256=ref.sha256,
             )
-        content = path.read_bytes()
+        content = await read_bytes(path)
         return TaskArtifactStat(
             ref=ref,
             size_bytes=len(content),

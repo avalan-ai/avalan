@@ -1,3 +1,4 @@
+from ..filesystem import DEFAULT_TEXT_ENCODING, assert_text_encoding, read_text
 from .binding import (
     FlowViewBindingResult,
     bind_flow_view_definition,
@@ -193,20 +194,26 @@ def compare_flow_topology(
     return bind_flow_view_definition(view, definition)
 
 
-def compile_flow_source(
+async def compile_flow_source(
     source: str,
     *,
     source_path: str | Path | None = None,
     registry: FlowNodeRegistry | None = None,
+    encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> FlowDefinitionCompileResult:
     assert isinstance(source, str), "source must be a string"
     if source_path is not None:
         assert isinstance(source_path, str | Path)
     if registry is not None:
         assert isinstance(registry, FlowNodeRegistry)
-    result = FlowDefinitionLoader(registry).loads_validation_result(
+    assert_text_encoding(encoding)
+    result = FlowDefinitionLoader(
+        registry,
+        encoding=encoding,
+    ).loads_validation_result(
         source,
         source_path=source_path,
+        encoding=encoding,
     )
     if result.definition is None:
         return FlowDefinitionCompileResult(
@@ -223,36 +230,45 @@ def compile_flow_source(
     )
 
 
-def compile_flow_file(
+async def compile_flow_file(
     path: str | Path,
     *,
     registry: FlowNodeRegistry | None = None,
+    encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> FlowDefinitionCompileResult:
     assert isinstance(path, str | Path), "path must be a string or path"
     if registry is not None:
         assert isinstance(registry, FlowNodeRegistry)
+    assert_text_encoding(encoding)
     source_path = Path(path)
-    return compile_flow_source(
-        source_path.read_text(encoding="utf-8"),
+    return await compile_flow_source(
+        await read_text(source_path, encoding=encoding),
         source_path=source_path,
         registry=registry,
+        encoding=encoding,
     )
 
 
-def inspect_flow_graph_source(
+async def inspect_flow_graph_source(
     source: str,
     *,
     source_path: str | Path | None = None,
     registry: FlowNodeRegistry | None = None,
+    encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> FlowGraphInspectionResult:
     assert isinstance(source, str), "source must be a string"
     if source_path is not None:
         assert isinstance(source_path, str | Path)
     if registry is not None:
         assert isinstance(registry, FlowNodeRegistry)
-    result = FlowDefinitionLoader(registry).loads_validation_result(
+    assert_text_encoding(encoding)
+    result = FlowDefinitionLoader(
+        registry,
+        encoding=encoding,
+    ).loads_validation_result(
         source,
         source_path=source_path,
+        encoding=encoding,
     )
     diagnostics = result.diagnostics
     if (
@@ -273,19 +289,22 @@ def inspect_flow_graph_source(
     )
 
 
-def inspect_flow_graph_file(
+async def inspect_flow_graph_file(
     path: str | Path,
     *,
     registry: FlowNodeRegistry | None = None,
+    encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> FlowGraphInspectionResult:
     assert isinstance(path, str | Path), "path must be a string or path"
     if registry is not None:
         assert isinstance(registry, FlowNodeRegistry)
+    assert_text_encoding(encoding)
     source_path = Path(path)
-    return inspect_flow_graph_source(
-        source_path.read_text(encoding="utf-8"),
+    return await inspect_flow_graph_source(
+        await read_text(source_path, encoding=encoding),
         source_path=source_path,
         registry=registry,
+        encoding=encoding,
     )
 
 

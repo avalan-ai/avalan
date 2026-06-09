@@ -1,3 +1,9 @@
+from ..filesystem import (
+    DEFAULT_TEXT_ENCODING,
+    assert_text_encoding,
+    read_text,
+    run_awaitable,
+)
 from .definition import (
     FrozenMetadata,
     IdempotencyMode,
@@ -92,15 +98,37 @@ class TaskLoadError(ValueError):
 
 
 class TaskDefinitionLoader:
-    def load(self, path: str | Path) -> TaskDefinition:
-        result = self.load_result(path)
+    def __init__(self, *, encoding: str = DEFAULT_TEXT_ENCODING) -> None:
+        assert_text_encoding(encoding)
+        self._encoding = encoding
+
+    def load(
+        self,
+        path: str | Path,
+        *,
+        encoding: str | None = None,
+    ) -> TaskDefinition:
+        result = self.load_result(path, encoding=encoding)
         if result.definition is None:
             raise TaskLoadError(result.issues)
         return result.definition
 
-    def load_result(self, path: str | Path) -> TaskLoadResult:
-        source = Path(path).read_text(encoding="utf-8")
+    def load_result(
+        self,
+        path: str | Path,
+        *,
+        encoding: str | None = None,
+    ) -> TaskLoadResult:
+        source = run_awaitable(
+            read_text(Path(path), encoding=self._text_encoding(encoding))
+        )
         return self.loads_result(source, source_path=path)
+
+    def _text_encoding(self, encoding: str | None) -> str:
+        if encoding is None:
+            return self._encoding
+        assert_text_encoding(encoding)
+        return encoding
 
     def loads(
         self, source: str, *, source_path: str | Path | None = None
@@ -133,12 +161,20 @@ class TaskDefinitionLoader:
         return _build_definition(raw, source_path=source_path)
 
 
-def load_task_definition(path: str | Path) -> TaskDefinition:
-    return TaskDefinitionLoader().load(path)
+def load_task_definition(
+    path: str | Path,
+    *,
+    encoding: str = DEFAULT_TEXT_ENCODING,
+) -> TaskDefinition:
+    return TaskDefinitionLoader(encoding=encoding).load(path)
 
 
-def load_task_definition_result(path: str | Path) -> TaskLoadResult:
-    return TaskDefinitionLoader().load_result(path)
+def load_task_definition_result(
+    path: str | Path,
+    *,
+    encoding: str = DEFAULT_TEXT_ENCODING,
+) -> TaskLoadResult:
+    return TaskDefinitionLoader(encoding=encoding).load_result(path)
 
 
 def loads_task_definition(

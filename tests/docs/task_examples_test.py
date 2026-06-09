@@ -1,3 +1,4 @@
+from asyncio import run as asyncio_run
 from collections.abc import Iterable, Mapping
 from importlib.util import module_from_spec, spec_from_file_location
 from json import load
@@ -193,8 +194,8 @@ class TaskExamplesTest(TestCase):
         flow_definition = load_task_definition(root / "flow_task.toml")
         image_definition = load_task_definition(root / "image_flow_task.toml")
         flow_loader = _poc_flow_loader()
-        native_flow = flow_loader.load(root / "flow.toml")
-        image_flow = flow_loader.load(root / "image_flow.toml")
+        native_flow = asyncio_run(flow_loader.load(root / "flow.toml"))
+        image_flow = asyncio_run(flow_loader.load(root / "image_flow.toml"))
         with (root / "invoice.schema.json").open(encoding="utf-8") as file:
             schema = load(file)
         with (root / "agent.toml").open("rb") as file:

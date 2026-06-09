@@ -1,3 +1,4 @@
+from asyncio import run as asyncio_run
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -44,6 +45,15 @@ from avalan.flow import (
     flow_graph_diagnostic_load_category,
     validate_flow_definition,
 )
+
+
+def _compile_flow_graph(
+    source: FlowGraphSource,
+    nodes: tuple[FlowNodeDefinition, ...],
+    **kwargs: object,
+) -> FlowGraphCompileResult:
+    return asyncio_run(compile_flow_graph(source, nodes, **kwargs))
+
 
 _GRAPH_DIAGNOSTIC_CASES = (
     (
@@ -171,7 +181,7 @@ class FlowGraphCompilerTestCase(TestCase):
         )
         binding = FlowGraphEdgeBinding(edge_id="route_1", label="review")
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -233,7 +243,7 @@ class FlowGraphCompilerTestCase(TestCase):
             ),
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -311,7 +321,7 @@ class FlowGraphCompilerTestCase(TestCase):
             FlowNodeDefinition(name="finish", type="echo"),
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             nodes,
             edge_bindings={
@@ -390,7 +400,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_identity="/private/customer/flow.toml",
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -462,7 +472,7 @@ class FlowGraphCompilerTestCase(TestCase):
                     source_identity="/private/customer/flow.toml",
                 )
 
-                result = compile_flow_graph(
+                result = _compile_flow_graph(
                     source,
                     (
                         FlowNodeDefinition(name="start", type="input"),
@@ -516,7 +526,7 @@ class FlowGraphCompilerTestCase(TestCase):
             start_column=5,
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -580,7 +590,7 @@ class FlowGraphCompilerTestCase(TestCase):
             start_column=5,
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -634,7 +644,7 @@ class FlowGraphCompilerTestCase(TestCase):
             start_column=3,
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -688,7 +698,7 @@ class FlowGraphCompilerTestCase(TestCase):
             start_column=3,
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -744,7 +754,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_identity="/private/customer/flow.toml",
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -805,7 +815,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_identity="/private/customer/flow.toml",
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -864,7 +874,7 @@ class FlowGraphCompilerTestCase(TestCase):
             ),
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (FlowNodeDefinition(name="review", type="pass-through"),),
         )
@@ -903,7 +913,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_identity="/private/customer/flow.toml",
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -999,7 +1009,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_identity="/private/customer/flow.toml",
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -1036,7 +1046,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_identity="/private/customer/flow.toml",
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -1101,7 +1111,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_identity="/private/customer/flow.toml",
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -1227,7 +1237,7 @@ class FlowGraphCompilerTestCase(TestCase):
             "avalan.flow.graph.parse_mermaid_import",
             return_value=parser_result,
         ):
-            result = compile_flow_graph(
+            result = _compile_flow_graph(
                 source,
                 (
                     FlowNodeDefinition(name="start", type="input"),
@@ -1284,7 +1294,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_identity="/private/customer/flow.toml",
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -1368,7 +1378,7 @@ class FlowGraphCompilerTestCase(TestCase):
                     source_identity="/private/customer/flow.toml",
                 )
 
-                result = compile_flow_graph(
+                result = _compile_flow_graph(
                     source,
                     (
                         FlowNodeDefinition(name="start", type="input"),
@@ -1449,7 +1459,7 @@ class FlowGraphCompilerTestCase(TestCase):
             start_column=5,
         )
 
-        result = compile_flow_graph(
+        result = _compile_flow_graph(
             source,
             (
                 FlowNodeDefinition(name="start", type="input"),
@@ -1608,7 +1618,7 @@ class FlowGraphCompilerTestCase(TestCase):
             "avalan.flow.graph.parse_mermaid_import",
             return_value=parser_result,
         ):
-            result = compile_flow_graph(
+            result = _compile_flow_graph(
                 source,
                 (
                     FlowNodeDefinition(name="start", type="input"),
@@ -1676,7 +1686,7 @@ class FlowGraphCompilerTestCase(TestCase):
                 base_path=base_path,
             )
 
-            result = compile_flow_graph(
+            result = _compile_flow_graph(
                 source,
                 (
                     FlowNodeDefinition(name="start", type="input"),
@@ -1710,7 +1720,7 @@ class FlowGraphCompilerTestCase(TestCase):
                 base_path=base_path,
             )
 
-            result = compile_flow_graph(
+            result = _compile_flow_graph(
                 source,
                 (
                     FlowNodeDefinition(name="start", type="input"),
@@ -1790,7 +1800,7 @@ class FlowGraphCompilerTestCase(TestCase):
                         source_span=source_span,
                     )
 
-                    result = compile_flow_graph(source, ())
+                    result = _compile_flow_graph(source, ())
 
                     self.assertFalse(result.ok)
                     self.assertEqual(result.edges, ())
@@ -1823,7 +1833,7 @@ class FlowGraphCompilerTestCase(TestCase):
             source_span=source_span,
         )
 
-        result = compile_flow_graph(source, ())
+        result = _compile_flow_graph(source, ())
 
         self.assertFalse(result.ok)
         self.assertEqual(result.edges, ())
@@ -1849,7 +1859,7 @@ class FlowGraphCompilerTestCase(TestCase):
             "resolve",
             side_effect=OSError("PrivateCustomerToken"),
         ):
-            result = compile_flow_graph(source, ())
+            result = _compile_flow_graph(source, ())
 
         self.assertFalse(result.ok)
         self.assertEqual(result.edges, ())
@@ -1882,7 +1892,7 @@ class FlowGraphCompilerTestCase(TestCase):
                 "read_text",
                 side_effect=PermissionError("PrivateCustomerToken"),
             ):
-                result = compile_flow_graph(source, ())
+                result = _compile_flow_graph(source, ())
 
         self.assertFalse(result.ok)
         self.assertEqual(result.edges, ())
@@ -1904,13 +1914,13 @@ class FlowGraphCompilerTestCase(TestCase):
         binding = FlowGraphEdgeBinding(edge_id="route_1")
 
         with self.assertRaises(AssertionError):
-            compile_flow_graph(object(), ())  # type: ignore[arg-type]
+            _compile_flow_graph(object(), ())  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
-            compile_flow_graph(source, [])  # type: ignore[arg-type]
+            _compile_flow_graph(source, [])  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
-            compile_flow_graph(source, (object(),))  # type: ignore[arg-type]
+            _compile_flow_graph(source, (object(),))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
-            compile_flow_graph(
+            _compile_flow_graph(
                 source,
                 (),
                 edge_bindings=[],  # type: ignore[arg-type]
@@ -1923,7 +1933,7 @@ class FlowGraphCompilerTestCase(TestCase):
         for edge_bindings in invalid_bindings:
             with self.subTest(edge_bindings=edge_bindings):
                 with self.assertRaises(AssertionError):
-                    compile_flow_graph(
+                    _compile_flow_graph(
                         source,
                         (
                             FlowNodeDefinition(name="start", type="input"),

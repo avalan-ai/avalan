@@ -1,3 +1,9 @@
+from ..filesystem import (
+    DEFAULT_TEXT_ENCODING,
+    assert_text_encoding,
+    read_text,
+    run_awaitable,
+)
 from .condition import (
     FlowCondition,
     FlowConditionEvaluationContext,
@@ -304,32 +310,69 @@ class FlowLoadError(ValueError):
 
 
 class FlowDefinitionLoader:
-    def __init__(self, registry: FlowNodeRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: FlowNodeRegistry | None = None,
+        *,
+        encoding: str = DEFAULT_TEXT_ENCODING,
+    ) -> None:
+        assert_text_encoding(encoding)
         self._registry = registry or default_flow_node_registry()
+        self._encoding = encoding
 
-    def load(self, path: str | Path) -> FlowDefinition:
-        result = self.load_result(path)
+    async def load(
+        self,
+        path: str | Path,
+        *,
+        encoding: str | None = None,
+    ) -> FlowDefinition:
+        result = await self.load_result(path, encoding=encoding)
         if result.definition is None:
             raise FlowLoadError(result.issues)
         return result.definition
 
-    def load_result(self, path: str | Path) -> FlowLoadResult:
+    async def load_result(
+        self,
+        path: str | Path,
+        *,
+        encoding: str | None = None,
+    ) -> FlowLoadResult:
         source_path = Path(path)
-        source = source_path.read_text(encoding="utf-8")
-        return self.loads_result(source, source_path=source_path)
+        text_encoding = self._text_encoding(encoding)
+        source = await read_text(source_path, encoding=text_encoding)
+        return self.loads_result(
+            source,
+            source_path=source_path,
+            encoding=text_encoding,
+        )
 
-    def load_validation_result(self, path: str | Path) -> FlowLoadResult:
+    async def load_validation_result(
+        self,
+        path: str | Path,
+        *,
+        encoding: str | None = None,
+    ) -> FlowLoadResult:
         source_path = Path(path)
-        source = source_path.read_text(encoding="utf-8")
-        return self.loads_validation_result(source, source_path=source_path)
+        text_encoding = self._text_encoding(encoding)
+        source = await read_text(source_path, encoding=text_encoding)
+        return self.loads_validation_result(
+            source,
+            source_path=source_path,
+            encoding=text_encoding,
+        )
 
     def loads(
         self,
         source: str,
         *,
         source_path: str | Path | None = None,
+        encoding: str | None = None,
     ) -> FlowDefinition:
-        result = self.loads_result(source, source_path=source_path)
+        result = self.loads_result(
+            source,
+            source_path=source_path,
+            encoding=encoding,
+        )
         if result.definition is None:
             raise FlowLoadError(result.issues)
         return result.definition
@@ -339,8 +382,10 @@ class FlowDefinitionLoader:
         source: str,
         *,
         source_path: str | Path | None = None,
+        encoding: str | None = None,
     ) -> FlowLoadResult:
         assert isinstance(source, str), "source must be a string"
+        text_encoding = self._text_encoding(encoding)
         try:
             raw = loads(source)
         except TOMLDecodeError:
@@ -356,11 +401,14 @@ class FlowDefinitionLoader:
                     ),
                 ),
             )
-        return _build_result(
-            raw,
-            registry=self._registry,
-            source_path=source_path,
-            build_runtime=True,
+        return run_awaitable(
+            _build_result(
+                raw,
+                registry=self._registry,
+                source_path=source_path,
+                build_runtime=True,
+                encoding=text_encoding,
+            )
         )
 
     def loads_validation_result(
@@ -368,8 +416,10 @@ class FlowDefinitionLoader:
         source: str,
         *,
         source_path: str | Path | None = None,
+        encoding: str | None = None,
     ) -> FlowLoadResult:
         assert isinstance(source, str), "source must be a string"
+        text_encoding = self._text_encoding(encoding)
         try:
             raw = loads(source)
         except TOMLDecodeError:
@@ -385,36 +435,58 @@ class FlowDefinitionLoader:
                     ),
                 ),
             )
-        return _build_result(
-            raw,
-            registry=self._registry,
-            source_path=source_path,
-            build_runtime=False,
+        return run_awaitable(
+            _build_result(
+                raw,
+                registry=self._registry,
+                source_path=source_path,
+                build_runtime=False,
+                encoding=text_encoding,
+            )
         )
 
+    def _text_encoding(self, encoding: str | None) -> str:
+        if encoding is None:
+            return self._encoding
+        assert_text_encoding(encoding)
+        return encoding
 
-def load_flow_definition(path: str | Path) -> FlowDefinition:
-    return FlowDefinitionLoader().load(path)
+
+async def load_flow_definition(
+    path: str | Path,
+    *,
+    encoding: str = DEFAULT_TEXT_ENCODING,
+) -> FlowDefinition:
+    return await FlowDefinitionLoader(encoding=encoding).load(path)
 
 
-def load_flow_definition_result(path: str | Path) -> FlowLoadResult:
-    return FlowDefinitionLoader().load_result(path)
+async def load_flow_definition_result(
+    path: str | Path,
+    *,
+    encoding: str = DEFAULT_TEXT_ENCODING,
+) -> FlowLoadResult:
+    return await FlowDefinitionLoader(encoding=encoding).load_result(path)
 
 
 def loads_flow_definition(
     source: str,
     *,
     source_path: str | Path | None = None,
+    encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> FlowDefinition:
-    return FlowDefinitionLoader().loads(source, source_path=source_path)
+    return FlowDefinitionLoader(encoding=encoding).loads(
+        source,
+        source_path=source_path,
+    )
 
 
 def loads_flow_definition_result(
     source: str,
     *,
     source_path: str | Path | None = None,
+    encoding: str = DEFAULT_TEXT_ENCODING,
 ) -> FlowLoadResult:
-    return FlowDefinitionLoader().loads_result(
+    return FlowDefinitionLoader(encoding=encoding).loads_result(
         source,
         source_path=source_path,
     )
@@ -483,12 +555,13 @@ def _condition_output_names(
     return tuple(dict.fromkeys(names))
 
 
-def _build_result(
+async def _build_result(
     raw: Mapping[str, object],
     *,
     registry: FlowNodeRegistry,
     source_path: str | Path | None,
     build_runtime: bool,
+    encoding: str,
 ) -> FlowLoadResult:
     issues: list[FlowLoadIssue] = []
     _validate_top_level_sections(raw, issues)
@@ -612,12 +685,13 @@ def _build_result(
             authoring_graph=authoring_graph,
         )
     if graph_raw is not None:
-        graph_result = _compile_graph_edges(
+        graph_result = await _compile_graph_edges(
             graph_raw,
             nodes,
             issues,
             definition_base=definition_base,
             source_path=source_path,
+            encoding=encoding,
         )
         if graph_result is None:
             return FlowLoadResult(
@@ -880,13 +954,14 @@ def _validate_graph_edges_section(
         )
 
 
-def _compile_graph_edges(
+async def _compile_graph_edges(
     raw: RawSection,
     nodes: tuple[FlowNodeDefinition, ...],
     issues: list[FlowLoadIssue],
     *,
     definition_base: Path | None,
     source_path: str | Path | None,
+    encoding: str,
 ) -> FlowGraphCompileResult | None:
     if _has_graph_issue(issues):
         return None
@@ -899,10 +974,11 @@ def _compile_graph_edges(
     edge_bindings = _graph_edge_bindings(raw, issues)
     if source is None or _has_graph_issue(issues):
         return None
-    result = compile_flow_graph(
+    result = await compile_flow_graph(
         source,
         nodes,
         edge_bindings=edge_bindings,
+        encoding=encoding,
     )
     issues.extend(
         _issue_from_diagnostic(diagnostic) for diagnostic in result.diagnostics

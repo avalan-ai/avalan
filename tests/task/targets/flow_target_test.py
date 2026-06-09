@@ -450,9 +450,9 @@ def _flow_loader_resolver(
     *,
     agent_runner: AgentTaskTargetRunner,
     root: Path,
-) -> Callable[[TaskTargetContext], Flow]:
-    def resolve(context: TaskTargetContext) -> Flow:
-        result = FlowDefinitionLoader(
+) -> Callable[[TaskTargetContext], Awaitable[Flow]]:
+    async def resolve(context: TaskTargetContext) -> Flow:
+        result = await FlowDefinitionLoader(
             registry=task_flow_node_registry(
                 context,
                 agent_runner=agent_runner,
