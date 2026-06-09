@@ -61,6 +61,7 @@ _ALLOWED_TOP_LEVEL_SECTIONS = frozenset(
         "entry",
         "edges",
         "flow",
+        "graph",
         "input",
         "inputs",
         "nodes",
@@ -166,6 +167,17 @@ _ALLOWED_EDGE_FIELDS = frozenset(
         "target",
     }
 )
+_ALLOWED_GRAPH_FIELDS = frozenset(
+    {
+        "diagram",
+        "edges",
+        "format",
+        "mode",
+        "path",
+        "source",
+    }
+)
+_ALLOWED_GRAPH_EDGE_FIELDS = _ALLOWED_EDGE_FIELDS - {"source", "target"}
 _ALLOWED_CONDITION_FIELDS = frozenset(
     {
         "condition",
@@ -462,6 +474,8 @@ def _build_result(
     _validate_top_level_sections(raw, issues)
     flow_raw = _section(raw, "flow", issues, required=True)
     nodes_raw = _section(raw, "nodes", issues, required=True)
+    graph_raw = _section(raw, "graph", issues, required=False)
+    _validate_graph_section(graph_raw, issues)
     if flow_raw is None or nodes_raw is None:
         return FlowLoadResult(definition=None, issues=tuple(issues))
 
@@ -716,6 +730,49 @@ def _child_section(
             issues.append(_invalid_section_type(name))
         return None
     return value
+
+
+def _validate_graph_section(
+    raw: RawSection | None,
+    issues: list[FlowLoadIssue],
+) -> None:
+    if raw is None:
+        return
+    _validate_unknown_fields(
+        raw,
+        allowed=_ALLOWED_GRAPH_FIELDS,
+        path="graph",
+        issues=issues,
+        hint="Remove unsupported fields from the graph authoring table.",
+    )
+    if "edges" in raw:
+        _validate_graph_edges_section(raw["edges"], issues)
+
+
+def _validate_graph_edges_section(
+    value: object,
+    issues: list[FlowLoadIssue],
+) -> None:
+    if not isinstance(value, Mapping):
+        issues.append(_invalid_section_type("graph.edges"))
+        return
+    for edge_id, raw in value.items():
+        if not isinstance(edge_id, str) or not edge_id.strip():
+            issues.append(
+                _invalid_type("graph.edges", "Use named edge tables.")
+            )
+            continue
+        path = f"graph.edges.{edge_id}"
+        if not isinstance(raw, Mapping):
+            issues.append(_invalid_section_type(path))
+            continue
+        _validate_unknown_fields(
+            raw,
+            allowed=_ALLOWED_GRAPH_EDGE_FIELDS,
+            path=path,
+            issues=issues,
+            hint="Remove unsupported fields from graph edge metadata.",
+        )
 
 
 def _input_definition(
@@ -1464,6 +1521,7 @@ def _validate_unknown_fields(
     allowed: frozenset[str],
     path: str,
     issues: list[FlowLoadIssue],
+    hint: str = "Remove unsupported fields from the native flow.",
 ) -> None:
     for key in raw:
         if isinstance(key, str) and key not in allowed:
@@ -1472,7 +1530,7 @@ def _validate_unknown_fields(
                     code="flow.unsupported_field",
                     path=f"{path}.{key}",
                     message="Flow TOML field is not supported.",
-                    hint="Remove unsupported fields from the native flow.",
+                    hint=hint,
                     category=FlowLoadIssueCategory.UNSUPPORTED,
                 )
             )

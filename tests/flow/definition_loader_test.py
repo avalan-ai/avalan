@@ -1117,6 +1117,134 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             flow_loader._issue_from_diagnostic(diagnostic)
 
+    def test_load_accepts_structurally_valid_graph_section(self) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "graph_admission"
+            entrypoint = "start"
+            output_node = "start"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start
+            '''
+
+            [nodes.start]
+            type = "echo"
+            """)
+
+        self.assertTrue(result.ok)
+        assert result.definition is not None
+        self.assertEqual(result.definition.name, "graph_admission")
+
+    def test_graph_section_rejects_invalid_shapes_and_fields(self) -> None:
+        cases = (
+            (
+                """
+                graph = "private graph payload"
+                """,
+                "flow.invalid_section",
+                "graph",
+            ),
+            (
+                """
+                [graph]
+                unknown_ref = "private.txt"
+                """,
+                "flow.unsupported_field",
+                "graph.unknown_ref",
+            ),
+            (
+                """
+                [graph]
+                edges = "private graph route"
+                """,
+                "flow.invalid_section",
+                "graph.edges",
+            ),
+            (
+                """
+                [graph.edges.route_1]
+                source = "private"
+                """,
+                "flow.unsupported_field",
+                "graph.edges.route_1.source",
+            ),
+            (
+                """
+                [graph.edges]
+                route_1 = "private graph route"
+                """,
+                "flow.invalid_section",
+                "graph.edges.route_1",
+            ),
+            (
+                """
+                [graph.edges.""]
+                label = "private graph route"
+                """,
+                "flow.invalid_type",
+                "graph.edges",
+            ),
+        )
+
+        for graph_toml, code, path in cases:
+            with self.subTest(path=path):
+                result = loads_flow_definition_result(f"""
+                    {graph_toml}
+
+                    [flow]
+                    name = "graph_invalid"
+                    entrypoint = "start"
+                    output_node = "start"
+
+                    [nodes.start]
+                    type = "echo"
+                    """)
+
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    [(issue.code, issue.path) for issue in result.issues],
+                    [(code, path)],
+                )
+                self.assertNotIn("private", str(result.public_diagnostics))
+
+    def test_graph_section_preserves_unknown_top_level_rejection(
+        self,
+    ) -> None:
+        result = loads_flow_definition_result("""
+            [flow]
+            name = "graph_unknown"
+            entrypoint = "start"
+            output_node = "start"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start
+            '''
+
+            [nodes.start]
+            type = "echo"
+
+            [cli]
+            runner = "python private.py"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in result.issues],
+            [("flow.unsupported_section", "cli")],
+        )
+        self.assertNotIn("private.py", str(result.public_diagnostics))
+
     def test_missing_sections_and_invalid_shapes_are_aggregated(self) -> None:
         result = loads_flow_definition_result("""
             flow = "invalid"
