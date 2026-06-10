@@ -20,6 +20,7 @@ from ...memory.permanent import Memory as Memory
 from ...memory.permanent import PermanentMemoryPartition
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import fields
 from datetime import datetime
 from logging import Logger
@@ -513,6 +514,59 @@ class Theme(ABC):
 
     def __call__(self, item: Model | str) -> RenderableType:
         return self.model(item) if isinstance(item, Model) else str(item)
+
+    def flow_run_progress_message(
+        self,
+        event_type: str,
+        *,
+        node: str | None = None,
+        status: str | None = None,
+        attempt: int | None = None,
+        flow_name: str | None = None,
+    ) -> str:
+        """Return the live flow run status line."""
+        _ = status, flow_name
+        if node:
+            if event_type == "flow_node_started":
+                suffix = f" attempt {attempt}" if attempt is not None else ""
+                return f"Running node {node}{suffix}."
+            if event_type == "flow_node_retrying":
+                suffix = (
+                    f" after attempt {attempt}" if attempt is not None else ""
+                )
+                return f"Retrying node {node}{suffix}."
+            if event_type == "flow_node_completed":
+                return f"Completed node {node}."
+            if event_type == "flow_node_failed":
+                return f"Failed node {node}."
+            if event_type == "flow_node_skipped":
+                return f"Skipped node {node}."
+            if event_type == "flow_node_paused":
+                return f"Paused node {node}."
+            if event_type == "flow_node_resumed":
+                return f"Resumed node {node}."
+            if event_type == "flow_node_cancelled":
+                return f"Cancelled node {node}."
+        if event_type == "flow_started":
+            return "Flow run started."
+        if event_type == "flow_completed":
+            return "Flow run completed."
+        if event_type == "flow_cancelled":
+            return "Flow run cancelled."
+        return "Flow run is active."
+
+    def flow_run_progress(
+        self,
+        mermaid_source: str,
+        *,
+        node_states: Mapping[str, str],
+        active_nodes: tuple[str, ...],
+        message: str,
+        console_width: int,
+    ) -> RenderableType:
+        """Return the live flow run progress renderable."""
+        _ = node_states, active_nodes, console_width
+        return f"{message}\n\n{mermaid_source}"
 
     def _f(
         self,

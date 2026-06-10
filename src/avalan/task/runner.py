@@ -672,6 +672,7 @@ class DirectTaskRunner:
         remote_url_policy: TaskRemoteUrlPolicy | None = None,
         remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
         remote_url_resolver: TaskRemoteUrlResolver | None = None,
+        event_observer: TaskSanitizedEventObserver | None = None,
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
@@ -696,6 +697,7 @@ class DirectTaskRunner:
         self._remote_url_policy = remote_url_policy
         self._remote_url_http_client = remote_url_http_client
         self._remote_url_resolver = remote_url_resolver
+        self._event_observer = event_observer
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
         self._observability_sink = observability_sink
@@ -1139,6 +1141,7 @@ class DirectTaskRunner:
         observability_sink = self._observability_sink_for(definition)
         if (
             not definition.observability.capture_events
+            and self._event_observer is None
             and metrics_observer is None
             and trace_observer is None
             and observability_sink is None
@@ -1150,6 +1153,7 @@ class DirectTaskRunner:
             attempt_id=attempt.attempt_id,
             sanitizer=sanitizer,
             capture_events=definition.observability.capture_events,
+            event_observer=self._event_observer,
             metrics_observer=metrics_observer,
             trace_observer=trace_observer,
             observability_sink=observability_sink,

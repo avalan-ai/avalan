@@ -30,11 +30,13 @@ from ...utils import (
     tool_call_error_payload,
 )
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta
+from importlib import import_module
 from locale import format_string
 from logging import Logger
 from math import ceil, inf
-from re import sub
+from re import fullmatch, sub
 from textwrap import wrap
 from typing import (
     TYPE_CHECKING,
@@ -179,6 +181,78 @@ class FancyTheme(Theme):
     @property
     def quantity_data(self) -> list[str]:
         return ["likes"]
+
+    def flow_run_progress_message(
+        self,
+        event_type: str,
+        *,
+        node: str | None = None,
+        status: str | None = None,
+        attempt: int | None = None,
+        flow_name: str | None = None,
+    ) -> str:
+        _ = status, flow_name
+        if node:
+            if event_type == "flow_node_started":
+                suffix = f" attempt {attempt}" if attempt is not None else ""
+                return f"Running node [cyan]{node}[/cyan]{suffix}."
+            if event_type == "flow_node_retrying":
+                suffix = (
+                    f" after attempt {attempt}" if attempt is not None else ""
+                )
+                return f"Retrying node [cyan]{node}[/cyan]{suffix}."
+            if event_type == "flow_node_completed":
+                return f"Completed node [cyan]{node}[/cyan]."
+            if event_type == "flow_node_failed":
+                return f"Failed node [cyan]{node}[/cyan]."
+            if event_type == "flow_node_skipped":
+                return f"Skipped node [cyan]{node}[/cyan]."
+            if event_type == "flow_node_paused":
+                return f"Paused node [cyan]{node}[/cyan]."
+            if event_type == "flow_node_resumed":
+                return f"Resumed node [cyan]{node}[/cyan]."
+            if event_type == "flow_node_cancelled":
+                return f"Cancelled node [cyan]{node}[/cyan]."
+        if event_type == "flow_started":
+            return "Flow run started."
+        if event_type == "flow_completed":
+            return "Flow run completed."
+        if event_type == "flow_cancelled":
+            return "Flow run cancelled."
+        return "Flow run is active."
+
+    def flow_run_progress(
+        self,
+        mermaid_source: str,
+        *,
+        node_states: Mapping[str, str],
+        active_nodes: tuple[str, ...],
+        message: str,
+        console_width: int,
+    ) -> RenderableType:
+        styled_source = _flow_run_styled_mermaid_source(
+            mermaid_source,
+            node_states=node_states,
+            active_nodes=active_nodes,
+        )
+        diagram = _flow_run_mermaid_renderable(styled_source, console_width)
+        status_table = _flow_run_status_table(node_states)
+        progress_body: RenderableType = diagram
+        if status_table is not None:
+            progress_body = Columns(
+                [diagram, status_table],
+                expand=False,
+                padding=(0, 4),
+            )
+        return Panel(
+            Padding(
+                Group(Text.from_markup(f"[bold]{message}[/bold]"), progress_body),
+                (1, 2),
+            ),
+            title=self._icons["task_id"] + " [cyan]Flow progress[/cyan]",
+            box=box.SQUARE,
+            border_style="cyan",
+        )
 
     def action(
         self,
@@ -2604,3 +2678,114 @@ class FancyTheme(Theme):
             elif not skip_blank_lines:
                 lines.append("")
         return lines
+
+
+def _flow_run_styled_mermaid_source(
+    mermaid_source: str,
+    *,
+    node_states: Mapping[str, str],
+    active_nodes: tuple[str, ...],
+) -> str:
+    lines = [mermaid_source.rstrip()]
+    active = set(active_nodes)
+    lines.extend(
+        [
+            "  classDef avalanRunning fill:#ecfeff,stroke:#0f172a,"
+            "color:#0f172a,stroke-width:4px",
+            "  classDef avalanCompleted fill:#166534,stroke:#dcfce7,"
+            "color:#dcfce7,stroke-width:2px",
+            "  classDef avalanFailed fill:#991b1b,stroke:#fee2e2,"
+            "color:#fee2e2,stroke-width:2px",
+            "  classDef avalanSkipped fill:#525252,stroke:#e5e5e5,"
+            "color:#e5e5e5,stroke-width:2px",
+            "  classDef avalanPaused fill:#92400e,stroke:#fef3c7,"
+            "color:#fef3c7,stroke-width:2px",
+        ]
+    )
+    for node, state in node_states.items():
+        if not _is_safe_flow_node_identifier(node):
+            continue
+        class_name = _flow_run_node_class(
+            "running" if node in active else state
+        )
+        if class_name is not None:
+            lines.append(f"  class {node} {class_name}")
+    return "\n".join(lines) + "\n"
+
+
+def _flow_run_node_class(state: str) -> str | None:
+    match state:
+        case "running" | "started" | "retrying":
+            return "avalanRunning"
+        case "succeeded" | "completed":
+            return "avalanCompleted"
+        case "failed" | "cancelled":
+            return "avalanFailed"
+        case "skipped":
+            return "avalanSkipped"
+        case "paused" | "resumed":
+            return "avalanPaused"
+        case _:
+            return None
+
+
+def _flow_run_mermaid_renderable(
+    mermaid_source: str,
+    console_width: int,
+) -> RenderableType:
+    _ = console_width
+    try:
+        termaid = import_module("termaid")
+    except ImportError:
+        return Text(mermaid_source, style="bright_black")
+    render_rich = getattr(termaid, "render_rich", None)
+    if not callable(render_rich):
+        return Text(mermaid_source, style="bright_black")
+    try:
+        return cast(Callable[..., RenderableType], render_rich)(
+            mermaid_source,
+            theme="default",
+        )
+    except Exception as exc:
+        return Group(
+            Text(
+                f"Diagram renderer unavailable ({type(exc).__name__}).",
+                style="yellow",
+            ),
+            Text(mermaid_source, style="bright_black"),
+        )
+
+
+def _flow_run_status_table(
+    node_states: Mapping[str, str],
+) -> Table | None:
+    if not node_states:
+        return None
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bright_black", no_wrap=True)
+    table.add_column(style="cyan", no_wrap=True)
+    table.add_column(style="white", no_wrap=True)
+    for node, state in node_states.items():
+        label, style = _flow_run_state_display(state)
+        table.add_row(label, node, Text(state, style=style))
+    return table
+
+
+def _flow_run_state_display(state: str) -> tuple[str, str]:
+    match state:
+        case "running" | "started" | "retrying":
+            return ">", "bold cyan"
+        case "succeeded" | "completed":
+            return "+", "green"
+        case "failed" | "cancelled":
+            return "!", "bold red"
+        case "skipped":
+            return "-", "bright_black"
+        case "paused" | "resumed":
+            return "=", "yellow"
+        case _:
+            return ".", "bright_black"
+
+
+def _is_safe_flow_node_identifier(node: str) -> bool:
+    return fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", node) is not None

@@ -20,6 +20,7 @@ from rich.console import Console
 
 from avalan.cli.commands import flow as flow_cmds
 from avalan.cli.commands import task as task_cmds
+from avalan.cli.theme.fancy import FancyTheme
 from avalan.entities import (
     Message,
     MessageContentFile,
@@ -3403,6 +3404,27 @@ class FlowRunCommandTestCase(TestCase):
         human_output = human_console.export_text()
         self.assertIn("Flow run completed.", human_output)
         self.assertIn('"answer":"ok"', human_output)
+
+    def test_flow_run_human_strict_prints_progress_monitor(self) -> None:
+        console = Console(record=True, width=160)
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_strict_constant_flow(root)
+            with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
+                result = flow_cmds.flow_run(
+                    _args(flow=flow_path, task_input_json="{}"),
+                    console,
+                    theme,
+                )
+
+        output = console.export_text()
+        self.assertTrue(result)
+        self.assertIn("Flow progress", output)
+        self.assertIn("start", output)
+        self.assertIn("succeeded", output)
+        self.assertIn("Flow run completed.", output)
 
     def test_flow_run_stops_when_structured_writer_fails(self) -> None:
         console = Console(record=True, width=160)

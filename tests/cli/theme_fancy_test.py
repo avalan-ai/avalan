@@ -40,6 +40,51 @@ from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import PermanentMemoryPartition
 
 
+class FancyThemeFlowProgressTestCase(unittest.TestCase):
+    def test_flow_run_progress_message_reports_active_node(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+
+        message = theme.flow_run_progress_message(
+            "flow_node_started",
+            node="analyze_pov_1",
+            attempt=2,
+        )
+
+        self.assertIn("Running node", message)
+        self.assertIn("analyze_pov_1", message)
+        self.assertIn("attempt 2", message)
+
+    def test_flow_run_progress_inverts_running_node_class(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        captured: dict[str, str] = {}
+
+        def fake_render(source: str, console_width: int) -> Text:
+            captured["source"] = source
+            captured["width"] = str(console_width)
+            return Text("diagram")
+
+        with patch(
+            "avalan.cli.theme.fancy._flow_run_mermaid_renderable",
+            fake_render,
+        ):
+            theme.flow_run_progress(
+                "flowchart LR\n  analyze_pov_1[analyze_pov_1]\n",
+                node_states={"analyze_pov_1": "pending"},
+                active_nodes=("analyze_pov_1",),
+                message="Running node [cyan]analyze_pov_1[/cyan].",
+                console_width=120,
+            )
+
+        self.assertIn(
+            "classDef avalanRunning fill:#ecfeff,stroke:#0f172a",
+            captured["source"],
+        )
+        self.assertIn(
+            "class analyze_pov_1 avalanRunning",
+            captured["source"],
+        )
+
+
 class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
     async def test_tool_running_spinner_text(self):
         theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)

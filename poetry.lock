@@ -9011,6 +9011,28 @@ test = ["pytest", "tornado (>=4.5)", "typeguard"]
 
 
 [[package]]
+name = "termaid"
+version = "0.6.1"
+description = "Render Mermaid diagrams in your terminal or Python app"
+optional = false
+python-versions = ">=3.11"
+groups = ["main"]
+files = [
+    {file = "termaid-0.6.1-py3-none-any.whl", hash = "sha256:44b15a47e2650dcdc08b2d94f3caf9588c369f6e1e945e2e5d99d35df8548bc1"},
+    {file = "termaid-0.6.1.tar.gz", hash = "sha256:f7284009b7e85fceae62ffed5dfc6d37b2e74cc6821698897654429ad943ed64"},
+]
+
+[package.dependencies]
+rich = {version = ">=13.0", optional = true, markers = "extra == \"rich\""}
+
+[package.extras]
+dev = ["pytest (>=7.0)", "pytest-snapshot"]
+rich = ["rich (>=13.0)"]
+textual = ["textual (>=0.40)"]
+tui = ["textual (>=0.40)"]
+
+
+[[package]]
 name = "threadpoolctl"
 version = "3.6.0"
 description = "threadpoolctl"
@@ -10371,4 +10393,4 @@ youtube = ["youtube-transcript-api"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "0c2c6561d9aed610b3f1bec24c40bc743fb901c14002597cd3368885d6158ab5"
+content-hash = "d165573ede02fa5ada8c9fb9b8def67e8cb32fc2abd16932f143863da5e8d81e"

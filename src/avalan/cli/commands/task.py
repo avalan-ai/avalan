@@ -39,6 +39,7 @@ from ...task import (
     TaskRetentionStoreNotFoundError,
     TaskRunResult,
     TaskRunState,
+    TaskSanitizedEventObserver,
     TaskStoreNotFoundError,
     TaskTargetContext,
     TaskTargetRunner,
@@ -1053,6 +1054,7 @@ def _task_cli_client_context(
     logger: Logger | None,
     input_value: object = None,
     flow_tool_resolver: FlowToolResolver | None = None,
+    event_observer: TaskSanitizedEventObserver | None = None,
 ) -> _TaskCliClientContext:
     stack = AsyncExitStack()
     artifact_store = _task_artifact_store()
@@ -1089,6 +1091,7 @@ def _task_cli_client_context(
                 hmac_provider=hmac_provider,
                 execution_roots=(definition_path.parent,),
                 input_roots=(Path.cwd(),),
+                event_observer=event_observer,
             ),
             stack=stack,
         )
@@ -1111,6 +1114,7 @@ def _task_cli_client_context(
             hmac_provider=hmac_provider,
             execution_roots=(definition_path.parent,),
             input_roots=(Path.cwd(),),
+            event_observer=event_observer,
         ),
         database=database,
         stack=stack,

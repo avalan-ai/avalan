@@ -184,6 +184,7 @@ class TaskEventPipeline:
     sanitizer: PrivacySanitizer
     attempt_id: str | None = None
     capture_events: bool = True
+    event_observer: TaskSanitizedEventObserver | None = None
     metrics_observer: TaskSanitizedEventObserver | None = None
     trace_observer: TaskSanitizedEventObserver | None = None
     observability_sink: ObservabilitySink | None = None
@@ -194,6 +195,8 @@ class TaskEventPipeline:
         assert isinstance(self.capture_events, bool)
         if self.attempt_id is not None:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
+        if self.event_observer is not None:
+            assert callable(self.event_observer)
         if self.metrics_observer is not None:
             assert callable(self.metrics_observer)
         if self.trace_observer is not None:
@@ -222,6 +225,7 @@ class TaskEventPipeline:
             except Exception:
                 observed = draft
         await gather(
+            _notify_observer(self.event_observer, observed),
             _notify_observer(self.metrics_observer, observed),
             _notify_observer(self.trace_observer, observed),
             record_observability_event(

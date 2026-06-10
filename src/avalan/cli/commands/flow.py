@@ -37,6 +37,7 @@ from ...flow import (
     FlowView,
     FlowViewClassDefinition,
     FlowViewComment,
+    FlowViewDirection,
     FlowViewEdge,
     FlowViewGroup,
     FlowViewImportMode,
@@ -60,9 +61,11 @@ from ...task import (
     TaskExecutionTarget,
     TaskInputContract,
     TaskMetadata,
+    TaskObservedEvent,
     TaskOutputContract,
     TaskPrivacyPolicy,
     TaskRunState,
+    TaskSanitizedEventObserver,
     TaskSchemaResolutionError,
     TaskTargetType,
     TaskValidationCategory,
@@ -119,7 +122,7 @@ from argparse import Namespace
 from asyncio import to_thread
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
@@ -128,6 +131,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from rich.console import Console
+from rich.live import Live
 
 _AVALAN_INPUT_TYPE_SCHEMA_KEY = "x-avalan-input-type"
 _AVALAN_MIME_TYPES_SCHEMA_KEY = "x-avalan-mime-types"
@@ -295,8 +299,9 @@ def flow_run(
     logger: Logger | None = None,
 ) -> bool:
     """Run a native flow definition."""
-    _ = theme
-    return _run_awaitable(_flow_run(args, console, hub=hub, logger=logger))
+    return _run_awaitable(
+        _flow_run(args, console, theme=theme, hub=hub, logger=logger)
+    )
 
 
 def flow_inspect(
@@ -1422,6 +1427,7 @@ async def _flow_run(
     args: Namespace,
     console: Console,
     *,
+    theme: Theme,
     hub: object | None,
     logger: Logger | None,
 ) -> bool:
@@ -1441,6 +1447,7 @@ async def _flow_run(
         return await _flow_run_with_task_context(
             args,
             console,
+            theme=theme,
             flow_path=flow_path,
             hub=hub,
             logger=logger,
@@ -1450,6 +1457,7 @@ async def _flow_run(
             return await _flow_run_with_task_context(
                 args,
                 console,
+                theme=theme,
                 flow_path=flow_path,
                 hub=hub,
                 logger=logger,
@@ -1534,6 +1542,7 @@ async def _flow_run_with_task_context(
     args: Namespace,
     console: Console,
     *,
+    theme: Theme,
     flow_path: Path,
     hub: object | None,
     logger: Logger | None,
@@ -1594,7 +1603,13 @@ async def _flow_run_with_task_context(
             resolver_issues,
         )
         return False
+    monitor = _flow_run_progress_monitor(args, console, theme, definition)
+    event_observer: TaskSanitizedEventObserver | None = None
+    if monitor is not None:
+        event_observer = monitor.observe
     try:
+        if monitor is not None:
+            monitor.start()
         async with AsyncExitStack() as stack:
             tool_resolver: FlowToolResolver | None = None
             if tool_manager is not None:
@@ -1609,6 +1624,7 @@ async def _flow_run_with_task_context(
                 logger=logger,
                 input_value=flow_input.value,
                 flow_tool_resolver=tool_resolver,
+                event_observer=event_observer,
             )
             async with client_context as client:
                 result = await client.run(
@@ -1616,9 +1632,17 @@ async def _flow_run_with_task_context(
                     input_value=flow_input.value,
                     metadata=_task_command_metadata(ephemeral=True),
                 )
+                if (
+                    monitor is not None
+                    and result.run.state == TaskRunState.SUCCEEDED
+                ):
+                    monitor.complete()
     except (AssertionError, ImportError, OSError, TaskValidationError) as exc:
         _print_task_execution_error(diagnostic_console, exc)
         return False
+    finally:
+        if monitor is not None:
+            monitor.stop()
     if result.run.state != TaskRunState.SUCCEEDED:
         _print_task_run_failure(diagnostic_console, result)
         return False
@@ -1638,6 +1662,182 @@ async def _flow_run_with_task_context(
             markup=False,
         )
     return True
+
+
+@dataclass(slots=True)
+class _FlowRunProgressMonitor:
+    console: Console
+    theme: Theme
+    mermaid_source: str
+    node_states: dict[str, str]
+    active_nodes: set[str] = field(default_factory=set)
+    message: str = "Flow run is starting."
+    live: Live | None = field(default=None, init=False)
+
+    def start(self) -> None:
+        self.live = Live(
+            self.render(),
+            console=self.console,
+            refresh_per_second=4,
+            transient=False,
+        )
+        self.live.start(refresh=True)
+
+    def stop(self) -> None:
+        if self.live is not None:
+            self.live.stop()
+            self.live = None
+
+    def complete(self) -> None:
+        self._apply_event("flow_completed", node=None, status=None)
+        self.message = self.theme.flow_run_progress_message("flow_completed")
+        if self.live is not None:
+            self.live.update(self.render(), refresh=True)
+
+    def observe(self, event: TaskObservedEvent) -> None:
+        event_type = getattr(event, "event_type", None)
+        if not isinstance(event_type, str):
+            return
+        if not event_type.startswith("flow_"):
+            return
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, Mapping):
+            payload = {}
+        node = _flow_progress_payload_string(payload, "node")
+        status = _flow_progress_payload_string(payload, "status")
+        attempt = _flow_progress_payload_int(payload, "attempt")
+        if attempt is None:
+            attempt = _flow_progress_payload_int(payload, "attempts")
+        flow_name = _flow_progress_payload_string(payload, "flow_name")
+        self._apply_event(event_type, node=node, status=status)
+        self.message = self.theme.flow_run_progress_message(
+            event_type,
+            node=node,
+            status=status,
+            attempt=attempt,
+            flow_name=flow_name,
+        )
+        if self.live is not None:
+            self.live.update(self.render(), refresh=True)
+
+    def render(self) -> object:
+        return self.theme.flow_run_progress(
+            self.mermaid_source,
+            node_states=self.node_states,
+            active_nodes=tuple(sorted(self.active_nodes)),
+            message=self.message,
+            console_width=self.console.width,
+        )
+
+    def _apply_event(
+        self,
+        event_type: str,
+        *,
+        node: str | None,
+        status: str | None,
+    ) -> None:
+        if event_type == "flow_completed":
+            self.active_nodes.clear()
+            return
+        if node is None or node not in self.node_states:
+            return
+        match event_type:
+            case "flow_node_started":
+                self.node_states[node] = "running"
+                self.active_nodes.add(node)
+            case "flow_node_retrying":
+                self.node_states[node] = "retrying"
+                self.active_nodes.add(node)
+            case "flow_node_completed":
+                self.node_states[node] = status or "succeeded"
+                self.active_nodes.discard(node)
+            case "flow_node_failed" | "flow_node_cancelled":
+                self.node_states[node] = status or "failed"
+                self.active_nodes.discard(node)
+            case "flow_node_skipped":
+                self.node_states[node] = "skipped"
+                self.active_nodes.discard(node)
+            case "flow_node_paused":
+                self.node_states[node] = "paused"
+                self.active_nodes.discard(node)
+            case "flow_node_resumed":
+                self.node_states[node] = "resumed"
+                self.active_nodes.discard(node)
+
+
+def _flow_run_progress_monitor(
+    args: Namespace,
+    console: Console,
+    theme: Theme,
+    definition: FlowDefinition,
+) -> _FlowRunProgressMonitor | None:
+    if _task_run_json_output(args) or _task_run_quiet(args):
+        return None
+    if not callable(getattr(theme, "flow_run_progress", None)):
+        return None
+    if not callable(getattr(theme, "flow_run_progress_message", None)):
+        return None
+    return _FlowRunProgressMonitor(
+        console=console,
+        theme=theme,
+        mermaid_source=_flow_definition_progress_mermaid_source(definition),
+        node_states={node.name: "pending" for node in definition.nodes},
+    )
+
+
+def _flow_definition_progress_mermaid_source(
+    definition: FlowDefinition,
+) -> str:
+    view = FlowView(
+        import_mode=FlowViewImportMode.EXECUTABLE,
+        direction=FlowViewDirection.LR,
+        nodes=tuple(
+            FlowViewNode(id=node.name, label=node.name)
+            for node in definition.nodes
+        ),
+        edges=tuple(
+            FlowViewEdge(
+                id=f"edge_{index}",
+                source=edge.source,
+                target=edge.target,
+                label=edge.label,
+            )
+            for index, edge in enumerate(definition.edges)
+        ),
+    )
+    rendered = render_flow_view(view)
+    if rendered.ok:
+        return rendered.source
+    return _flow_definition_progress_fallback_source(definition)
+
+
+def _flow_definition_progress_fallback_source(
+    definition: FlowDefinition,
+) -> str:
+    lines = ["flowchart LR"]
+    for node in definition.nodes:
+        lines.append(f"  {node.name}")
+    for edge in definition.edges:
+        lines.append(f"  {edge.source} --> {edge.target}")
+    return "\n".join(lines) + "\n"
+
+
+def _flow_progress_payload_string(
+    payload: Mapping[str, object],
+    key: str,
+) -> str | None:
+    value = payload.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _flow_progress_payload_int(
+    payload: Mapping[str, object],
+    key: str,
+) -> int | None:
+    value = payload.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
 
 
 @dataclass(slots=True)
