@@ -1,21 +1,34 @@
+from .artifact import ArtifactStore
 from .context import TaskTargetContext
+from .converters import FileConverter
 from .definition import TaskDefinition, TaskTargetType
+from .store import TaskStore
 from .validation import TaskValidationIssue
 
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Protocol
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TaskValidationContext:
     execution_roots: tuple[Path, ...] = ()
+    artifact_store: ArtifactStore | None = None
+    task_store: TaskStore | None = None
+    file_converters: Mapping[str, FileConverter] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __post_init__(self) -> None:
         assert isinstance(self.execution_roots, tuple)
         for root in self.execution_roots:
             assert isinstance(root, Path)
+        assert isinstance(self.file_converters, Mapping)
+        for name, converter in self.file_converters.items():
+            assert isinstance(name, str) and name.strip()
+            assert hasattr(converter, "convert")
 
 
 class TaskTargetRunner(Protocol):

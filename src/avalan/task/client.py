@@ -496,6 +496,9 @@ class TaskClient:
                     execution_roots=tuple(
                         Path(root) for root in self._execution_roots
                     ),
+                    artifact_store=self._artifact_store,
+                    task_store=self._store,
+                    file_converters=self._file_converters,
                 ),
             )
         )
