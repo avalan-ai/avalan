@@ -249,6 +249,30 @@ class TaskDocsTest(TestCase):
         )
         self.assertIn("Tool refs that are disabled", docs)
 
+    def test_flow_compatibility_docs_cover_graph_migration(self) -> None:
+        docs = FLOW_COMPATIBILITY_DOC.read_text(encoding="utf-8")
+        normalized = " ".join(docs.split())
+
+        required_phrases = (
+            "## Graph Authoring Migration",
+            (
+                "Existing strict TOML definitions with hand-authored"
+                " `[[edges]]` require no migration."
+            ),
+            "Older Avalan versions that do not know `[graph]` fail closed",
+            "avalan flow compile graph.flow.toml --output strict.flow.toml",
+            "avalan flow validate strict.flow.toml",
+            "avalan flow compile graph.flow.toml --check",
+            "avalan flow graph inspect graph.flow.toml --json",
+            "avalan flow validate graph.flow.toml",
+            "normal `[[edges]]` and omits executable `[graph]` source",
+        )
+
+        for phrase in required_phrases:
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
+        self.assertNotIn("Mermaid runs", docs)
+
     def test_flow_compatibility_matrix_covers_poc_fields(self) -> None:
         docs = FLOW_COMPATIBILITY_DOC.read_text(encoding="utf-8")
         rows = _flow_matrix_rows(docs)
@@ -278,6 +302,12 @@ class TaskDocsTest(TestCase):
             "`nodes.<name>.response_format_ref`",
             "`[[edges]]`",
             "`edges.condition`",
+            "`[graph]`",
+            '`graph.source = "inline"`',
+            '`graph.source = "file"`',
+            "`[graph.edges.<edge_id>]`",
+            "Canonical graph compile output",
+            "`[graph]` with `[[edges]]`",
             "`cli.runner`",
             "`cli.example_pdf`",
         }
@@ -288,12 +318,22 @@ class TaskDocsTest(TestCase):
             "`flow.input.memory`",
             "`nodes.<name>.user_prompt_ref`",
             "`nodes.<name>.response_format_ref`",
+            "`[graph]` with `[[edges]]`",
             "`cli.runner`",
             "`cli.example_pdf`",
         }
         for field in rejected_fields:
             with self.subTest(field=field):
                 self.assertIn("Rejected", rows[field])
+        for field in (
+            "`[graph]`",
+            '`graph.source = "inline"`',
+            '`graph.source = "file"`',
+            "`[graph.edges.<edge_id>]`",
+        ):
+            with self.subTest(field=field):
+                self.assertIn("Rejected by older versions", rows[field])
+        self.assertIn("strict TOML", rows["Canonical graph compile output"])
 
     def test_flow_authoring_doc_covers_strict_flow_surfaces(self) -> None:
         docs = FLOW_AUTHORING_DOC.read_text(encoding="utf-8")
