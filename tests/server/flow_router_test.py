@@ -1,7 +1,9 @@
+from ast import AST, Attribute, Call, ImportFrom, Name, parse, walk
 from asyncio import gather
 from asyncio import run as asyncio_run
 from datetime import UTC, datetime
 from json import dumps
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 
@@ -29,12 +31,113 @@ from avalan.task import TaskClientUnsupportedOperationError, TaskRunState
 from avalan.task.event import SanitizedTaskEvent, TaskEventCategory
 from avalan.task.store import TaskStoreNotFoundError
 
+_FORBIDDEN_ASYNCIO_IMPORTS = frozenset({"run", "to_thread"})
+_FORBIDDEN_ASYNCIO_METHODS = frozenset({"run", "to_thread"})
+_FORBIDDEN_LOOP_METHODS = frozenset({"run_until_complete"})
+_FORBIDDEN_SYNC_FILE_METHODS = frozenset(
+    {
+        "read_bytes",
+        "read_text",
+        "write_bytes",
+        "write_text",
+    }
+)
+
+
+def _server_flow_async_boundary_violations(
+    path: Path,
+    source: str,
+) -> tuple[str, ...]:
+    tree = parse(source, filename=str(path))
+    violations: list[str] = []
+    for node in walk(tree):
+        if isinstance(node, ImportFrom):
+            violations.extend(_asyncio_import_violations(path, node))
+            continue
+        if isinstance(node, Call):
+            violations.extend(_call_boundary_violations(path, node))
+    return tuple(sorted(violations))
+
+
+def _asyncio_import_violations(
+    path: Path,
+    node: ImportFrom,
+) -> tuple[str, ...]:
+    if node.module != "asyncio":
+        return ()
+    return tuple(
+        f"{_node_location(path, node)} imports asyncio.{alias.name}"
+        for alias in node.names
+        if alias.name in _FORBIDDEN_ASYNCIO_IMPORTS
+    )
+
+
+def _call_boundary_violations(path: Path, node: Call) -> tuple[str, ...]:
+    func = node.func
+    if isinstance(func, Name) and func.id in _FORBIDDEN_ASYNCIO_METHODS:
+        return (f"{_node_location(path, node)} calls {func.id}",)
+    if not isinstance(func, Attribute):
+        return ()
+    violations: list[str] = []
+    if func.attr in _FORBIDDEN_SYNC_FILE_METHODS:
+        violations.append(f"{_node_location(path, node)} calls {func.attr}")
+    if func.attr in _FORBIDDEN_LOOP_METHODS:
+        violations.append(f"{_node_location(path, node)} calls {func.attr}")
+    if (
+        isinstance(func.value, Name)
+        and func.value.id == "asyncio"
+        and func.attr in _FORBIDDEN_ASYNCIO_METHODS
+    ):
+        violations.append(
+            f"{_node_location(path, node)} calls asyncio.{func.attr}"
+        )
+    return tuple(violations)
+
+
+def _node_location(path: Path, node: AST) -> str:
+    return f"{path}:{getattr(node, 'lineno', 0)}"
+
 
 class FlowRouterTestCase(TestCase):
     def setUp(self) -> None:
         self.app = FastAPI()
         self.app.include_router(router, prefix="/flows")
         self.client = TestClient(self.app)
+
+    def test_flow_router_module_keeps_async_boundaries(self) -> None:
+        module_path = Path(flow_router.__file__)
+
+        violations = _server_flow_async_boundary_violations(
+            Path("server/routers/flow.py"),
+            module_path.read_text(encoding="utf-8"),
+        )
+
+        self.assertEqual(violations, ())
+
+    def test_flow_router_boundary_audit_rejects_sync_bridges(self) -> None:
+        violations = _server_flow_async_boundary_violations(
+            Path("server/routers/flow.py"),
+            """from asyncio import run, to_thread
+
+async def load(path, loop):
+    path.read_text()
+    asyncio.run(load_async())
+    loop.run_until_complete(load_async())
+    return to_thread(path.write_text, "private")
+""",
+        )
+
+        self.assertEqual(
+            violations,
+            (
+                "server/routers/flow.py:1 imports asyncio.run",
+                "server/routers/flow.py:1 imports asyncio.to_thread",
+                "server/routers/flow.py:4 calls read_text",
+                "server/routers/flow.py:5 calls asyncio.run",
+                "server/routers/flow.py:6 calls run_until_complete",
+                "server/routers/flow.py:7 calls to_thread",
+            ),
+        )
 
     def test_validate_success_and_malformed_source_are_safe(self) -> None:
         success = self.client.post(
