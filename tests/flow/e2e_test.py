@@ -39,6 +39,7 @@ from avalan.flow import (
     FlowPlanNodeRunner,
     FlowRetryPolicy,
     FlowReviewState,
+    InMemoryFlowStateStore,
     Node,
     compile_flow_source,
     default_flow_node_registry,
@@ -303,6 +304,141 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(runtime_inputs[0], "graph"))
         self.assertNotIn("Private graph label", str(compiled.definition))
         self.assertNotIn("Private decorative note", str(runtime_inputs[0]))
+
+    async def test_graph_runtime_trace_events_and_records_are_strict_only(
+        self,
+    ) -> None:
+        compiled = await compile_flow_source(
+            """
+            [flow]
+            name = "graph_runtime_privacy"
+            version = "1"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "result"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            result = "finish.value"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@-->|Private graph route| finish
+            private_note d@-->|Private decorative route| private_sink
+            '''
+
+            [graph.edges.route_1]
+            label = "approved"
+
+            [nodes.start]
+            type = "constant"
+            value = {answer = "ok"}
+
+            [nodes.finish]
+            type = "pass-through"
+
+            [nodes.finish.mapping.value]
+            type = "select"
+            source = "start.value"
+            """,
+            source_path="/private/customer/flow.toml",
+        )
+        invalid = await compile_flow_source(
+            """
+            [flow]
+            name = "graph_runtime_invalid_privacy"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start -->|Private invalid graph route| finish
+            '''
+
+            [nodes.start]
+            type = "constant"
+            value = "ok"
+
+            [nodes.finish]
+            type = "pass-through"
+            """,
+            source_path="/private/customer/invalid-flow.toml",
+        )
+
+        self.assertTrue(compiled.ok, compiled.public_diagnostics)
+        assert compiled.definition is not None
+        events: list[Event] = []
+        executor = FlowExecutor(event_listener=events.append)
+        result = await executor.run(compiled.definition)
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        assert result.result is not None
+        self.assertEqual(result.outputs, {"result": {"answer": "ok"}})
+        store = InMemoryFlowStateStore()
+        record = await store.create_flow_execution(
+            "run-graph-runtime",
+            trace=result.result.trace,
+            node_outputs=result.result.node_outputs,
+            selected_outputs=result.outputs,
+            metadata={
+                "strict_flow": {
+                    "name": "graph_runtime_privacy",
+                    "version": "1",
+                }
+            },
+        )
+        record_inspection = executor.inspect(record, plan=result.plan)
+        record_export = executor.export_trace(record, plan=result.plan)
+
+        self.assertFalse(invalid.ok)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in invalid.public_diagnostics],
+            ["flow.graph.unsupported_executable_edge"],
+        )
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in result.result.trace.edges],
+            [("start", "finish")],
+        )
+        self.assertEqual(
+            {
+                cast(Mapping[str, object], event.payload)["flow_name"]
+                for event in events
+                if event.payload is not None
+            },
+            {"graph_runtime_privacy"},
+        )
+        _assert_no_authoring_graph_values(
+            self,
+            (
+                tuple(event.payload for event in events),
+                result.result.trace.as_public_dict(),
+                result.inspect().as_public_dict(),
+                result.export_sanitized_trace(),
+                record.as_snapshot(),
+                record_inspection.as_public_dict(),
+                record_export,
+                invalid.public_diagnostics,
+            ),
+        )
 
     async def test_human_review_pauses_and_resumes_medium_risk_routes(
         self,
@@ -1188,6 +1324,26 @@ def _event_payloads(
         for event in events
         if event.type == event_type
     ]
+
+
+def _assert_no_authoring_graph_values(
+    test_case: FlowE2ETestCase,
+    values: tuple[object, ...],
+) -> None:
+    rendered = str(values)
+    for sentinel in (
+        "flowchart",
+        "route_1",
+        "Private graph route",
+        "Private decorative route",
+        "Private invalid graph route",
+        "private_note",
+        "private_sink",
+        "/private/customer",
+        "flow.toml",
+        "invalid-flow.toml",
+    ):
+        test_case.assertNotIn(sentinel, rendered)
 
 
 if __name__ == "__main__":
