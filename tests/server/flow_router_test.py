@@ -1,11 +1,13 @@
+from asyncio import gather
 from datetime import UTC, datetime
 from json import dumps
 from types import SimpleNamespace
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from avalan.flow import (
     FlowDefinition,
@@ -577,6 +579,68 @@ class FlowRouterTestCase(TestCase):
             cancel.json()["detail"]["diagnostics"][0]["code"],
             "flow.task.cancel_unavailable",
         )
+
+
+class FlowRouterAsyncTestCase(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.app = FastAPI()
+        self.app.include_router(router, prefix="/flows")
+        self.client = AsyncClient(
+            transport=ASGITransport(app=self.app),
+            base_url="http://testserver",
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self.client.aclose()
+
+    async def test_validate_and_run_graph_sources_concurrently(self) -> None:
+        valid_validate, invalid_validate, valid_run, file_run = await gather(
+            self.client.post(
+                "/flows/validate",
+                json={"source": _graph_flow_source()},
+            ),
+            self.client.post(
+                "/flows/validate",
+                json={"source": _invalid_graph_flow_source()},
+            ),
+            self.client.post(
+                "/flows/run",
+                json={
+                    "source": _graph_flow_source(),
+                    "inputs": {"payload": "safe"},
+                },
+            ),
+            self.client.post(
+                "/flows/run",
+                json={"source": _file_graph_flow_source()},
+            ),
+        )
+
+        self.assertEqual(valid_validate.status_code, 200)
+        self.assertTrue(valid_validate.json()["ok"], valid_validate.text)
+        self.assertEqual(invalid_validate.status_code, 200)
+        self.assertFalse(invalid_validate.json()["ok"])
+        self.assertEqual(
+            invalid_validate.json()["diagnostics"][0]["code"],
+            "flow.graph.unsupported_executable_edge",
+        )
+        self.assertEqual(valid_run.status_code, 200)
+        self.assertTrue(valid_run.json()["ok"], valid_run.text)
+        self.assertEqual(valid_run.json()["outputs"], {"answer": "safe"})
+        self.assertEqual(file_run.status_code, 200)
+        self.assertFalse(file_run.json()["ok"])
+        self.assertEqual(
+            file_run.json()["diagnostics"][0]["code"],
+            "flow.graph.read_failure",
+        )
+        for response in (
+            valid_validate,
+            invalid_validate,
+            valid_run,
+            file_run,
+        ):
+            self.assertNotIn("Private graph label", response.text)
+            self.assertNotIn("customer-token", response.text)
 
 
 class _FakeFlowTaskClient:
