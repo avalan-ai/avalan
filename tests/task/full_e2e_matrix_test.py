@@ -1654,7 +1654,9 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             flows.mkdir()
             (flows / "route.mmd").write_text(
                 "flowchart LR\n"
-                "start route_1@-->|Private queued route| finish\n",
+                "start route_1@-->|Private queued route| finish\n"
+                "private_note decorative_1@-->|Private queued note| "
+                "private_sink\n",
                 encoding="utf-8",
             )
             (flows / "file_graph.toml").write_text(
@@ -1735,7 +1737,199 @@ source = "start.value"
         inspection_value = str(inspection.as_dict())
         self.assertNotIn("flowchart", inspection_value)
         self.assertNotIn("Private queued route", inspection_value)
+        self.assertNotIn("Private queued note", inspection_value)
+        self.assertNotIn("private_note", inspection_value)
+        self.assertNotIn("private_sink", inspection_value)
         self.assertNotIn("route.mmd", inspection_value)
+
+    async def test_graph_flow_source_modes_execute_direct_and_queue(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            flows = workspace.root / "flows"
+            flows.mkdir()
+            (flows / "direct_route.mmd").write_text(
+                "flowchart LR\n"
+                "start route_1@-->|Private direct route| finish\n"
+                "private_note decorative_1@-->|Private direct note| "
+                "private_sink\n",
+                encoding="utf-8",
+            )
+            (flows / "direct_file_graph.toml").write_text(
+                _graph_task_flow_source(
+                    name="direct_file_graph_flow",
+                    source="file",
+                    graph_source='path = "direct_route.mmd"',
+                ),
+                encoding="utf-8",
+            )
+            (flows / "queued_inline_graph.toml").write_text(
+                _graph_task_flow_source(
+                    name="queued_inline_graph_flow",
+                    source="inline",
+                    graph_source=(
+                        "diagram = '''\n"
+                        "flowchart LR\n"
+                        "start route_1@-->|Private inline route| finish\n"
+                        "private_note decorative_1@-->|Private inline note| "
+                        "private_sink\n"
+                        "'''"
+                    ),
+                ),
+                encoding="utf-8",
+            )
+            target = FlowTaskTargetRunner(
+                ref_base=workspace.root,
+                strict_resolver=task_cmds._task_strict_flow_resolver(
+                    workspace.root
+                ),
+            )
+            direct_client = workspace.direct_client(target)
+            queued_client = workspace.queued_client(target)
+            worker = workspace.worker(target)
+
+            direct_result = await direct_client.run(
+                _direct_flow_definition(
+                    name="direct_graph_file_flow",
+                    ref="flows/direct_file_graph.toml",
+                ),
+                input_value="direct-ready",
+            )
+            submission = await queued_client.enqueue(
+                _queued_definition(
+                    name="queued_graph_inline_flow",
+                    execution=TaskExecutionTarget.flow(
+                        "flows/queued_inline_graph.toml"
+                    ),
+                ),
+                input_value="queued-ready",
+                idempotency_key="matrix-private-graph-inline-window",
+                owner_scope="matrix-private-graph-inline-owner",
+            )
+            processed = await worker.process_once()
+            direct_inspection = await direct_client.inspect(
+                direct_result.run.run_id
+            )
+            queued_output = await queued_client.output(submission.run.run_id)
+            queued_inspection = await queued_client.inspect(
+                submission.run.run_id
+            )
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(direct_result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(direct_result.output, "direct-ready")
+        self.assertEqual(queued_output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(processed.output, "queued-ready")
+        self.assertEqual(
+            queued_output.output_summary,
+            {"privacy": REDACTED_MARKER},
+        )
+        _assert_no_sentinels(
+            (
+                direct_inspection.as_dict(),
+                queued_inspection.as_dict(),
+                _cli_snapshot(direct_inspection.as_dict()),
+                _cli_snapshot(queued_inspection.as_dict()),
+            ),
+            (
+                "flowchart",
+                "Private direct route",
+                "Private direct note",
+                "Private inline route",
+                "Private inline note",
+                "private_note",
+                "private_sink",
+                "direct_route.mmd",
+                "matrix-private-graph-inline-window",
+                "matrix-private-graph-inline-owner",
+            ),
+        )
+
+    async def test_queued_invalid_graph_flow_ref_fails_before_enqueue(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            flows = workspace.root / "flows"
+            flows.mkdir()
+            (flows / "invalid_route.mmd").write_text(
+                "flowchart LR\nstart -->|Private queued route| finish\n",
+                encoding="utf-8",
+            )
+            (flows / "invalid_graph.toml").write_text(
+                """
+[flow]
+name = "queued_invalid_graph_flow"
+version = "1"
+
+[[inputs]]
+name = "prompt"
+type = "string"
+
+[[outputs]]
+name = "answer"
+type = "text"
+
+[entry]
+type = "node"
+node = "start"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "finish.value"
+
+[graph]
+format = "mermaid"
+source = "file"
+mode = "executable"
+path = "invalid_route.mmd"
+
+[nodes.start]
+type = "pass-through"
+
+[nodes.finish]
+type = "pass-through"
+""",
+                encoding="utf-8",
+            )
+            target = FlowTaskTargetRunner(
+                ref_base=workspace.root,
+                strict_resolver=task_cmds._task_strict_flow_resolver(
+                    workspace.root
+                ),
+            )
+            client = workspace.queued_client(target)
+            worker = workspace.worker(target)
+
+            with self.assertRaises(TaskValidationError) as error:
+                await client.enqueue(
+                    _queued_definition(
+                        name="queued_invalid_graph_file_flow",
+                        execution=TaskExecutionTarget.flow(
+                            "flows/invalid_graph.toml"
+                        ),
+                    ),
+                    input_value="ready",
+                    idempotency_key="matrix-private-invalid-graph-window",
+                    owner_scope="matrix-private-invalid-graph-owner",
+                )
+            processed = await worker.process_once()
+
+        self.assertEqual(
+            [issue.code for issue in error.exception.issues],
+            ["flow.graph.unsupported_executable_edge"],
+        )
+        self.assertEqual(error.exception.issues[0].path, "graph.edges")
+        self.assertEqual(workspace.queue.items, {})
+        self.assertFalse(processed.processed)
+        rendered = str(error.exception)
+        self.assertNotIn("flowchart", rendered)
+        self.assertNotIn("Private queued route", rendered)
+        self.assertNotIn("invalid_route.mmd", rendered)
+        self.assertNotIn("invalid_graph.toml", rendered)
+        self.assertNotIn("matrix-private-invalid-graph", rendered)
 
     async def test_queued_flow_file_conversion_requires_artifact_store(
         self,
@@ -2249,12 +2443,16 @@ def _direct_agent_definition(
     )
 
 
-def _direct_flow_definition(*, name: str) -> TaskDefinition:
+def _direct_flow_definition(
+    *,
+    name: str,
+    ref: str = "flows/subflow.toml",
+) -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name=name, version="1"),
         input=TaskInputContract.string(),
         output=TaskOutputContract.text(),
-        execution=TaskExecutionTarget.flow("flows/subflow.toml"),
+        execution=TaskExecutionTarget.flow(ref),
         run=TaskRunPolicy.direct(timeout_seconds=60),
         privacy=TaskPrivacyPolicy(raw_retention_days=1),
         artifact=TaskArtifactPolicy.references_only(retention_days=3),
@@ -2290,6 +2488,57 @@ def _queued_definition(
         ),
         retry=TaskRetryPolicy(max_attempts=1),
     )
+
+
+def _graph_task_flow_source(
+    *,
+    name: str,
+    source: str,
+    graph_source: str,
+) -> str:
+    return f"""
+[flow]
+name = "{name}"
+version = "1"
+
+[[inputs]]
+name = "prompt"
+type = "string"
+
+[[outputs]]
+name = "answer"
+type = "text"
+
+[entry]
+type = "node"
+node = "start"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "finish.value"
+
+[graph]
+format = "mermaid"
+source = "{source}"
+mode = "executable"
+{graph_source}
+
+[nodes.start]
+type = "pass-through"
+
+[nodes.start.mapping.value]
+type = "select"
+source = "input.prompt"
+
+[nodes.finish]
+type = "pass-through"
+
+[nodes.finish.mapping.value]
+type = "select"
+source = "start.value"
+"""
 
 
 def _direct_vendor_definition(name: str) -> TaskDefinition:

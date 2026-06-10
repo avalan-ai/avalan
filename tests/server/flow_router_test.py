@@ -521,6 +521,98 @@ class FlowRouterTestCase(TestCase):
             "flow.task.run_not_found",
         )
 
+    def test_resume_compiles_graph_source_before_executor(self) -> None:
+        store = InMemoryFlowStateStore()
+        self.app.state.flow_state_store = store
+        run = self.client.post(
+            "/flows/run",
+            json={
+                "source": _strict_flow_source(),
+                "inputs": {"payload": "safe"},
+                "run_id": "run-1",
+            },
+        )
+        executor = _CapturingResumeExecutor()
+        self.app.state.flow_executor = executor
+
+        response = self.client.post(
+            "/flows/runs/run-1/resume",
+            json={
+                "source": _graph_flow_source(),
+                "decisions": {"review": {"decision": "approved"}},
+            },
+        )
+        record = asyncio_run(store.get_flow_execution("run-1"))
+
+        self.assertTrue(run.json()["ok"], run.text)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["ok"])
+        self.assertEqual(
+            response.json()["diagnostics"][0]["code"],
+            "flow.execution.test_diagnostic",
+        )
+        self.assertEqual(response.json()["record_revision"], 1)
+        self.assertEqual(record.revision, 1)
+        self.assertIsInstance(executor.seen_flow, FlowDefinition)
+        assert isinstance(executor.seen_flow, FlowDefinition)
+        self.assertEqual(executor.seen_flow.name, "server-graph-flow")
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in executor.seen_flow.edges],
+            [("echo", "finish")],
+        )
+        self.assertNotIn("Private graph label", str(executor.seen_flow))
+        self.assertFalse(hasattr(executor.seen_flow, "graph"))
+        self.assertNotIn("Private graph label", response.text)
+
+    def test_resume_rejects_graph_source_before_executor(self) -> None:
+        store = InMemoryFlowStateStore()
+        self.app.state.flow_state_store = store
+        run = self.client.post(
+            "/flows/run",
+            json={
+                "source": _strict_flow_source(),
+                "inputs": {"payload": "safe"},
+                "run_id": "run-1",
+            },
+        )
+        executor = _CapturingResumeExecutor()
+        self.app.state.flow_executor = executor
+
+        invalid = self.client.post(
+            "/flows/runs/run-1/resume",
+            json={
+                "source": _invalid_graph_flow_source(),
+                "decisions": {"review": {"decision": "approved"}},
+            },
+        )
+        file_backed = self.client.post(
+            "/flows/runs/run-1/resume",
+            json={
+                "source": _file_graph_flow_source(),
+                "decisions": {"review": {"decision": "approved"}},
+            },
+        )
+        record = asyncio_run(store.get_flow_execution("run-1"))
+
+        self.assertTrue(run.json()["ok"], run.text)
+        self.assertEqual(invalid.status_code, 200)
+        self.assertFalse(invalid.json()["ok"])
+        self.assertEqual(file_backed.status_code, 200)
+        self.assertFalse(file_backed.json()["ok"])
+        self.assertEqual(
+            invalid.json()["diagnostics"][0]["code"],
+            "flow.graph.unsupported_executable_edge",
+        )
+        self.assertEqual(
+            file_backed.json()["diagnostics"][0]["code"],
+            "flow.graph.read_failure",
+        )
+        self.assertEqual(record.revision, 1)
+        self.assertIsNone(executor.seen_flow)
+        for response in (invalid, file_backed):
+            self.assertNotIn("Private graph label", response.text)
+            self.assertNotIn("customer-token", response.text)
+
     def test_validate_and_run_compile_graph_source_before_executor(
         self,
     ) -> None:
@@ -834,6 +926,21 @@ class _CapturingDiagnosticExecutor(FlowExecutor):
 
     async def run(
         self, *args: object, **kwargs: object
+    ) -> FlowExecutorRunResult:
+        _ = kwargs
+        self.seen_flow = args[0] if args else None
+        return FlowExecutorRunResult(diagnostics=(_diagnostic(),))
+
+
+class _CapturingResumeExecutor(FlowExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_flow: object | None = None
+
+    async def resume(
+        self,
+        *args: object,
+        **kwargs: object,
     ) -> FlowExecutorRunResult:
         _ = kwargs
         self.seen_flow = args[0] if args else None

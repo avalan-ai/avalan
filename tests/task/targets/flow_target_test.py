@@ -3,7 +3,7 @@ from asyncio import CancelledError, sleep, wait_for
 from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from inspect import isawaitable
+from inspect import getsource, isawaitable
 from pathlib import Path
 from sys import path as sys_path
 from tempfile import TemporaryDirectory
@@ -21,6 +21,7 @@ from store_contract_test import (  # type: ignore[import-not-found]
     SequenceIds,
 )
 
+from avalan.cli.commands import task as task_cmds
 from avalan.entities import (
     Message,
     MessageContentFile,
@@ -83,6 +84,7 @@ from avalan.flow.flow import Flow
 from avalan.flow.loader import FlowDefinitionLoader
 from avalan.flow.node import Node
 from avalan.flow.registry import FlowNodeConfigurationError
+from avalan.server.routers import flow as flow_router_module
 from avalan.task import (
     DROPPED_MARKER,
     ENCRYPTED_MARKER,
@@ -981,6 +983,34 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
             _task_flow_loading_async_violations(module_source),
             (),
         )
+
+    def test_task_flow_loading_integrations_keep_async_boundaries(
+        self,
+    ) -> None:
+        sources = {
+            "task cli validation helper": getsource(
+                task_cmds._validate_task_flow_reference
+            ),
+            "task cli strict resolver": getsource(
+                task_cmds._task_strict_flow_resolver
+            ),
+            "server validate route": getsource(
+                flow_router_module.validate_flow
+            ),
+            "server compile route": getsource(flow_router_module.compile_flow),
+            "server graph inspect route": getsource(
+                flow_router_module.inspect_graph
+            ),
+            "server run route": getsource(flow_router_module.run_flow),
+            "server resume route": getsource(flow_router_module.resume_run),
+        }
+
+        for label, source in sources.items():
+            with self.subTest(label=label):
+                self.assertEqual(
+                    _task_flow_loading_async_violations(source),
+                    (),
+                )
 
     def test_flow_target_loading_audit_rejects_sync_bridges(self) -> None:
         violations = _task_flow_loading_async_violations("""
@@ -5492,6 +5522,8 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
                 diagram=(
                     "flowchart LR\n"
                     "start route_1@-->|Private customer route| finish\n"
+                    "private_note decorative_1@-->|Private visual note| "
+                    "private_sink\n"
                 ),
             )
             flow_store = InMemoryFlowStateStore()
@@ -5529,6 +5561,9 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
         rendered = f"{result.run.result} {record.as_snapshot()} {events}"
         self.assertNotIn("flowchart", rendered)
         self.assertNotIn("Private customer route", rendered)
+        self.assertNotIn("Private visual note", rendered)
+        self.assertNotIn("private_note", rendered)
+        self.assertNotIn("private_sink", rendered)
 
     async def test_direct_runner_executes_strict_subflow_plan(self) -> None:
         flow_store = InMemoryFlowStateStore()
