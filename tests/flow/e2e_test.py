@@ -1,7 +1,9 @@
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import patch
 
+import avalan.flow.executor as flow_executor_module
 from avalan.event import Event, EventType
 from avalan.flow import (
     FlowCondition,
@@ -12,6 +14,7 @@ from avalan.flow import (
     FlowEdgeKind,
     FlowEdgeState,
     FlowEntryBehavior,
+    FlowExecutionPlan,
     FlowExecutor,
     FlowInputDefinition,
     FlowInputMapping,
@@ -31,6 +34,8 @@ from avalan.flow import (
     FlowOutputBehavior,
     FlowOutputDefinition,
     FlowOutputType,
+    FlowPlanCompileResult,
+    FlowPlanExecutionResult,
     FlowPlanNodeRunner,
     FlowRetryPolicy,
     FlowReviewState,
@@ -149,6 +154,155 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
             ["flow.graph.unsupported_executable_edge"],
         )
         self.assertNotIn("Private graph label", str(invalid.as_public_dict()))
+
+    async def test_invalid_graph_authoring_stops_before_runtime_build(
+        self,
+    ) -> None:
+        build_calls: list[str] = []
+
+        def blocked_factory(definition: FlowNodeDefinition) -> Node:
+            build_calls.append(definition.name)
+            raise AssertionError("runtime node build should not be reached")
+
+        registry = default_flow_node_registry().register(
+            "blocked",
+            blocked_factory,
+            metadata=FlowNodeMetadata(kind=FlowNodeKind.PASS_THROUGH),
+        )
+
+        result = await FlowDefinitionLoader(registry).loads_result("""
+            [flow]
+            name = "invalid_graph_runtime"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start -->|Private graph label| finish
+            '''
+
+            [nodes.start]
+            type = "blocked"
+
+            [nodes.finish]
+            type = "blocked"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.definition)
+        self.assertEqual(build_calls, [])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.graph.unsupported_executable_edge"],
+        )
+        self.assertNotIn("Private graph label", str(result.public_diagnostics))
+
+    async def test_executor_boundary_receives_only_strict_flow_objects(
+        self,
+    ) -> None:
+        compiled = await compile_flow_source("""
+            [flow]
+            name = "graph_runtime_boundary"
+            version = "1"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "result"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            result = "finish.value"
+
+            [graph]
+            format = "mermaid"
+            source = "inline"
+            mode = "executable"
+            diagram = '''
+            flowchart LR
+            start route_1@-->|Private graph label| finish
+            start -.-> note["Private decorative note"]
+            '''
+
+            [graph.edges.route_1]
+            label = "approved"
+
+            [nodes.start]
+            type = "constant"
+            value = {answer = "ok"}
+
+            [nodes.finish]
+            type = "pass-through"
+
+            [nodes.finish.mapping.value]
+            type = "select"
+            source = "start.value"
+            """)
+        self.assertTrue(compiled.ok, compiled.public_diagnostics)
+        assert compiled.definition is not None
+        compile_inputs: list[FlowDefinition] = []
+        runtime_inputs: list[FlowExecutionPlan] = []
+        original_compile = flow_executor_module.compile_flow_definition
+        original_execute = flow_executor_module.execute_flow_plan
+
+        async def capturing_compile(
+            definition: FlowDefinition,
+            registry: FlowNodeRegistry | None = None,
+        ) -> FlowPlanCompileResult:
+            compile_inputs.append(definition)
+            return await original_compile(definition, registry)
+
+        async def capturing_execute(
+            plan: FlowExecutionPlan,
+            runner: FlowPlanNodeRunner,
+            **kwargs: Any,
+        ) -> FlowPlanExecutionResult:
+            runtime_inputs.append(plan)
+            return await original_execute(plan, runner, **kwargs)
+
+        with (
+            patch.object(
+                flow_executor_module,
+                "compile_flow_definition",
+                capturing_compile,
+            ),
+            patch.object(
+                flow_executor_module,
+                "execute_flow_plan",
+                capturing_execute,
+            ),
+        ):
+            result = await FlowExecutor().run(compiled.definition)
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"result": {"answer": "ok"}})
+        self.assertEqual(compile_inputs, [compiled.definition])
+        self.assertEqual(len(runtime_inputs), 1)
+        self.assertIsInstance(runtime_inputs[0], FlowExecutionPlan)
+        self.assertEqual(
+            [
+                (edge.source, edge.target, edge.label)
+                for edge in compiled.definition.edges
+            ],
+            [("start", "finish", "approved")],
+        )
+        self.assertFalse(hasattr(compiled.definition, "graph"))
+        self.assertFalse(hasattr(runtime_inputs[0], "graph"))
+        self.assertNotIn("Private graph label", str(compiled.definition))
+        self.assertNotIn("Private decorative note", str(runtime_inputs[0]))
 
     async def test_human_review_pauses_and_resumes_medium_risk_routes(
         self,
