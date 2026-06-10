@@ -1,4 +1,5 @@
 from asyncio import gather
+from asyncio import run as asyncio_run
 from datetime import UTC, datetime
 from json import dumps
 from types import SimpleNamespace
@@ -18,7 +19,9 @@ from avalan.flow import (
     FlowExecutorRunResult,
     FlowNodePlan,
     InMemoryFlowStateStore,
+    compile_flow_source,
     default_flow_node_registry,
+    inspect_flow_graph_source,
 )
 from avalan.server.routers import flow as flow_router
 from avalan.server.routers.flow import router
@@ -53,6 +56,120 @@ class FlowRouterTestCase(TestCase):
             "flow.malformed_toml",
         )
         self.assertNotIn("private customer prompt", failure.text)
+
+    def test_compile_and_graph_inspect_match_sdk_public_shapes(
+        self,
+    ) -> None:
+        compile_sdk = asyncio_run(compile_flow_source(_graph_flow_source()))
+        inspect_sdk = asyncio_run(
+            inspect_flow_graph_source(_graph_flow_source())
+        )
+
+        compiled = self.client.post(
+            "/flows/compile",
+            json={"source": _graph_flow_source()},
+        )
+        inspected = self.client.post(
+            "/flows/graph/inspect",
+            json={"source": _graph_flow_source()},
+        )
+
+        self.assertEqual(compiled.status_code, 200)
+        self.assertEqual(inspected.status_code, 200)
+        self.assertEqual(
+            compiled.json(),
+            flow_router._public_value(compile_sdk.as_public_dict()),
+        )
+        self.assertEqual(
+            inspected.json(),
+            flow_router._public_value(inspect_sdk.as_public_dict()),
+        )
+        self.assertTrue(compiled.json()["ok"])
+        self.assertTrue(inspected.json()["ok"])
+        self.assertEqual(
+            compiled.json()["canonical_source"],
+            {"format": "toml", "strict": True},
+        )
+        self.assertEqual(
+            inspected.json()["inspection"]["schema_version"],
+            "flow.graph.inspection.v1",
+        )
+        self.assertNotIn("Private graph label", compiled.text)
+        self.assertNotIn("Private graph label", inspected.text)
+
+    def test_compile_and_graph_inspect_failures_are_safe(self) -> None:
+        invalid_compile_sdk = asyncio_run(
+            compile_flow_source(_invalid_graph_flow_source())
+        )
+        invalid_inspect_sdk = asyncio_run(
+            inspect_flow_graph_source(_invalid_graph_flow_source())
+        )
+        file_compile_sdk = asyncio_run(
+            compile_flow_source(_file_graph_flow_source())
+        )
+        file_inspect_sdk = asyncio_run(
+            inspect_flow_graph_source(_file_graph_flow_source())
+        )
+
+        invalid_compile = self.client.post(
+            "/flows/compile",
+            json={"source": _invalid_graph_flow_source()},
+        )
+        invalid_inspect = self.client.post(
+            "/flows/graph/inspect",
+            json={"source": _invalid_graph_flow_source()},
+        )
+        file_compile = self.client.post(
+            "/flows/compile",
+            json={"source": _file_graph_flow_source()},
+        )
+        file_inspect = self.client.post(
+            "/flows/graph/inspect",
+            json={"source": _file_graph_flow_source()},
+        )
+
+        self.assertEqual(
+            invalid_compile.json(),
+            flow_router._public_value(invalid_compile_sdk.as_public_dict()),
+        )
+        self.assertEqual(
+            invalid_inspect.json(),
+            flow_router._public_value(invalid_inspect_sdk.as_public_dict()),
+        )
+        self.assertEqual(
+            file_compile.json(),
+            flow_router._public_value(file_compile_sdk.as_public_dict()),
+        )
+        self.assertEqual(
+            file_inspect.json(),
+            flow_router._public_value(file_inspect_sdk.as_public_dict()),
+        )
+        self.assertEqual(
+            invalid_compile.json()["diagnostics"][0]["code"],
+            "flow.graph.unsupported_executable_edge",
+        )
+        self.assertEqual(
+            invalid_inspect.json()["diagnostics"][0]["code"],
+            "flow.graph.unsupported_executable_edge",
+        )
+        self.assertEqual(
+            file_compile.json()["diagnostics"][0]["code"],
+            "flow.graph.read_failure",
+        )
+        self.assertEqual(
+            file_inspect.json()["diagnostics"][0]["code"],
+            "flow.graph.read_failure",
+        )
+        for response in (
+            invalid_compile,
+            invalid_inspect,
+            file_compile,
+            file_inspect,
+        ):
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["ok"])
+            self.assertNotIn("Private graph label", response.text)
+            self.assertNotIn("customer-token", response.text)
 
     def test_request_validation_errors_are_sanitized(self) -> None:
         invalid_source = self.client.post(

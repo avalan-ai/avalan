@@ -13,6 +13,8 @@ from ...flow import (
     FlowView,
     FlowViewImportMode,
     compare_flow_topology,
+    compile_flow_source,
+    inspect_flow_graph_source,
     inspect_flow_record,
     parse_mermaid_view,
     render_flow_view,
@@ -107,6 +109,32 @@ async def validate_flow(
             else None
         ),
     )
+
+
+@router.post("/compile")
+async def compile_flow(
+    payload: FlowDefinitionSourceRequest,
+    request: Request,
+) -> dict[str, object]:
+    """Compile an authoring flow into strict public metadata."""
+    result = await compile_flow_source(
+        payload.source,
+        registry=_flow_registry(request),
+    )
+    return cast(dict[str, object], _public_value(result.as_public_dict()))
+
+
+@router.post("/graph/inspect")
+async def inspect_graph(
+    payload: FlowDefinitionSourceRequest,
+    request: Request,
+) -> dict[str, object]:
+    """Inspect a static authoring graph without running nodes."""
+    result = await inspect_flow_graph_source(
+        payload.source,
+        registry=_flow_registry(request),
+    )
+    return cast(dict[str, object], _public_value(result.as_public_dict()))
 
 
 @router.post("/mermaid/parse")
