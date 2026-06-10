@@ -919,7 +919,7 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
 
         create_mock.assert_not_awaited()
 
-    async def test_rejects_incompatible_reasoning_effort(self):
+    async def test_rejects_invalid_reasoning_effort(self):
         create_mock = AsyncMock()
         self.openai_stub.AsyncOpenAI.return_value.responses.create = (
             create_mock
@@ -929,13 +929,38 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             base_url="https://tenant.openai.azure.com/openai/v1/",
         )
         settings = GenerationSettings(
-            reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+            reasoning=ReasoningSettings(
+                effort="ultra",  # type: ignore[arg-type]
+            )
         )
 
         with self.assertRaisesRegex(AssertionError, "reasoning effort"):
             await client("deployment", [], settings=settings)
 
         create_mock.assert_not_awaited()
+
+    async def test_gpt_55_reasoning_xhigh_effort_is_forwarded(self):
+        response = SimpleNamespace(
+            output=[SimpleNamespace(content=[SimpleNamespace(text="x")])]
+        )
+        create_mock = AsyncMock(return_value=response)
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = (
+            create_mock
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url="url")
+        settings = GenerationSettings(
+            reasoning=ReasoningSettings(effort=ReasoningEffort.XHIGH)
+        )
+
+        await client(
+            "gpt-5.5",
+            [Message(role=MessageRole.USER, content="hi")],
+            settings,
+            use_async_generator=False,
+        )
+
+        kwargs = create_mock.await_args.kwargs
+        self.assertEqual(kwargs["reasoning"], {"effort": "xhigh"})
 
     def test_response_text_format_normalizes_supported_shapes(self):
         self.assertEqual(

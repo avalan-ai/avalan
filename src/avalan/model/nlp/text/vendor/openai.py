@@ -161,6 +161,7 @@ class OpenAIClient(TextGenerationVendor):
             ReasoningEffort.LOW,
             ReasoningEffort.MEDIUM,
             ReasoningEffort.HIGH,
+            ReasoningEffort.XHIGH,
         }
     )
     _client: Any
@@ -373,6 +374,9 @@ class OpenAIClient(TextGenerationVendor):
         effort = settings.reasoning.effort
         if effort is None or effort == ReasoningEffort.NONE:
             return None
+        assert isinstance(
+            effort, ReasoningEffort
+        ), "OpenAI Responses reasoning effort is not supported"
         if effort == ReasoningEffort.MAX:
             effort = ReasoningEffort.XHIGH
         if restricted and effort not in OpenAIClient._REASONING_EFFORTS:
