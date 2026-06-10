@@ -1,4 +1,5 @@
 from logging import Logger
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -16,6 +17,7 @@ from avalan.entities import (
 from avalan.model.engine import Engine
 from avalan.model.transformer import AutoTokenizer
 from avalan.model.vision import BaseVisionModel
+from avalan.model.vision import text as vision_text
 from avalan.model.vision.text import (
     AutoModelForImageTextToText,
     AutoProcessor,
@@ -43,6 +45,31 @@ class PTMWithGenerate(PreTrainedModel):
 
 class ImageTextToTextModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
+
+    def test_lazy_transformers_proxies_import_targets(self):
+        processor = MagicMock()
+        model = MagicMock()
+        module = SimpleNamespace(
+            AutoProcessor=processor,
+            Gemma3ForConditionalGeneration=model,
+        )
+
+        with patch(
+            "avalan.model.vision.text.import_module",
+            return_value=module,
+        ):
+            self.assertIs(vision_text._auto_processor(), processor)
+            self.assertIs(
+                AutoProcessor.from_pretrained("processor"),
+                processor.from_pretrained.return_value,
+            )
+            self.assertIs(
+                Gemma3ForConditionalGeneration.from_pretrained("model"),
+                model.from_pretrained.return_value,
+            )
+
+        processor.from_pretrained.assert_called_once_with("processor")
+        model.from_pretrained.assert_called_once_with("model")
 
     def test_instantiation_with_load_model(self):
         logger_mock = MagicMock(spec=Logger)

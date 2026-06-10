@@ -1,11 +1,13 @@
 from contextlib import nullcontext
 from logging import Logger
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, patch
 
 from transformers import PreTrainedModel
 
 from avalan.entities import EngineSettings
+from avalan.model.audio import generation as audio_generation
 from avalan.model.audio.generation import (
     MUSICGEN_KEYS_TO_IGNORE_ON_LOAD_UNEXPECTED,
     AudioGenerationModel,
@@ -52,6 +54,32 @@ class AudioGenerationModelInstantiationTestCase(TestCase):
         self.assertRegex(
             "decoder.model.decoder.embed_positions.weights",
             patterns[0],
+        )
+
+    def test_lazy_transformers_helpers_import_targets(self):
+        processor = object()
+
+        class MusicgenForConditionalGeneration:
+            pass
+
+        module = SimpleNamespace(
+            AutoProcessor=processor,
+            MusicgenForConditionalGeneration=MusicgenForConditionalGeneration,
+        )
+
+        with patch(
+            "avalan.model.audio.generation.import_module",
+            return_value=module,
+        ):
+            self.assertIs(audio_generation._auto_processor(), processor)
+            self.assertIs(
+                audio_generation._musicgen_for_conditional_generation(),
+                MusicgenForConditionalGeneration,
+            )
+
+        self.assertEqual(
+            MusicgenForConditionalGeneration._keys_to_ignore_on_load_unexpected,
+            MUSICGEN_KEYS_TO_IGNORE_ON_LOAD_UNEXPECTED,
         )
 
     def test_instantiation_with_load_model(self):

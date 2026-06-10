@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 from logging import Logger
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, call, patch
 
@@ -12,6 +13,7 @@ from avalan.entities import (
 )
 from avalan.model.engine import Engine
 from avalan.model.vision.diffusion import TextToImageModel
+from avalan.model.vision.diffusion import image as diffusion_image
 
 
 class DummyDiffusionPipeline:
@@ -22,6 +24,16 @@ class DummyDiffusionPipeline:
 class TextToImageModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
     refiner_id = "refiner/model"
+
+    def test_lazy_diffusers_helper_imports_pipeline(self) -> None:
+        pipeline = object()
+        module = SimpleNamespace(DiffusionPipeline=pipeline)
+
+        with patch(
+            "avalan.model.vision.diffusion.image.import_module",
+            return_value=module,
+        ):
+            self.assertIs(diffusion_image._diffusion_pipeline(), pipeline)
 
     def test_missing_refiner(self) -> None:
         with self.assertRaises(AssertionError):

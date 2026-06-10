@@ -1,11 +1,13 @@
 from contextlib import nullcontext
 from logging import Logger
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, patch
 
 from transformers import PreTrainedModel
 
 from avalan.entities import EngineSettings
+from avalan.model.audio import speech as speech_module
 from avalan.model.audio.speech import (
     AutoFeatureExtractor,
     DiaConfig,
@@ -17,6 +19,21 @@ from avalan.model.engine import Engine
 
 class TextToSpeechModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
+
+    def test_lazy_transformers_helpers_import_targets(self):
+        tokenizer = object()
+        processor = object()
+        module = SimpleNamespace(
+            AutoTokenizer=tokenizer,
+            DiaProcessor=processor,
+        )
+
+        with patch(
+            "avalan.model.audio.speech.import_module",
+            return_value=module,
+        ):
+            self.assertIs(speech_module._auto_tokenizer(), tokenizer)
+            self.assertIs(speech_module._dia_processor(), processor)
 
     def test_instantiation_no_load(self):
         logger_mock = MagicMock(spec=Logger)

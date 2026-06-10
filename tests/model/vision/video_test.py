@@ -1,11 +1,13 @@
 from contextlib import nullcontext
 from logging import Logger
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import ANY, MagicMock, call, patch
 
 from avalan.entities import EngineSettings
 from avalan.model.engine import Engine
 from avalan.model.vision.diffusion import TextToVideoModel
+from avalan.model.vision.diffusion import video as diffusion_video
 
 
 class DummyDiffusionPipeline:
@@ -16,6 +18,50 @@ class DummyDiffusionPipeline:
 class TextToVideoModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
     upsampler_id = "up/model"
+
+    def test_lazy_diffusers_helpers_import_targets(self) -> None:
+        pipeline = object()
+        condition = object()
+
+        def export_to_video(*args: object, **kwargs: object) -> object:
+            return ("export", args, kwargs)
+
+        def load_image(*args: object, **kwargs: object) -> object:
+            return ("image", args, kwargs)
+
+        def load_video(*args: object, **kwargs: object) -> object:
+            return ("video", args, kwargs)
+
+        modules = {
+            "diffusers": SimpleNamespace(DiffusionPipeline=pipeline),
+            "diffusers.pipelines.ltx.pipeline_ltx_condition": SimpleNamespace(
+                LTXVideoCondition=condition
+            ),
+            "diffusers.utils": SimpleNamespace(
+                export_to_video=export_to_video,
+                load_image=load_image,
+                load_video=load_video,
+            ),
+        }
+
+        with patch(
+            "avalan.model.vision.diffusion.video.import_module",
+            side_effect=modules.__getitem__,
+        ):
+            self.assertIs(diffusion_video._diffusion_pipeline(), pipeline)
+            self.assertIs(diffusion_video._ltx_video_condition(), condition)
+            self.assertEqual(
+                diffusion_video.export_to_video("frame", fps=12),
+                ("export", ("frame",), {"fps": 12}),
+            )
+            self.assertEqual(
+                diffusion_video.load_image("image.png"),
+                ("image", ("image.png",), {}),
+            )
+            self.assertEqual(
+                diffusion_video.load_video("video.mp4"),
+                ("video", ("video.mp4",), {}),
+            )
 
     def test_instantiation_with_load_model(self) -> None:
         logger_mock = MagicMock(spec=Logger)
