@@ -1,22 +1,28 @@
 from ...model.audio import BaseAudioModel
-from ...model.engine import Engine
+from ...model.engine import DiffusionPipeline, Engine
 from ...model.vendor import TextGenerationVendor
 
 from copy import deepcopy
+from importlib import import_module
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from torch import inference_mode
 from transformers import (
     AutoFeatureExtractor,
-    AutoTokenizer,
     DiaConfig,
     DiaForConditionalGeneration,
-    DiaProcessor,
     PreTrainedModel,
 )
 
 _DIA_TOKEN_ID_FIELDS = ("pad_token_id", "eos_token_id", "bos_token_id")
+
+
+def _auto_tokenizer() -> Any:
+    return getattr(import_module("transformers"), "AutoTokenizer")
+
+
+def _dia_processor() -> Any:
+    return getattr(import_module("transformers"), "DiaProcessor")
 
 
 class TextToSpeechModel(BaseAudioModel):
@@ -68,14 +74,15 @@ class TextToSpeechModel(BaseAudioModel):
         self._sync_dia_config_token_ids(config)
         return config
 
-    def _load_processor(self, config: DiaConfig) -> DiaProcessor:
+    def _load_processor(self, config: DiaConfig) -> Any:
         assert self._model_id
         processor_kwargs = {
             **self._hub_kwargs(self._settings.tokenizer_subfolder),
             "trust_remote_code": self._settings.trust_remote_code,
         }
+        dia_processor = _dia_processor()
         processor_dict, processor_init_kwargs = (
-            DiaProcessor.get_processor_dict(
+            dia_processor.get_processor_dict(
                 self._model_id,
                 **processor_kwargs,
             )
@@ -84,14 +91,14 @@ class TextToSpeechModel(BaseAudioModel):
             self._model_id,
             **processor_kwargs,
         )
-        tokenizer = cast(Any, AutoTokenizer).from_pretrained(
+        tokenizer = cast(Any, _auto_tokenizer()).from_pretrained(
             self._model_id,
             config=config,
             **processor_kwargs,
         )
         return cast(
-            DiaProcessor,
-            DiaProcessor.from_args_and_dict(
+            Any,
+            dia_processor.from_args_and_dict(
                 [feature_extractor, tokenizer],
                 processor_dict,
                 **processor_init_kwargs,

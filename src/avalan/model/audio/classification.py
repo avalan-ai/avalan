@@ -1,10 +1,9 @@
 from ...model.audio import BaseAudioModel
-from ...model.engine import Engine
+from ...model.engine import DiffusionPipeline, Engine
 from ...model.vendor import TextGenerationVendor
 
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from torch import inference_mode
 from transformers import (
     AutoFeatureExtractor,

@@ -1,12 +1,11 @@
 from ...entities import GenerationSettings, Input
-from ...model.engine import Engine
+from ...model.engine import DiffusionPipeline, Engine
 from ...model.nlp import BaseNLPModel
 from ...model.vendor import TextGenerationVendor
 
 from dataclasses import replace
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from torch import Tensor, argmax, inference_mode, softmax
 from transformers import (
     AutoModelForSeq2SeqLM,

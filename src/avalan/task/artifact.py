@@ -493,7 +493,11 @@ def bounded_artifact_reader(
     *,
     max_bytes: int | None,
 ) -> BinaryIO:
-    _assert_optional_size(max_bytes, "max_bytes")
+    try:
+        _assert_optional_size(max_bytes, "max_bytes")
+    except Exception:
+        reader.close()
+        raise
     if max_bytes is None:
         return reader
     return cast(BinaryIO, _BoundedArtifactReader(reader, max_bytes=max_bytes))

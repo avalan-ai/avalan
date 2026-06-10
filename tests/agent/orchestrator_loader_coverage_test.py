@@ -155,8 +155,9 @@ debug_source = \"{debug_file.name}\"
                     },
                 )
                 bts_patch.assert_called_once()
-                self.assertEqual(
-                    bts_patch.call_args.kwargs["debug_source"].name,
-                    debug_file.name,
-                )
+                debug_source = bts_patch.call_args.kwargs["debug_source"]
+                try:
+                    self.assertEqual(debug_source.name, debug_file.name)
+                finally:
+                    debug_source.close()
             await stack.aclose()

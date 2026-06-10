@@ -5,7 +5,6 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, call, patch
 
 import numpy as np
-from diffusers import AnimateDiffPipeline, DiffusionPipeline
 from PIL import Image
 
 from avalan.entities import (
@@ -17,15 +16,25 @@ from avalan.model.engine import Engine
 from avalan.model.vision.diffusion import TextToAnimationModel
 
 
+class DummyDiffusionPipeline:
+    def to(self, *args: object, **kwargs: object) -> object:
+        return self
+
+
 class TextToAnimationModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
 
     def test_instantiation_with_load_model(self) -> None:
         logger_mock = MagicMock(spec=Logger)
+        animate_pipeline = MagicMock()
         with (
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch("avalan.model.engine.find_spec", return_value=None),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch(
                 "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
@@ -37,13 +46,17 @@ class TextToAnimationModelInstantiationTestCase(TestCase):
                 "avalan.model.vision.diffusion.animation.load_file",
                 return_value={"sd": 1},
             ) as load_mock,
-            patch.object(AnimateDiffPipeline, "from_pretrained") as pipe_mock,
+            patch(
+                "avalan.model.vision.diffusion.animation._animate_diff_pipeline",
+                return_value=animate_pipeline,
+            ),
         ):
+            pipe_mock = animate_pipeline.from_pretrained
             adapter_instance = MagicMock()
             adapter_instance.to.return_value = adapter_instance
             adapter_cls.return_value = adapter_instance
 
-            pipe_instance = MagicMock(spec=DiffusionPipeline)
+            pipe_instance = MagicMock(spec=DummyDiffusionPipeline)
             pipe_instance.to.return_value = pipe_instance
             pipe_mock.return_value = pipe_instance
 
@@ -76,10 +89,15 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_all_parameter_combinations(self) -> None:
         logger_mock = MagicMock(spec=Logger)
+        animate_pipeline = MagicMock()
         with (
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch("avalan.model.engine.find_spec", return_value=None),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch(
                 "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
@@ -91,7 +109,10 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
                 "avalan.model.vision.diffusion.animation.load_file",
                 return_value={},
             ),
-            patch.object(AnimateDiffPipeline, "from_pretrained") as pipe_mock,
+            patch(
+                "avalan.model.vision.diffusion.animation._animate_diff_pipeline",
+                return_value=animate_pipeline,
+            ),
             patch(
                 "avalan.model.vision.diffusion.animation.EulerDiscreteScheduler.from_config"
             ) as scheduler_mock,
@@ -103,11 +124,12 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
                 return_value=nullcontext(),
             ),
         ):
+            pipe_mock = animate_pipeline.from_pretrained
             adapter_instance = MagicMock()
             adapter_instance.to.return_value = adapter_instance
             adapter_cls.return_value = adapter_instance
 
-            pipe_instance = MagicMock(spec=DiffusionPipeline)
+            pipe_instance = MagicMock(spec=DummyDiffusionPipeline)
             pipe_instance.to.return_value = pipe_instance
             pipe_instance.scheduler = MagicMock(config="cfg")
             output = MagicMock()
@@ -171,10 +193,15 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_invalid_steps(self) -> None:
         logger_mock = MagicMock(spec=Logger)
+        animate_pipeline = MagicMock()
         with (
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch("avalan.model.engine.find_spec", return_value=None),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch(
                 "avalan.model.vision.diffusion.animation.MotionAdapter"
             ) as adapter_cls,
@@ -186,12 +213,16 @@ class TextToAnimationModelCallTestCase(IsolatedAsyncioTestCase):
                 "avalan.model.vision.diffusion.animation.load_file",
                 return_value={},
             ),
-            patch.object(AnimateDiffPipeline, "from_pretrained") as pipe_mock,
+            patch(
+                "avalan.model.vision.diffusion.animation._animate_diff_pipeline",
+                return_value=animate_pipeline,
+            ),
         ):
+            pipe_mock = animate_pipeline.from_pretrained
             adapter_instance = MagicMock()
             adapter_instance.to.return_value = adapter_instance
             adapter_cls.return_value = adapter_instance
-            pipe_instance = MagicMock(spec=DiffusionPipeline)
+            pipe_instance = MagicMock(spec=DummyDiffusionPipeline)
             pipe_instance.to.return_value = pipe_instance
             pipe_mock.return_value = pipe_instance
 
@@ -217,7 +248,7 @@ class TextToAnimationModelFrameConversionTestCase(TestCase):
         self.assertEqual(images[0].mode, "RGB")
         self.assertEqual(images[0].size, (2, 1))
         self.assertEqual(
-            list(images[0].getdata()),
+            [images[0].getpixel((0, 0)), images[0].getpixel((1, 0))],
             [(0, 255, 0), (255, 102, 0)],
         )
 
@@ -229,7 +260,10 @@ class TextToAnimationModelFrameConversionTestCase(TestCase):
         self.assertEqual(len(images), 1)
         self.assertEqual(images[0].mode, "L")
         self.assertEqual(images[0].size, (2, 1))
-        self.assertEqual(list(images[0].getdata()), [128, 255])
+        self.assertEqual(
+            [images[0].getpixel((0, 0)), images[0].getpixel((1, 0))],
+            [128, 255],
+        )
 
     def test_frames_to_images_requires_frame_batches(self) -> None:
         with self.assertRaises(AssertionError):
@@ -244,10 +278,14 @@ class TextToAnimationModelBaseMethodsTestCase(TestCase):
         with (
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch("avalan.model.engine.find_spec", return_value=None),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch.object(
                 TextToAnimationModel,
                 "_load_model",
-                return_value=MagicMock(spec=DiffusionPipeline),
+                return_value=MagicMock(spec=DummyDiffusionPipeline),
             ),
         ):
             model = TextToAnimationModel("id", settings)
@@ -263,10 +301,14 @@ class TextToAnimationModelBaseMethodsTestCase(TestCase):
         with (
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch("avalan.model.engine.find_spec", return_value=None),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch.object(
                 TextToAnimationModel,
                 "_load_model",
-                return_value=MagicMock(spec=DiffusionPipeline),
+                return_value=MagicMock(spec=DummyDiffusionPipeline),
             ),
         ):
             model = TextToAnimationModel("id", settings)

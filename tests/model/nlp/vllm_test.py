@@ -3,13 +3,13 @@ from unittest import TestCase, main
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from transformers import (
-    AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizerFast,
 )
 
 from avalan.entities import TransformerEngineSettings
 from avalan.model.nlp.text.vllm import VllmModel
+from avalan.model.transformer import AutoTokenizer
 
 
 class VllmModelTestCase(TestCase):

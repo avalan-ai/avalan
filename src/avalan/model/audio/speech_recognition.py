@@ -1,16 +1,19 @@
 from ...model.audio import BaseAudioModel
-from ...model.engine import Engine
+from ...model.engine import DiffusionPipeline, Engine
 from ...model.vendor import TextGenerationVendor
 
+from importlib import import_module
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from torch import argmax, inference_mode
 from transformers import (
     AutoModelForCTC,
-    AutoProcessor,
     PreTrainedModel,
 )
+
+
+def _auto_processor() -> Any:
+    return getattr(import_module("transformers"), "AutoProcessor")
 
 
 class SpeechRecognitionModel(BaseAudioModel):
@@ -21,7 +24,7 @@ class SpeechRecognitionModel(BaseAudioModel):
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = cast(
             Any,
-            cast(Any, AutoProcessor).from_pretrained(
+            cast(Any, _auto_processor()).from_pretrained(
                 self._model_id,
                 trust_remote_code=self._settings.trust_remote_code,
                 # default behavior in transformers v4.48

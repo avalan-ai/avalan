@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 from PIL import Image
 from transformers import (
-    AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizerFast,
 )
@@ -15,6 +14,7 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model.engine import Engine
+from avalan.model.transformer import AutoTokenizer
 from avalan.model.vision import BaseVisionModel
 from avalan.model.vision.text import (
     AutoModelForImageTextToText,

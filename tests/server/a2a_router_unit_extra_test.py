@@ -899,7 +899,9 @@ async def _run_create_task_error_paths(
     client = TestClient(app)
 
     response = client.post(
-        "/tasks", data="not json", headers={"content-type": "application/json"}
+        "/tasks",
+        content="not json",
+        headers={"content-type": "application/json"},
     )
     assert response.status_code == 400
 

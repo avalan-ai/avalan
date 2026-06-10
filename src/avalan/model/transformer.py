@@ -31,11 +31,22 @@ else:
         pass
 
     class _LazyExternal:
+        __test__ = False
+
         def __init__(self, module_name: str, name: str) -> None:
             self._module_name = module_name
             self._name = name
 
+        def from_pretrained(self, *args: object, **kwargs: object) -> Any:
+            module = import_module(self._module_name)
+            target = getattr(module, self._name)
+            return target.from_pretrained(*args, **kwargs)
+
         def __getattr__(self, name: str) -> Any:
+            if name == "_is_coroutine" or (
+                name.startswith("__") and name.endswith("__")
+            ):
+                raise AttributeError(name)
             module = import_module(self._module_name)
             target = getattr(module, self._name)
             return getattr(target, name)

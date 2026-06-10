@@ -4,18 +4,21 @@ from ....entities import (
     VisionColorModel,
     VisionImageFormat,
 )
-from ....model.engine import Engine
+from ....model.engine import DiffusionPipeline, Engine, PreTrainedModel
 from ....model.vendor import TextGenerationVendor
 from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
+from importlib import import_module
 from logging import Logger, getLogger
 from types import MethodType
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from torch import float32, inference_mode
-from transformers import PreTrainedModel
+
+
+def _diffusion_pipeline() -> Any:
+    return getattr(import_module("diffusers"), "DiffusionPipeline")
 
 
 class TextToImageModel(BaseVisionModel):
@@ -37,10 +40,11 @@ class TextToImageModel(BaseVisionModel):
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         dtype = Engine.weight(self._settings.weight_type)
         dtype_variant = self._settings.weight_type
+        pipeline = _diffusion_pipeline()
 
         base = cast(
             DiffusionPipeline,
-            cast(Any, DiffusionPipeline).from_pretrained(
+            cast(Any, pipeline).from_pretrained(
                 self._model_id,
                 torch_dtype=dtype,
                 variant=dtype_variant,
@@ -52,7 +56,7 @@ class TextToImageModel(BaseVisionModel):
 
         refiner = cast(
             DiffusionPipeline,
-            cast(Any, DiffusionPipeline).from_pretrained(
+            cast(Any, pipeline).from_pretrained(
                 self._settings.refiner_model_id,
                 text_encoder_2=cast(Any, base).text_encoder_2,
                 vae=cast(Any, base).vae,

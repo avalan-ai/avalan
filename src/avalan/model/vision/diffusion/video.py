@@ -1,21 +1,43 @@
 from ....entities import EngineSettings, Input
-from ....model.engine import Engine
+from ....model.engine import DiffusionPipeline, Engine, PreTrainedModel
 from ....model.vendor import TextGenerationVendor
 from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
+from importlib import import_module
 from logging import Logger, getLogger
 from typing import Any, cast
 
-from diffusers import DiffusionPipeline
-from diffusers.pipelines.ltx.pipeline_ltx_condition import LTXVideoCondition
-from diffusers.utils import (  # type: ignore[attr-defined]
-    export_to_video,
-    load_image,
-    load_video,
-)
 from torch import Generator, inference_mode
-from transformers import PreTrainedModel
+
+
+def _diffusion_pipeline() -> Any:
+    return getattr(import_module("diffusers"), "DiffusionPipeline")
+
+
+def _ltx_video_condition() -> Any:
+    return getattr(
+        import_module("diffusers.pipelines.ltx.pipeline_ltx_condition"),
+        "LTXVideoCondition",
+    )
+
+
+def export_to_video(*args: object, **kwargs: object) -> Any:
+    return getattr(import_module("diffusers.utils"), "export_to_video")(
+        *args, **kwargs
+    )
+
+
+def load_image(*args: object, **kwargs: object) -> Any:
+    return getattr(import_module("diffusers.utils"), "load_image")(
+        *args, **kwargs
+    )
+
+
+def load_video(*args: object, **kwargs: object) -> Any:
+    return getattr(import_module("diffusers.utils"), "load_video")(
+        *args, **kwargs
+    )
 
 
 class TextToVideoModel(BaseVisionModel):
@@ -37,20 +59,21 @@ class TextToVideoModel(BaseVisionModel):
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         assert self._model_id, "A model id is required."
         dtype = Engine.weight(self._settings.weight_type)
+        pipeline = _diffusion_pipeline()
         base_pipe = cast(
             Any,
-            DiffusionPipeline.from_pretrained(
+            pipeline.from_pretrained(
                 self._model_id,
                 torch_dtype=dtype,
-            ),  # type: ignore[no-untyped-call]
+            ),
         ).to(self._device)
         self._upsampler_pipe = cast(
             Any,
-            DiffusionPipeline.from_pretrained(
+            pipeline.from_pretrained(
                 self._settings.upsampler_model_id,
                 vae=base_pipe.vae,
                 torch_dtype=dtype,
-            ),  # type: ignore[no-untyped-call]
+            ),
         ).to(self._device)
         cast(Any, base_pipe.vae).enable_tiling()
         return cast(DiffusionPipeline, base_pipe)
@@ -75,10 +98,11 @@ class TextToVideoModel(BaseVisionModel):
     ) -> str:
         model = cast(Any, self._model)
         upsampler = cast(Any, self._upsampler_pipe)
+        condition_class = _ltx_video_condition()
         ratio = int(getattr(model, "vae_spatial_compression_ratio", 1))
         image = load_image(reference_path)
         video = load_video(export_to_video([image]))
-        condition = LTXVideoCondition(video=video, frame_index=0)
+        condition = condition_class(video=video, frame_index=0)
 
         down_h = int(height * downscale)
         down_w = int(width * downscale)

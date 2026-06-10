@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 from transformers import (
     AutoModelForSeq2SeqLM,
-    AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizerFast,
 )
@@ -12,6 +11,7 @@ from transformers import (
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.engine import Engine
 from avalan.model.nlp.sequence import SequenceToSequenceModel
+from avalan.model.transformer import AutoTokenizer
 
 
 class SequenceToSequenceModelInstantiationTestCase(TestCase):

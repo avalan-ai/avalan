@@ -88,10 +88,7 @@ def _optional_type(module_name: str, type_name: str) -> type[Any] | None:
     if module_name in modules:
         module = modules[module_name]
         return cast(type[Any], getattr(module, type_name))
-    if find_spec(module_name) is None:
-        return None
-    module = import_module(module_name)
-    return cast(type[Any], getattr(module, type_name))
+    return None
 
 
 def _pretrained_model_type() -> type[Any] | None:
@@ -481,36 +478,41 @@ class Engine(ABC):
             pretrained_model_type = (
                 None if is_vendor else _pretrained_model_type()
             )
-            diffusion_pipeline_type = (
-                None if is_vendor else _diffusion_pipeline_type()
-            )
             is_pretrained_model = (
                 pretrained_model_type is not None
                 and isinstance(self._model, pretrained_model_type)
             )
-            is_diffusion_pipeline = (
+            accepts_loaded_model = False
+            if not is_pretrained_model and not is_vendor:
+                accepts_loaded_model = self._accepts_loaded_model(self._model)
+            diffusion_pipeline_type = (
+                None
+                if is_vendor or is_pretrained_model or accepts_loaded_model
+                else _diffusion_pipeline_type()
+            )
+            is_diffusion_pipeline = bool(
                 diffusion_pipeline_type is not None
                 and isinstance(self._model, diffusion_pipeline_type)
             )
-            accepts_loaded_model = False
 
             if (
                 not is_pretrained_model
                 and not is_vendor
                 and not is_diffusion_pipeline
+                and not accepts_loaded_model
             ):
                 is_mlx = Engine._is_mlx_model(self._model)
 
-                if not is_mlx and Engine._has_module("sentence_transformers"):
-                    from sentence_transformers import SentenceTransformer
-
-                    is_sentence_transformer = isinstance(
-                        self._model, SentenceTransformer
+                sentence_transformer_type = (
+                    None
+                    if is_mlx
+                    else _optional_type(
+                        "sentence_transformers", "SentenceTransformer"
                     )
-
-                if not is_mlx and not is_sentence_transformer:
-                    accepts_loaded_model = self._accepts_loaded_model(
-                        self._model
+                )
+                if sentence_transformer_type is not None:
+                    is_sentence_transformer = isinstance(
+                        self._model, sentence_transformer_type
                     )
 
             assert (

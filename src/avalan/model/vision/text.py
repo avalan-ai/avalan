@@ -4,23 +4,49 @@ from ...entities import (
     MessageRole,
 )
 from ...model.engine import Engine
+from ...model.lazy import LazyExternal
 from ...model.transformer import TransformerModel
 from ...model.vision import BaseVisionModel
 
+from importlib import import_module
 from typing import Any, Literal, cast
 
 from PIL import Image
 from torch import Tensor, inference_mode
-from transformers import (
-    AutoImageProcessor,
-    AutoModelForImageTextToText,
-    AutoProcessor,
-    Gemma3ForConditionalGeneration,
-    Qwen2VLForConditionalGeneration,
-)
 from transformers.tokenization_utils_base import BatchEncoding
 
+AutoImageProcessor = LazyExternal("transformers", "AutoImageProcessor")
+AutoModelForImageTextToText = LazyExternal(
+    "transformers", "AutoModelForImageTextToText"
+)
 AutoModelForVision2Seq = AutoModelForImageTextToText
+
+
+class _AutoProcessorProxy:
+    def from_pretrained(self, *args: object, **kwargs: object) -> Any:
+        return _auto_processor().from_pretrained(*args, **kwargs)
+
+
+class _LazyTransformersModelProxy:
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def from_pretrained(self, *args: object, **kwargs: object) -> Any:
+        model_class = getattr(import_module("transformers"), self._name)
+        return model_class.from_pretrained(*args, **kwargs)
+
+
+def _auto_processor() -> Any:
+    return getattr(import_module("transformers"), "AutoProcessor")
+
+
+AutoProcessor = _AutoProcessorProxy()
+Gemma3ForConditionalGeneration = _LazyTransformersModelProxy(
+    "Gemma3ForConditionalGeneration"
+)
+Qwen2VLForConditionalGeneration = _LazyTransformersModelProxy(
+    "Qwen2VLForConditionalGeneration"
+)
 
 
 class ImageToTextModel(TransformerModel):

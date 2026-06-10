@@ -1,5 +1,6 @@
 from ...entities import EngineSettings, ImageEntity
-from ...model.engine import Engine
+from ...model.engine import DiffusionPipeline, Engine, PreTrainedModel
+from ...model.lazy import LazyExternal
 from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.classification import ImageClassificationModel
@@ -10,18 +11,16 @@ from logging import Logger, getLogger
 from os import environ
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import inference_mode, tensor
-from transformers import (
-    AutoConfig,
-    AutoImageProcessor,
-    AutoModelForObjectDetection,
-    PretrainedConfig,
-    PreTrainedModel,
-)
 
 _DISABLE_SAFETENSORS_CONVERSION = "DISABLE_SAFETENSORS_CONVERSION"
+AutoConfig = LazyExternal("transformers", "AutoConfig")
+AutoImageProcessor = LazyExternal("transformers", "AutoImageProcessor")
+AutoModelForObjectDetection = LazyExternal(
+    "transformers", "AutoModelForObjectDetection"
+)
+PretrainedConfig = LazyExternal("transformers", "PretrainedConfig")
 
 
 class ObjectDetectionModel(ImageClassificationModel):
@@ -76,7 +75,7 @@ class ObjectDetectionModel(ImageClassificationModel):
             else:
                 environ[_DISABLE_SAFETENSORS_CONVERSION] = previous_value
 
-    def _load_config(self) -> PretrainedConfig:
+    def _load_config(self) -> Any:
         assert self._model_id
         config_dict, _ = PretrainedConfig.get_config_dict(
             self._model_id,
@@ -92,7 +91,7 @@ class ObjectDetectionModel(ImageClassificationModel):
             return AutoConfig.for_model(model_type, **normalized_config)
 
         return cast(
-            PretrainedConfig,
+            Any,
             AutoConfig.from_pretrained(
                 self._model_id,
                 revision=self._revision,

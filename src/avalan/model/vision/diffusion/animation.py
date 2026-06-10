@@ -1,29 +1,61 @@
 from ....entities import BetaSchedule, EngineSettings, Input, TimestepSpacing
-from ....model.engine import Engine
+from ....model.engine import DiffusionPipeline, Engine, PreTrainedModel
 from ....model.vendor import TextGenerationVendor
 from ....model.vision import BaseVisionModel
 
 from dataclasses import replace
+from importlib import import_module
 from logging import Logger, getLogger
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-import diffusers.utils as diffusers_utils
 import numpy as np
-from diffusers import (
-    AnimateDiffPipeline,
-    DiffusionPipeline,
-    EulerDiscreteScheduler,
-    MotionAdapter,
-)
-from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from huggingface_hub import hf_hub_download
 from numpy.typing import NDArray
 from PIL import Image
 from safetensors.torch import load_file
 from torch import inference_mode
-from transformers import PreTrainedModel
 
-export_to_gif = cast(Any, diffusers_utils).export_to_gif
+if TYPE_CHECKING:
+    from diffusers.schedulers.scheduling_utils import SchedulerMixin
+else:
+    SchedulerMixin: TypeAlias = Any
+
+
+class _LazyDiffusersClass:
+    __test__ = False
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __call__(self, *args: object, **kwargs: object) -> Any:
+        target = getattr(import_module("diffusers"), self._name)
+        return target(*args, **kwargs)
+
+    def from_config(self, *args: object, **kwargs: object) -> Any:
+        target = getattr(import_module("diffusers"), self._name)
+        return target.from_config(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "_is_coroutine" or (
+            name.startswith("__") and name.endswith("__")
+        ):
+            raise AttributeError(name)
+        target = getattr(import_module("diffusers"), self._name)
+        return getattr(target, name)
+
+
+EulerDiscreteScheduler = _LazyDiffusersClass("EulerDiscreteScheduler")
+MotionAdapter = _LazyDiffusersClass("MotionAdapter")
+
+
+def export_to_gif(*args: object, **kwargs: object) -> Any:
+    return getattr(import_module("diffusers.utils"), "export_to_gif")(
+        *args, **kwargs
+    )
+
+
+def _animate_diff_pipeline() -> Any:
+    return getattr(import_module("diffusers"), "AnimateDiffPipeline")
 
 
 class TextToAnimationModel(BaseVisionModel):
@@ -56,7 +88,7 @@ class TextToAnimationModel(BaseVisionModel):
         )
         pipe = cast(
             DiffusionPipeline,
-            cast(Any, AnimateDiffPipeline)
+            cast(Any, _animate_diff_pipeline())
             .from_pretrained(
                 self._settings.base_model_id,
                 feature_extractor=None,
