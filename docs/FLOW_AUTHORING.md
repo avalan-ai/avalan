@@ -168,6 +168,70 @@ default = true
 When more than one outgoing route can match, set priorities, exclusive routing,
 or a default route so routing remains deterministic.
 
+## Graph-Authored Strict Flows
+
+Use `[graph]` when Mermaid should author the route topology while TOML remains
+the source of execution semantics. The loader compiles the graph to ordinary
+strict `[[edges]]`, validates the resulting definition, and never runs Mermaid
+directly.
+
+An inline graph keeps the diagram in the flow definition:
+
+```toml
+[graph]
+format = "mermaid"
+source = "inline"
+mode = "executable"
+diagram = '''
+flowchart LR
+start route_profile@-->|diagram label ignored| pick
+start -.-> note["review-only note"]
+note -.-> pick
+'''
+
+[graph.edges.route_profile]
+kind = "success"
+label = "profile_ready"
+```
+
+A file-backed graph keeps Mermaid beside the flow definition:
+
+```toml
+[graph]
+format = "mermaid"
+source = "file"
+mode = "executable"
+path = "profile_topology.mmd"
+```
+
+Graph paths are resolved relative to the flow file. URL schemes, absolute path
+escapes, parent traversal, symlink escapes, and unreadable files are rejected
+with privacy-safe diagnostics.
+
+Mermaid node IDs become actual only when they exactly match declared strict
+node names such as `[nodes.start]` and `[nodes.pick]`. Decorative nodes and
+edges can appear in the diagram for review context, but they do not create
+runtime nodes, routes, joins, retries, mappings, prompts, tools, or outputs.
+
+Executable graph edges must use explicit Mermaid edge IDs, for example
+`route_profile@-->`. Metadata binds only through `[graph.edges.<edge_id>]`.
+Labels, classes, styles, shapes, subgraphs, generated view IDs, link-style
+indexes, and source-target pairs do not bind metadata and do not infer runtime
+behavior. Mermaid edge labels are inert unless the matching graph edge
+metadata explicitly sets a strict `label`.
+
+Compile graph-authored flows to canonical strict TOML for review, CI, storage,
+or older consumers:
+
+```bash
+avalan flow compile docs/examples/flows/graph_inline.flow.toml \
+  --output strict.flow.toml
+avalan flow compile docs/examples/flows/graph_file.flow.toml --check
+```
+
+Canonical strict TOML contains normal `[[edges]]` records and omits executable
+`[graph]` source.
+
 ## Joins, Retries, Timeouts, And Loops
 
 Nodes with more than one inbound path need a join policy unless their contract

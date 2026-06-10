@@ -1,0 +1,44 @@
+[flow]
+name = "graph_file_profile"
+version = "1"
+
+[[inputs]]
+name = "payload"
+type = "object"
+
+[[outputs]]
+name = "profile"
+type = "object"
+
+[entry]
+type = "node"
+node = "start"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+profile = "pick.value"
+
+[graph]
+format = "mermaid"
+source = "file"
+mode = "executable"
+path = "profile_topology.mmd"
+
+[graph.edges.route_profile]
+kind = "success"
+label = "profile_ready"
+
+[nodes.start]
+type = "input"
+
+[nodes.pick]
+type = "select"
+
+[nodes.pick.mapping.value]
+type = "object"
+
+[nodes.pick.mapping.value.fields]
+name = "input.payload.name"
+account_id = "input.payload.account.id"

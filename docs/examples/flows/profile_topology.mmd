@@ -1,0 +1,6 @@
+flowchart LR
+start(["Payload"]) route_profile@-->|diagram label ignored| pick{"Pick fields"}
+start -.-> note["review-only note"]
+note -.-> pick
+classDef review fill:#eef,stroke:#446
+class note review
