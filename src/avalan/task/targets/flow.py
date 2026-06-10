@@ -58,6 +58,7 @@ from ...flow.store import (
     FlowNodeAttemptRecord,
     FlowStateStore,
 )
+from ...flow.validator import validate_flow_definition
 from ..artifact import TaskArtifactRef, TaskArtifactRetention
 from ..context import TaskInputFile, TaskTargetContext
 from ..converters import (
@@ -86,7 +87,7 @@ from ..privacy import (
     STORED_ENVELOPE_MARKER,
     STORED_MARKER,
 )
-from ..store import TaskStoreNotFoundError
+from ..store import TaskExecutionContext, TaskStoreNotFoundError
 from ..target import TaskTargetRunner, TaskValidationContext
 from ..validation import (
     TaskValidationCategory,
@@ -201,11 +202,68 @@ class FlowTaskTargetRunner(TaskTargetRunner):
     ) -> tuple[TaskValidationIssue, ...]:
         assert isinstance(definition, TaskDefinition)
         assert isinstance(context, TaskValidationContext)
-        return validate_flow_task_compatibility(
-            definition,
-            context,
-            ref_base=self._ref_base,
-        ).issues
+        issues = list(
+            validate_flow_task_compatibility(
+                definition,
+                context,
+                ref_base=self._ref_base,
+            ).issues
+        )
+        if (
+            issues
+            or self._strict_resolver is None
+            or definition.execution.type != TaskTargetType.FLOW
+        ):
+            return tuple(issues)
+        try:
+            resolved = await self._resolve_strict_flow_for_validation(
+                definition
+            )
+        except TaskValidationError as error:
+            issues.extend(error.issues)
+        else:
+            if isinstance(resolved, FlowDefinition):
+                result = validate_flow_definition(resolved)
+                if result.diagnostics:
+                    issues.extend(
+                        _flow_diagnostics_to_issues(result.diagnostics)
+                    )
+        return tuple(issues)
+
+    async def _resolve_strict_flow_for_validation(
+        self,
+        definition: TaskDefinition,
+    ) -> FlowDefinition | FlowExecutionPlan:
+        assert self._strict_resolver is not None
+        resolved = self._strict_resolver(
+            TaskTargetContext(
+                definition=definition,
+                execution=TaskExecutionContext(
+                    run_id="validation-run",
+                    attempt_id="validation-attempt",
+                    attempt_number=1,
+                ),
+            )
+        )
+        if isawaitable(resolved):
+            resolved = await resolved
+        if not isinstance(resolved, FlowDefinition | FlowExecutionPlan):
+            raise TaskValidationError(
+                (
+                    _unsupported_flow_issue(
+                        path="execution.ref",
+                        message=(
+                            "Flow resolver did not return a flow "
+                            "definition or execution plan."
+                        ),
+                        hint=(
+                            "Return a validated flow definition or compiled "
+                            "execution plan."
+                        ),
+                    ),
+                )
+            )
+        return resolved
 
     async def run(self, context: TaskTargetContext) -> object:
         assert isinstance(context, TaskTargetContext)
