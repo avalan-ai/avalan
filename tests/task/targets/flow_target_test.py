@@ -1,3 +1,4 @@
+from ast import Attribute, Call, ImportFrom, Name, parse, walk
 from asyncio import CancelledError, sleep, wait_for
 from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable, Mapping
@@ -25,6 +26,13 @@ from avalan.entities import (
     MessageContentFile,
     MessageContentText,
     MessageRole,
+    ToolCall,
+    ToolCallContext,
+    ToolCallDiagnostic,
+    ToolCallOutcome,
+    ToolDescriptor,
+    ToolNameResolution,
+    ToolNameResolutionStatus,
 )
 from avalan.event import Event, EventType
 from avalan.flow import (
@@ -372,6 +380,37 @@ class SingleOutputConverter:
         )
 
 
+class EmptyToolResolver:
+    def list_tools(self) -> list[ToolDescriptor]:
+        return []
+
+    def resolve_tool_name(
+        self,
+        name: str,
+        *,
+        provider_originated: bool = False,
+    ) -> ToolNameResolution:
+        _ = provider_originated
+        return ToolNameResolution(
+            requested_name=name,
+            status=ToolNameResolutionStatus.UNKNOWN,
+            canonical_name=None,
+            candidates=[],
+        )
+
+    def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
+        _ = call
+        return None
+
+    async def execute_call(
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+    ) -> ToolCallOutcome:
+        _ = call, context
+        raise AssertionError("tool execution is not expected")
+
+
 def _page_result(
     page_index: int,
     content: bytes,
@@ -463,6 +502,135 @@ def _flow_loader_resolver(
         return result.flow
 
     return resolve
+
+
+def _strict_flow_loader_resolver(
+    root: Path,
+) -> Callable[[TaskTargetContext], Awaitable[FlowDefinition]]:
+    async def resolve(context: TaskTargetContext) -> FlowDefinition:
+        flow_ref = context.definition.execution.ref
+        path = Path(flow_ref)
+        if not path.is_absolute():
+            path = root / path
+        result = await FlowDefinitionLoader(
+            registry=task_flow_node_registry(context)
+        ).load_validation_result(path)
+        if result.definition is None:
+            raise TaskValidationError(
+                tuple(
+                    TaskValidationIssue(
+                        code=issue.code,
+                        path=issue.path,
+                        message=issue.message,
+                        hint=issue.hint,
+                        category=TaskValidationCategory.UNSUPPORTED,
+                    )
+                    for issue in result.issues
+                )
+            )
+        return result.definition
+
+    return resolve
+
+
+def _task_flow_loading_async_violations(
+    source: str,
+) -> tuple[str, ...]:
+    tree = parse(source)
+    violations: list[str] = []
+    for node in walk(tree):
+        if isinstance(node, ImportFrom) and node.module == "asyncio":
+            for alias in node.names:
+                if alias.name in {"run", "to_thread"}:
+                    violations.append(
+                        f"line {node.lineno} imports asyncio.{alias.name}"
+                    )
+        if isinstance(node, Call):
+            name = _call_name(node)
+            if name in {
+                "asyncio.run",
+                "asyncio.to_thread",
+                "to_thread",
+                "run_until_complete",
+                "read_text",
+                "read_bytes",
+                "write_text",
+                "write_bytes",
+            }:
+                violations.append(f"line {node.lineno} calls {name}")
+    return tuple(violations)
+
+
+def _call_name(node: Call) -> str:
+    func = node.func
+    if isinstance(func, Name):
+        return func.id
+    if isinstance(func, Attribute):
+        if isinstance(func.value, Name) and func.value.id == "asyncio":
+            return f"asyncio.{func.attr}"
+        return func.attr
+    return ""
+
+
+def _write_strict_graph_flow(
+    path: Path,
+    *,
+    diagram: str,
+    graph_path: str | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    source = "file" if graph_path is not None else "inline"
+    graph_source = (
+        f'path = "{graph_path}"'
+        if graph_path is not None
+        else f"diagram = '''\n{diagram}'''"
+    )
+    path.write_text(
+        f"""
+[flow]
+name = "graph-task-flow"
+version = "1"
+
+[[inputs]]
+name = "prompt"
+type = "string"
+
+[[outputs]]
+name = "answer"
+type = "text"
+
+[entry]
+type = "node"
+node = "start"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "finish.value"
+
+[graph]
+format = "mermaid"
+source = "{source}"
+mode = "executable"
+{graph_source}
+
+[nodes.start]
+type = "pass-through"
+
+[nodes.start.mapping.value]
+type = "select"
+source = "input.prompt"
+
+[nodes.finish]
+type = "pass-through"
+
+[nodes.finish.mapping.value]
+type = "select"
+source = "start.value"
+""",
+        encoding="utf-8",
+    )
 
 
 def _agent_node_flow(
@@ -700,6 +868,143 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
         )
         self.assertEqual(issues[0].path, "execution.type")
 
+    def test_strict_validation_compiles_graph_reference_safely(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flow_path = root / "flows" / "valid.toml"
+            _write_strict_graph_flow(
+                flow_path,
+                diagram="flowchart LR\nstart route_1@--> finish\n",
+            )
+            runner = FlowTaskTargetRunner(
+                ref_base=root,
+                strict_resolver=_strict_flow_loader_resolver(root),
+            )
+
+            issues = self._run_validate(
+                runner,
+                self._definition(
+                    execution=TaskExecutionTarget.flow("flows/valid.toml"),
+                ),
+                TaskValidationContext(execution_roots=(root,)),
+            )
+
+        self.assertEqual(issues, ())
+
+    def test_strict_validation_reports_graph_reference_issues_safely(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flow_path = root / "flows" / "invalid.toml"
+            _write_strict_graph_flow(
+                flow_path,
+                diagram=(
+                    "flowchart LR\nstart -->|Private customer route| finish\n"
+                ),
+            )
+            runner = FlowTaskTargetRunner(
+                ref_base=root,
+                strict_resolver=_strict_flow_loader_resolver(root),
+            )
+
+            issues = self._run_validate(
+                runner,
+                self._definition(
+                    execution=TaskExecutionTarget.flow("flows/invalid.toml"),
+                ),
+                TaskValidationContext(execution_roots=(root,)),
+            )
+
+        self.assertEqual(
+            [issue.code for issue in issues],
+            ["flow.graph.unsupported_executable_edge"],
+        )
+        self.assertEqual(issues[0].path, "graph.edges")
+        self.assertNotIn("Private customer route", str(issues))
+        self.assertNotIn("invalid.toml", str(issues))
+
+    def test_strict_validation_reports_invalid_resolved_definition(
+        self,
+    ) -> None:
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: FlowDefinition(
+                name="invalid",
+                version="1",
+                entry_behavior=FlowEntryBehavior(node="missing"),
+                output_behavior=FlowOutputBehavior(outputs={"answer": "x.y"}),
+                nodes=(FlowNodeDefinition(name="missing", type="private"),),
+                outputs=(
+                    FlowOutputDefinition(
+                        name="answer",
+                        type=FlowOutputType.TEXT,
+                    ),
+                ),
+            )
+        )
+
+        issues = self._run_validate(
+            runner,
+            self._definition(),
+            TaskValidationContext(),
+        )
+
+        self.assertEqual(issues[0].code, "flow.unknown_node_type")
+        self.assertEqual(issues[0].path, "nodes.missing.type")
+
+    def test_strict_validation_rejects_invalid_resolver_result_safely(
+        self,
+    ) -> None:
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: cast(Any, "private flow")
+        )
+
+        issues = self._run_validate(
+            runner,
+            self._definition(),
+            TaskValidationContext(),
+        )
+
+        self.assertEqual(
+            [issue.code for issue in issues],
+            ["execution.unsupported_flow"],
+        )
+        self.assertEqual(issues[0].path, "execution.ref")
+        self.assertNotIn("private flow", str(issues))
+
+    def test_flow_target_loading_keeps_async_boundaries(self) -> None:
+        module_source = Path(flow_target_module.__file__).read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(
+            _task_flow_loading_async_violations(module_source),
+            (),
+        )
+
+    def test_flow_target_loading_audit_rejects_sync_bridges(self) -> None:
+        violations = _task_flow_loading_async_violations("""
+from asyncio import run, to_thread
+
+def load(path):
+    path.read_text()
+    loop.run_until_complete(load_async())
+    asyncio.run(load_async())
+    return to_thread(path.write_text, "private")
+""")
+
+        self.assertEqual(
+            violations,
+            (
+                "line 2 imports asyncio.run",
+                "line 2 imports asyncio.to_thread",
+                "line 5 calls read_text",
+                "line 6 calls run_until_complete",
+                "line 7 calls asyncio.run",
+                "line 8 calls to_thread",
+            ),
+        )
+
     def test_compatibility_report_marks_scalar_flow_compatible(self) -> None:
         report = validate_flow_task_compatibility(
             self._definition(),
@@ -747,6 +1052,15 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
 
 
 class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
+    def test_task_scoped_registry_accepts_tool_resolver(self) -> None:
+        registry = task_flow_node_registry(
+            self._context(),
+            tool_resolver=EmptyToolResolver(),
+        )
+
+        self.assertTrue(registry.supports("tool"))
+        self.assertTrue(registry.supports_tool_resolution("tool"))
+
     def test_task_scoped_registry_loads_file_convert_toml_shape(self) -> None:
         converter = RecordingPdfPageConverter((_page_result(1, b"page"),))
         context = self._context(file_converters={"pdf_image": converter})
@@ -2873,6 +3187,12 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             flow_target_module._strict_resume_node_outputs(  # type: ignore[attr-defined]
                 compile_result.plan,
                 diagnostic_resume_record,
+            )
+        )
+        self.assertIsNone(
+            flow_target_module._strict_resume_node_outputs(  # type: ignore[attr-defined]
+                compile_result.plan,
+                old_record,
             )
         )
         self.assertIsNone(
@@ -5160,6 +5480,55 @@ class FlowTaskTargetRunnerE2ETest(IsolatedAsyncioTestCase):
                 "flow_manager_call_after",
             ],
         )
+
+    async def test_direct_runner_executes_graph_authored_strict_flow(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            flow_path = root / "flows" / "inline.toml"
+            _write_strict_graph_flow(
+                flow_path,
+                diagram=(
+                    "flowchart LR\n"
+                    "start route_1@-->|Private customer route| finish\n"
+                ),
+            )
+            flow_store = InMemoryFlowStateStore()
+            runner = DirectTaskRunner(
+                self.store,
+                target=FlowTaskTargetRunner(
+                    ref_base=root,
+                    strict_resolver=_strict_flow_loader_resolver(root),
+                    flow_state_store=flow_store,
+                ),
+                hmac_provider=StaticHmacProvider(),
+                execution_roots=(root,),
+                definition_hash=lambda _: "flow-direct-graph-strict",
+            )
+
+            result = await runner.run(
+                self._definition(
+                    input_contract=TaskInputContract.string(),
+                    output_contract=TaskOutputContract.text(),
+                    execution=TaskExecutionTarget.flow("flows/inline.toml"),
+                    observability=TaskObservabilityPolicy(),
+                ),
+                input_value="ready",
+            )
+            record = await flow_store.get_flow_execution(result.run.run_id)
+            events = await self.store.list_events(result.run.run_id)
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(result.output, "ready")
+        self.assertEqual(dict(record.selected_outputs), {"answer": "ready"})
+        self.assertEqual(
+            [(edge.source, edge.target) for edge in record.trace.edges],
+            [("start", "finish")],
+        )
+        rendered = f"{result.run.result} {record.as_snapshot()} {events}"
+        self.assertNotIn("flowchart", rendered)
+        self.assertNotIn("Private customer route", rendered)
 
     async def test_direct_runner_executes_strict_subflow_plan(self) -> None:
         flow_store = InMemoryFlowStateStore()

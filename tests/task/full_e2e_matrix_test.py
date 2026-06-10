@@ -1646,6 +1646,97 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             ),
         )
 
+    async def test_queued_graph_authored_flow_file_source_executes(
+        self,
+    ) -> None:
+        with MatrixWorkspace() as workspace:
+            flows = workspace.root / "flows"
+            flows.mkdir()
+            (flows / "route.mmd").write_text(
+                "flowchart LR\n"
+                "start route_1@-->|Private queued route| finish\n",
+                encoding="utf-8",
+            )
+            (flows / "file_graph.toml").write_text(
+                """
+[flow]
+name = "queued_graph_flow"
+version = "1"
+
+[[inputs]]
+name = "prompt"
+type = "string"
+
+[[outputs]]
+name = "answer"
+type = "text"
+
+[entry]
+type = "node"
+node = "start"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "finish.value"
+
+[graph]
+format = "mermaid"
+source = "file"
+mode = "executable"
+path = "route.mmd"
+
+[nodes.start]
+type = "pass-through"
+
+[nodes.start.mapping.value]
+type = "select"
+source = "input.prompt"
+
+[nodes.finish]
+type = "pass-through"
+
+[nodes.finish.mapping.value]
+type = "select"
+source = "start.value"
+""",
+                encoding="utf-8",
+            )
+            target = FlowTaskTargetRunner(
+                ref_base=workspace.root,
+                strict_resolver=task_cmds._task_strict_flow_resolver(
+                    workspace.root
+                ),
+            )
+            client = workspace.queued_client(target)
+            worker = workspace.worker(target)
+            definition_value = _queued_definition(
+                name="queued_graph_file_flow",
+                execution=TaskExecutionTarget.flow("flows/file_graph.toml"),
+            )
+
+            submission = await client.enqueue(
+                definition_value,
+                input_value="ready",
+            )
+            processed = await worker.process_once()
+            output = await client.output(submission.run.run_id)
+            inspection = await client.inspect(submission.run.run_id)
+
+        self.assertTrue(processed.processed)
+        self.assertIsNotNone(processed.completion)
+        self.assertEqual(
+            processed.completion.run.state, TaskRunState.SUCCEEDED
+        )
+        self.assertEqual(output.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(processed.output, "ready")
+        self.assertEqual(output.output_summary, {"privacy": REDACTED_MARKER})
+        inspection_value = str(inspection.as_dict())
+        self.assertNotIn("flowchart", inspection_value)
+        self.assertNotIn("Private queued route", inspection_value)
+        self.assertNotIn("route.mmd", inspection_value)
+
     async def test_queued_flow_file_conversion_requires_artifact_store(
         self,
     ) -> None:
