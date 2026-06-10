@@ -1,19 +1,17 @@
-from ...model.engine import Engine
+from ...model.engine import DiffusionPipeline, Engine, PreTrainedModel
+from ...model.lazy import LazyExternal
 from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 from ...model.vision.text import ImageToTextModel
 
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import inference_mode
-from transformers import (
-    AutoImageProcessor,
-    PreTrainedModel,
-)
-from transformers import (
-    VisionEncoderDecoderModel as VisionEncoderDecoderModelImpl,
+
+AutoImageProcessor = LazyExternal("transformers", "AutoImageProcessor")
+VisionEncoderDecoderModelImpl = LazyExternal(
+    "transformers", "VisionEncoderDecoderModel"
 )
 
 

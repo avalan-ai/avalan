@@ -3,11 +3,14 @@ from logging import Logger
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import ANY, MagicMock, call, patch
 
-from diffusers import DiffusionPipeline
-
 from avalan.entities import EngineSettings
 from avalan.model.engine import Engine
 from avalan.model.vision.diffusion import TextToVideoModel
+
+
+class DummyDiffusionPipeline:
+    def to(self, *args: object, **kwargs: object) -> object:
+        return self
 
 
 class TextToVideoModelInstantiationTestCase(TestCase):
@@ -16,18 +19,25 @@ class TextToVideoModelInstantiationTestCase(TestCase):
 
     def test_instantiation_with_load_model(self) -> None:
         logger_mock = MagicMock(spec=Logger)
+        pipeline = MagicMock()
         with (
-            patch.object(
-                DiffusionPipeline, "from_pretrained"
-            ) as pipeline_mock,
+            patch(
+                "avalan.model.vision.diffusion.video._diffusion_pipeline",
+                return_value=pipeline,
+            ),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
         ):
-            base_instance = MagicMock(spec=DiffusionPipeline)
+            pipeline_mock = pipeline.from_pretrained
+            base_instance = MagicMock(spec=DummyDiffusionPipeline)
             base_instance.to.return_value = base_instance
             base_instance.vae = MagicMock()
             base_instance.vae.enable_tiling = MagicMock()
-            upsampler_instance = MagicMock(spec=DiffusionPipeline)
+            upsampler_instance = MagicMock(spec=DummyDiffusionPipeline)
             upsampler_instance.to.return_value = upsampler_instance
             pipeline_mock.side_effect = [base_instance, upsampler_instance]
 
@@ -58,10 +68,16 @@ class TextToVideoModelCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call(self) -> None:
         logger_mock = MagicMock(spec=Logger)
+        pipeline = MagicMock()
         with (
-            patch.object(
-                DiffusionPipeline, "from_pretrained"
-            ) as pipeline_mock,
+            patch(
+                "avalan.model.vision.diffusion.video._diffusion_pipeline",
+                return_value=pipeline,
+            ),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
@@ -79,10 +95,11 @@ class TextToVideoModelCallTestCase(IsolatedAsyncioTestCase):
                 return_value=nullcontext(),
             ),
             patch(
-                "avalan.model.vision.diffusion.video.LTXVideoCondition"
+                "avalan.model.vision.diffusion.video._ltx_video_condition"
             ) as cond_cls,
         ):
-            base_instance = MagicMock(spec=DiffusionPipeline)
+            pipeline_mock = pipeline.from_pretrained
+            base_instance = MagicMock(spec=DummyDiffusionPipeline)
             base_instance.to.return_value = base_instance
             base_instance.vae = MagicMock()
             base_instance.vae_spatial_compression_ratio = 2
@@ -92,13 +109,15 @@ class TextToVideoModelCallTestCase(IsolatedAsyncioTestCase):
             frame = MagicMock()
             second_out.frames = [[frame]]
             base_instance.side_effect = [first_out, second_out]
-            upsampler_instance = MagicMock(spec=DiffusionPipeline)
+            upsampler_instance = MagicMock(spec=DummyDiffusionPipeline)
             upsampler_instance.to.return_value = upsampler_instance
             upsampler_instance.return_value = MagicMock(frames=["upscaled"])
             pipeline_mock.side_effect = [base_instance, upsampler_instance]
 
+            condition_class = MagicMock()
             cond_instance = MagicMock()
-            cond_cls.return_value = cond_instance
+            condition_class.return_value = cond_instance
+            cond_cls.return_value = condition_class
             load_image_mock.return_value = "img"
 
             settings = EngineSettings(upsampler_model_id=self.upsampler_id)

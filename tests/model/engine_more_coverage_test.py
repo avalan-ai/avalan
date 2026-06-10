@@ -100,20 +100,19 @@ class WeightAndDeviceTestCase(TestCase):
                 engine_module._optional_type("missing_module", "Missing")
             )
 
-        class Imported:
-            pass
-
-        imported_module = types.SimpleNamespace(Imported=Imported)
         with (
             patch.object(engine_module, "modules", {}),
             patch.object(engine_module, "find_spec", return_value=object()),
             patch.object(
-                engine_module, "import_module", return_value=imported_module
+                engine_module,
+                "import_module",
+                side_effect=AssertionError(
+                    "optional type should not import unloaded modules"
+                ),
             ),
         ):
-            self.assertIs(
+            self.assertIsNone(
                 engine_module._optional_type("imported_module", "Imported"),
-                Imported,
             )
 
     def test_pretrained_model_type_uses_loaded_global(self) -> None:

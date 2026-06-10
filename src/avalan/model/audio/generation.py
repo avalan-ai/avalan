@@ -1,27 +1,34 @@
 from ...model.audio import BaseAudioModel
-from ...model.engine import Engine
+from ...model.engine import DiffusionPipeline, Engine
 from ...model.vendor import TextGenerationVendor
 
+from importlib import import_module
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from torch import from_numpy, inference_mode
 from torchaudio import save
-from transformers import (
-    AutoProcessor,
-    PreTrainedModel,
-)
-from transformers import (
-    MusicgenForConditionalGeneration as TransformersMusicgen,
-)
-
+from transformers import PreTrainedModel
 
 # MusicGen checkpoints include this non-persistent sinusoidal buffer. Ignore
 # only that key so unrelated load report diagnostics still surface.
-class MusicgenForConditionalGeneration(TransformersMusicgen):  # type: ignore[no-untyped-call]
-    _keys_to_ignore_on_load_unexpected = [
-        r"decoder\.model\.decoder\.embed_positions\.weights",
-    ]
+MUSICGEN_KEYS_TO_IGNORE_ON_LOAD_UNEXPECTED = [
+    r"decoder\.model\.decoder\.embed_positions\.weights",
+]
+
+
+def _auto_processor() -> Any:
+    return getattr(import_module("transformers"), "AutoProcessor")
+
+
+def _musicgen_for_conditional_generation() -> Any:
+    model_class = getattr(
+        import_module("transformers"),
+        "MusicgenForConditionalGeneration",
+    )
+    model_class._keys_to_ignore_on_load_unexpected = (
+        MUSICGEN_KEYS_TO_IGNORE_ON_LOAD_UNEXPECTED
+    )
+    return model_class
 
 
 class AudioGenerationModel(BaseAudioModel):
@@ -32,11 +39,11 @@ class AudioGenerationModel(BaseAudioModel):
     ) -> PreTrainedModel | TextGenerationVendor | DiffusionPipeline:
         self._processor = cast(
             Any,
-            cast(Any, AutoProcessor).from_pretrained(self._model_id),
+            cast(Any, _auto_processor()).from_pretrained(self._model_id),
         )
         model = cast(
             PreTrainedModel,
-            cast(Any, MusicgenForConditionalGeneration)
+            cast(Any, _musicgen_for_conditional_generation())
             .from_pretrained(
                 self._model_id,
                 device_map=self._device,

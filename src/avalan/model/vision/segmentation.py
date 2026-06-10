@@ -1,16 +1,16 @@
-from ...model.engine import Engine
+from ...model.engine import DiffusionPipeline, Engine, PreTrainedModel
+from ...model.lazy import LazyExternal
 from ...model.vendor import TextGenerationVendor
 from ...model.vision import BaseVisionModel
 
 from typing import Any, Literal, cast
 
-from diffusers import DiffusionPipeline
 from PIL import Image
 from torch import inference_mode, unique
-from transformers import (
-    AutoImageProcessor,
-    AutoModelForSemanticSegmentation,
-    PreTrainedModel,
+
+AutoImageProcessor = LazyExternal("transformers", "AutoImageProcessor")
+AutoModelForSemanticSegmentation = LazyExternal(
+    "transformers", "AutoModelForSemanticSegmentation"
 )
 
 

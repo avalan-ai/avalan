@@ -3,7 +3,6 @@ from logging import Logger
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, call, patch
 
-from diffusers import DiffusionPipeline
 from torch import float32
 
 from avalan.entities import (
@@ -13,6 +12,11 @@ from avalan.entities import (
 )
 from avalan.model.engine import Engine
 from avalan.model.vision.diffusion import TextToImageModel
+
+
+class DummyDiffusionPipeline:
+    def to(self, *args: object, **kwargs: object) -> object:
+        return self
 
 
 class TextToImageModelInstantiationTestCase(TestCase):
@@ -25,17 +29,24 @@ class TextToImageModelInstantiationTestCase(TestCase):
 
     def test_instantiation_with_load_model(self) -> None:
         logger_mock = MagicMock(spec=Logger)
+        pipeline = MagicMock()
         with (
-            patch.object(
-                DiffusionPipeline, "from_pretrained"
-            ) as pipeline_mock,
+            patch(
+                "avalan.model.vision.diffusion.image._diffusion_pipeline",
+                return_value=pipeline,
+            ),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
         ):
-            base_instance = MagicMock(spec=DiffusionPipeline)
+            pipeline_mock = pipeline.from_pretrained
+            base_instance = MagicMock(spec=DummyDiffusionPipeline)
             base_instance.text_encoder_2 = "te2"
             base_instance.vae = MagicMock()
-            refiner_instance = MagicMock(spec=DiffusionPipeline)
+            refiner_instance = MagicMock(spec=DummyDiffusionPipeline)
             refiner_instance.vae = base_instance.vae
             pipeline_mock.side_effect = [base_instance, refiner_instance]
 
@@ -87,10 +98,16 @@ class TextToImageModelCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call(self) -> None:
         logger_mock = MagicMock(spec=Logger)
+        pipeline = MagicMock()
         with (
-            patch.object(
-                DiffusionPipeline, "from_pretrained"
-            ) as pipeline_mock,
+            patch(
+                "avalan.model.vision.diffusion.image._diffusion_pipeline",
+                return_value=pipeline,
+            ),
+            patch(
+                "avalan.model.engine.DiffusionPipeline",
+                DummyDiffusionPipeline,
+            ),
             patch.object(Engine, "weight", return_value="dtype"),
             patch.object(Engine, "get_default_device", return_value="cpu"),
             patch(
@@ -98,12 +115,13 @@ class TextToImageModelCallTestCase(IsolatedAsyncioTestCase):
                 return_value=nullcontext(),
             ) as inf_mock,
         ):
-            base_instance = MagicMock(spec=DiffusionPipeline)
+            pipeline_mock = pipeline.from_pretrained
+            base_instance = MagicMock(spec=DummyDiffusionPipeline)
             base_instance.text_encoder_2 = "te2"
             base_instance.vae = "vae"
             base_instance.return_value = MagicMock(images="latent")
             refiner_image = MagicMock()
-            refiner_instance = MagicMock(spec=DiffusionPipeline)
+            refiner_instance = MagicMock(spec=DummyDiffusionPipeline)
             refiner_instance.return_value = MagicMock(images=[refiner_image])
             pipeline_mock.side_effect = [base_instance, refiner_instance]
 

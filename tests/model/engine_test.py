@@ -382,11 +382,16 @@ class EngineLoadTestCase(TestCase):
                 self.accepted_model = model
                 return model is self.fake_model
 
-        engine = NativeEngine()
+        with patch(
+            "avalan.model.engine._diffusion_pipeline_type",
+            side_effect=AssertionError("diffusers should not be imported"),
+        ) as diffusion_type_mock:
+            engine = NativeEngine()
 
         self.assertIs(engine.model, engine.fake_model)
         self.assertIs(engine.accepted_model, engine.fake_model)
         self.assertTrue(engine._loaded_model)
+        diffusion_type_mock.assert_not_called()
 
     def test_unknown_native_model_is_rejected_when_hook_returns_false(self):
         class NativeEngine(Engine):

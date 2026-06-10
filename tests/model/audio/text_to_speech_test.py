@@ -8,10 +8,8 @@ from transformers import PreTrainedModel
 from avalan.entities import EngineSettings
 from avalan.model.audio.speech import (
     AutoFeatureExtractor,
-    AutoTokenizer,
     DiaConfig,
     DiaForConditionalGeneration,
-    DiaProcessor,
     TextToSpeechModel,
 )
 from avalan.model.engine import Engine
@@ -157,8 +155,10 @@ class TextToSpeechModelInstantiationTestCase(TestCase):
         logger_mock = MagicMock(spec=Logger)
         config = MagicMock(spec=DiaConfig)
         feature_extractor = MagicMock()
-        processor = MagicMock(spec=DiaProcessor)
+        processor = MagicMock()
         tokenizer = MagicMock()
+        dia_processor = MagicMock()
+        auto_tokenizer = MagicMock()
         settings = EngineSettings(
             access_token="token",
             auto_load_model=False,
@@ -178,27 +178,30 @@ class TextToSpeechModelInstantiationTestCase(TestCase):
         }
 
         with (
-            patch.object(
-                DiaProcessor,
-                "get_processor_dict",
-                return_value=(processor_dict, {"unused": "ok"}),
-            ) as get_processor_dict_mock,
+            patch(
+                "avalan.model.audio.speech._dia_processor",
+                return_value=dia_processor,
+            ),
+            patch(
+                "avalan.model.audio.speech._auto_tokenizer",
+                return_value=auto_tokenizer,
+            ),
             patch.object(
                 AutoFeatureExtractor,
                 "from_pretrained",
                 return_value=feature_extractor,
             ) as feature_extractor_mock,
-            patch.object(
-                AutoTokenizer,
-                "from_pretrained",
-                return_value=tokenizer,
-            ) as tokenizer_mock,
-            patch.object(
-                DiaProcessor,
-                "from_args_and_dict",
-                return_value=processor,
-            ) as from_args_mock,
         ):
+            get_processor_dict_mock = dia_processor.get_processor_dict
+            get_processor_dict_mock.return_value = (
+                processor_dict,
+                {"unused": "ok"},
+            )
+            tokenizer_mock = auto_tokenizer.from_pretrained
+            tokenizer_mock.return_value = tokenizer
+            from_args_mock = dia_processor.from_args_and_dict
+            from_args_mock.return_value = processor
+
             result = model._load_processor(config)
 
         self.assertIs(result, processor)

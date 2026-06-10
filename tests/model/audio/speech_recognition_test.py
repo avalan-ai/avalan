@@ -8,7 +8,6 @@ from transformers import PreTrainedModel
 from avalan.entities import EngineSettings
 from avalan.model.audio.speech_recognition import (
     AutoModelForCTC,
-    AutoProcessor,
     SpeechRecognitionModel,
 )
 from avalan.model.engine import Engine
@@ -19,8 +18,12 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
 
     def test_instantiation_no_load(self):
         logger_mock = MagicMock(spec=Logger)
+        processor = MagicMock()
         with (
-            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch(
+                "avalan.model.audio.speech_recognition._auto_processor",
+                return_value=processor,
+            ) as processor_helper_mock,
             patch.object(AutoModelForCTC, "from_pretrained") as model_mock,
         ):
             settings = EngineSettings(auto_load_model=False)
@@ -30,15 +33,20 @@ class SpeechRecognitionModelInstantiationTestCase(TestCase):
                 logger=logger_mock,
             )
             self.assertIsInstance(model, SpeechRecognitionModel)
-            processor_mock.assert_not_called()
+            processor_helper_mock.assert_not_called()
             model_mock.assert_not_called()
 
     def test_instantiation_with_load_model(self):
         logger_mock = MagicMock(spec=Logger)
+        processor = MagicMock()
         with (
-            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch(
+                "avalan.model.audio.speech_recognition._auto_processor",
+                return_value=processor,
+            ),
             patch.object(AutoModelForCTC, "from_pretrained") as model_mock,
         ):
+            processor_mock = processor.from_pretrained
             processor_instance = MagicMock()
             type(processor_instance.tokenizer).pad_token_id = PropertyMock(
                 return_value=1
@@ -79,8 +87,12 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_with_resampling(self):
         logger_mock = MagicMock(spec=Logger)
+        processor = MagicMock()
         with (
-            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch(
+                "avalan.model.audio.speech_recognition._auto_processor",
+                return_value=processor,
+            ),
             patch.object(AutoModelForCTC, "from_pretrained") as model_mock,
             patch.object(
                 SpeechRecognitionModel, "_resample"
@@ -93,6 +105,7 @@ class SpeechRecognitionModelCallTestCase(IsolatedAsyncioTestCase):
                 return_value=nullcontext(),
             ) as inference_mode_mock,
         ):
+            processor_mock = processor.from_pretrained
             processor_instance = MagicMock()
             processor_call = MagicMock(input_values="inputs")
             processor_call.to.return_value = processor_call
@@ -143,8 +156,12 @@ class SpeechRecognitionNoResampleTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_without_resampling(self):
         logger_mock = MagicMock(spec=Logger)
+        processor = MagicMock()
         with (
-            patch.object(AutoProcessor, "from_pretrained") as processor_mock,
+            patch(
+                "avalan.model.audio.speech_recognition._auto_processor",
+                return_value=processor,
+            ),
             patch.object(AutoModelForCTC, "from_pretrained") as model_mock,
             patch.object(
                 SpeechRecognitionModel, "_resample"
@@ -157,6 +174,7 @@ class SpeechRecognitionNoResampleTestCase(IsolatedAsyncioTestCase):
                 return_value=nullcontext(),
             ) as inf_mock,
         ):
+            processor_mock = processor.from_pretrained
             processor_instance = MagicMock()
             processor_call = MagicMock(input_values="inputs")
             processor_call.to.return_value = processor_call

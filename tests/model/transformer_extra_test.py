@@ -1,3 +1,4 @@
+import sys
 from logging import Logger
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
@@ -18,6 +19,14 @@ class DummyTransformerModel(TransformerModel):
 
 
 class TransformerModelPropertyTestCase(TestCase):
+    def test_lazy_auto_tokenizer_ignores_pytest_introspection(self) -> None:
+        sys.modules.pop("transformers.models.auto.tokenization_auto", None)
+
+        self.assertFalse(getattr(AutoTokenizer, "__test__", False))
+        self.assertNotIn(
+            "transformers.models.auto.tokenization_auto", sys.modules
+        )
+
     def test_properties_and_tokenize(self) -> None:
         model = DummyTransformerModel(
             "id",
