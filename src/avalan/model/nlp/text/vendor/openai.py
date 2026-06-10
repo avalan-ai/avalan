@@ -155,15 +155,6 @@ class OpenAIStream(TextGenerationVendorStream):
 
 class OpenAIClient(TextGenerationVendor):
     _DEFAULT_MODEL_ID = "default"
-    _REASONING_EFFORTS = frozenset(
-        {
-            ReasoningEffort.MINIMAL,
-            ReasoningEffort.LOW,
-            ReasoningEffort.MEDIUM,
-            ReasoningEffort.HIGH,
-            ReasoningEffort.XHIGH,
-        }
-    )
     _client: Any
     _extra_query: dict[str, str] | None
     _is_azure: bool
@@ -241,10 +232,7 @@ class OpenAIClient(TextGenerationVendor):
             text = OpenAIClient._text_config(settings)
             if text:
                 kwargs["text"] = text
-            reasoning = OpenAIClient._reasoning_config(
-                settings,
-                restricted=use_reasoning_profile,
-            )
+            reasoning = OpenAIClient._reasoning_config(settings)
             if reasoning:
                 kwargs["reasoning"] = reasoning
             prompt_cache_retention = (
@@ -368,8 +356,6 @@ class OpenAIClient(TextGenerationVendor):
     @staticmethod
     def _reasoning_config(
         settings: GenerationSettings,
-        *,
-        restricted: bool = False,
     ) -> dict[str, str] | None:
         effort = settings.reasoning.effort
         if effort is None or effort == ReasoningEffort.NONE:
@@ -379,10 +365,6 @@ class OpenAIClient(TextGenerationVendor):
         ), "OpenAI Responses reasoning effort is not supported"
         if effort == ReasoningEffort.MAX:
             effort = ReasoningEffort.XHIGH
-        if restricted and effort not in OpenAIClient._REASONING_EFFORTS:
-            raise AssertionError(
-                "OpenAI Responses reasoning effort is not supported"
-            )
         return {"effort": effort.value}
 
     @staticmethod
