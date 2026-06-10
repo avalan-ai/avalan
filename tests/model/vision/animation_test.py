@@ -1,6 +1,7 @@
 import itertools
 from contextlib import nullcontext
 from logging import Logger
+from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, call, patch
 
@@ -14,6 +15,7 @@ from avalan.entities import (
 )
 from avalan.model.engine import Engine
 from avalan.model.vision.diffusion import TextToAnimationModel
+from avalan.model.vision.diffusion import animation as animation_module
 
 
 class DummyDiffusionPipeline:
@@ -23,6 +25,59 @@ class DummyDiffusionPipeline:
 
 class TextToAnimationModelInstantiationTestCase(TestCase):
     model_id = "dummy/model"
+
+    def test_lazy_diffusers_helpers_import_targets(self) -> None:
+        class MotionAdapter:
+            marker = "motion"
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        class EulerDiscreteScheduler:
+            marker = "scheduler"
+
+            @classmethod
+            def from_config(cls, *args: object, **kwargs: object) -> object:
+                return ("scheduler", args, kwargs)
+
+        def export_to_gif(*args: object, **kwargs: object) -> object:
+            return ("gif", args, kwargs)
+
+        pipeline = object()
+        modules = {
+            "diffusers": SimpleNamespace(
+                AnimateDiffPipeline=pipeline,
+                EulerDiscreteScheduler=EulerDiscreteScheduler,
+                MotionAdapter=MotionAdapter,
+            ),
+            "diffusers.utils": SimpleNamespace(export_to_gif=export_to_gif),
+        }
+
+        with patch(
+            "avalan.model.vision.diffusion.animation.import_module",
+            side_effect=modules.__getitem__,
+        ):
+            adapter = animation_module.MotionAdapter("repo", dtype="float16")
+            self.assertIsInstance(adapter, MotionAdapter)
+            self.assertEqual(adapter.args, ("repo",))
+            self.assertEqual(adapter.kwargs, {"dtype": "float16"})
+            self.assertEqual(
+                animation_module.EulerDiscreteScheduler.from_config(
+                    "cfg", beta_schedule="scaled_linear"
+                ),
+                (
+                    "scheduler",
+                    ("cfg",),
+                    {"beta_schedule": "scaled_linear"},
+                ),
+            )
+            self.assertEqual(animation_module.MotionAdapter.marker, "motion")
+            self.assertEqual(
+                animation_module.export_to_gif(["frame"], "out.gif"),
+                ("gif", (["frame"], "out.gif"), {}),
+            )
+            self.assertIs(animation_module._animate_diff_pipeline(), pipeline)
 
     def test_instantiation_with_load_model(self) -> None:
         logger_mock = MagicMock(spec=Logger)

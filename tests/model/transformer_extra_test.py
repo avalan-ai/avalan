@@ -1,5 +1,6 @@
 import sys
 from logging import Logger
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,27 @@ class TransformerModelPropertyTestCase(TestCase):
         self.assertFalse(getattr(AutoTokenizer, "__test__", False))
         self.assertNotIn(
             "transformers.models.auto.tokenization_auto", sys.modules
+        )
+
+    def test_lazy_auto_tokenizer_forwards_to_imported_target(self) -> None:
+        target = MagicMock()
+        target.model_input_names = ["input_ids"]
+        tokenizer = object()
+        target.from_pretrained.return_value = tokenizer
+        module = SimpleNamespace(AutoTokenizer=target)
+
+        with patch(
+            "avalan.model.transformer.import_module",
+            return_value=module,
+        ):
+            self.assertIs(
+                AutoTokenizer.from_pretrained("tokenizer", use_fast=True),
+                tokenizer,
+            )
+            self.assertEqual(AutoTokenizer.model_input_names, ["input_ids"])
+
+        target.from_pretrained.assert_called_once_with(
+            "tokenizer", use_fast=True
         )
 
     def test_properties_and_tokenize(self) -> None:
