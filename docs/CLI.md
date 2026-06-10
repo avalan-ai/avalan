@@ -1608,12 +1608,14 @@ Compile a flow definition to canonical strict TOML:
 avalan flow compile flow.toml
 avalan flow compile flow.toml --output strict.flow.toml
 avalan flow compile flow.toml --check --json
+avalan flow compile flow.toml --encoding utf-8
 ```
 
 Without `--output` or `--check`, canonical strict TOML is printed to stdout.
 `--output PATH` writes the canonical strict TOML atomically. `--check`
-compiles and validates without writing. `--json` prints compact status and
-public diagnostics instead of TOML.
+compiles and validates without writing. `--encoding NAME` selects the local
+file encoding and defaults to UTF-8. `--json` prints compact status and public
+diagnostics instead of TOML.
 
 ### avalan flow graph inspect
 
