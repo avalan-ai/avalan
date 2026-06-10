@@ -1,6 +1,8 @@
+from ast import Attribute, Call, ImportFrom, Name, parse, walk
 from asyncio import CancelledError, sleep
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 from types import ModuleType
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
@@ -8,6 +10,10 @@ from unittest.mock import patch
 
 from async_helpers import run_async
 
+import avalan.flow.executor as flow_executor_module
+import avalan.flow.inspection as flow_inspection_module
+import avalan.flow.plan as flow_plan_module
+import avalan.flow.runtime as flow_runtime_module
 from avalan.entities import ToolManagerSettings
 from avalan.event import Event, EventType
 from avalan.flow import (
@@ -82,6 +88,32 @@ from avalan.tool.manager import ToolManager
 
 _async_compile_flow_definition = compile_flow_definition
 _async_loads_flow_definition_result = loads_flow_definition_result
+_FLOW_RUNTIME_BOUNDARY_MODULES = {
+    "executor.py": flow_executor_module,
+    "inspection.py": flow_inspection_module,
+    "plan.py": flow_plan_module,
+    "runtime.py": flow_runtime_module,
+}
+_FORBIDDEN_RUNTIME_AUTHORING_NAMES = frozenset(
+    {
+        "FlowDefinitionLoader",
+        "compile_flow_file",
+        "compile_flow_graph",
+        "compile_flow_source",
+        "inspect_flow_graph_file",
+        "inspect_flow_graph_source",
+        "load_flow_definition",
+        "load_flow_definition_result",
+        "loads_flow_definition",
+        "loads_flow_definition_result",
+        "parse_mermaid",
+        "parse_mermaid_import",
+        "parse_mermaid_view",
+        "read_text",
+    }
+)
+_FORBIDDEN_RUNTIME_ASYNC_NAMES = frozenset({"run", "to_thread"})
+_FORBIDDEN_RUNTIME_LOOP_METHODS = frozenset({"run_until_complete"})
 
 
 def compile_flow_definition(*args: object, **kwargs: object) -> object:
@@ -93,6 +125,110 @@ def loads_flow_definition_result(
     **kwargs: object,
 ) -> object:
     return run_async(_async_loads_flow_definition_result(*args, **kwargs))
+
+
+def _runtime_boundary_violations(
+    path: Path,
+    source: str,
+) -> tuple[str, ...]:
+    tree = parse(source, filename=str(path))
+    violations: list[str] = []
+    for node in walk(tree):
+        if isinstance(node, ImportFrom):
+            violations.extend(
+                f"{_node_location(path, node)} imports {alias.name}"
+                for alias in node.names
+                if alias.name in _FORBIDDEN_RUNTIME_AUTHORING_NAMES
+                or (
+                    node.module == "asyncio"
+                    and alias.name in _FORBIDDEN_RUNTIME_ASYNC_NAMES
+                )
+            )
+            continue
+        if isinstance(node, Call):
+            call_name = _call_name(node)
+            if call_name in _FORBIDDEN_RUNTIME_AUTHORING_NAMES:
+                violations.append(
+                    f"{_node_location(path, node)} calls {call_name}"
+                )
+            if _calls_forbidden_async_bridge(node):
+                violations.append(
+                    f"{_node_location(path, node)} calls {call_name}"
+                )
+    return tuple(sorted(violations))
+
+
+def _call_name(node: Call) -> str:
+    func = node.func
+    if isinstance(func, Name):
+        return func.id
+    if isinstance(func, Attribute):
+        return func.attr
+    return ""
+
+
+def _calls_forbidden_async_bridge(node: Call) -> bool:
+    func = node.func
+    if isinstance(func, Name):
+        return func.id in _FORBIDDEN_RUNTIME_ASYNC_NAMES
+    if isinstance(func, Attribute):
+        return func.attr in _FORBIDDEN_RUNTIME_LOOP_METHODS or (
+            isinstance(func.value, Name)
+            and func.value.id == "asyncio"
+            and func.attr in _FORBIDDEN_RUNTIME_ASYNC_NAMES
+        )
+    return False
+
+
+def _node_location(path: Path, node: object) -> str:
+    return f"{path}:{getattr(node, 'lineno', 0)}"
+
+
+class FlowRuntimeBoundaryTestCase(TestCase):
+    def test_runtime_facing_modules_do_not_load_graph_authoring(self) -> None:
+        violations = tuple(
+            violation
+            for path, module in _FLOW_RUNTIME_BOUNDARY_MODULES.items()
+            for violation in _runtime_boundary_violations(
+                Path(path),
+                Path(module.__file__).read_text(encoding="utf-8"),
+            )
+        )
+
+        self.assertEqual(violations, ())
+
+    def test_runtime_boundary_audit_rejects_authoring_wrappers(self) -> None:
+        violations = _runtime_boundary_violations(
+            Path("runtime.py"),
+            """from asyncio import run, to_thread
+from avalan.flow.authoring import compile_flow_source
+from avalan.flow.loader import FlowDefinitionLoader
+
+async def bad(path, loop):
+    await compile_flow_source("private")
+    loader = FlowDefinitionLoader()
+    path.read_text()
+    asyncio.run(loader.loads("private"))
+    loop.run_until_complete(loader.loads("private"))
+    return to_thread(path.write_text, "private")
+""",
+        )
+
+        self.assertEqual(
+            violations,
+            (
+                "runtime.py:1 imports run",
+                "runtime.py:1 imports to_thread",
+                "runtime.py:10 calls run_until_complete",
+                "runtime.py:11 calls to_thread",
+                "runtime.py:2 imports compile_flow_source",
+                "runtime.py:3 imports FlowDefinitionLoader",
+                "runtime.py:6 calls compile_flow_source",
+                "runtime.py:7 calls FlowDefinitionLoader",
+                "runtime.py:8 calls read_text",
+                "runtime.py:9 calls run",
+            ),
+        )
 
 
 async def runtime_flow_adder(a: int, b: int) -> int:
