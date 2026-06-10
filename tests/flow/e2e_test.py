@@ -1,4 +1,6 @@
 from collections.abc import Mapping
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
@@ -274,6 +276,158 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
             ["flow.graph.unsupported_executable_edge"],
         )
         self.assertNotIn("Private graph label", str(invalid.as_public_dict()))
+
+    async def test_file_graph_loads_validates_compiles_and_runs(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            graph_directory = root / "graphs"
+            graph_directory.mkdir()
+            graph_path = graph_directory / "customer-token.mmd"
+            graph_path.write_text(
+                "\n".join(
+                    (
+                        "flowchart LR",
+                        "start route_1@-->|Private graph route| finish",
+                        'start -.-> private_note["Private decorative note"]',
+                    )
+                ),
+                encoding="utf-8",
+            )
+            flow_path = root / "flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "file_graph_runtime"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "object"
+
+                [[outputs]]
+                name = "result"
+                type = "object"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                result = "finish.value"
+
+                [graph]
+                format = "mermaid"
+                source = "file"
+                mode = "executable"
+                path = "graphs/customer-token.mmd"
+
+                [graph.edges.route_1]
+                label = "approved"
+
+                [nodes.start]
+                type = "constant"
+                value = {answer = "ok"}
+
+                [nodes.finish]
+                type = "pass-through"
+
+                [nodes.finish.mapping.value]
+                type = "select"
+                source = "start.value"
+                """,
+                encoding="utf-8",
+            )
+
+            validation = await FlowDefinitionLoader().load_validation_result(
+                flow_path
+            )
+            loaded = await FlowDefinitionLoader().load_result(flow_path)
+
+        self.assertTrue(validation.ok, validation.public_diagnostics)
+        self.assertTrue(validation.authoring_graph)
+        self.assertIsNone(validation.flow)
+        assert validation.definition is not None
+        self.assertTrue(loaded.ok, loaded.public_diagnostics)
+        self.assertTrue(loaded.authoring_graph)
+        assert loaded.definition is not None
+        assert loaded.flow is not None
+        self.assertEqual(
+            [
+                (edge.source, edge.target, edge.label)
+                for edge in loaded.definition.edges
+            ],
+            [("start", "finish", "approved")],
+        )
+        self.assertEqual(validation.definition.edges, loaded.definition.edges)
+
+        plan = await compile_flow_definition(loaded.definition)
+        run = await FlowExecutor().run(loaded.definition)
+
+        self.assertTrue(plan.ok, plan.public_diagnostics)
+        self.assertTrue(run.ok, run.public_diagnostics)
+        self.assertEqual(run.outputs, {"result": {"answer": "ok"}})
+        rendered = str(
+            (
+                loaded.definition,
+                loaded.public_diagnostics,
+                serialize_flow_definition(loaded.definition),
+            )
+        )
+        self.assertNotIn("[graph]", rendered)
+        self.assertNotIn("Private graph route", rendered)
+        self.assertNotIn("Private decorative note", rendered)
+        self.assertNotIn("customer-token", rendered)
+        self.assertFalse(hasattr(loaded.definition, "graph"))
+
+    async def test_file_graph_without_safe_base_fails_before_node_build(
+        self,
+    ) -> None:
+        build_calls: list[str] = []
+
+        def blocked_factory(definition: FlowNodeDefinition) -> Node:
+            build_calls.append(definition.name)
+            raise AssertionError("runtime node build should not be reached")
+
+        registry = default_flow_node_registry().register(
+            "blocked",
+            blocked_factory,
+            metadata=FlowNodeMetadata(kind=FlowNodeKind.PASS_THROUGH),
+        )
+        result = await FlowDefinitionLoader(registry).loads_result("""
+            [flow]
+            name = "file_graph_without_base"
+            entrypoint = "start"
+            output_node = "finish"
+
+            [graph]
+            format = "mermaid"
+            source = "file"
+            mode = "executable"
+            path = "private/customer-token.mmd"
+
+            [nodes.start]
+            type = "blocked"
+
+            [nodes.finish]
+            type = "blocked"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.authoring_graph)
+        self.assertIsNone(result.definition)
+        self.assertIsNone(result.flow)
+        self.assertEqual(build_calls, [])
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.graph.read_failure"],
+        )
+        self.assertNotIn("customer-token", str(result.public_diagnostics))
+        self.assertNotIn("private/", str(result.public_diagnostics))
 
     async def test_invalid_graph_authoring_stops_before_runtime_build(
         self,
