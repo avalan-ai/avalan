@@ -7,6 +7,7 @@ from inspect import getsource, isawaitable
 from pathlib import Path
 from sys import path as sys_path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import patch
@@ -143,6 +144,7 @@ from avalan.task.targets import (
     validate_flow_task_compatibility,
 )
 from avalan.task.targets import flow as flow_target_module
+from avalan.task.usage import usage_flow_node
 
 
 class StaticHmacProvider:
@@ -733,6 +735,85 @@ def _multi_incoming_agent_flow(
 
 
 class FlowTaskTargetRunnerValidationTest(TestCase):
+    def test_flow_node_event_listener_adds_flow_node(self) -> None:
+        captured: list[Event] = []
+        listener = flow_target_module._flow_node_event_listener(
+            "analyze_pov_1",
+            captured.append,
+        )
+
+        assert listener is not None
+        result = listener(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                payload={"token_type": "ReasoningToken"},
+                started=1.0,
+                finished=2.0,
+                elapsed=1.0,
+            )
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(len(captured), 1)
+        payload = cast(dict[str, object], captured[0].payload)
+        self.assertEqual(payload["flow_node"], "analyze_pov_1")
+        self.assertEqual(payload["token_type"], "ReasoningToken")
+        self.assertEqual(captured[0].started, 1.0)
+        self.assertEqual(captured[0].finished, 2.0)
+        self.assertEqual(captured[0].elapsed, 1.0)
+
+    def test_flow_node_event_listener_handles_non_mapping_payload(
+        self,
+    ) -> None:
+        captured: list[Event] = []
+        listener = flow_target_module._flow_node_event_listener(
+            "analyze_pov_1",
+            captured.append,
+        )
+
+        assert listener is not None
+        listener(Event(type=EventType.TOOL_PROCESS, payload=None))
+
+        self.assertEqual(
+            captured[0].payload,
+            {"flow_node": "analyze_pov_1"},
+        )
+
+    def test_flow_node_event_listener_returns_none_without_listener(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            flow_target_module._flow_node_event_listener(
+                "analyze_pov_1",
+                None,
+            )
+        )
+
+    def test_flow_node_usage_observer_adds_flow_node(self) -> None:
+        captured: list[object] = []
+        observer = flow_target_module._flow_node_usage_observer(
+            "analyze_pov_1",
+            captured.append,
+        )
+        response = SimpleNamespace()
+
+        assert observer is not None
+        result = observer(response)
+
+        self.assertIsNone(result)
+        self.assertEqual(captured, [response])
+        self.assertEqual(usage_flow_node(response), "analyze_pov_1")
+
+    def test_flow_node_usage_observer_returns_none_without_observer(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            flow_target_module._flow_node_usage_observer(
+                "analyze_pov_1",
+                None,
+            )
+        )
+
     def test_flow_target_accepts_observability_without_path_leaks(
         self,
     ) -> None:

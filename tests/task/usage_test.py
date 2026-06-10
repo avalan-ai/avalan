@@ -206,6 +206,7 @@ class UsageTotalsTest(TestCase):
             USAGE_METADATA_KEYS,
             (
                 "provider_family",
+                "flow_node",
                 "cache_creation_ephemeral_5m_input_tokens",
                 "cache_creation_ephemeral_1h_input_tokens",
                 "cache_read_ephemeral_5m_input_tokens",
@@ -1581,6 +1582,7 @@ class UsageTotalsTest(TestCase):
         metadata = freeze_usage_metadata(
             {
                 "provider_family": "azure_openai",
+                "flow_node": "analyze_pov_1",
                 "cache_creation_ephemeral_5m_input_tokens": 3,
                 "cache_creation_ephemeral_1h_input_tokens": 4,
                 "cache_read_ephemeral_5m_input_tokens": 5,
@@ -1605,6 +1607,7 @@ class UsageTotalsTest(TestCase):
             metadata,
             {
                 "provider_family": UsageProviderFamily.AZURE_OPENAI.value,
+                "flow_node": "analyze_pov_1",
                 "cache_creation_ephemeral_5m_input_tokens": 3,
                 "cache_creation_ephemeral_1h_input_tokens": 4,
                 "cache_read_ephemeral_5m_input_tokens": 5,

@@ -171,6 +171,74 @@ class ThemePropertyTestCase(unittest.TestCase):
         self.assertEqual(self.theme.styles, {})
 
 
+class ThemeFlowProgressTestCase(unittest.TestCase):
+    def setUp(self):
+        self.theme = DummyTheme(lambda s: s, lambda s, p, n: s)
+
+    def test_flow_run_progress_messages_cover_node_events(self):
+        cases = {
+            "flow_node_started": "Running node_a (attempt 2).",
+            "flow_node_retrying": "Retrying node_a after attempt 2.",
+            "flow_node_completed": "Finished node_a.",
+            "flow_node_failed": "node_a failed.",
+            "flow_node_skipped": "Skipped node_a.",
+            "flow_node_paused": "Paused node_a.",
+            "flow_node_resumed": "Resumed node_a.",
+            "flow_node_cancelled": "Cancelled node_a.",
+        }
+
+        for event_type, expected in cases.items():
+            with self.subTest(event_type=event_type):
+                self.assertEqual(
+                    self.theme.flow_run_progress_message(
+                        event_type,
+                        node="node_a",
+                        attempt=2,
+                    ),
+                    expected,
+                )
+
+    def test_flow_run_progress_messages_cover_flow_events(self):
+        cases = {
+            "flow_started": "Flow run started.",
+            "flow_completed": "Flow run completed.",
+            "flow_cancelled": "Flow run cancelled.",
+            "unknown": "Flow run is active.",
+        }
+
+        for event_type, expected in cases.items():
+            with self.subTest(event_type=event_type):
+                self.assertEqual(
+                    self.theme.flow_run_progress_message(event_type),
+                    expected,
+                )
+
+    def test_flow_run_progress_message_omits_first_attempt(self):
+        self.assertEqual(
+            self.theme.flow_run_progress_message(
+                "flow_node_started",
+                node="node_a",
+                attempt=1,
+            ),
+            "Running node_a.",
+        )
+
+    def test_flow_run_progress_plain_renderable(self):
+        renderable = self.theme.flow_run_progress(
+            "flowchart LR\n  node_a\n",
+            node_states={"node_a": "running"},
+            active_nodes=("node_a",),
+            message="Running node_a.",
+            console_width=80,
+            flow_stats={"__total__": {"elapsed_ms": 1}},
+        )
+
+        self.assertEqual(
+            renderable,
+            "Running node_a.\n\nflowchart LR\n  node_a\n",
+        )
+
+
 class ThemeAbstractMethodsTestCase(unittest.TestCase):
     def setUp(self):
         self.theme = DummyTheme(lambda s: s, lambda s, p, n: s)

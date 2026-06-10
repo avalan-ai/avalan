@@ -528,25 +528,29 @@ class Theme(ABC):
         _ = status, flow_name
         if node:
             if event_type == "flow_node_started":
-                suffix = f" attempt {attempt}" if attempt is not None else ""
-                return f"Running node {node}{suffix}."
+                suffix = (
+                    f" (attempt {attempt})"
+                    if attempt is not None and attempt > 1
+                    else ""
+                )
+                return f"Running {node}{suffix}."
             if event_type == "flow_node_retrying":
                 suffix = (
                     f" after attempt {attempt}" if attempt is not None else ""
                 )
-                return f"Retrying node {node}{suffix}."
+                return f"Retrying {node}{suffix}."
             if event_type == "flow_node_completed":
-                return f"Completed node {node}."
+                return f"Finished {node}."
             if event_type == "flow_node_failed":
-                return f"Failed node {node}."
+                return f"{node} failed."
             if event_type == "flow_node_skipped":
-                return f"Skipped node {node}."
+                return f"Skipped {node}."
             if event_type == "flow_node_paused":
-                return f"Paused node {node}."
+                return f"Paused {node}."
             if event_type == "flow_node_resumed":
-                return f"Resumed node {node}."
+                return f"Resumed {node}."
             if event_type == "flow_node_cancelled":
-                return f"Cancelled node {node}."
+                return f"Cancelled {node}."
         if event_type == "flow_started":
             return "Flow run started."
         if event_type == "flow_completed":
@@ -563,9 +567,10 @@ class Theme(ABC):
         active_nodes: tuple[str, ...],
         message: str,
         console_width: int,
+        flow_stats: Mapping[str, Mapping[str, int | float]] | None = None,
     ) -> RenderableType:
         """Return the live flow run progress renderable."""
-        _ = node_states, active_nodes, console_width
+        _ = node_states, active_nodes, console_width, flow_stats
         return f"{message}\n\n{mermaid_source}"
 
     def _f(

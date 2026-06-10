@@ -356,6 +356,7 @@ class SanitizedTaskEventTest(TestCase):
             ),
             metadata={
                 "provider_family": UsageProviderFamily.AZURE_OPENAI,
+                "flow_node": "analyze_pov_1",
                 "cache_key": "private-cache-key",
                 "headers": {"status": "private-header"},
                 "raw_model_id": "provider/model-private",
@@ -367,6 +368,7 @@ class SanitizedTaskEventTest(TestCase):
         self.assertEqual(payload["event_type"], "usage_observed")
         self.assertEqual(payload["source"], "exact")
         self.assertEqual(payload["provider_family"], "azure_openai")
+        self.assertEqual(payload["flow_node"], "analyze_pov_1")
         self.assertEqual(payload["input_tokens"], 3)
         self.assertEqual(payload["cached_input_tokens"], 0)
         self.assertEqual(payload["cache_creation_input_tokens"], 2)

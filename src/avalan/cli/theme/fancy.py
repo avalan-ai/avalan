@@ -67,6 +67,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.rule import Rule
+from rich.spinner import Spinner as RichSpinner
 from rich.table import Column, Table
 from rich.text import Text
 
@@ -194,25 +195,29 @@ class FancyTheme(Theme):
         _ = status, flow_name
         if node:
             if event_type == "flow_node_started":
-                suffix = f" attempt {attempt}" if attempt is not None else ""
-                return f"Running node [cyan]{node}[/cyan]{suffix}."
+                suffix = (
+                    f" (attempt {attempt})"
+                    if attempt is not None and attempt > 1
+                    else ""
+                )
+                return f"Running [cyan]{node}[/cyan]{suffix}."
             if event_type == "flow_node_retrying":
                 suffix = (
                     f" after attempt {attempt}" if attempt is not None else ""
                 )
-                return f"Retrying node [cyan]{node}[/cyan]{suffix}."
+                return f"Retrying [cyan]{node}[/cyan]{suffix}."
             if event_type == "flow_node_completed":
-                return f"Completed node [cyan]{node}[/cyan]."
+                return f"Finished [cyan]{node}[/cyan]."
             if event_type == "flow_node_failed":
-                return f"Failed node [cyan]{node}[/cyan]."
+                return f"[cyan]{node}[/cyan] failed."
             if event_type == "flow_node_skipped":
-                return f"Skipped node [cyan]{node}[/cyan]."
+                return f"Skipped [cyan]{node}[/cyan]."
             if event_type == "flow_node_paused":
-                return f"Paused node [cyan]{node}[/cyan]."
+                return f"Paused [cyan]{node}[/cyan]."
             if event_type == "flow_node_resumed":
-                return f"Resumed node [cyan]{node}[/cyan]."
+                return f"Resumed [cyan]{node}[/cyan]."
             if event_type == "flow_node_cancelled":
-                return f"Cancelled node [cyan]{node}[/cyan]."
+                return f"Cancelled [cyan]{node}[/cyan]."
         if event_type == "flow_started":
             return "Flow run started."
         if event_type == "flow_completed":
@@ -229,6 +234,7 @@ class FancyTheme(Theme):
         active_nodes: tuple[str, ...],
         message: str,
         console_width: int,
+        flow_stats: Mapping[str, Mapping[str, int | float]] | None = None,
     ) -> RenderableType:
         styled_source = _flow_run_styled_mermaid_source(
             mermaid_source,
@@ -236,7 +242,10 @@ class FancyTheme(Theme):
             active_nodes=active_nodes,
         )
         diagram = _flow_run_mermaid_renderable(styled_source, console_width)
-        status_table = _flow_run_status_table(node_states)
+        status_table = _flow_run_status_table(
+            node_states,
+            flow_stats=flow_stats,
+        )
         progress_body: RenderableType = diagram
         if status_table is not None:
             progress_body = Columns(
@@ -244,9 +253,17 @@ class FancyTheme(Theme):
                 expand=False,
                 padding=(0, 4),
             )
+        status_line = Table.grid(padding=(0, 1))
+        status_line.add_row(
+            RichSpinner(
+                "moon",
+                text=Text.from_markup(f"[bold]{message}[/bold]"),
+                style="cyan",
+            )
+        )
         return Panel(
             Padding(
-                Group(Text.from_markup(f"[bold]{message}[/bold]"), progress_body),
+                Group(status_line, progress_body),
                 (1, 2),
             ),
             title=self._icons["task_id"] + " [cyan]Flow progress[/cyan]",
@@ -2690,16 +2707,26 @@ def _flow_run_styled_mermaid_source(
     active = set(active_nodes)
     lines.extend(
         [
-            "  classDef avalanRunning fill:#ecfeff,stroke:#0f172a,"
-            "color:#0f172a,stroke-width:4px",
-            "  classDef avalanCompleted fill:#166534,stroke:#dcfce7,"
-            "color:#dcfce7,stroke-width:2px",
-            "  classDef avalanFailed fill:#991b1b,stroke:#fee2e2,"
-            "color:#fee2e2,stroke-width:2px",
-            "  classDef avalanSkipped fill:#525252,stroke:#e5e5e5,"
-            "color:#e5e5e5,stroke-width:2px",
-            "  classDef avalanPaused fill:#92400e,stroke:#fef3c7,"
-            "color:#fef3c7,stroke-width:2px",
+            (
+                "  classDef avalanRunning fill:#ecfeff,stroke:#0f172a,"
+                "color:#0f172a,stroke-width:4px"
+            ),
+            (
+                "  classDef avalanCompleted fill:#166534,stroke:#dcfce7,"
+                "color:#dcfce7,stroke-width:2px"
+            ),
+            (
+                "  classDef avalanFailed fill:#991b1b,stroke:#fee2e2,"
+                "color:#fee2e2,stroke-width:2px"
+            ),
+            (
+                "  classDef avalanSkipped fill:#525252,stroke:#e5e5e5,"
+                "color:#e5e5e5,stroke-width:2px"
+            ),
+            (
+                "  classDef avalanPaused fill:#92400e,stroke:#fef3c7,"
+                "color:#fef3c7,stroke-width:2px"
+            ),
         ]
     )
     for node, state in node_states.items():
@@ -2756,19 +2783,171 @@ def _flow_run_mermaid_renderable(
         )
 
 
+_FLOW_RUN_TOTAL_STATS_KEY = "__total__"
+
+
 def _flow_run_status_table(
     node_states: Mapping[str, str],
-) -> Table | None:
+    *,
+    flow_stats: Mapping[str, Mapping[str, int | float]] | None = None,
+) -> RenderableType | None:
     if not node_states:
         return None
+    header = _flow_run_stats_header(flow_stats)
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bright_black", no_wrap=True)
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(style="white", no_wrap=True)
+    table.add_column(style="bright_black", no_wrap=True)
     for node, state in node_states.items():
         label, style = _flow_run_state_display(state)
-        table.add_row(label, node, Text(state, style=style))
-    return table
+        table.add_row(
+            label,
+            node,
+            Text(state, style=style),
+            _flow_run_node_stats(flow_stats, node),
+        )
+    return Panel(
+        Group(header, table),
+        title="[cyan]Nodes[/cyan]",
+        box=box.SQUARE,
+        border_style="gray35",
+        padding=(0, 1),
+    )
+
+
+def _flow_run_stats_header(
+    flow_stats: Mapping[str, Mapping[str, int | float]] | None,
+) -> Panel:
+    stats = _flow_run_stats_values(flow_stats, _FLOW_RUN_TOTAL_STATS_KEY)
+    table = Table.grid(padding=(0, 1))
+    table.add_column(no_wrap=True)
+    table.add_column(justify="right", style="white", no_wrap=True)
+    for label, value in (
+        (":alarm_clock: t", _flow_run_format_duration(stats["elapsed_ms"])),
+        (":abacus: n", _flow_run_format_number(stats["executed_nodes"])),
+        (
+            ":white_check_mark: ok",
+            _flow_run_format_number(stats["succeeded_nodes"]),
+        ),
+        (
+            ":cross_mark: fail",
+            _flow_run_format_number(stats["failed_nodes"]),
+        ),
+        (
+            ":high_voltage: avg",
+            _flow_run_format_duration(stats["average_node_ms"]),
+        ),
+        (
+            ":laptop_computer: in",
+            _flow_run_format_number(stats["input_tokens"]),
+        ),
+        (":robot: out", _flow_run_format_number(stats["output_tokens"])),
+        (
+            ":brain: rsn",
+            _flow_run_format_number(stats["reasoning_tokens"]),
+        ),
+        (":hammer: tool", _flow_run_format_number(stats["tools_executed"])),
+    ):
+        table.add_row(Text.from_markup(label, style="bright_black"), value)
+    return Panel(
+        table,
+        title="[cyan]Stats[/cyan]",
+        box=box.SQUARE,
+        border_style="cyan",
+        padding=(0, 1),
+    )
+
+
+def _flow_run_node_stats(
+    flow_stats: Mapping[str, Mapping[str, int | float]] | None,
+    node: str,
+) -> Text:
+    stats = _flow_run_stats_values(flow_stats, node)
+    return Text.from_markup(
+        " ".join(
+            (
+                ":alarm_clock:"
+                + _flow_run_format_duration(stats["elapsed_ms"]),
+                ":laptop_computer:"
+                + _flow_run_format_number(stats["input_tokens"])
+                + "i",
+                ":robot:"
+                + _flow_run_format_number(stats["output_tokens"])
+                + "o",
+                ":brain:"
+                + _flow_run_format_number(stats["reasoning_tokens"])
+                + "r",
+                ":hammer:"
+                + _flow_run_format_number(stats["tools_executed"])
+                + "t",
+            )
+        ),
+        style="bright_black",
+    )
+
+
+def _flow_run_stats_values(
+    flow_stats: Mapping[str, Mapping[str, int | float]] | None,
+    key: str,
+) -> Mapping[str, int | float]:
+    source = flow_stats.get(key, {}) if flow_stats is not None else {}
+    return {
+        "elapsed_ms": _flow_run_stats_number(source, "elapsed_ms"),
+        "executed_nodes": _flow_run_stats_number(
+            source,
+            "executed_nodes",
+        ),
+        "succeeded_nodes": _flow_run_stats_number(
+            source,
+            "succeeded_nodes",
+        ),
+        "failed_nodes": _flow_run_stats_number(source, "failed_nodes"),
+        "average_node_ms": _flow_run_stats_number(
+            source,
+            "average_node_ms",
+        ),
+        "input_tokens": _flow_run_stats_number(source, "input_tokens"),
+        "output_tokens": _flow_run_stats_number(source, "output_tokens"),
+        "reasoning_tokens": _flow_run_stats_number(
+            source,
+            "reasoning_tokens",
+        ),
+        "tools_executed": _flow_run_stats_number(
+            source,
+            "tools_executed",
+        ),
+    }
+
+
+def _flow_run_stats_number(
+    source: Mapping[str, int | float],
+    key: str,
+) -> int | float:
+    value = source.get(key, 0)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0
+    return max(value, 0)
+
+
+def _flow_run_format_number(value: int | float) -> str:
+    return intcomma(int(value))
+
+
+def _flow_run_format_duration(milliseconds: int | float) -> str:
+    value = max(float(milliseconds), 0.0)
+    if value < 1000:
+        return f"{int(value)}ms"
+    seconds = value / 1000
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remaining_seconds = int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m{remaining_seconds:02d}s"
+    hours = minutes // 60
+    remaining_minutes = minutes % 60
+    return f"{hours}h{remaining_minutes:02d}m"
 
 
 def _flow_run_state_display(state: str) -> tuple[str, str]:

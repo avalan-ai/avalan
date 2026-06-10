@@ -29,6 +29,7 @@ from avalan.task import (
     TaskDefinition,
     TaskDirectTarget,
     TaskErrorCode,
+    TaskEventCategory,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
@@ -46,6 +47,7 @@ from avalan.task import (
     TaskMaterializedFile,
     TaskMetadata,
     TaskObservabilityPolicy,
+    TaskObservedEvent,
     TaskOutputContract,
     TaskPrivacyPolicy,
     TaskProviderReferenceKind,
@@ -918,6 +920,37 @@ class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.output_tokens, 5)
         self.assertEqual(len(sink.usage_totals), 1)
         self.assertEqual(sink.usage_event_count, 1)
+
+    async def test_observe_usage_notifies_event_observer_without_metrics(
+        self,
+    ) -> None:
+        observed: list[TaskObservedEvent] = []
+        target = DuplicateUsageObservingTarget(CountingUsageResponse())
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, target),
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-usage-live-observer",
+            event_observer=observed.append,
+        )
+
+        result = await runner.run(
+            definition(observability=TaskObservabilityPolicy.noop()),
+            input_value="private prompt",
+        )
+        usage_events = [
+            event
+            for event in observed
+            if event.category == TaskEventCategory.USAGE
+        ]
+
+        self.assertEqual(result.run.state, TaskRunState.SUCCEEDED)
+        self.assertEqual(await self.store.list_usage(result.run.run_id), ())
+        self.assertEqual(len(usage_events), 1)
+        payload = cast(dict[str, object], usage_events[0].payload)
+        self.assertEqual(payload["input_tokens"], 3)
+        self.assertEqual(payload["output_tokens"], 5)
+        self.assertNotIn("private prompt", str(payload))
 
     async def test_observe_usage_deduplicates_replayed_provider_usage(
         self,

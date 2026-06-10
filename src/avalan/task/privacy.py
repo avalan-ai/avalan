@@ -46,6 +46,7 @@ _COMMON_SAFE_FIELDS = frozenset(
         "finished_at",
         "flow_id",
         "flow_name",
+        "flow_node",
         "flow_revision",
         "flow_version",
         "hint",
@@ -72,6 +73,7 @@ _COMMON_SAFE_FIELDS = frozenset(
         "status",
         "target",
         "timestamp",
+        "token_type",
         "type",
     }
 )

@@ -49,6 +49,7 @@ from .observability import (
     ObservabilitySink,
     TaskEventPipeline,
     TaskSanitizedEventObserver,
+    observe_response_usage,
     record_response_usage,
 )
 from .privacy import (
@@ -966,9 +967,23 @@ class DirectTaskRunner:
                 attempt=attempt,
             )
 
-        usage_observer = (
-            observe_usage if definition.observability.metrics else None
-        )
+        observed_usage_ids: set[str] = set()
+
+        async def observe_live_usage(response: object) -> None:
+            await observe_response_usage(
+                response,
+                run_id=run.run_id,
+                attempt_id=attempt.attempt_id,
+                usage_observer=self._event_observer,
+                observed_usage_ids=observed_usage_ids,
+            )
+
+        if definition.observability.metrics:
+            usage_observer = observe_usage
+        elif self._event_observer is not None:
+            usage_observer = observe_live_usage
+        else:
+            usage_observer = None
         usage_tracker = TaskUsageObservationTracker(
             usage_observer,
             has_observations=lambda response: bool(
@@ -1235,6 +1250,7 @@ class DirectTaskRunner:
             response=response,
             run_id=run.run_id,
             attempt_id=attempt.attempt_id,
+            usage_observer=self._event_observer,
         )
 
     def _observability_sink_for(

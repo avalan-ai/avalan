@@ -528,6 +528,28 @@ class PrivacyTest(TestCase):
         self.assertNotIn("private prompt", str(unknown))
         self.assertNotIn("secret token", str(unknown))
 
+    def test_event_redaction_keeps_flow_node_and_token_type(self) -> None:
+        sanitizer = PrivacySanitizer()
+
+        event = sanitizer.sanitize_event(
+            "token_generated",
+            {
+                "flow_node": "analyze_pov_1",
+                "token": "private token",
+                "token_type": "ReasoningToken",
+            },
+        )
+
+        self.assertEqual(
+            event,
+            {
+                "event_type": "token_generated",
+                "flow_node": "analyze_pov_1",
+                "token_type": "ReasoningToken",
+            },
+        )
+        self.assertNotIn("private token", str(event))
+
     def test_event_redaction_drops_error_text_and_paths(self) -> None:
         sanitizer = PrivacySanitizer()
 

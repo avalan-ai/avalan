@@ -128,9 +128,363 @@ async def flow_cli_adder(a: int, b: int) -> int:
     return a + b
 
 
+class _RecordingFlowProgressTheme:
+    def __init__(self) -> None:
+        self.flow_stats: Mapping[str, Mapping[str, int | float]] = {}
+
+    def flow_run_progress_message(
+        self,
+        event_type: str,
+        *,
+        node: str | None = None,
+        status: str | None = None,
+        attempt: int | None = None,
+        flow_name: str | None = None,
+    ) -> str:
+        _ = node, status, attempt, flow_name
+        return event_type
+
+    def flow_run_progress(
+        self,
+        mermaid_source: str,
+        *,
+        node_states: Mapping[str, str],
+        active_nodes: tuple[str, ...],
+        message: str,
+        console_width: int,
+        flow_stats: Mapping[str, Mapping[str, int | float]] | None = None,
+    ) -> str:
+        _ = mermaid_source, node_states, active_nodes, message, console_width
+        self.flow_stats = flow_stats or {}
+        return "rendered"
+
+
+class _RecordingLive:
+    def __init__(self) -> None:
+        self.update_calls = 0
+
+    def update(self, *_args: object, **_kwargs: object) -> None:
+        self.update_calls += 1
+
+
 class FlowRunCommandTestCase(TestCase):
     def setUp(self) -> None:
         self.theme = SimpleNamespace()
+
+    def test_flow_progress_monitor_collects_node_stats(self) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  analyze_pov_1\n",
+            node_states={"analyze_pov_1": "pending"},
+            node_stats={"analyze_pov_1": flow_cmds._FlowRunNodeStats()},
+        )
+
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_started",
+                payload={
+                    "node": "analyze_pov_1",
+                    "status": "started",
+                    "attempt": 1,
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="input_token_count_after",
+                payload={"flow_node": "analyze_pov_1", "count": 12},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "token_type": "ReasoningToken",
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "token_type": "Token",
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="tool_execute",
+                payload={"flow_node": "analyze_pov_1"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="usage_observed",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "input_tokens": 4,
+                    "output_tokens": 7,
+                    "reasoning_tokens": 3,
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_completed",
+                payload={
+                    "node": "analyze_pov_1",
+                    "status": "succeeded",
+                    "duration_ms": 2500,
+                },
+            )
+        )
+        monitor.render()
+
+        flow_stats = theme.flow_stats
+        self.assertEqual(monitor.message, "flow_node_completed")
+        self.assertEqual(monitor.node_states["analyze_pov_1"], "succeeded")
+        self.assertEqual(flow_stats["analyze_pov_1"]["elapsed_ms"], 2500)
+        self.assertEqual(flow_stats["analyze_pov_1"]["input_tokens"], 16)
+        self.assertEqual(flow_stats["analyze_pov_1"]["output_tokens"], 9)
+        self.assertEqual(flow_stats["analyze_pov_1"]["reasoning_tokens"], 4)
+        self.assertEqual(flow_stats["analyze_pov_1"]["tools_executed"], 1)
+        self.assertEqual(flow_stats["__total__"]["executed_nodes"], 1)
+        self.assertEqual(flow_stats["__total__"]["succeeded_nodes"], 1)
+
+    def test_flow_progress_monitor_handles_remaining_node_states(self) -> None:
+        theme = _RecordingFlowProgressTheme()
+        node_names = (
+            "retry",
+            "fail",
+            "skip",
+            "pause",
+            "resume",
+            "unknown",
+        )
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n",
+            node_states={node: "pending" for node in node_names},
+        )
+
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_retrying",
+                payload={"node": "retry", "attempt": 1},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_failed",
+                payload={"node": "fail"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_skipped",
+                payload={"node": "skip"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_paused",
+                payload={"node": "pause"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_resumed",
+                payload={"node": "resume"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_started",
+                payload={"node": "missing"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_completed",
+                payload={},
+            )
+        )
+
+        self.assertEqual(monitor.node_states["retry"], "retrying")
+        self.assertEqual(monitor.node_states["fail"], "failed")
+        self.assertEqual(monitor.node_states["skip"], "skipped")
+        self.assertEqual(monitor.node_states["pause"], "paused")
+        self.assertEqual(monitor.node_states["resume"], "resumed")
+        self.assertFalse(monitor.active_nodes)
+        self.assertIsNotNone(monitor.finished_at)
+
+    def test_flow_progress_monitor_ignores_invalid_stat_payloads(self) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  analyze_pov_1\n",
+            node_states={"analyze_pov_1": "pending"},
+            node_stats={"analyze_pov_1": flow_cmds._FlowRunNodeStats()},
+        )
+
+        monitor.observe(
+            SimpleNamespace(
+                event_type="input_token_count_after",
+                payload={"flow_node": "analyze_pov_1", "count": True},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="input_token_count_after",
+                payload={"flow_node": "analyze_pov_1", "count": -1},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={"flow_node": "unknown", "token_type": "Token"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="usage_observed",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "input_tokens": -1,
+                    "output_tokens": "private",
+                    "reasoning_tokens": False,
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_completed",
+                payload={
+                    "node": "analyze_pov_1",
+                    "status": "succeeded",
+                    "duration_ms": -1,
+                },
+            )
+        )
+        monitor.render()
+
+        flow_stats = theme.flow_stats
+        self.assertEqual(flow_stats["analyze_pov_1"]["elapsed_ms"], 0)
+        self.assertEqual(flow_stats["analyze_pov_1"]["input_tokens"], 0)
+        self.assertEqual(flow_stats["analyze_pov_1"]["output_tokens"], 0)
+
+    def test_flow_progress_monitor_uses_single_active_node_for_stats(
+        self,
+    ) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  analyze_pov_1\n",
+            node_states={"analyze_pov_1": "pending"},
+            node_stats={"analyze_pov_1": flow_cmds._FlowRunNodeStats()},
+        )
+
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_started",
+                payload={"node": "analyze_pov_1", "status": "started"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={"token_type": "Token"},
+            )
+        )
+        monitor.render()
+
+        self.assertEqual(
+            theme.flow_stats["analyze_pov_1"]["output_tokens"],
+            1,
+        )
+
+    def test_flow_progress_monitor_ignores_invalid_event_shapes(self) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  analyze_pov_1\n",
+            node_states={"analyze_pov_1": "pending"},
+        )
+        live = _RecordingLive()
+        monitor.live = cast(Any, live)
+
+        monitor.observe(SimpleNamespace(event_type=123, payload={}))
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload=[],
+            )
+        )
+
+        self.assertEqual(live.update_calls, 1)
+
+    def test_flow_progress_monitor_renders_as_rich_renderable(self) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  analyze_pov_1\n",
+            node_states={"analyze_pov_1": "pending"},
+        )
+
+        rendered = list(Console(file=StringIO()).render(monitor))
+
+        self.assertTrue(rendered)
+
+    def test_flow_progress_monitor_requires_message_renderer(self) -> None:
+        theme = SimpleNamespace(flow_run_progress=lambda *args, **kwargs: "")
+
+        monitor = flow_cmds._flow_run_progress_monitor(
+            _args(),
+            Console(file=StringIO(), width=120),
+            cast(Any, theme),
+            _flow_definition(),
+        )
+
+        self.assertIsNone(monitor)
+
+    def test_flow_definition_progress_mermaid_falls_back_on_error(
+        self,
+    ) -> None:
+        definition = FlowDefinition(
+            name="contract",
+            entrypoint="start",
+            output_node="finish",
+            nodes=(
+                FlowNodeDefinition(name="start", type="echo"),
+                FlowNodeDefinition(name="finish", type="echo"),
+            ),
+            edges=(FlowEdgeDefinition(source="start", target="finish"),),
+        )
+        with patch.object(
+            flow_cmds,
+            "render_flow_view",
+            return_value=MermaidRenderResult(
+                source="",
+                diagnostics=(
+                    _flow_cli_diagnostic("flow.execution.render_failed"),
+                ),
+            ),
+        ):
+            source = flow_cmds._flow_definition_progress_mermaid_source(
+                definition
+            )
+
+        self.assertIn("flowchart LR", source)
+        self.assertIn("start --> finish", source)
 
     def test_flow_validate_json_success(self) -> None:
         stream = StringIO()

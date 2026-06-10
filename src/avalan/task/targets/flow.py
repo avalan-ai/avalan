@@ -89,6 +89,7 @@ from ..privacy import (
 )
 from ..store import TaskExecutionContext, TaskStoreNotFoundError
 from ..target import TaskTargetRunner, TaskValidationContext
+from ..usage import tag_usage_response
 from ..validation import (
     TaskValidationCategory,
     TaskValidationError,
@@ -105,7 +106,7 @@ from inspect import isawaitable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from time import perf_counter
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
 StrictFlowResolver = Callable[
@@ -1524,8 +1525,14 @@ def _agent_node_factory(
                     files=files,
                     metadata=context.metadata,
                     cancellation_checker=context.cancellation_checker,
-                    event_listener=context.event_listener,
-                    usage_observer=context.usage_observer,
+                    event_listener=_flow_node_event_listener(
+                        definition.name,
+                        context.event_listener,
+                    ),
+                    usage_observer=_flow_node_usage_observer(
+                        definition.name,
+                        context.usage_observer,
+                    ),
                     artifact_store=context.artifact_store,
                     task_store=context.task_store,
                     file_converters=context.file_converters,
@@ -1535,6 +1542,49 @@ def _agent_node_factory(
         return Node(definition.name, func=run)
 
     return build
+
+
+def _flow_node_event_listener(
+    node_name: str,
+    listener: Callable[[Event], Awaitable[None] | None] | None,
+) -> Callable[[Event], Awaitable[None] | None] | None:
+    assert isinstance(node_name, str) and node_name.strip()
+    if listener is None:
+        return None
+    assert callable(listener)
+
+    def observe(event: Event) -> Awaitable[None] | None:
+        assert isinstance(event, Event)
+        payload: dict[str, Any] = {}
+        if isinstance(event.payload, Mapping):
+            payload.update(event.payload)
+        payload["flow_node"] = node_name
+        return listener(
+            Event(
+                type=event.type,
+                payload=payload,
+                started=event.started,
+                finished=event.finished,
+                elapsed=event.elapsed,
+            )
+        )
+
+    return observe
+
+
+def _flow_node_usage_observer(
+    node_name: str,
+    observer: Callable[[object], Awaitable[None] | None] | None,
+) -> Callable[[object], Awaitable[None] | None] | None:
+    assert isinstance(node_name, str) and node_name.strip()
+    if observer is None:
+        return None
+    assert callable(observer)
+
+    def observe(response: object) -> Awaitable[None] | None:
+        return observer(tag_usage_response(response, flow_node=node_name))
+
+    return observe
 
 
 def _agent_file_plan(definition: FlowNodeDefinition) -> _AgentFilePlan:

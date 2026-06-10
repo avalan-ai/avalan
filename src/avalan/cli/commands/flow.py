@@ -128,9 +128,10 @@ from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from os import strerror
 from pathlib import Path
+from time import monotonic
 from uuid import uuid4
 
-from rich.console import Console
+from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.live import Live
 
 _AVALAN_INPUT_TYPE_SCHEMA_KEY = "x-avalan-input-type"
@@ -1665,18 +1666,43 @@ async def _flow_run_with_task_context(
 
 
 @dataclass(slots=True)
+class _FlowRunNodeStats:
+    started_at: float | None = None
+    elapsed_ms: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    tools_executed: int = 0
+
+    def snapshot(self, now: float) -> dict[str, int | float]:
+        elapsed_ms = self.elapsed_ms
+        if self.started_at is not None:
+            elapsed_ms = max(elapsed_ms, (now - self.started_at) * 1000)
+        return {
+            "elapsed_ms": elapsed_ms,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "tools_executed": self.tools_executed,
+        }
+
+
+@dataclass(slots=True)
 class _FlowRunProgressMonitor:
     console: Console
     theme: Theme
     mermaid_source: str
     node_states: dict[str, str]
     active_nodes: set[str] = field(default_factory=set)
+    node_stats: dict[str, _FlowRunNodeStats] = field(default_factory=dict)
+    started_at: float = field(default_factory=monotonic)
+    finished_at: float | None = None
     message: str = "Flow run is starting."
     live: Live | None = field(default=None, init=False)
 
     def start(self) -> None:
         self.live = Live(
-            self.render(),
+            self,
             console=self.console,
             refresh_per_second=4,
             transient=False,
@@ -1692,17 +1718,20 @@ class _FlowRunProgressMonitor:
         self._apply_event("flow_completed", node=None, status=None)
         self.message = self.theme.flow_run_progress_message("flow_completed")
         if self.live is not None:
-            self.live.update(self.render(), refresh=True)
+            self.live.update(self, refresh=True)
 
     def observe(self, event: TaskObservedEvent) -> None:
         event_type = getattr(event, "event_type", None)
         if not isinstance(event_type, str):
             return
-        if not event_type.startswith("flow_"):
-            return
         payload = getattr(event, "payload", None)
         if not isinstance(payload, Mapping):
             payload = {}
+        self._apply_stats(event_type, payload)
+        if not event_type.startswith("flow_"):
+            if self.live is not None:
+                self.live.update(self, refresh=True)
+            return
         node = _flow_progress_payload_string(payload, "node")
         status = _flow_progress_payload_string(payload, "status")
         attempt = _flow_progress_payload_int(payload, "attempt")
@@ -1718,16 +1747,25 @@ class _FlowRunProgressMonitor:
             flow_name=flow_name,
         )
         if self.live is not None:
-            self.live.update(self.render(), refresh=True)
+            self.live.update(self, refresh=True)
 
-    def render(self) -> object:
+    def render(self) -> RenderableType:
         return self.theme.flow_run_progress(
             self.mermaid_source,
             node_states=self.node_states,
             active_nodes=tuple(sorted(self.active_nodes)),
             message=self.message,
             console_width=self.console.width,
+            flow_stats=self._flow_stats_snapshot(),
         )
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        _ = console, options
+        yield self.render()
 
     def _apply_event(
         self,
@@ -1737,32 +1775,175 @@ class _FlowRunProgressMonitor:
         status: str | None,
     ) -> None:
         if event_type == "flow_completed":
+            self.finished_at = monotonic()
             self.active_nodes.clear()
             return
         if node is None or node not in self.node_states:
             return
+        node_stats = self._node_stats(node)
         match event_type:
             case "flow_node_started":
                 self.node_states[node] = "running"
                 self.active_nodes.add(node)
+                if node_stats.started_at is None:
+                    node_stats.started_at = monotonic()
             case "flow_node_retrying":
                 self.node_states[node] = "retrying"
                 self.active_nodes.add(node)
+                if node_stats.started_at is None:
+                    node_stats.started_at = monotonic()
             case "flow_node_completed":
                 self.node_states[node] = status or "succeeded"
                 self.active_nodes.discard(node)
+                self._finish_node_stats(node_stats)
             case "flow_node_failed" | "flow_node_cancelled":
                 self.node_states[node] = status or "failed"
                 self.active_nodes.discard(node)
+                self._finish_node_stats(node_stats)
             case "flow_node_skipped":
                 self.node_states[node] = "skipped"
                 self.active_nodes.discard(node)
             case "flow_node_paused":
                 self.node_states[node] = "paused"
                 self.active_nodes.discard(node)
+                self._finish_node_stats(node_stats)
             case "flow_node_resumed":
                 self.node_states[node] = "resumed"
                 self.active_nodes.discard(node)
+
+    def _finish_node_stats(self, node_stats: _FlowRunNodeStats) -> None:
+        if node_stats.started_at is not None:
+            node_stats.elapsed_ms = max(
+                node_stats.elapsed_ms,
+                (monotonic() - node_stats.started_at) * 1000,
+            )
+        node_stats.started_at = None
+
+    def _apply_stats(
+        self,
+        event_type: str,
+        payload: Mapping[str, object],
+    ) -> None:
+        if event_type.startswith("flow_"):
+            self._apply_flow_stats(payload)
+            return
+        node = _flow_progress_payload_string(payload, "flow_node")
+        if node is None and len(self.active_nodes) == 1:
+            node = next(iter(self.active_nodes))
+        if node is None or node not in self.node_states:
+            return
+        node_stats = self._node_stats(node)
+        match event_type:
+            case "input_token_count_after":
+                count = _flow_progress_payload_non_negative_int(
+                    payload,
+                    "count",
+                )
+                if count is not None:
+                    node_stats.input_tokens += count
+            case "token_generated":
+                node_stats.output_tokens += 1
+                token_type = _flow_progress_payload_string(
+                    payload,
+                    "token_type",
+                )
+                if token_type == "ReasoningToken":
+                    node_stats.reasoning_tokens += 1
+            case "tool_execute":
+                node_stats.tools_executed += 1
+            case "usage_observed":
+                self._apply_usage_stats(node_stats, payload)
+
+    def _apply_usage_stats(
+        self,
+        node_stats: _FlowRunNodeStats,
+        payload: Mapping[str, object],
+    ) -> None:
+        input_tokens = _flow_progress_payload_non_negative_int(
+            payload,
+            "input_tokens",
+        )
+        if input_tokens is not None:
+            node_stats.input_tokens += input_tokens
+        output_tokens = _flow_progress_payload_non_negative_int(
+            payload,
+            "output_tokens",
+        )
+        if output_tokens is not None:
+            node_stats.output_tokens += output_tokens
+        reasoning_tokens = _flow_progress_payload_non_negative_int(
+            payload,
+            "reasoning_tokens",
+        )
+        if reasoning_tokens is not None:
+            node_stats.reasoning_tokens += reasoning_tokens
+
+    def _apply_flow_stats(
+        self,
+        payload: Mapping[str, object],
+    ) -> None:
+        node = _flow_progress_payload_string(payload, "node")
+        if node is None or node not in self.node_states:
+            return
+        duration_ms = _flow_progress_payload_non_negative_number(
+            payload,
+            "duration_ms",
+        )
+        if duration_ms is None:
+            return
+        self._node_stats(node).elapsed_ms = duration_ms
+
+    def _flow_stats_snapshot(self) -> dict[str, dict[str, int | float]]:
+        now = monotonic()
+        snapshots = {
+            node: self._node_stats(node).snapshot(now)
+            for node in self.node_states
+        }
+        executed_states = {"succeeded", "completed", "failed", "cancelled"}
+        succeeded_states = {"succeeded", "completed"}
+        failed_states = {"failed", "cancelled"}
+        elapsed_nodes = [
+            values["elapsed_ms"]
+            for values in snapshots.values()
+            if values["elapsed_ms"] > 0
+        ]
+        total = {
+            "elapsed_ms": ((self.finished_at or now) - self.started_at) * 1000,
+            "executed_nodes": sum(
+                1
+                for state in self.node_states.values()
+                if state in executed_states
+            ),
+            "succeeded_nodes": sum(
+                1
+                for state in self.node_states.values()
+                if state in succeeded_states
+            ),
+            "failed_nodes": sum(
+                1
+                for state in self.node_states.values()
+                if state in failed_states
+            ),
+            "average_node_ms": (
+                sum(elapsed_nodes) / len(elapsed_nodes) if elapsed_nodes else 0
+            ),
+            "input_tokens": sum(
+                values["input_tokens"] for values in snapshots.values()
+            ),
+            "output_tokens": sum(
+                values["output_tokens"] for values in snapshots.values()
+            ),
+            "reasoning_tokens": sum(
+                values["reasoning_tokens"] for values in snapshots.values()
+            ),
+            "tools_executed": sum(
+                values["tools_executed"] for values in snapshots.values()
+            ),
+        }
+        return {"__total__": total, **snapshots}
+
+    def _node_stats(self, node: str) -> _FlowRunNodeStats:
+        return self.node_stats.setdefault(node, _FlowRunNodeStats())
 
 
 def _flow_run_progress_monitor(
@@ -1782,6 +1963,9 @@ def _flow_run_progress_monitor(
         theme=theme,
         mermaid_source=_flow_definition_progress_mermaid_source(definition),
         node_states={node.name: "pending" for node in definition.nodes},
+        node_stats={
+            node.name: _FlowRunNodeStats() for node in definition.nodes
+        },
     )
 
 
@@ -1838,6 +2022,28 @@ def _flow_progress_payload_int(
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return None
+
+
+def _flow_progress_payload_non_negative_int(
+    payload: Mapping[str, object],
+    key: str,
+) -> int | None:
+    value = _flow_progress_payload_int(payload, key)
+    if value is None or value < 0:
+        return None
+    return value
+
+
+def _flow_progress_payload_non_negative_number(
+    payload: Mapping[str, object],
+    key: str,
+) -> float | None:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if value < 0:
+        return None
+    return float(value)
 
 
 @dataclass(slots=True)
