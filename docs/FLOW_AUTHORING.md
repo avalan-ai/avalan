@@ -232,6 +232,112 @@ avalan flow compile docs/examples/flows/graph_file.flow.toml --check
 Canonical strict TOML contains normal `[[edges]]` records and omits executable
 `[graph]` source.
 
+## Common Graph Diagnostics
+
+Graph compiler diagnostics use stable public codes and safe paths. They name
+the rule that failed, but they do not include raw Mermaid source, graph file
+paths, private labels, prompts, URLs, or TOML metadata values.
+
+| Code | Path | Fix |
+| --- | --- | --- |
+| `flow.graph.duplicate_edge_id` | `graph.edges` | Give every executable Mermaid edge a unique explicit edge ID. |
+| `flow.graph.decorative_edge_metadata` | `graph.edges` | Bind `[graph.edges.<edge_id>]` only to edges whose source and target are declared strict nodes. |
+| `flow.graph.missing_edge_metadata` | `graph.edges` | Remove metadata for absent Mermaid edge IDs or add the matching explicit edge. |
+| `flow.graph.read_failure` | `graph.source` | Use a readable local graph file under the flow definition directory. |
+| `flow.graph.path_escape` | `graph.source` | Keep graph paths relative to the flow file and inside that directory tree. |
+| `flow.graph.malformed_source` | `graph.source` | Fix Mermaid syntax or remove executable-mode unsafe directives. |
+| `flow.graph.unsupported_executable_edge` | `graph.edges` | Add explicit IDs to executable edges and avoid ambiguous shorthand or bidirectional executable edges. |
+| `flow.graph.edge_conflict` | `edges` | Use either `[graph]` authoring or hand-authored `[[edges]]`, not both. |
+
+## Negative Graph Examples
+
+These example files are expected to fail compilation and are covered by the
+documentation tests:
+
+| Example | Expected code |
+| --- | --- |
+| [`duplicate_edge_id.flow.toml`](examples/flows/negative/duplicate_edge_id.flow.toml) | `flow.graph.duplicate_edge_id` |
+| [`metadata_decorative_edge.flow.toml`](examples/flows/negative/metadata_decorative_edge.flow.toml) | `flow.graph.decorative_edge_metadata` |
+| [`missing_graph_file.flow.toml`](examples/flows/negative/missing_graph_file.flow.toml) | `flow.graph.read_failure` |
+| [`path_escape.flow.toml`](examples/flows/negative/path_escape.flow.toml) | `flow.graph.path_escape` |
+| [`unsafe_directive.flow.toml`](examples/flows/negative/unsafe_directive.flow.toml) | `flow.graph.malformed_source` |
+| [`graph_edges_conflict.flow.toml`](examples/flows/negative/graph_edges_conflict.flow.toml) | `flow.graph.edge_conflict` |
+
+Inspect a failure as JSON:
+
+```bash
+avalan flow graph inspect \
+  docs/examples/flows/negative/duplicate_edge_id.flow.toml \
+  --json
+```
+
+The JSON diagnostic includes stable fields such as `code`, `category`,
+`severity`, `message`, `path`, and `hint`. Source spans may appear when the
+compiler can identify a safe line and column, but private source text is not
+included.
+
+## JSON Graph Inspection Shape
+
+Static graph inspection exposes classification and binding state for tooling:
+
+```json
+{
+  "ok": true,
+  "authoring_graph": true,
+  "diagnostics": [],
+  "inspection": {
+    "schema_version": "flow.graph.inspection.v1",
+    "source": {
+      "format": "mermaid",
+      "source_kind": "inline",
+      "mode": "executable"
+    },
+    "nodes": [
+      {
+        "id": "start",
+        "classification": "actual",
+        "strict_node": "start"
+      },
+      {
+        "id": "note",
+        "classification": "decorative"
+      }
+    ],
+    "edges": [
+      {
+        "index": 0,
+        "source": "start",
+        "target": "pick",
+        "classification": "executable",
+        "edge_id": "route_profile"
+      }
+    ],
+    "bindings": [
+      {
+        "edge_id": "route_profile",
+        "state": "bound",
+        "metadata_fields": [
+          "kind",
+          "label"
+        ]
+      }
+    ],
+    "generated_edges": [
+      {
+        "index": 0,
+        "source": "start",
+        "target": "pick",
+        "kind": "success",
+        "label": "profile_ready"
+      }
+    ]
+  }
+}
+```
+
+This is static authoring inspection. Durable runtime inspection still uses run
+IDs and never returns decorative topology.
+
 ## Joins, Retries, Timeouts, And Loops
 
 Nodes with more than one inbound path need a join policy unless their contract

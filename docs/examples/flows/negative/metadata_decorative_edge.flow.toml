@@ -1,0 +1,47 @@
+[flow]
+name = "graph_metadata_decorative_edge"
+version = "1"
+
+[[inputs]]
+name = "payload"
+type = "object"
+
+[[outputs]]
+name = "profile"
+type = "object"
+
+[entry]
+type = "node"
+node = "start"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+profile = "pick.value"
+
+[graph]
+format = "mermaid"
+source = "inline"
+mode = "executable"
+diagram = '''
+flowchart LR
+start route_profile@--> pick
+pick note_route@-->|private review label| note
+'''
+
+[graph.edges.note_route]
+kind = "success"
+label = "ignored"
+
+[nodes.start]
+type = "input"
+
+[nodes.pick]
+type = "select"
+
+[nodes.pick.mapping.value]
+type = "object"
+
+[nodes.pick.mapping.value.fields]
+name = "input.payload.name"
