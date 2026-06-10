@@ -1,0 +1,51 @@
+[flow]
+name = "graph_inline_profile"
+version = "1"
+
+[[inputs]]
+name = "payload"
+type = "object"
+
+[[outputs]]
+name = "profile"
+type = "object"
+
+[entry]
+type = "node"
+node = "start"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+profile = "pick.value"
+
+[graph]
+format = "mermaid"
+source = "inline"
+mode = "executable"
+diagram = '''
+flowchart LR
+start route_profile@-->|diagram label ignored| pick
+start -.-> note["review-only note"]
+note -.-> pick
+classDef review fill:#eef,stroke:#446
+class note review
+'''
+
+[graph.edges.route_profile]
+kind = "success"
+label = "profile_ready"
+
+[nodes.start]
+type = "input"
+
+[nodes.pick]
+type = "select"
+
+[nodes.pick.mapping.value]
+type = "object"
+
+[nodes.pick.mapping.value.fields]
+name = "input.payload.name"
+account_id = "input.payload.account.id"
