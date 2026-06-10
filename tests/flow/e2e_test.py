@@ -41,6 +41,7 @@ from avalan.flow import (
     FlowReviewState,
     InMemoryFlowStateStore,
     Node,
+    compile_flow_definition,
     compile_flow_source,
     default_flow_node_registry,
     serialize_flow_definition,
@@ -48,6 +49,124 @@ from avalan.flow import (
 
 
 class FlowE2ETestCase(IsolatedAsyncioTestCase):
+    async def test_native_strict_toml_loads_validates_compiles_and_runs(
+        self,
+    ) -> None:
+        source = """
+            [flow]
+            name = "native_strict_runtime"
+            version = "1"
+
+            [[inputs]]
+            name = "payload"
+            type = "object"
+
+            [[outputs]]
+            name = "answer"
+            type = "object"
+
+            [entry]
+            type = "node"
+            node = "start"
+
+            [output_behavior]
+            type = "map"
+
+            [output_behavior.outputs]
+            answer = "finish.value"
+
+            [nodes.start]
+            type = "input"
+
+            [nodes.finish]
+            type = "select"
+
+            [nodes.finish.mapping.value]
+            type = "object"
+
+            [nodes.finish.mapping.value.fields]
+            customer = "input.payload.customer"
+            approved = "input.payload.approved"
+
+            [[edges]]
+            source = "start"
+            target = "finish"
+            label = "approved"
+            """
+
+        validation = await FlowDefinitionLoader().loads_validation_result(
+            source
+        )
+        loaded = await FlowDefinitionLoader().loads_result(source)
+
+        self.assertTrue(validation.ok, validation.public_diagnostics)
+        self.assertFalse(validation.authoring_graph)
+        self.assertIsNone(validation.flow)
+        self.assertTrue(loaded.ok, loaded.public_diagnostics)
+        self.assertFalse(loaded.authoring_graph)
+        assert loaded.definition is not None
+        assert loaded.flow is not None
+
+        plan = await compile_flow_definition(loaded.definition)
+        self.assertTrue(plan.ok, plan.public_diagnostics)
+        assert plan.plan is not None
+        self.assertEqual(
+            [
+                (edge.source, edge.target, edge.label)
+                for edge in plan.plan.edges
+            ],
+            [("start", "finish", "approved")],
+        )
+
+        result = await FlowExecutor().run(
+            loaded.definition,
+            inputs={
+                "payload": {
+                    "customer": "Northwind",
+                    "approved": True,
+                },
+            },
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(
+            result.outputs,
+            {"answer": {"customer": "Northwind", "approved": True}},
+        )
+        self.assertFalse(hasattr(loaded.definition, "graph"))
+        self.assertNotIn(
+            "[graph]", serialize_flow_definition(loaded.definition)
+        )
+
+    async def test_native_strict_toml_rejects_invalid_edges_before_runtime(
+        self,
+    ) -> None:
+        result = await FlowDefinitionLoader().loads_result("""
+            [flow]
+            name = "invalid_native_strict_runtime"
+            entrypoint = "start"
+            output_node = "start"
+
+            [nodes.start]
+            type = "input"
+
+            [[edges]]
+            source = "start"
+            target = "missing_private_node"
+            """)
+
+        self.assertFalse(result.ok)
+        self.assertFalse(result.authoring_graph)
+        self.assertIsNone(result.definition)
+        self.assertIsNone(result.flow)
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in result.issues],
+            [("flow.bad_reference", "edges.target")],
+        )
+        self.assertNotIn(
+            "missing_private_node", str(result.public_diagnostics)
+        )
+
     async def test_graph_compile_strict_serialization_runs_equivalently(
         self,
     ) -> None:
