@@ -151,6 +151,12 @@ class TaskDocsTest(TestCase):
                     self.assertIn(flag, docs)
                     self.assertIn(flag, help_text)
 
+        compile_help = _find_parser(parser, " flow compile").format_help()
+        for flag in ("--encoding", "--output", "--check", "--json"):
+            with self.subTest(command="compile", flag=flag):
+                self.assertIn(flag, docs)
+                self.assertIn(flag, compile_help)
+
         resume_help = _find_parser(parser, " flow resume").format_help()
         for flag in ("--store-dsn", "--store-schema", "--decision-json"):
             with self.subTest(command="resume", flag=flag):
