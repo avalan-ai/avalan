@@ -1,0 +1,39 @@
+[flow]
+name = "graph_path_escape"
+version = "1"
+
+[[inputs]]
+name = "payload"
+type = "object"
+
+[[outputs]]
+name = "profile"
+type = "object"
+
+[entry]
+type = "node"
+node = "start"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+profile = "pick.value"
+
+[graph]
+format = "mermaid"
+source = "file"
+mode = "executable"
+path = "../profile_topology.mmd"
+
+[nodes.start]
+type = "input"
+
+[nodes.pick]
+type = "select"
+
+[nodes.pick.mapping.value]
+type = "object"
+
+[nodes.pick.mapping.value.fields]
+name = "input.payload.name"
