@@ -150,6 +150,7 @@ class FancyThemeFlowProgressTestCase(unittest.TestCase):
                     "failed_nodes": 1,
                     "average_node_ms": 750,
                     "input_tokens": 1234,
+                    "cached_input_tokens": 99,
                     "output_tokens": 56,
                     "reasoning_tokens": 7,
                     "tools_executed": 3,
@@ -157,6 +158,7 @@ class FancyThemeFlowProgressTestCase(unittest.TestCase):
                 "analyze_pov_1": {
                     "elapsed_ms": 1000,
                     "input_tokens": 12,
+                    "cached_input_tokens": 4,
                     "output_tokens": 34,
                     "reasoning_tokens": 5,
                     "tools_executed": 2,
@@ -171,14 +173,47 @@ class FancyThemeFlowProgressTestCase(unittest.TestCase):
         self.assertIn("Nodes", output)
         self.assertIn("time", output)
         self.assertIn("nodes", output)
+        self.assertIn("cached", output)
         self.assertIn("tool", output)
         self.assertIn("1.5s", output)
         self.assertIn("1,234", output)
-        self.assertIn("📥 12", output)
-        self.assertIn("📤 34", output)
-        self.assertIn("🧠 5", output)
-        self.assertIn("🛠 2", output)
+        self.assertIn("out 56 🔥", output)
+        self.assertNotIn("nodes 🔗", output)
+        self.assertNotIn("ok ✅", output)
+        self.assertNotIn("out 🚀", output)
+        self.assertRegex(output, "📨\\s+12")
+        self.assertRegex(output, "💾\\s+33%")
+        self.assertRegex(output, "💬\\s+34")
+        self.assertRegex(output, "🧠\\s+5")
+        self.assertRegex(output, "🛠\\s+2")
         self.assertNotRegex(output, "[\\u2800-\\u28ff]")
+
+    def test_flow_run_stats_header_expands_columns(self):
+        console = Console(file=StringIO(), record=True, width=100)
+        console.print(
+            fancy_theme_module._flow_run_stats_header(
+                {
+                    "__total__": {
+                        "elapsed_ms": 1500,
+                        "executed_nodes": 7,
+                        "succeeded_nodes": 7,
+                        "failed_nodes": 0,
+                        "average_node_ms": 3100,
+                        "input_tokens": 2092,
+                        "cached_input_tokens": 1536,
+                        "output_tokens": 94,
+                        "reasoning_tokens": 0,
+                        "tools_executed": 0,
+                    }
+                }
+            )
+        )
+
+        stat_line = next(
+            line for line in console.export_text().splitlines()
+            if "nodes 7" in line
+        )
+        self.assertGreaterEqual(stat_line.index("tool"), 75)
 
     def test_flow_run_progress_sanitizes_negative_stats(self):
         theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
@@ -197,6 +232,7 @@ class FancyThemeFlowProgressTestCase(unittest.TestCase):
                     "failed_nodes": -3,
                     "average_node_ms": -4,
                     "input_tokens": -5,
+                    "cached_input_tokens": -9,
                     "output_tokens": -6,
                     "reasoning_tokens": -7,
                     "tools_executed": -8,

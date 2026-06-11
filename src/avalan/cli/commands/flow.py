@@ -133,6 +133,8 @@ from uuid import uuid4
 
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.live import Live
+from rich.markdown import Markdown
+from rich.pretty import Pretty
 
 _AVALAN_INPUT_TYPE_SCHEMA_KEY = "x-avalan-input-type"
 _AVALAN_MIME_TYPES_SCHEMA_KEY = "x-avalan-mime-types"
@@ -1662,12 +1664,27 @@ async def _flow_run_with_task_context(
         if not output_written:
             return False
     if not _task_run_json_output(args) and not _task_run_quiet(args):
-        console.print("Flow run completed.", markup=False)
-        console.print(
-            f"output {_format_task_cli_value(result.output)}",
-            markup=False,
-        )
+        _print_flow_run_result(console, result.output)
     return True
+
+
+def _print_flow_run_result(console: Console, output: object) -> None:
+    console.line()
+    if isinstance(output, str):
+        console.print(Markdown(output))
+        return
+    console.print(Pretty(_plain_flow_run_result(output)))
+
+
+def _plain_flow_run_result(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _plain_flow_run_result(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list | tuple):
+        return [_plain_flow_run_result(item) for item in value]
+    return value
 
 
 @dataclass(slots=True)
@@ -1678,6 +1695,7 @@ class _FlowRunNodeStats:
     output_tokens: int = 0
     reasoning_tokens: int = 0
     usage_input_tokens: int = 0
+    usage_cached_input_tokens: int = 0
     usage_output_tokens: int = 0
     usage_reasoning_tokens: int = 0
     tools_executed: int = 0
@@ -1689,6 +1707,7 @@ class _FlowRunNodeStats:
         return {
             "elapsed_ms": elapsed_ms,
             "input_tokens": max(self.input_tokens, self.usage_input_tokens),
+            "cached_input_tokens": self.usage_cached_input_tokens,
             "output_tokens": max(self.output_tokens, self.usage_output_tokens),
             "reasoning_tokens": max(
                 self.reasoning_tokens,
@@ -1877,6 +1896,12 @@ class _FlowRunProgressMonitor:
         )
         if input_tokens is not None:
             node_stats.usage_input_tokens += input_tokens
+        cached_input_tokens = _flow_progress_payload_non_negative_int(
+            payload,
+            "cached_input_tokens",
+        )
+        if cached_input_tokens is not None:
+            node_stats.usage_cached_input_tokens += cached_input_tokens
         output_tokens = _flow_progress_payload_non_negative_int(
             payload,
             "output_tokens",
@@ -1941,6 +1966,9 @@ class _FlowRunProgressMonitor:
             ),
             "input_tokens": sum(
                 values["input_tokens"] for values in snapshots.values()
+            ),
+            "cached_input_tokens": sum(
+                values["cached_input_tokens"] for values in snapshots.values()
             ),
             "output_tokens": sum(
                 values["output_tokens"] for values in snapshots.values()

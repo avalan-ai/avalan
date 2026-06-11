@@ -228,6 +228,7 @@ class FlowRunCommandTestCase(TestCase):
                 payload={
                     "flow_node": "analyze_pov_1",
                     "input_tokens": 4,
+                    "cached_input_tokens": 5,
                     "output_tokens": 7,
                     "reasoning_tokens": 3,
                 },
@@ -250,11 +251,16 @@ class FlowRunCommandTestCase(TestCase):
         self.assertEqual(monitor.node_states["analyze_pov_1"], "succeeded")
         self.assertEqual(flow_stats["analyze_pov_1"]["elapsed_ms"], 2500)
         self.assertEqual(flow_stats["analyze_pov_1"]["input_tokens"], 12)
+        self.assertEqual(
+            flow_stats["analyze_pov_1"]["cached_input_tokens"],
+            5,
+        )
         self.assertEqual(flow_stats["analyze_pov_1"]["output_tokens"], 7)
         self.assertEqual(flow_stats["analyze_pov_1"]["reasoning_tokens"], 3)
         self.assertEqual(flow_stats["analyze_pov_1"]["tools_executed"], 1)
         self.assertEqual(flow_stats["__total__"]["executed_nodes"], 1)
         self.assertEqual(flow_stats["__total__"]["succeeded_nodes"], 1)
+        self.assertEqual(flow_stats["__total__"]["cached_input_tokens"], 5)
 
     def test_flow_progress_monitor_keeps_streamed_token_high_water_mark(
         self,
@@ -371,11 +377,13 @@ class FlowRunCommandTestCase(TestCase):
         for usage in (
             {
                 "input_tokens": 4,
+                "cached_input_tokens": 1,
                 "output_tokens": 2,
                 "reasoning_tokens": 1,
             },
             {
                 "input_tokens": 6,
+                "cached_input_tokens": 3,
                 "output_tokens": 3,
                 "reasoning_tokens": 2,
             },
@@ -390,6 +398,7 @@ class FlowRunCommandTestCase(TestCase):
 
         flow_stats = theme.flow_stats["analyze_pov_1"]
         self.assertEqual(flow_stats["input_tokens"], 10)
+        self.assertEqual(flow_stats["cached_input_tokens"], 4)
         self.assertEqual(flow_stats["output_tokens"], 5)
         self.assertEqual(flow_stats["reasoning_tokens"], 3)
 
@@ -495,6 +504,7 @@ class FlowRunCommandTestCase(TestCase):
                 payload={
                     "flow_node": "analyze_pov_1",
                     "input_tokens": -1,
+                    "cached_input_tokens": -2,
                     "output_tokens": "private",
                     "reasoning_tokens": False,
                 },
@@ -515,6 +525,10 @@ class FlowRunCommandTestCase(TestCase):
         flow_stats = theme.flow_stats
         self.assertEqual(flow_stats["analyze_pov_1"]["elapsed_ms"], 0)
         self.assertEqual(flow_stats["analyze_pov_1"]["input_tokens"], 0)
+        self.assertEqual(
+            flow_stats["analyze_pov_1"]["cached_input_tokens"],
+            0,
+        )
         self.assertEqual(flow_stats["analyze_pov_1"]["output_tokens"], 0)
 
     def test_flow_progress_monitor_uses_single_active_node_for_stats(
@@ -3905,8 +3919,81 @@ class FlowRunCommandTestCase(TestCase):
         self.assertFalse(writer_result)
         self.assertTrue(human_result)
         human_output = human_console.export_text()
-        self.assertIn("Flow run completed.", human_output)
-        self.assertIn('"answer":"ok"', human_output)
+        self.assertNotIn("Flow run completed.", human_output)
+        self.assertNotIn("output {", human_output)
+        self.assertNotIn('output "', human_output)
+        self.assertIn("answer", human_output)
+        self.assertIn("ok", human_output)
+
+    def test_flow_run_string_output_renders_markdown(
+        self,
+    ) -> None:
+        with (
+            TemporaryDirectory() as temporary_directory,
+            patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+        ):
+            root = Path(temporary_directory)
+            flow_path = root / "text.flow.toml"
+            flow_path.write_text(
+                """
+                [flow]
+                name = "text"
+                version = "1"
+
+                [[inputs]]
+                name = "payload"
+                type = "string"
+
+                [[outputs]]
+                name = "result"
+                type = "text"
+
+                [entry]
+                type = "node"
+                node = "start"
+
+                [output_behavior]
+                type = "map"
+
+                [output_behavior.outputs]
+                result = "start.value"
+
+                [nodes.start]
+                type = "constant"
+                value = "# Done\\n\\n**ok**"
+                """,
+                encoding="utf-8",
+            )
+            human_console = Console(record=True, width=160)
+            human_result = flow_cmds.flow_run(
+                _args(flow=flow_path, task_input="ignored"),
+                human_console,
+                self.theme,
+            )
+
+        human_output = human_console.export_text()
+        self.assertTrue(human_result)
+        self.assertIn("Done", human_output)
+        self.assertIn("ok", human_output)
+        self.assertNotIn("# Done", human_output)
+        self.assertNotIn("output {", human_output)
+        self.assertNotIn('output "', human_output)
+
+    def test_plain_flow_run_result_normalizes_tuples(self) -> None:
+        result = flow_cmds._plain_flow_run_result(
+            {
+                1: ("alpha", {"nested": ("beta",)}),
+                "items": [("gamma",)],
+            }
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "1": ["alpha", {"nested": ["beta"]}],
+                "items": [["gamma"]],
+            },
+        )
 
     def test_flow_run_human_strict_prints_progress_monitor(self) -> None:
         console = Console(record=True, width=160)
@@ -3927,7 +4014,7 @@ class FlowRunCommandTestCase(TestCase):
         self.assertIn("Flow progress", output)
         self.assertIn("start", output)
         self.assertIn("succeeded", output)
-        self.assertIn("Flow run completed.", output)
+        self.assertNotIn("\nFlow run completed.\n", output)
 
     def test_flow_run_stops_when_structured_writer_fails(self) -> None:
         console = Console(record=True, width=160)

@@ -248,15 +248,19 @@ class FancyTheme(Theme):
         )
         progress_body: RenderableType = diagram
         if status_table is not None:
-            progress_body = Columns(
-                [diagram, status_table],
-                expand=False,
-                padding=(0, 4),
+            progress_body = (
+                Columns(
+                    [diagram, status_table],
+                    expand=False,
+                    padding=(0, 4),
+                )
+                if console_width >= 120
+                else Group(diagram, Text(""), status_table)
             )
         status_line = Table.grid(padding=(0, 1))
         status_line.add_row(
             RichSpinner(
-                "simpleDotsScrolling",
+                "arc",
                 text=Text.from_markup(f"[bold]{message}[/bold]"),
                 style="cyan",
             )
@@ -2798,7 +2802,7 @@ def _flow_run_status_table(
     table.add_column(style="bright_black", no_wrap=True)
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(style="white", no_wrap=True)
-    for _ in range(10):
+    for _ in range(6):
         table.add_column(no_wrap=True)
     for node, state in node_states.items():
         label, style = _flow_run_state_display(state)
@@ -2821,38 +2825,33 @@ def _flow_run_stats_header(
     flow_stats: Mapping[str, Mapping[str, int | float]] | None,
 ) -> Panel:
     stats = _flow_run_stats_values(flow_stats, _FLOW_RUN_TOTAL_STATS_KEY)
-    table = Table.grid(padding=(0, 2))
-    for _ in range(10):
-        table.add_column(no_wrap=True)
+    table = Table.grid(expand=True, padding=(0, 1))
+    for _ in range(5):
+        table.add_column(no_wrap=True, ratio=1)
     table.add_row(
-        Text("time", style="bright_black"),
-        Text(_flow_run_format_duration(stats["elapsed_ms"]), style="white"),
-        Text("nodes", style="bright_black"),
-        Text(_flow_run_format_number(stats["executed_nodes"]), style="white"),
-        Text("ok", style="bright_black"),
-        Text(_flow_run_format_number(stats["succeeded_nodes"]), style="white"),
-        Text("fail", style="bright_black"),
-        Text(_flow_run_format_number(stats["failed_nodes"]), style="white"),
-        Text("avg", style="bright_black"),
-        Text(
-            _flow_run_format_duration(stats["average_node_ms"]),
-            style="white",
-        ),
+        _flow_run_total_cell("nodes", stats["executed_nodes"]),
+        _flow_run_total_cell("ok", stats["succeeded_nodes"]),
+        _flow_run_total_cell("in", stats["input_tokens"]),
+        _flow_run_total_cell("cached", stats["cached_input_tokens"]),
+        _flow_run_total_cell("tool", stats["tools_executed"]),
     )
     table.add_row(
-        Text("in", style="bright_black"),
-        Text(_flow_run_format_number(stats["input_tokens"]), style="white"),
-        Text("out", style="bright_black"),
-        Text(_flow_run_format_number(stats["output_tokens"]), style="white"),
-        Text("rsn", style="bright_black"),
-        Text(
-            _flow_run_format_number(stats["reasoning_tokens"]),
-            style="white",
+        _flow_run_total_cell(
+            "time",
+            _flow_run_format_duration(stats["elapsed_ms"]),
         ),
-        Text("tool", style="bright_black"),
-        Text(_flow_run_format_number(stats["tools_executed"]), style="white"),
-        Text(""),
-        Text(""),
+        _flow_run_total_cell("fail", stats["failed_nodes"]),
+        _flow_run_total_cell(
+            "out",
+            stats["output_tokens"],
+            value_suffix_markup=":fire:",
+            value_suffix_style="dim red",
+        ),
+        _flow_run_total_cell("rsn", stats["reasoning_tokens"]),
+        _flow_run_total_cell(
+            "avg",
+            _flow_run_format_duration(stats["average_node_ms"]),
+        ),
     )
     return Panel(
         table,
@@ -2869,19 +2868,34 @@ def _flow_run_node_stats_cells(
 ) -> tuple[Text, ...]:
     stats = _flow_run_stats_values(flow_stats, node)
     return (
-        Text.from_markup(":stopwatch:", style="bright_black"),
-        Text(_flow_run_format_duration(stats["elapsed_ms"]), style="white"),
-        Text.from_markup(":inbox_tray:", style="bright_black"),
-        Text(_flow_run_format_number(stats["input_tokens"]), style="white"),
-        Text.from_markup(":outbox_tray:", style="bright_black"),
-        Text(_flow_run_format_number(stats["output_tokens"]), style="white"),
-        Text.from_markup(":brain:", style="bright_black"),
-        Text(
-            _flow_run_format_number(stats["reasoning_tokens"]),
-            style="white",
+        _flow_run_metric_cell(
+            ":stopwatch:",
+            _flow_run_format_duration(stats["elapsed_ms"]),
+            width=6,
         ),
-        Text.from_markup(":hammer_and_wrench:", style="bright_black"),
-        Text(_flow_run_format_number(stats["tools_executed"]), style="white"),
+        _flow_run_metric_cell(
+            ":incoming_envelope:",
+            _flow_run_format_number(stats["input_tokens"]),
+        ),
+        _flow_run_metric_cell(
+            ":floppy_disk:",
+            _flow_run_format_percentage(
+                stats["cached_input_tokens"],
+                stats["input_tokens"],
+            ),
+        ),
+        _flow_run_metric_cell(
+            ":speech_balloon:",
+            _flow_run_format_number(stats["output_tokens"]),
+        ),
+        _flow_run_metric_cell(
+            ":brain:",
+            _flow_run_format_number(stats["reasoning_tokens"]),
+        ),
+        _flow_run_metric_cell(
+            ":hammer_and_wrench:",
+            _flow_run_format_number(stats["tools_executed"]),
+        ),
     )
 
 
@@ -2906,6 +2920,10 @@ def _flow_run_stats_values(
             "average_node_ms",
         ),
         "input_tokens": _flow_run_stats_number(source, "input_tokens"),
+        "cached_input_tokens": _flow_run_stats_number(
+            source,
+            "cached_input_tokens",
+        ),
         "output_tokens": _flow_run_stats_number(source, "output_tokens"),
         "reasoning_tokens": _flow_run_stats_number(
             source,
@@ -2946,6 +2964,52 @@ def _flow_run_format_duration(milliseconds: int | float) -> str:
     hours = minutes // 60
     remaining_minutes = minutes % 60
     return f"{hours}h{remaining_minutes:02d}m"
+
+
+def _flow_run_format_percentage(value: int | float, total: int | float) -> str:
+    if total <= 0 or value <= 0:
+        return "0%"
+    percentage = min((float(value) / float(total)) * 100, 100)
+    return f"{percentage:.0f}%"
+
+
+def _flow_run_metric_cell(
+    emoji_markup: str,
+    value: str,
+    *,
+    width: int = 5,
+) -> Text:
+    text = Text()
+    text.append(Text.from_markup(emoji_markup, style="bright_black"))
+    text.append(" ")
+    text.append(value.rjust(width), style="white")
+    return text
+
+
+def _flow_run_total_cell(
+    label: str,
+    value: int | float | str,
+    *,
+    value_suffix_markup: str | None = None,
+    value_suffix_style: str | None = None,
+) -> Text:
+    rendered = (
+        _flow_run_format_number(value)
+        if isinstance(value, int | float)
+        else value
+    )
+    text = Text(label, style="bright_black")
+    text.append(" ")
+    text.append(rendered, style="white")
+    if value_suffix_markup is not None:
+        text.append(" ")
+        suffix = (
+            Text.from_markup(value_suffix_markup, style=value_suffix_style)
+            if value_suffix_style is not None
+            else Text.from_markup(value_suffix_markup)
+        )
+        text.append(suffix)
+    return text
 
 
 def _flow_run_state_display(state: str) -> tuple[str, str]:
