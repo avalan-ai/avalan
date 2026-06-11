@@ -1625,6 +1625,7 @@ async def _flow_run_with_task_context(
                 logger=logger,
                 input_value=flow_input.value,
                 flow_tool_resolver=tool_resolver,
+                flow_concurrency_limit=getattr(args, "flow_parallel", 1),
                 event_observer=event_observer,
             )
             async with client_context as client:

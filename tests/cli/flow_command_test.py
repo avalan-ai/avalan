@@ -115,6 +115,7 @@ TASK_ARGS = {
     "task_pdf": None,
     "task_run_json": False,
     "task_output_path": None,
+    "flow_parallel": 1,
     "quiet": False,
     "tool": None,
     "tools": None,
@@ -3795,15 +3796,22 @@ class FlowRunCommandTestCase(TestCase):
                 flow_cmds,
                 "_task_cli_client_context",
                 return_value=_FailingFlowClientContext(),
-            ):
+            ) as client_context:
                 result = flow_cmds.flow_run(
-                    _args(flow=flow_path, task_input_json='{"answer":"ok"}'),
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"answer":"ok"}',
+                        flow_parallel=5,
+                    ),
                     console,
                     self.theme,
                 )
 
         output = console.export_text()
         self.assertFalse(result)
+        self.assertEqual(
+            client_context.call_args.kwargs["flow_concurrency_limit"], 5
+        )
         self.assertIn("io.failure", output)
         self.assertNotIn("private client failure", output)
 

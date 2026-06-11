@@ -93,6 +93,13 @@ class CliInitTestCase(TestCase):
 
 
 class CliParallelOptionTestCase(TestCase):
+    def test_default_flow_parallel_count_uses_cpu_count(self) -> None:
+        with patch("avalan.cli.__main__.cpu_count", return_value=12):
+            self.assertEqual(CLI._default_flow_parallel_count(), 12)
+
+        with patch("avalan.cli.__main__.cpu_count", return_value=None):
+            self.assertEqual(CLI._default_flow_parallel_count(), 1)
+
     def test_parallel_argument(self) -> None:
         logger = MagicMock()
         with patch.object(sys, "argv", ["prog"]):
@@ -116,6 +123,34 @@ class CliParallelOptionTestCase(TestCase):
             ]
         )
         self.assertEqual(args.parallel_count, 5)
+
+    def test_flow_run_parallel_argument(self) -> None:
+        logger = MagicMock()
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch.object(CLI, "_default_flow_parallel_count", return_value=8),
+        ):
+            cli = CLI(logger)
+
+        default_args = cli._parser.parse_args(["flow", "run", "flow.toml"])
+        explicit_args = cli._parser.parse_args(
+            ["flow", "run", "flow.toml", "--flow-parallel", "4"]
+        )
+
+        self.assertIsNone(getattr(default_args, "parallel", None))
+        self.assertEqual(default_args.flow_parallel, 8)
+        self.assertEqual(explicit_args.flow_parallel, 4)
+
+    def test_flow_run_parallel_argument_must_be_positive(self) -> None:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(logger)
+
+        for value in ("0", "many"):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                cli._parser.parse_args(
+                    ["flow", "run", "flow.toml", "--flow-parallel", value]
+                )
 
 
 class CliTaskOptionTestCase(TestCase):

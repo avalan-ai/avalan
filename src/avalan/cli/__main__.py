@@ -25,12 +25,14 @@ from ..model.manager import ModelManager
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
 from ..tool.graph_settings import GraphToolSettings
+from ..types import assert_positive_int
 from ..utils import logger_replace
 
 import gettext
 import sys
 from argparse import (
     ArgumentParser,
+    ArgumentTypeError,
     Namespace,
     _ArgumentGroup,
     _SubParsersAction,
@@ -64,7 +66,7 @@ from logging import (
     basicConfig,
     getLogger,
 )
-from os import environ, getenv
+from os import cpu_count, environ, getenv
 from os.path import join
 from pathlib import Path
 from re import fullmatch
@@ -810,6 +812,22 @@ class CLI:
     @staticmethod
     def _default_parallel_count() -> int:
         return _cuda_device_count()
+
+    @staticmethod
+    def _default_flow_parallel_count() -> int:
+        return cpu_count() or 1
+
+    @staticmethod
+    def _positive_integer(value: str) -> int:
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ArgumentTypeError("must be an integer") from exc
+        try:
+            assert_positive_int(parsed, "value")
+        except AssertionError as exc:
+            raise ArgumentTypeError(str(exc)) from exc
+        return parsed
 
     @staticmethod
     def _default_attention(device: str) -> AttentionImplementation | None:
@@ -1558,7 +1576,9 @@ class CLI:
         )
         flow_command_parsers = flow_parser.add_subparsers(dest="flow_command")
         flow_run_parser = flow_command_parsers.add_parser(
-            name="run", description="Run a given flow", parents=[global_parser]
+            name="run",
+            description="Run a given flow",
+            parents=[global_parser],
         )
         flow_run_parser.add_argument(
             "flow",
@@ -1612,6 +1632,17 @@ class CLI:
             type=str,
             default=None,
             help="Write successful flow output to a JSON file.",
+        )
+        flow_run_parser.add_argument(
+            "--flow-parallel",
+            dest="flow_parallel",
+            metavar="N",
+            type=CLI._positive_integer,
+            default=CLI._default_flow_parallel_count(),
+            help=(
+                "Maximum number of ready flow nodes to execute in parallel "
+                "(defaults to the number of CPUs)"
+            ),
         )
         flow_run_parser.add_argument(
             "--tool",

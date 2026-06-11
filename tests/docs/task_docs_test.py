@@ -44,6 +44,7 @@ FLOW_RUN_FLAGS = (
     "--pdf",
     "--json",
     "--output",
+    "--flow-parallel",
     "--tool",
     "--tools",
 )
