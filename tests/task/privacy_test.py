@@ -535,7 +535,6 @@ class PrivacyTest(TestCase):
             "token_generated",
             {
                 "flow_node": "analyze_pov_1",
-                "count": 3,
                 "token": "private token",
                 "token_type": "ReasoningToken",
             },
@@ -546,7 +545,6 @@ class PrivacyTest(TestCase):
             {
                 "event_type": "token_generated",
                 "flow_node": "analyze_pov_1",
-                "count": 3,
                 "token_type": "ReasoningToken",
             },
         )

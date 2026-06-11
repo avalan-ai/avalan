@@ -1,4 +1,5 @@
 from logging import getLogger
+from typing import cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -321,12 +322,37 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
                 yield Event(type=EventType.TOOL_DETECT)
                 yield Token(id=7, token="b")
 
-        text, calls = await OrchestratorResponse._response_text_and_calls(
-            Response()
+        engine = _DummyEngine()
+        engine.tokenizer.encode.return_value = [42]
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
         )
+
+        text, calls = await response._response_text_and_calls(
+            cast(TextGenerationResponse, Response())
+        )
+        token_events = [
+            call.args[0]
+            for call in event_manager.trigger.await_args_list
+            if call.args[0].type == EventType.TOKEN_GENERATED
+        ]
 
         self.assertEqual(text, "ab")
         self.assertEqual(calls, [])
+        self.assertEqual(
+            [event.payload["token"] for event in token_events],
+            ["a", "b"],
+        )
 
     async def test_tool_process_queue(self):
         engine = _DummyEngine()
