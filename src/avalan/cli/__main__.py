@@ -3699,6 +3699,8 @@ class CLI:
     async def _needs_hf_token(args: Namespace) -> bool:
         """Return ``True`` if the command needs hub authentication."""
         command = args.command
+        if command == "flow":
+            return False
         if command == "task":
             engine = await CLI._task_agent_engine_uri(args)
             if not engine:

@@ -3789,6 +3789,7 @@ class FlowRunCommandTestCase(TestCase):
 
     def test_flow_run_agent_context_handles_client_failures(self) -> None:
         console = Console(record=True, width=160)
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
 
         with TemporaryDirectory() as temporary_directory:
             flow_path = _write_agent_context_flow(Path(temporary_directory))
@@ -3804,7 +3805,7 @@ class FlowRunCommandTestCase(TestCase):
                         flow_parallel=5,
                     ),
                     console,
-                    self.theme,
+                    theme,
                 )
 
         output = console.export_text()
@@ -3814,6 +3815,9 @@ class FlowRunCommandTestCase(TestCase):
         )
         self.assertIn("io.failure", output)
         self.assertNotIn("private client failure", output)
+        self.assertGreater(
+            output.rfind("io.failure"), output.rfind("Flow progress")
+        )
 
     def test_flow_run_agent_context_reports_failed_run(self) -> None:
         console = Console(record=True, width=160)

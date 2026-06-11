@@ -1640,6 +1640,10 @@ async def _flow_run_with_task_context(
                 ):
                     monitor.complete()
     except (AssertionError, ImportError, OSError, TaskValidationError) as exc:
+        if monitor is not None:
+            monitor.stop()
+            diagnostic_console.line()
+            monitor = None
         _print_task_execution_error(diagnostic_console, exc)
         return False
     finally:
