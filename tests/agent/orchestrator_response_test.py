@@ -12,6 +12,7 @@ from avalan.agent import AgentOperation, EngineEnvironment, Specification
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
+    _streamed_token_count,
 )
 from avalan.entities import (
     EngineUri,
@@ -177,6 +178,11 @@ def _complex_response():
 
 
 class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
+    def test_streamed_token_count_estimates_visible_text(self) -> None:
+        self.assertEqual(_streamed_token_count(""), 0)
+        self.assertEqual(_streamed_token_count("   "), 1)
+        self.assertEqual(_streamed_token_count("hello world"), 3)
+
     async def test_iteration_emits_events_and_end(self):
         engine = _DummyEngine()
         engine.tokenizer.encode.return_value = [42]
@@ -214,6 +220,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             token_events[0].payload,
             {
+                "count": 1,
                 "token_id": 42,
                 "token_type": "str",
                 "model_id": "m",
@@ -224,6 +231,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             token_events[1].payload,
             {
+                "count": 1,
                 "token_id": 5,
                 "token_type": "Token",
                 "model_id": "m",

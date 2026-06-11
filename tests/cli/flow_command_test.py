@@ -309,6 +309,47 @@ class FlowRunCommandTestCase(TestCase):
         self.assertEqual(flow_stats["output_tokens"], 2)
         self.assertEqual(flow_stats["reasoning_tokens"], 1)
 
+    def test_flow_progress_monitor_uses_streamed_token_counts(self) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  analyze_pov_1\n",
+            node_states={"analyze_pov_1": "pending"},
+        )
+
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_started",
+                payload={"node": "analyze_pov_1", "status": "started"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "token_type": "Token",
+                    "count": 5,
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "token_type": "ReasoningToken",
+                    "count": 2,
+                },
+            )
+        )
+        monitor.render()
+
+        flow_stats = theme.flow_stats["analyze_pov_1"]
+        self.assertEqual(flow_stats["output_tokens"], 5)
+        self.assertEqual(flow_stats["reasoning_tokens"], 2)
+
     def test_flow_progress_monitor_adds_usage_when_not_streaming(
         self,
     ) -> None:

@@ -263,6 +263,63 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             flow_node_registry_runner(object())  # type: ignore[arg-type]
 
+    async def test_execute_flow_plan_scopes_nested_events_to_node(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        node = FlowNodePlan(
+            name="agent_node",
+            type="agent",
+            kind=FlowNodeKind.AGENT,
+            output_contracts=(
+                FlowNodeContract(name="value", type=FlowOutputType.JSON),
+            ),
+        )
+        plan = self._plan(
+            entry_node="agent_node",
+            outputs={"answer": "agent_node.value"},
+            nodes=(node,),
+        )
+
+        async def runner(
+            _: FlowNodePlan,
+            _inputs: Mapping[str, object],
+        ) -> str:
+            options = flow_runtime_module._FLOW_EXECUTION_OPTIONS.get()
+            assert options is not None
+            assert options.event_listener is not None
+            result = options.event_listener(
+                Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={"token_type": "Token", "count": 3},
+                )
+            )
+            if result is not None:
+                await result
+            return "ok"
+
+        result = await execute_flow_plan(
+            plan,
+            runner,
+            event_listener=events.append,
+        )
+        token_events = [
+            event
+            for event in events
+            if event.type == EventType.TOKEN_GENERATED
+        ]
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(token_events), 1)
+        self.assertEqual(
+            cast(Mapping[str, object], token_events[0].payload)["flow_node"],
+            "agent_node",
+        )
+        self.assertEqual(
+            cast(Mapping[str, object], token_events[0].payload)["count"],
+            3,
+        )
+
     async def test_flow_node_registry_runner_handles_subflows(self) -> None:
         runner = FlowNodeRegistryRunner()
         subflow = self._plan(

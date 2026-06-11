@@ -916,14 +916,19 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 if self._engine_agent.engine
                 else None
             )
-            if token_id is None and tokenizer:
+            token_count = _streamed_token_count(token_str)
+            if tokenizer:
                 ids = tokenizer.encode(token_str, add_special_tokens=False)
-                token_id = ids[0] if ids else None
+                if ids:
+                    token_count = len(ids)
+                    if token_id is None:
+                        token_id = ids[0]
 
             await self._event_manager.trigger(
                 Event(
                     type=EventType.TOKEN_GENERATED,
                     payload={
+                        "count": token_count,
                         "token_id": token_id,
                         "model_id": self._engine_agent.engine.model_id,
                         "token": token_str,
@@ -995,3 +1000,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         )
         self._context = context
         return context
+
+
+def _streamed_token_count(token: str) -> int:
+    if not token:
+        return 0
+    visible_length = len(token.strip())
+    if not visible_length:
+        return 1
+    return max(1, round(visible_length / 4))

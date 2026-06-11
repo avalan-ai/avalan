@@ -314,6 +314,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             token_events[0].payload,
             {
+                "count": 1,
                 "token_id": 1,
                 "token_type": "str",
                 "model_id": "m",
@@ -324,6 +325,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             token_events[1].payload,
             {
+                "count": 1,
                 "token_id": 2,
                 "token_type": "str",
                 "model_id": "m",

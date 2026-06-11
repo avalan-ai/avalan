@@ -1848,14 +1848,20 @@ class _FlowRunProgressMonitor:
                 if count is not None:
                     node_stats.input_tokens += count
             case "token_generated":
+                count = _flow_progress_payload_non_negative_int(
+                    payload,
+                    "count",
+                )
+                if count is None:
+                    count = 1
                 token_type = _flow_progress_payload_string(
                     payload,
                     "token_type",
                 )
                 if token_type == "ReasoningToken":
-                    node_stats.reasoning_tokens += 1
+                    node_stats.reasoning_tokens += count
                 else:
-                    node_stats.output_tokens += 1
+                    node_stats.output_tokens += count
             case "tool_execute":
                 node_stats.tools_executed += 1
             case "usage_observed":
