@@ -237,6 +237,7 @@ class TaskClient:
         remote_url_policy: TaskRemoteUrlPolicy | None = None,
         remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
         remote_url_resolver: TaskRemoteUrlResolver | None = None,
+        event_observer: TaskSanitizedEventObserver | None = None,
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
@@ -261,6 +262,7 @@ class TaskClient:
         self._remote_url_policy = remote_url_policy
         self._remote_url_http_client = remote_url_http_client
         self._remote_url_resolver = remote_url_resolver
+        self._event_observer = event_observer
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
         self._observability_sink = observability_sink
@@ -832,6 +834,7 @@ class TaskClient:
             remote_url_policy=self._remote_url_policy,
             remote_url_http_client=self._remote_url_http_client,
             remote_url_resolver=self._remote_url_resolver,
+            event_observer=self._event_observer,
             metrics_event_observer=self._metrics_event_observer,
             trace_event_observer=self._trace_event_observer,
             observability_sink=self._observability_sink,

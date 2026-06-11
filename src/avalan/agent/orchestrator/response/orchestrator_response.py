@@ -533,8 +533,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._response = current_response
         return delta
 
-    @staticmethod
     async def _response_text_and_calls(
+        self,
         response: TextGenerationResponse,
     ) -> tuple[str, list[ToolCall]]:
         if not response.is_async_generator:
@@ -543,16 +543,48 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         async for item in response:
+            if isinstance(item, Event):
+                continue
+            await self._emit_token_generated_event(item)
+            self._step += 1
             if isinstance(item, ToolCallToken):
                 if item.call is not None:
                     calls.append(item.call)
-                continue
-            if isinstance(item, Event):
                 continue
             text_parts.append(
                 item.token if hasattr(item, "token") else str(item)
             )
         return "".join(text_parts), calls
+
+    async def _emit_token_generated_event(
+        self,
+        item: Token | TokenDetail | str,
+    ) -> None:
+        if not self._event_manager:
+            return
+        token_str = item.token if hasattr(item, "token") else str(item)
+        token_id = getattr(item, "id", None)
+        tokenizer = (
+            self._engine_agent.engine.tokenizer
+            if self._engine_agent.engine
+            else None
+        )
+        if token_id is None and tokenizer:
+            ids = tokenizer.encode(token_str, add_special_tokens=False)
+            token_id = ids[0] if ids else None
+
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                payload={
+                    "token_id": token_id,
+                    "model_id": self._engine_agent.engine.model_id,
+                    "token": token_str,
+                    "token_type": type(item).__qualname__,
+                    "step": self._step,
+                },
+            )
+        )
 
     async def _execute_tool_call(
         self,
@@ -909,29 +941,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self, item: Token | TokenDetail | Event | str
     ) -> Token | TokenDetail | Event:
         if self._event_manager and not isinstance(item, Event):
-            token_str = item.token if hasattr(item, "token") else str(item)
-            token_id = getattr(item, "id", None)
-            tokenizer = (
-                self._engine_agent.engine.tokenizer
-                if self._engine_agent.engine
-                else None
-            )
-            if token_id is None and tokenizer:
-                ids = tokenizer.encode(token_str, add_special_tokens=False)
-                token_id = ids[0] if ids else None
-
-            await self._event_manager.trigger(
-                Event(
-                    type=EventType.TOKEN_GENERATED,
-                    payload={
-                        "token_id": token_id,
-                        "model_id": self._engine_agent.engine.model_id,
-                        "token": token_str,
-                        "token_type": type(item).__qualname__,
-                        "step": self._step,
-                    },
-                )
-            )
+            await self._emit_token_generated_event(item)
 
         self._step += 1
 

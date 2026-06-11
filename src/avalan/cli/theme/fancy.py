@@ -30,11 +30,13 @@ from ...utils import (
     tool_call_error_payload,
 )
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta
+from importlib import import_module
 from locale import format_string
 from logging import Logger
 from math import ceil, inf
-from re import sub
+from re import fullmatch, sub
 from textwrap import wrap
 from typing import (
     TYPE_CHECKING,
@@ -65,6 +67,7 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.rule import Rule
+from rich.spinner import Spinner as RichSpinner
 from rich.table import Column, Table
 from rich.text import Text
 
@@ -179,6 +182,98 @@ class FancyTheme(Theme):
     @property
     def quantity_data(self) -> list[str]:
         return ["likes"]
+
+    def flow_run_progress_message(
+        self,
+        event_type: str,
+        *,
+        node: str | None = None,
+        status: str | None = None,
+        attempt: int | None = None,
+        flow_name: str | None = None,
+    ) -> str:
+        _ = status, flow_name
+        if node:
+            if event_type == "flow_node_started":
+                suffix = (
+                    f" (attempt {attempt})"
+                    if attempt is not None and attempt > 1
+                    else ""
+                )
+                return f"Running [cyan]{node}[/cyan]{suffix}."
+            if event_type == "flow_node_retrying":
+                suffix = (
+                    f" after attempt {attempt}" if attempt is not None else ""
+                )
+                return f"Retrying [cyan]{node}[/cyan]{suffix}."
+            if event_type == "flow_node_completed":
+                return f"Finished [cyan]{node}[/cyan]."
+            if event_type == "flow_node_failed":
+                return f"[cyan]{node}[/cyan] failed."
+            if event_type == "flow_node_skipped":
+                return f"Skipped [cyan]{node}[/cyan]."
+            if event_type == "flow_node_paused":
+                return f"Paused [cyan]{node}[/cyan]."
+            if event_type == "flow_node_resumed":
+                return f"Resumed [cyan]{node}[/cyan]."
+            if event_type == "flow_node_cancelled":
+                return f"Cancelled [cyan]{node}[/cyan]."
+        if event_type == "flow_started":
+            return "Flow run started."
+        if event_type == "flow_completed":
+            return "Flow run completed."
+        if event_type == "flow_cancelled":
+            return "Flow run cancelled."
+        return "Flow run is active."
+
+    def flow_run_progress(
+        self,
+        mermaid_source: str,
+        *,
+        node_states: Mapping[str, str],
+        active_nodes: tuple[str, ...],
+        message: str,
+        console_width: int,
+        flow_stats: Mapping[str, Mapping[str, int | float]] | None = None,
+    ) -> RenderableType:
+        styled_source = _flow_run_styled_mermaid_source(
+            mermaid_source,
+            node_states=node_states,
+            active_nodes=active_nodes,
+        )
+        diagram = _flow_run_mermaid_renderable(styled_source, console_width)
+        status_table = _flow_run_status_table(
+            node_states,
+            flow_stats=flow_stats,
+        )
+        progress_body: RenderableType = diagram
+        if status_table is not None:
+            progress_body = (
+                Columns(
+                    [diagram, status_table],
+                    expand=False,
+                    padding=(0, 4),
+                )
+                if console_width >= 120
+                else Group(diagram, Text(""), status_table)
+            )
+        status_line = Table.grid(padding=(0, 1))
+        status_line.add_row(
+            RichSpinner(
+                "arc",
+                text=Text.from_markup(f"[bold]{message}[/bold]"),
+                style="cyan",
+            )
+        )
+        return Panel(
+            Padding(
+                Group(status_line, Text(""), progress_body),
+                (1, 2),
+            ),
+            title="[cyan]Flow progress[/cyan]",
+            box=box.SQUARE,
+            border_style="cyan",
+        )
 
     def action(
         self,
@@ -2604,3 +2699,334 @@ class FancyTheme(Theme):
             elif not skip_blank_lines:
                 lines.append("")
         return lines
+
+
+def _flow_run_styled_mermaid_source(
+    mermaid_source: str,
+    *,
+    node_states: Mapping[str, str],
+    active_nodes: tuple[str, ...],
+) -> str:
+    lines = [mermaid_source.rstrip()]
+    active = set(active_nodes)
+    lines.extend(
+        [
+            (
+                "  classDef avalanRunning fill:#ecfeff,stroke:#0f172a,"
+                "color:#0f172a,stroke-width:4px"
+            ),
+            (
+                "  classDef avalanCompleted fill:#166534,stroke:#dcfce7,"
+                "color:#dcfce7,stroke-width:2px"
+            ),
+            (
+                "  classDef avalanFailed fill:#991b1b,stroke:#fee2e2,"
+                "color:#fee2e2,stroke-width:2px"
+            ),
+            (
+                "  classDef avalanSkipped fill:#525252,stroke:#e5e5e5,"
+                "color:#e5e5e5,stroke-width:2px"
+            ),
+            (
+                "  classDef avalanPaused fill:#92400e,stroke:#fef3c7,"
+                "color:#fef3c7,stroke-width:2px"
+            ),
+        ]
+    )
+    for node, state in node_states.items():
+        if not _is_safe_flow_node_identifier(node):
+            continue
+        class_name = _flow_run_node_class(
+            "running" if node in active else state
+        )
+        if class_name is not None:
+            lines.append(f"  class {node} {class_name}")
+    return "\n".join(lines) + "\n"
+
+
+def _flow_run_node_class(state: str) -> str | None:
+    match state:
+        case "running" | "started" | "retrying":
+            return "avalanRunning"
+        case "succeeded" | "completed":
+            return "avalanCompleted"
+        case "failed" | "cancelled":
+            return "avalanFailed"
+        case "skipped":
+            return "avalanSkipped"
+        case "paused" | "resumed":
+            return "avalanPaused"
+        case _:
+            return None
+
+
+def _flow_run_mermaid_renderable(
+    mermaid_source: str,
+    console_width: int,
+) -> RenderableType:
+    _ = console_width
+    try:
+        termaid = import_module("termaid")
+    except ImportError:
+        return Text(mermaid_source, style="bright_black")
+    render_rich = getattr(termaid, "render_rich", None)
+    if not callable(render_rich):
+        return Text(mermaid_source, style="bright_black")
+    try:
+        return cast(Callable[..., RenderableType], render_rich)(
+            mermaid_source,
+            theme="default",
+        )
+    except Exception as exc:
+        return Group(
+            Text(
+                f"Diagram renderer unavailable ({type(exc).__name__}).",
+                style="yellow",
+            ),
+            Text(mermaid_source, style="bright_black"),
+        )
+
+
+_FLOW_RUN_TOTAL_STATS_KEY = "__total__"
+
+
+def _flow_run_status_table(
+    node_states: Mapping[str, str],
+    *,
+    flow_stats: Mapping[str, Mapping[str, int | float]] | None = None,
+) -> RenderableType | None:
+    if not node_states:
+        return None
+    header = _flow_run_stats_header(flow_stats)
+    table = Table.grid(padding=(0, 1))
+    table.add_column(style="bright_black", no_wrap=True)
+    table.add_column(style="cyan", no_wrap=True)
+    table.add_column(style="white", no_wrap=True)
+    for _ in range(6):
+        table.add_column(no_wrap=True)
+    for node, state in node_states.items():
+        label, style = _flow_run_state_display(state)
+        table.add_row(
+            label,
+            node,
+            Text(state, style=style),
+            *_flow_run_node_stats_cells(flow_stats, node),
+        )
+    return Panel(
+        Group(header, table),
+        title="[cyan]Nodes[/cyan]",
+        box=box.SQUARE,
+        border_style="gray35",
+        padding=(0, 1),
+    )
+
+
+def _flow_run_stats_header(
+    flow_stats: Mapping[str, Mapping[str, int | float]] | None,
+) -> Panel:
+    stats = _flow_run_stats_values(flow_stats, _FLOW_RUN_TOTAL_STATS_KEY)
+    table = Table.grid(expand=True, padding=(0, 1))
+    for _ in range(5):
+        table.add_column(no_wrap=True, ratio=1)
+    table.add_row(
+        _flow_run_total_cell("nodes", stats["executed_nodes"]),
+        _flow_run_total_cell("ok", stats["succeeded_nodes"]),
+        _flow_run_total_cell("in", stats["input_tokens"]),
+        _flow_run_total_cell("cached", stats["cached_input_tokens"]),
+        _flow_run_total_cell("tool", stats["tools_executed"]),
+    )
+    table.add_row(
+        _flow_run_total_cell(
+            "time",
+            _flow_run_format_duration(stats["elapsed_ms"]),
+        ),
+        _flow_run_total_cell("fail", stats["failed_nodes"]),
+        _flow_run_total_cell(
+            "out",
+            stats["output_tokens"],
+            value_suffix_markup=":fire:",
+            value_suffix_style="dim red",
+        ),
+        _flow_run_total_cell("rsn", stats["reasoning_tokens"]),
+        _flow_run_total_cell(
+            "avg",
+            _flow_run_format_duration(stats["average_node_ms"]),
+        ),
+    )
+    return Panel(
+        table,
+        title="[cyan]Stats[/cyan]",
+        box=box.SQUARE,
+        border_style="cyan",
+        padding=(0, 1),
+    )
+
+
+def _flow_run_node_stats_cells(
+    flow_stats: Mapping[str, Mapping[str, int | float]] | None,
+    node: str,
+) -> tuple[Text, ...]:
+    stats = _flow_run_stats_values(flow_stats, node)
+    return (
+        _flow_run_metric_cell(
+            ":stopwatch:",
+            _flow_run_format_duration(stats["elapsed_ms"]),
+            width=6,
+        ),
+        _flow_run_metric_cell(
+            ":incoming_envelope:",
+            _flow_run_format_number(stats["input_tokens"]),
+        ),
+        _flow_run_metric_cell(
+            ":floppy_disk:",
+            _flow_run_format_percentage(
+                stats["cached_input_tokens"],
+                stats["input_tokens"],
+            ),
+        ),
+        _flow_run_metric_cell(
+            ":speech_balloon:",
+            _flow_run_format_number(stats["output_tokens"]),
+        ),
+        _flow_run_metric_cell(
+            ":brain:",
+            _flow_run_format_number(stats["reasoning_tokens"]),
+        ),
+        _flow_run_metric_cell(
+            ":hammer_and_wrench:",
+            _flow_run_format_number(stats["tools_executed"]),
+        ),
+    )
+
+
+def _flow_run_stats_values(
+    flow_stats: Mapping[str, Mapping[str, int | float]] | None,
+    key: str,
+) -> Mapping[str, int | float]:
+    source = flow_stats.get(key, {}) if flow_stats is not None else {}
+    return {
+        "elapsed_ms": _flow_run_stats_number(source, "elapsed_ms"),
+        "executed_nodes": _flow_run_stats_number(
+            source,
+            "executed_nodes",
+        ),
+        "succeeded_nodes": _flow_run_stats_number(
+            source,
+            "succeeded_nodes",
+        ),
+        "failed_nodes": _flow_run_stats_number(source, "failed_nodes"),
+        "average_node_ms": _flow_run_stats_number(
+            source,
+            "average_node_ms",
+        ),
+        "input_tokens": _flow_run_stats_number(source, "input_tokens"),
+        "cached_input_tokens": _flow_run_stats_number(
+            source,
+            "cached_input_tokens",
+        ),
+        "output_tokens": _flow_run_stats_number(source, "output_tokens"),
+        "reasoning_tokens": _flow_run_stats_number(
+            source,
+            "reasoning_tokens",
+        ),
+        "tools_executed": _flow_run_stats_number(
+            source,
+            "tools_executed",
+        ),
+    }
+
+
+def _flow_run_stats_number(
+    source: Mapping[str, int | float],
+    key: str,
+) -> int | float:
+    value = source.get(key, 0)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0
+    return max(value, 0)
+
+
+def _flow_run_format_number(value: int | float) -> str:
+    return intcomma(int(value))
+
+
+def _flow_run_format_duration(milliseconds: int | float) -> str:
+    value = max(float(milliseconds), 0.0)
+    if value < 1000:
+        return f"{int(value)}ms"
+    seconds = value / 1000
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remaining_seconds = int(seconds % 60)
+    if minutes < 60:
+        return f"{minutes}m{remaining_seconds:02d}s"
+    hours = minutes // 60
+    remaining_minutes = minutes % 60
+    return f"{hours}h{remaining_minutes:02d}m"
+
+
+def _flow_run_format_percentage(value: int | float, total: int | float) -> str:
+    if total <= 0 or value <= 0:
+        return "0%"
+    percentage = min((float(value) / float(total)) * 100, 100)
+    return f"{percentage:.0f}%"
+
+
+def _flow_run_metric_cell(
+    emoji_markup: str,
+    value: str,
+    *,
+    width: int = 5,
+) -> Text:
+    text = Text()
+    text.append(Text.from_markup(emoji_markup, style="bright_black"))
+    text.append(" ")
+    text.append(value.rjust(width), style="white")
+    return text
+
+
+def _flow_run_total_cell(
+    label: str,
+    value: int | float | str,
+    *,
+    value_suffix_markup: str | None = None,
+    value_suffix_style: str | None = None,
+) -> Text:
+    rendered = (
+        _flow_run_format_number(value)
+        if isinstance(value, int | float)
+        else value
+    )
+    text = Text(label, style="bright_black")
+    text.append(" ")
+    text.append(rendered, style="white")
+    if value_suffix_markup is not None:
+        text.append(" ")
+        suffix = (
+            Text.from_markup(value_suffix_markup, style=value_suffix_style)
+            if value_suffix_style is not None
+            else Text.from_markup(value_suffix_markup)
+        )
+        text.append(suffix)
+    return text
+
+
+def _flow_run_state_display(state: str) -> tuple[str, str]:
+    match state:
+        case "running" | "started" | "retrying":
+            return ">", "bold cyan"
+        case "succeeded" | "completed":
+            return "+", "green"
+        case "failed" | "cancelled":
+            return "!", "bold red"
+        case "skipped":
+            return "-", "bright_black"
+        case "paused" | "resumed":
+            return "=", "yellow"
+        case _:
+            return ".", "bright_black"
+
+
+def _is_safe_flow_node_identifier(node: str) -> bool:
+    return fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", node) is not None

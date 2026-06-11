@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+from io import StringIO
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
@@ -8,10 +9,12 @@ from uuid import UUID
 import numpy as np
 from numpy.linalg import norm
 from rich import box
+from rich.console import Console
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from avalan.cli.theme import fancy as fancy_theme_module
 from avalan.cli.theme.fancy import FancyTheme
 from avalan.entities import (
     EngineMessage,
@@ -38,6 +41,297 @@ from avalan.entities import (
 from avalan.event import Event, EventStats, EventType
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import PermanentMemoryPartition
+
+
+class FancyThemeFlowProgressTestCase(unittest.TestCase):
+    def test_flow_run_progress_message_reports_active_node(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+
+        message = theme.flow_run_progress_message(
+            "flow_node_started",
+            node="analyze_pov_1",
+            attempt=2,
+        )
+
+        self.assertIn("Running", message)
+        self.assertIn("analyze_pov_1", message)
+        self.assertIn("(attempt 2)", message)
+
+    def test_flow_run_progress_message_omits_first_attempt(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+
+        message = theme.flow_run_progress_message(
+            "flow_node_started",
+            node="analyze_pov_1",
+            attempt=1,
+        )
+
+        self.assertIn("Running", message)
+        self.assertIn("analyze_pov_1", message)
+        self.assertNotIn("attempt", message)
+
+    def test_flow_run_progress_message_covers_remaining_events(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        cases = {
+            "flow_node_retrying": (
+                "Retrying [cyan]node_a[/cyan] after attempt 2."
+            ),
+            "flow_node_completed": "Finished [cyan]node_a[/cyan].",
+            "flow_node_failed": "[cyan]node_a[/cyan] failed.",
+            "flow_node_skipped": "Skipped [cyan]node_a[/cyan].",
+            "flow_node_paused": "Paused [cyan]node_a[/cyan].",
+            "flow_node_resumed": "Resumed [cyan]node_a[/cyan].",
+            "flow_node_cancelled": "Cancelled [cyan]node_a[/cyan].",
+        }
+
+        for event_type, expected in cases.items():
+            with self.subTest(event_type=event_type):
+                self.assertEqual(
+                    theme.flow_run_progress_message(
+                        event_type,
+                        node="node_a",
+                        attempt=2,
+                    ),
+                    expected,
+                )
+
+        self.assertEqual(
+            theme.flow_run_progress_message("flow_cancelled"),
+            "Flow run cancelled.",
+        )
+
+    def test_flow_run_progress_inverts_running_node_class(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        captured: dict[str, str] = {}
+
+        def fake_render(source: str, console_width: int) -> Text:
+            captured["source"] = source
+            captured["width"] = str(console_width)
+            return Text("diagram")
+
+        with patch(
+            "avalan.cli.theme.fancy._flow_run_mermaid_renderable",
+            fake_render,
+        ):
+            theme.flow_run_progress(
+                "flowchart LR\n  analyze_pov_1[analyze_pov_1]\n",
+                node_states={"analyze_pov_1": "pending"},
+                active_nodes=("analyze_pov_1",),
+                message="Running node [cyan]analyze_pov_1[/cyan].",
+                console_width=120,
+            )
+
+        self.assertIn(
+            "classDef avalanRunning fill:#ecfeff,stroke:#0f172a",
+            captured["source"],
+        )
+        self.assertIn(
+            "class analyze_pov_1 avalanRunning",
+            captured["source"],
+        )
+
+    def test_flow_run_progress_renders_sidebar_stats(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        console = Console(file=StringIO(), record=True, width=160)
+        renderable = theme.flow_run_progress(
+            "flowchart LR\n  analyze_pov_1[analyze_pov_1]\n",
+            node_states={
+                "analyze_pov_1": "succeeded",
+                "write_spec_request": "failed",
+            },
+            active_nodes=(),
+            message="Finished [cyan]analyze_pov_1[/cyan].",
+            console_width=160,
+            flow_stats={
+                "__total__": {
+                    "elapsed_ms": 1500,
+                    "executed_nodes": 2,
+                    "succeeded_nodes": 1,
+                    "failed_nodes": 1,
+                    "average_node_ms": 750,
+                    "input_tokens": 1234,
+                    "cached_input_tokens": 99,
+                    "output_tokens": 56,
+                    "reasoning_tokens": 7,
+                    "tools_executed": 3,
+                },
+                "analyze_pov_1": {
+                    "elapsed_ms": 1000,
+                    "input_tokens": 12,
+                    "cached_input_tokens": 4,
+                    "output_tokens": 34,
+                    "reasoning_tokens": 5,
+                    "tools_executed": 2,
+                },
+            },
+        )
+
+        console.print(renderable)
+        output = console.export_text()
+
+        self.assertIn("Stats", output)
+        self.assertIn("Nodes", output)
+        self.assertIn("time", output)
+        self.assertIn("nodes", output)
+        self.assertIn("cached", output)
+        self.assertIn("tool", output)
+        self.assertIn("1.5s", output)
+        self.assertIn("1,234", output)
+        self.assertIn("out 56 🔥", output)
+        self.assertNotIn("nodes 🔗", output)
+        self.assertNotIn("ok ✅", output)
+        self.assertNotIn("out 🚀", output)
+        self.assertRegex(output, "📨\\s+12")
+        self.assertRegex(output, "💾\\s+33%")
+        self.assertRegex(output, "💬\\s+34")
+        self.assertRegex(output, "🧠\\s+5")
+        self.assertRegex(output, "🛠\\s+2")
+        self.assertNotRegex(output, "[\\u2800-\\u28ff]")
+
+    def test_flow_run_stats_header_expands_columns(self):
+        console = Console(file=StringIO(), record=True, width=100)
+        console.print(
+            fancy_theme_module._flow_run_stats_header(
+                {
+                    "__total__": {
+                        "elapsed_ms": 1500,
+                        "executed_nodes": 7,
+                        "succeeded_nodes": 7,
+                        "failed_nodes": 0,
+                        "average_node_ms": 3100,
+                        "input_tokens": 2092,
+                        "cached_input_tokens": 1536,
+                        "output_tokens": 94,
+                        "reasoning_tokens": 0,
+                        "tools_executed": 0,
+                    }
+                }
+            )
+        )
+
+        stat_line = next(
+            line for line in console.export_text().splitlines()
+            if "nodes 7" in line
+        )
+        self.assertGreaterEqual(stat_line.index("tool"), 75)
+
+    def test_flow_run_progress_sanitizes_negative_stats(self):
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        console = Console(file=StringIO(), record=True, width=120)
+        renderable = theme.flow_run_progress(
+            "flowchart LR\n  analyze_pov_1[analyze_pov_1]\n",
+            node_states={"analyze_pov_1": "running"},
+            active_nodes=("analyze_pov_1",),
+            message="Running [cyan]analyze_pov_1[/cyan].",
+            console_width=120,
+            flow_stats={
+                "__total__": {
+                    "elapsed_ms": -1,
+                    "executed_nodes": True,
+                    "succeeded_nodes": -2,
+                    "failed_nodes": -3,
+                    "average_node_ms": -4,
+                    "input_tokens": -5,
+                    "cached_input_tokens": -9,
+                    "output_tokens": -6,
+                    "reasoning_tokens": -7,
+                    "tools_executed": -8,
+                }
+            },
+        )
+
+        console.print(renderable)
+        output = console.export_text()
+
+        self.assertIn("0ms", output)
+        self.assertNotIn("-5", output)
+
+    def test_flow_run_styled_mermaid_skips_unsafe_node(self):
+        source = fancy_theme_module._flow_run_styled_mermaid_source(
+            "flowchart LR\n  bad-node[bad-node]\n",
+            node_states={
+                "bad-node": "running",
+                "safe_node": "unknown",
+            },
+            active_nodes=(),
+        )
+
+        self.assertNotIn("class bad-node", source)
+        self.assertNotIn("class safe_node", source)
+
+    def test_flow_run_helper_branches(self):
+        self.assertEqual(
+            fancy_theme_module._flow_run_node_class("skipped"),
+            "avalanSkipped",
+        )
+        self.assertEqual(
+            fancy_theme_module._flow_run_node_class("paused"),
+            "avalanPaused",
+        )
+        self.assertIsNone(fancy_theme_module._flow_run_node_class("pending"))
+        self.assertIsNone(fancy_theme_module._flow_run_status_table({}))
+        self.assertEqual(
+            fancy_theme_module._flow_run_format_duration(61_000),
+            "1m01s",
+        )
+        self.assertEqual(
+            fancy_theme_module._flow_run_format_duration(3_660_000),
+            "1h01m",
+        )
+        self.assertEqual(
+            fancy_theme_module._flow_run_state_display("skipped")[0],
+            "-",
+        )
+        self.assertEqual(
+            fancy_theme_module._flow_run_state_display("paused")[0],
+            "=",
+        )
+
+    def test_flow_run_mermaid_renderable_falls_back_without_termaid(self):
+        with patch(
+            "avalan.cli.theme.fancy.import_module",
+            side_effect=ImportError,
+        ):
+            renderable = fancy_theme_module._flow_run_mermaid_renderable(
+                "flowchart LR\n",
+                80,
+            )
+
+        self.assertIsInstance(renderable, Text)
+
+    def test_flow_run_mermaid_renderable_falls_back_without_renderer(self):
+        module = SimpleNamespace(render_rich=None)
+        with patch(
+            "avalan.cli.theme.fancy.import_module",
+            return_value=module,
+        ):
+            renderable = fancy_theme_module._flow_run_mermaid_renderable(
+                "flowchart LR\n",
+                80,
+            )
+
+        self.assertIsInstance(renderable, Text)
+
+    def test_flow_run_mermaid_renderable_reports_renderer_error(self):
+        def render_rich(*_args, **_kwargs):
+            raise RuntimeError("private renderer detail")
+
+        module = SimpleNamespace(render_rich=render_rich)
+        with patch(
+            "avalan.cli.theme.fancy.import_module",
+            return_value=module,
+        ):
+            renderable = fancy_theme_module._flow_run_mermaid_renderable(
+                "flowchart LR\n",
+                80,
+            )
+
+        console = Console(file=StringIO(), record=True, width=120)
+        console.print(renderable)
+        output = console.export_text()
+
+        self.assertIn("Diagram renderer unavailable", output)
+        self.assertIn("RuntimeError", output)
 
 
 class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):

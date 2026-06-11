@@ -52,12 +52,14 @@ USAGE_COUNTER_NAMES = (
 )
 USAGE_METADATA_KEYS = (
     "provider_family",
+    "flow_node",
     "cache_creation_ephemeral_5m_input_tokens",
     "cache_creation_ephemeral_1h_input_tokens",
     "cache_read_ephemeral_5m_input_tokens",
     "cache_read_ephemeral_1h_input_tokens",
 )
 _LOCAL_USAGE_CALL_KEY_ATTRIBUTE = "_avalan_usage_call_key"
+_LOCAL_USAGE_FLOW_NODE_ATTRIBUTE = "_avalan_flow_node"
 _LOCAL_USAGE_CALL_KEY_COUNTER = count(1)
 _LOCAL_USAGE_CALL_KEYS: WeakKeyDictionary[object, str] = WeakKeyDictionary()
 _LOCAL_UNTRACKED_USAGE_CALL_KEYS: dict[int, list[tuple[object, str]]] = {}
@@ -215,8 +217,11 @@ def freeze_usage_metadata(
     provider_family = _provider_family_value(value.get("provider_family"))
     if provider_family is not None:
         metadata["provider_family"] = provider_family.value
+    flow_node = value.get("flow_node")
+    if isinstance(flow_node, str) and flow_node.strip():
+        metadata["flow_node"] = flow_node
     for key in USAGE_METADATA_KEYS:
-        if key == "provider_family":
+        if key in {"flow_node", "provider_family"}:
             continue
         counter = _counter_from_value(value.get(key))
         if counter is not None:
@@ -369,6 +374,22 @@ def usage_observation_entries_from_response(
 def usage_totals_from_response(response: object) -> UsageTotals | None:
     observation = usage_observation_from_response(response)
     return observation.totals if observation is not None else None
+
+
+def tag_usage_response(response: object, *, flow_node: str) -> object:
+    _assert_non_empty_string(flow_node, "flow_node")
+    try:
+        setattr(response, _LOCAL_USAGE_FLOW_NODE_ATTRIBUTE, flow_node)
+    except (AttributeError, TypeError):
+        pass
+    return response
+
+
+def usage_flow_node(response: object) -> str | None:
+    value = _value_at_path(response, (_LOCAL_USAGE_FLOW_NODE_ATTRIBUTE,))
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
 
 
 def _usage_counter_presence(value: int | None) -> UsageCounterPresence:

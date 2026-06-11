@@ -39,6 +39,7 @@ from ...task import (
     TaskRetentionStoreNotFoundError,
     TaskRunResult,
     TaskRunState,
+    TaskSanitizedEventObserver,
     TaskStoreNotFoundError,
     TaskTargetContext,
     TaskTargetRunner,
@@ -1053,6 +1054,8 @@ def _task_cli_client_context(
     logger: Logger | None,
     input_value: object = None,
     flow_tool_resolver: FlowToolResolver | None = None,
+    flow_concurrency_limit: int = 1,
+    event_observer: TaskSanitizedEventObserver | None = None,
 ) -> _TaskCliClientContext:
     stack = AsyncExitStack()
     artifact_store = _task_artifact_store()
@@ -1080,6 +1083,7 @@ def _task_cli_client_context(
             agent_target=agent_target,
             flow_state_store=InMemoryFlowStateStore(task_store=memory_store),
             flow_tool_resolver=flow_tool_resolver,
+            flow_concurrency_limit=flow_concurrency_limit,
         )
         return _TaskCliClientContext(
             TaskClient(
@@ -1089,6 +1093,7 @@ def _task_cli_client_context(
                 hmac_provider=hmac_provider,
                 execution_roots=(definition_path.parent,),
                 input_roots=(Path.cwd(),),
+                event_observer=event_observer,
             ),
             stack=stack,
         )
@@ -1101,6 +1106,7 @@ def _task_cli_client_context(
         agent_target=agent_target,
         flow_state_store=PgsqlFlowStateStore(database),
         flow_tool_resolver=flow_tool_resolver,
+        flow_concurrency_limit=flow_concurrency_limit,
     )
     return _TaskCliClientContext(
         TaskClient(
@@ -1111,6 +1117,7 @@ def _task_cli_client_context(
             hmac_provider=hmac_provider,
             execution_roots=(definition_path.parent,),
             input_roots=(Path.cwd(),),
+            event_observer=event_observer,
         ),
         database=database,
         stack=stack,
@@ -1123,6 +1130,7 @@ def _task_cli_target_runner(
     agent_target: TaskTargetRunner,
     flow_state_store: FlowStateStore,
     flow_tool_resolver: FlowToolResolver | None = None,
+    flow_concurrency_limit: int = 1,
 ) -> TaskTargetRunner:
     return TaskTargetRunnerRegistry(
         agent_target,
@@ -1138,6 +1146,7 @@ def _task_cli_target_runner(
                 agent_runner=agent_target,
                 execution_roots=(definition_path.parent,),
                 tool_resolver=flow_tool_resolver,
+                concurrency_limit=flow_concurrency_limit,
             )
         },
     )

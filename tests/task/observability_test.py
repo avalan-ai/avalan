@@ -37,8 +37,12 @@ from avalan.task import (
     record_observability_event,
     record_observability_usage,
 )
-from avalan.task.observability import record_response_usage
+from avalan.task.observability import (
+    observe_response_usage,
+    record_response_usage,
+)
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.usage import tag_usage_response, usage_flow_node
 
 
 class StaticHmacProvider(HmacProvider):
@@ -359,24 +363,28 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
             },
         }
         sink = RecordingSink()
+        observed: list[TaskObservedEvent] = []
 
         await record_response_usage(
             sink,
             store=store,
             response=response,
             run_id=run.run_id,
+            usage_observer=observed.append,
         )
         await record_response_usage(
             sink,
             store=store,
             response=response,
             run_id=run.run_id,
+            usage_observer=observed.append,
         )
         await record_response_usage(
             sink,
             store=store,
             response=equivalent_response,
             run_id=run.run_id,
+            usage_observer=observed.append,
         )
 
         records = await store.list_usage(run.run_id)
@@ -388,8 +396,102 @@ class ObservabilitySinkTest(IsolatedAsyncioTestCase):
         self.assertEqual(records[0].totals.total_tokens, 8)
         self.assertEqual(len(sink.usages), 2)
         self.assertEqual(len(sink.events), 2)
+        self.assertEqual(len(observed), 2)
+        observed_payload = cast(dict[str, object], observed[0].payload)
+        self.assertEqual(observed_payload["input_tokens"], 3)
         self.assertNotIn("private-response-id", str(records))
         self.assertNotIn("private-response-id", str(sink.events))
+
+    async def test_response_usage_helper_emits_flow_node_metadata(
+        self,
+    ) -> None:
+        store = InMemoryTaskStore()
+        await store.register_definition(
+            definition(),
+            definition_hash="hash-flow-node-usage",
+        )
+        run = await store.create_run(
+            TaskExecutionRequest(definition_id="hash-flow-node-usage")
+        )
+        response = tag_usage_response(
+            FakeUsageResponse(),
+            flow_node="analyze_pov_1",
+        )
+        ignored_response = tag_usage_response(3, flow_node="ignored")
+        observed: list[TaskObservedEvent] = []
+
+        await record_response_usage(
+            None,
+            store=store,
+            response=response,
+            run_id=run.run_id,
+            usage_observer=observed.append,
+        )
+
+        records = await store.list_usage(run.run_id)
+        payload = cast(dict[str, object], observed[0].payload)
+        self.assertNotIn("flow_node", records[0].metadata)
+        self.assertEqual(payload["flow_node"], "analyze_pov_1")
+        self.assertEqual(usage_flow_node(response), "analyze_pov_1")
+        self.assertIsNone(usage_flow_node(ignored_response))
+
+    async def test_observe_response_usage_deduplicates_live_events(
+        self,
+    ) -> None:
+        response = tag_usage_response(
+            FakeUsageResponse(),
+            flow_node="analyze_pov_1",
+        )
+        observed: list[TaskObservedEvent] = []
+        observed_usage_ids: set[str] = set()
+
+        await observe_response_usage(
+            response,
+            run_id="run-private",
+            attempt_id="attempt-private",
+            usage_observer=observed.append,
+            observed_usage_ids=observed_usage_ids,
+        )
+        await observe_response_usage(
+            response,
+            run_id="run-private",
+            attempt_id="attempt-private",
+            usage_observer=observed.append,
+            observed_usage_ids=observed_usage_ids,
+        )
+
+        self.assertEqual(len(observed), 1)
+        payload = cast(dict[str, object], observed[0].payload)
+        self.assertEqual(payload["input_tokens"], 3)
+        self.assertEqual(payload["output_tokens"], 4)
+        self.assertEqual(payload["flow_node"], "analyze_pov_1")
+        self.assertNotIn("run-private", str(payload))
+        self.assertNotIn("attempt-private", str(payload))
+
+    async def test_observe_response_usage_ignores_missing_inputs(
+        self,
+    ) -> None:
+        observed: list[TaskObservedEvent] = []
+
+        await observe_response_usage(
+            FakeUsageResponse(),
+            run_id="run-private",
+            usage_observer=None,
+        )
+        await observe_response_usage(
+            object(),
+            run_id="run-private",
+            usage_observer=observed.append,
+        )
+        await observe_response_usage(
+            FakeUsageResponse(),
+            run_id="run-private",
+            usage_observer=lambda event: (_ for _ in ()).throw(
+                RuntimeError("private observer failure")
+            ),
+        )
+
+        self.assertEqual(observed, [])
 
     async def test_runner_success_survives_sink_failures(self) -> None:
         store = InMemoryTaskStore()

@@ -21,6 +21,7 @@ from .usage import (
     UsageSource,
     UsageTotals,
     stable_usage_id_for_response,
+    usage_flow_node,
     usage_observation_entries_from_response,
 )
 
@@ -184,6 +185,7 @@ class TaskEventPipeline:
     sanitizer: PrivacySanitizer
     attempt_id: str | None = None
     capture_events: bool = True
+    event_observer: TaskSanitizedEventObserver | None = None
     metrics_observer: TaskSanitizedEventObserver | None = None
     trace_observer: TaskSanitizedEventObserver | None = None
     observability_sink: ObservabilitySink | None = None
@@ -194,6 +196,8 @@ class TaskEventPipeline:
         assert isinstance(self.capture_events, bool)
         if self.attempt_id is not None:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
+        if self.event_observer is not None:
+            assert callable(self.event_observer)
         if self.metrics_observer is not None:
             assert callable(self.metrics_observer)
         if self.trace_observer is not None:
@@ -222,6 +226,7 @@ class TaskEventPipeline:
             except Exception:
                 observed = draft
         await gather(
+            _notify_observer(self.event_observer, observed),
             _notify_observer(self.metrics_observer, observed),
             _notify_observer(self.trace_observer, observed),
             record_observability_event(
@@ -290,10 +295,12 @@ async def record_response_usage(
     response: object,
     run_id: str,
     attempt_id: str | None = None,
+    usage_observer: TaskSanitizedEventObserver | None = None,
 ) -> None:
     entries = usage_observation_entries_from_response(response)
     if not entries:
         return
+    flow_node = usage_flow_node(response)
     recorded_usage_ids = await _recorded_usage_ids(
         store,
         run_id=run_id,
@@ -318,9 +325,55 @@ async def record_response_usage(
                 attempt_id=attempt_id,
                 usage_id=usage_id,
                 observation=entry.observation,
+                flow_node=flow_node,
+                usage_observer=usage_observer,
             )
         )
     await gather(*record_tasks)
+
+
+async def observe_response_usage(
+    response: object,
+    *,
+    run_id: str,
+    attempt_id: str | None = None,
+    usage_observer: TaskSanitizedEventObserver | None = None,
+    observed_usage_ids: set[str] | None = None,
+) -> None:
+    if usage_observer is None:
+        return
+    entries = usage_observation_entries_from_response(response)
+    if not entries:
+        return
+    flow_node = usage_flow_node(response)
+    observed_tasks = []
+    for entry in entries:
+        usage_id = stable_usage_id_for_response(
+            entry.response,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            sequence=entry.sequence,
+        )
+        if observed_usage_ids is not None:
+            if usage_id in observed_usage_ids:
+                continue
+            observed_usage_ids.add(usage_id)
+        observed_tasks.append(
+            _notify_observer(
+                usage_observer,
+                SanitizedTaskUsageEvent(
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    source=entry.observation.source,
+                    totals=entry.observation.totals,
+                    metadata=_usage_event_metadata_with_flow_node(
+                        entry.observation.metadata,
+                        flow_node,
+                    ),
+                ),
+            )
+        )
+    await gather(*observed_tasks)
 
 
 async def _recorded_usage_ids(
@@ -349,6 +402,8 @@ async def _record_response_usage_observation(
     attempt_id: str | None,
     usage_id: str,
     observation: UsageObservation,
+    flow_node: str | None,
+    usage_observer: TaskSanitizedEventObserver | None,
 ) -> None:
     usage_record: UsageRecord | None = None
     try:
@@ -364,15 +419,39 @@ async def _record_response_usage_observation(
         return
     except Exception:
         pass
-    await record_observability_usage(
-        sink,
-        run_id=run_id,
-        attempt_id=attempt_id,
-        source=observation.source,
-        totals=observation.totals,
-        metadata=observation.metadata,
-        record=usage_record,
+    await gather(
+        _notify_observer(
+            usage_observer,
+            SanitizedTaskUsageEvent(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                source=observation.source,
+                totals=observation.totals,
+                metadata=_usage_event_metadata_with_flow_node(
+                    observation.metadata,
+                    flow_node,
+                ),
+            ),
+        ),
+        record_observability_usage(
+            sink,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            source=observation.source,
+            totals=observation.totals,
+            metadata=observation.metadata,
+            record=usage_record,
+        ),
     )
+
+
+def _usage_event_metadata_with_flow_node(
+    metadata: Mapping[str, object],
+    flow_node: str | None,
+) -> Mapping[str, object]:
+    if flow_node is None or "flow_node" in metadata:
+        return metadata
+    return {**metadata, "flow_node": flow_node}
 
 
 async def _notify_observer(

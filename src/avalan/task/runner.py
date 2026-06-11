@@ -49,6 +49,7 @@ from .observability import (
     ObservabilitySink,
     TaskEventPipeline,
     TaskSanitizedEventObserver,
+    observe_response_usage,
     record_response_usage,
 )
 from .privacy import (
@@ -672,6 +673,7 @@ class DirectTaskRunner:
         remote_url_policy: TaskRemoteUrlPolicy | None = None,
         remote_url_http_client: TaskRemoteUrlHttpClient | None = None,
         remote_url_resolver: TaskRemoteUrlResolver | None = None,
+        event_observer: TaskSanitizedEventObserver | None = None,
         metrics_event_observer: TaskSanitizedEventObserver | None = None,
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
@@ -696,6 +698,7 @@ class DirectTaskRunner:
         self._remote_url_policy = remote_url_policy
         self._remote_url_http_client = remote_url_http_client
         self._remote_url_resolver = remote_url_resolver
+        self._event_observer = event_observer
         self._metrics_event_observer = metrics_event_observer
         self._trace_event_observer = trace_event_observer
         self._observability_sink = observability_sink
@@ -964,9 +967,23 @@ class DirectTaskRunner:
                 attempt=attempt,
             )
 
-        usage_observer = (
-            observe_usage if definition.observability.metrics else None
-        )
+        observed_usage_ids: set[str] = set()
+
+        async def observe_live_usage(response: object) -> None:
+            await observe_response_usage(
+                response,
+                run_id=run.run_id,
+                attempt_id=attempt.attempt_id,
+                usage_observer=self._event_observer,
+                observed_usage_ids=observed_usage_ids,
+            )
+
+        if definition.observability.metrics:
+            usage_observer = observe_usage
+        elif self._event_observer is not None:
+            usage_observer = observe_live_usage
+        else:
+            usage_observer = None
         usage_tracker = TaskUsageObservationTracker(
             usage_observer,
             has_observations=lambda response: bool(
@@ -1139,6 +1156,7 @@ class DirectTaskRunner:
         observability_sink = self._observability_sink_for(definition)
         if (
             not definition.observability.capture_events
+            and self._event_observer is None
             and metrics_observer is None
             and trace_observer is None
             and observability_sink is None
@@ -1150,6 +1168,7 @@ class DirectTaskRunner:
             attempt_id=attempt.attempt_id,
             sanitizer=sanitizer,
             capture_events=definition.observability.capture_events,
+            event_observer=self._event_observer,
             metrics_observer=metrics_observer,
             trace_observer=trace_observer,
             observability_sink=observability_sink,
@@ -1231,6 +1250,7 @@ class DirectTaskRunner:
             response=response,
             run_id=run.run_id,
             attempt_id=attempt.attempt_id,
+            usage_observer=self._event_observer,
         )
 
     def _observability_sink_for(

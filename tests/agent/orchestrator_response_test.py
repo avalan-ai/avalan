@@ -232,6 +232,40 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_to_str_emits_streamed_token_events(self):
+        engine = _DummyEngine()
+        engine.tokenizer.encode.return_value = [42]
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+        )
+
+        self.assertEqual(await resp.to_str(), "ab")
+        token_events = [
+            call.args[0]
+            for call in event_manager.trigger.await_args_list
+            if call.args[0].type == EventType.TOKEN_GENERATED
+        ]
+        self.assertEqual(len(token_events), 2)
+        self.assertEqual(
+            [event.payload["token"] for event in token_events],
+            ["a", "b"],
+        )
+        self.assertEqual(
+            [event.payload["step"] for event in token_events],
+            [0, 1],
+        )
+
     async def test_harmony_streaming_handles_split_prefix(self) -> None:
         engine = _DummyEngine()
         engine.tokenizer.encode.return_value = [1]

@@ -3770,6 +3770,7 @@ class CliTaskCommandShellTestCase(TestCase):
                     ephemeral=False,
                     hub=None,
                     logger=None,
+                    flow_concurrency_limit=7,
                 )
             inspection_database = _FakeResource()
             with (
@@ -3800,6 +3801,7 @@ class CliTaskCommandShellTestCase(TestCase):
         ]
         self.assertIsNone(ephemeral_flow._flow_resolver)
         self.assertIsNotNone(ephemeral_flow._strict_resolver)
+        self.assertEqual(ephemeral_flow._concurrency_limit, 1)
         self.assertIsInstance(
             ephemeral_flow._flow_state_store,
             task_cmds.InMemoryFlowStateStore,
@@ -3810,6 +3812,7 @@ class CliTaskCommandShellTestCase(TestCase):
         durable_flow = durable_target._runners[task_cmds.TaskTargetType.FLOW]
         self.assertIsNone(durable_flow._flow_resolver)
         self.assertIsNotNone(durable_flow._strict_resolver)
+        self.assertEqual(durable_flow._concurrency_limit, 7)
         self.assertIs(durable_flow._flow_state_store, durable_flow_store)
         self.assertIsNotNone(inspection_context)
         assert inspection_context is not None

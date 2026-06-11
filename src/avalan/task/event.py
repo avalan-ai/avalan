@@ -304,6 +304,9 @@ def _usage_event_payload(
     provider_family = metadata.get("provider_family")
     if isinstance(provider_family, str):
         payload["provider_family"] = provider_family
+    flow_node = metadata.get("flow_node")
+    if isinstance(flow_node, str):
+        payload["flow_node"] = flow_node
     for counter_name in USAGE_COUNTER_NAMES:
         value = getattr(totals, counter_name)
         if value is not None:

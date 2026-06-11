@@ -1577,6 +1577,7 @@ Input and output flags:
 | `--pdf PATH` | Shorthand for one top-level PDF file input. |
 | `--json` | Print successful structured output as compact JSON. |
 | `--output PATH` | Write successful structured output as compact JSON. |
+| `--flow-parallel N` | Maximum ready strict flow nodes to execute in parallel. Defaults to the CPU count. |
 | `--tool NAME` | Enable one tool for strict flow tool nodes. |
 | `--tools NAMESPACE` | Enable tools matching a namespace for strict flow tool nodes. |
 

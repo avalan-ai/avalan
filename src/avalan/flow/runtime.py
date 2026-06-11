@@ -1529,10 +1529,14 @@ async def _run_plan_node_once(
     *,
     event_listener: FlowEventListener | None,
 ) -> _NodeRunOutcome:
+    node_event_listener = _node_scoped_event_listener(
+        node.name,
+        event_listener,
+    )
     token = _FLOW_EXECUTION_OPTIONS.set(
         _FlowExecutionOptions(
             cancellation_checker=cancellation_checker,
-            event_listener=event_listener,
+            event_listener=node_event_listener,
         )
     )
     try:
@@ -1620,6 +1624,34 @@ async def _run_plan_node_once(
         )
     finally:
         _FLOW_EXECUTION_OPTIONS.reset(token)
+
+
+def _node_scoped_event_listener(
+    node_name: str,
+    event_listener: FlowEventListener | None,
+) -> FlowEventListener | None:
+    assert isinstance(node_name, str) and node_name.strip()
+    if event_listener is None:
+        return None
+    assert callable(event_listener)
+
+    def observe(event: Event) -> Awaitable[None] | None:
+        assert isinstance(event, Event)
+        payload: dict[str, object] = {}
+        if isinstance(event.payload, Mapping):
+            payload.update(event.payload)
+        payload["flow_node"] = node_name
+        return event_listener(
+            Event(
+                type=event.type,
+                payload=payload,
+                started=event.started,
+                finished=event.finished,
+                elapsed=event.elapsed,
+            )
+        )
+
+    return observe
 
 
 def _should_retry_node(

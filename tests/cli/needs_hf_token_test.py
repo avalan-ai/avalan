@@ -19,6 +19,11 @@ def _task_agent_engine_uri(args: Namespace) -> str | None:
 
 
 class NeedsHfTokenTestCase(unittest.TestCase):
+    def test_flow_commands_do_not_require_token(self):
+        args = Namespace(command="flow", flow_command="run")
+
+        self.assertFalse(_needs_hf_token(args))
+
     def test_model_run_local_requires_token(self):
         args = Namespace(command="model", model_command="run", model="m")
         with patch.object(
