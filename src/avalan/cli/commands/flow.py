@@ -1672,6 +1672,9 @@ class _FlowRunNodeStats:
     input_tokens: int = 0
     output_tokens: int = 0
     reasoning_tokens: int = 0
+    usage_input_tokens: int = 0
+    usage_output_tokens: int = 0
+    usage_reasoning_tokens: int = 0
     tools_executed: int = 0
 
     def snapshot(self, now: float) -> dict[str, int | float]:
@@ -1680,9 +1683,12 @@ class _FlowRunNodeStats:
             elapsed_ms = max(elapsed_ms, (now - self.started_at) * 1000)
         return {
             "elapsed_ms": elapsed_ms,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "reasoning_tokens": self.reasoning_tokens,
+            "input_tokens": max(self.input_tokens, self.usage_input_tokens),
+            "output_tokens": max(self.output_tokens, self.usage_output_tokens),
+            "reasoning_tokens": max(
+                self.reasoning_tokens,
+                self.usage_reasoning_tokens,
+            ),
             "tools_executed": self.tools_executed,
         }
 
@@ -1842,13 +1848,14 @@ class _FlowRunProgressMonitor:
                 if count is not None:
                     node_stats.input_tokens += count
             case "token_generated":
-                node_stats.output_tokens += 1
                 token_type = _flow_progress_payload_string(
                     payload,
                     "token_type",
                 )
                 if token_type == "ReasoningToken":
                     node_stats.reasoning_tokens += 1
+                else:
+                    node_stats.output_tokens += 1
             case "tool_execute":
                 node_stats.tools_executed += 1
             case "usage_observed":
@@ -1864,19 +1871,19 @@ class _FlowRunProgressMonitor:
             "input_tokens",
         )
         if input_tokens is not None:
-            node_stats.input_tokens += input_tokens
+            node_stats.usage_input_tokens += input_tokens
         output_tokens = _flow_progress_payload_non_negative_int(
             payload,
             "output_tokens",
         )
         if output_tokens is not None:
-            node_stats.output_tokens += output_tokens
+            node_stats.usage_output_tokens += output_tokens
         reasoning_tokens = _flow_progress_payload_non_negative_int(
             payload,
             "reasoning_tokens",
         )
         if reasoning_tokens is not None:
-            node_stats.reasoning_tokens += reasoning_tokens
+            node_stats.usage_reasoning_tokens += reasoning_tokens
 
     def _apply_flow_stats(
         self,

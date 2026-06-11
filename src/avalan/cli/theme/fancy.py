@@ -256,7 +256,7 @@ class FancyTheme(Theme):
         status_line = Table.grid(padding=(0, 1))
         status_line.add_row(
             RichSpinner(
-                "moon",
+                "line",
                 text=Text.from_markup(f"[bold]{message}[/bold]"),
                 style="cyan",
             )
@@ -266,7 +266,7 @@ class FancyTheme(Theme):
                 Group(status_line, progress_body),
                 (1, 2),
             ),
-            title=self._icons["task_id"] + " [cyan]Flow progress[/cyan]",
+            title="[cyan]Flow progress[/cyan]",
             box=box.SQUARE,
             border_style="cyan",
         )
@@ -2820,36 +2820,39 @@ def _flow_run_stats_header(
     flow_stats: Mapping[str, Mapping[str, int | float]] | None,
 ) -> Panel:
     stats = _flow_run_stats_values(flow_stats, _FLOW_RUN_TOTAL_STATS_KEY)
-    table = Table.grid(padding=(0, 1))
-    table.add_column(no_wrap=True)
-    table.add_column(justify="right", style="white", no_wrap=True)
-    for label, value in (
-        (":alarm_clock: t", _flow_run_format_duration(stats["elapsed_ms"])),
-        (":abacus: n", _flow_run_format_number(stats["executed_nodes"])),
-        (
-            ":white_check_mark: ok",
-            _flow_run_format_number(stats["succeeded_nodes"]),
-        ),
-        (
-            ":cross_mark: fail",
-            _flow_run_format_number(stats["failed_nodes"]),
-        ),
-        (
-            ":high_voltage: avg",
+    table = Table.grid(padding=(0, 2))
+    for _ in range(10):
+        table.add_column(no_wrap=True)
+    table.add_row(
+        Text("time", style="bright_black"),
+        Text(_flow_run_format_duration(stats["elapsed_ms"]), style="white"),
+        Text("nodes", style="bright_black"),
+        Text(_flow_run_format_number(stats["executed_nodes"]), style="white"),
+        Text("ok", style="bright_black"),
+        Text(_flow_run_format_number(stats["succeeded_nodes"]), style="white"),
+        Text("fail", style="bright_black"),
+        Text(_flow_run_format_number(stats["failed_nodes"]), style="white"),
+        Text("avg", style="bright_black"),
+        Text(
             _flow_run_format_duration(stats["average_node_ms"]),
+            style="white",
         ),
-        (
-            ":laptop_computer: in",
-            _flow_run_format_number(stats["input_tokens"]),
-        ),
-        (":robot: out", _flow_run_format_number(stats["output_tokens"])),
-        (
-            ":brain: rsn",
+    )
+    table.add_row(
+        Text("in", style="bright_black"),
+        Text(_flow_run_format_number(stats["input_tokens"]), style="white"),
+        Text("out", style="bright_black"),
+        Text(_flow_run_format_number(stats["output_tokens"]), style="white"),
+        Text("rsn", style="bright_black"),
+        Text(
             _flow_run_format_number(stats["reasoning_tokens"]),
+            style="white",
         ),
-        (":hammer: tool", _flow_run_format_number(stats["tools_executed"])),
-    ):
-        table.add_row(Text.from_markup(label, style="bright_black"), value)
+        Text("tool", style="bright_black"),
+        Text(_flow_run_format_number(stats["tools_executed"]), style="white"),
+        Text(""),
+        Text(""),
+    )
     return Panel(
         table,
         title="[cyan]Stats[/cyan]",
@@ -2864,23 +2867,14 @@ def _flow_run_node_stats(
     node: str,
 ) -> Text:
     stats = _flow_run_stats_values(flow_stats, node)
-    return Text.from_markup(
+    return Text(
         " ".join(
             (
-                ":alarm_clock:"
-                + _flow_run_format_duration(stats["elapsed_ms"]),
-                ":laptop_computer:"
-                + _flow_run_format_number(stats["input_tokens"])
-                + "i",
-                ":robot:"
-                + _flow_run_format_number(stats["output_tokens"])
-                + "o",
-                ":brain:"
-                + _flow_run_format_number(stats["reasoning_tokens"])
-                + "r",
-                ":hammer:"
-                + _flow_run_format_number(stats["tools_executed"])
-                + "t",
+                _flow_run_format_duration(stats["elapsed_ms"]),
+                _flow_run_format_number(stats["input_tokens"]) + "i",
+                _flow_run_format_number(stats["output_tokens"]) + "o",
+                _flow_run_format_number(stats["reasoning_tokens"]) + "r",
+                _flow_run_format_number(stats["tools_executed"]) + "t",
             )
         ),
         style="bright_black",
