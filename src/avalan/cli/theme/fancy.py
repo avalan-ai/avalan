@@ -256,14 +256,14 @@ class FancyTheme(Theme):
         status_line = Table.grid(padding=(0, 1))
         status_line.add_row(
             RichSpinner(
-                "line",
+                "simpleDotsScrolling",
                 text=Text.from_markup(f"[bold]{message}[/bold]"),
                 style="cyan",
             )
         )
         return Panel(
             Padding(
-                Group(status_line, progress_body),
+                Group(status_line, Text(""), progress_body),
                 (1, 2),
             ),
             title="[cyan]Flow progress[/cyan]",
@@ -2794,18 +2794,19 @@ def _flow_run_status_table(
     if not node_states:
         return None
     header = _flow_run_stats_header(flow_stats)
-    table = Table.grid(padding=(0, 2))
+    table = Table.grid(padding=(0, 1))
     table.add_column(style="bright_black", no_wrap=True)
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(style="white", no_wrap=True)
-    table.add_column(style="bright_black", no_wrap=True)
+    for _ in range(10):
+        table.add_column(no_wrap=True)
     for node, state in node_states.items():
         label, style = _flow_run_state_display(state)
         table.add_row(
             label,
             node,
             Text(state, style=style),
-            _flow_run_node_stats(flow_stats, node),
+            *_flow_run_node_stats_cells(flow_stats, node),
         )
     return Panel(
         Group(header, table),
@@ -2862,22 +2863,25 @@ def _flow_run_stats_header(
     )
 
 
-def _flow_run_node_stats(
+def _flow_run_node_stats_cells(
     flow_stats: Mapping[str, Mapping[str, int | float]] | None,
     node: str,
-) -> Text:
+) -> tuple[Text, ...]:
     stats = _flow_run_stats_values(flow_stats, node)
-    return Text(
-        " ".join(
-            (
-                _flow_run_format_duration(stats["elapsed_ms"]),
-                _flow_run_format_number(stats["input_tokens"]) + "i",
-                _flow_run_format_number(stats["output_tokens"]) + "o",
-                _flow_run_format_number(stats["reasoning_tokens"]) + "r",
-                _flow_run_format_number(stats["tools_executed"]) + "t",
-            )
+    return (
+        Text.from_markup(":stopwatch:", style="bright_black"),
+        Text(_flow_run_format_duration(stats["elapsed_ms"]), style="white"),
+        Text.from_markup(":inbox_tray:", style="bright_black"),
+        Text(_flow_run_format_number(stats["input_tokens"]), style="white"),
+        Text.from_markup(":outbox_tray:", style="bright_black"),
+        Text(_flow_run_format_number(stats["output_tokens"]), style="white"),
+        Text.from_markup(":brain:", style="bright_black"),
+        Text(
+            _flow_run_format_number(stats["reasoning_tokens"]),
+            style="white",
         ),
-        style="bright_black",
+        Text.from_markup(":hammer_and_wrench:", style="bright_black"),
+        Text(_flow_run_format_number(stats["tools_executed"]), style="white"),
     )
 
 

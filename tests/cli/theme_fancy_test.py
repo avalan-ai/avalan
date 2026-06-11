@@ -174,13 +174,10 @@ class FancyThemeFlowProgressTestCase(unittest.TestCase):
         self.assertIn("tool", output)
         self.assertIn("1.5s", output)
         self.assertIn("1,234", output)
-        self.assertIn("34o", output)
-        self.assertIn("5r", output)
-        self.assertIn("2t", output)
-        self.assertNotIn("🤖", output)
-        self.assertNotIn("💻", output)
-        self.assertNotIn("🧠", output)
-        self.assertNotIn("🔨", output)
+        self.assertIn("📥 12", output)
+        self.assertIn("📤 34", output)
+        self.assertIn("🧠 5", output)
+        self.assertIn("🛠 2", output)
         self.assertNotRegex(output, "[\\u2800-\\u28ff]")
 
     def test_flow_run_progress_sanitizes_negative_stats(self):
