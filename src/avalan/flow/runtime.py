@@ -1640,7 +1640,7 @@ def _node_scoped_event_listener(
         payload: dict[str, object] = {}
         if isinstance(event.payload, Mapping):
             payload.update(event.payload)
-        payload.setdefault("flow_node", node_name)
+        payload["flow_node"] = node_name
         return event_listener(
             Event(
                 type=event.type,

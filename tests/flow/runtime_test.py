@@ -291,7 +291,11 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             result = options.event_listener(
                 Event(
                     type=EventType.TOKEN_GENERATED,
-                    payload={"token_type": "Token", "count": 3},
+                    payload={
+                        "flow_node": "child_agent",
+                        "token_type": "Token",
+                        "count": 3,
+                    },
                 )
             )
             if result is not None:
