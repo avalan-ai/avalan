@@ -3666,8 +3666,11 @@ class CLI:
     ) -> _ArgumentGroup:
         """Add dataclass based tool options to ``parser``."""
         group = parser.add_argument_group(f"{prefix} tool settings")
+        scalar_fields = getattr(settings_cls, "CLI_SCALAR_FIELDS", None)
 
         for field in fields(settings_cls):
+            if scalar_fields is not None and field.name not in scalar_fields:
+                continue
             option = f"--tool-{prefix}-{field.name.replace('_', '-')}"
             dest = f"tool_{prefix}_{field.name}"
 

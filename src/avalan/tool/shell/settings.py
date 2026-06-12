@@ -11,6 +11,9 @@ from ...types import (
     assert_env_name as _assert_env_name,
 )
 from ...types import (
+    assert_known_string_sequence as _assert_known_string_sequence,
+)
+from ...types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
 from ...types import (
@@ -31,7 +34,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from re import compile as compile_pattern
 from types import MappingProxyType
-from typing import Literal, cast, final
+from typing import ClassVar, Literal, final
 
 _TESSERACT_LANGUAGE_PATTERN = compile_pattern(r"^[A-Za-z0-9_]+$")
 
@@ -39,6 +42,64 @@ _TESSERACT_LANGUAGE_PATTERN = compile_pattern(r"^[A-Za-z0-9_]+$")
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ShellToolSettings:
+    CLI_SCALAR_FIELDS: ClassVar[tuple[str, ...]] = (
+        "backend",
+        "workspace_root",
+        "cwd",
+        "default_timeout_seconds",
+        "max_timeout_seconds",
+        "max_stdout_bytes",
+        "max_stderr_bytes",
+        "max_stdin_bytes",
+        "max_arguments",
+        "max_argument_bytes",
+        "max_command_bytes",
+        "max_path_count",
+        "max_glob_count",
+        "max_glob_bytes_per_glob",
+        "max_total_glob_bytes",
+        "max_full_file_bytes",
+        "max_rg_columns",
+        "max_rg_context_lines",
+        "max_rg_matches_per_file",
+        "max_head_lines",
+        "max_tail_lines",
+        "max_text_filter_input_bytes",
+        "max_filter_program_bytes",
+        "max_filter_pattern_bytes",
+        "max_filter_selectors",
+        "max_awk_fields",
+        "max_awk_separator_bytes",
+        "max_json_input_bytes",
+        "max_jq_filter_bytes",
+        "max_pdf_input_bytes",
+        "max_pdf_text_pages",
+        "max_pdf_raster_pages",
+        "max_pdf_raster_dpi",
+        "max_raster_long_edge_pixels",
+        "max_raster_pixels",
+        "max_output_files",
+        "max_output_file_bytes",
+        "max_total_output_file_bytes",
+        "max_inline_output_file_bytes",
+        "max_ocr_input_bytes",
+        "max_ocr_pixels",
+        "max_ocr_languages",
+        "max_tesseract_dpi",
+        "stream_read_chunk_bytes",
+        "max_concurrent_processes",
+        "max_concurrent_heavy_processes",
+        "default_pdf_timeout_seconds",
+        "max_pdf_timeout_seconds",
+        "default_ocr_timeout_seconds",
+        "max_ocr_timeout_seconds",
+        "tesseract_thread_limit",
+        "allow_media_tools",
+        "allow_absolute_paths",
+        "allow_symlinks",
+        "allow_hidden",
+    )
+
     backend: Literal["local"] = "local"
     workspace_root: str = "."
     cwd: str = "."
@@ -295,18 +356,19 @@ def _assert_positive_timeout_order(
         min_value=0,
         min_inclusive=False,
     )
-    default_number = cast(int | float, default_value)
-    max_number = cast(int | float, max_value)
+    assert isinstance(default_value, int | float)
+    assert isinstance(max_value, int | float)
     assert (
-        default_number <= max_number
+        default_value <= max_value
     ), f"{default_field_name} must not exceed {max_field_name}"
 
 
 def _assert_known_commands(value: object) -> None:
-    _assert_non_empty_string_sequence(value, "allowed_commands")
-    commands = cast(tuple[str, ...], value)
-    for command in commands:
-        assert command in SHELL_COMMAND_IDS, "allowed_commands must be known"
+    _assert_known_string_sequence(
+        value,
+        "allowed_commands",
+        SHELL_COMMAND_IDS,
+    )
 
 
 def _assert_non_empty_known_values(
@@ -314,16 +376,20 @@ def _assert_non_empty_known_values(
     field_name: str,
     known_values: tuple[str, ...],
 ) -> None:
-    _assert_non_empty_string_sequence(value, field_name)
-    items = cast(tuple[str, ...], value)
-    for item in items:
-        assert item in known_values, f"{field_name} contains unsupported value"
+    _assert_known_string_sequence(value, field_name, known_values)
 
 
 def _assert_tesseract_languages(value: object) -> None:
     _assert_non_empty_string_sequence(value, "allowed_tesseract_languages")
-    items = cast(tuple[str, ...], value)
-    for item in items:
+    assert isinstance(
+        value,
+        Sequence,
+    ), "allowed_tesseract_languages must be a sequence"
+    assert not isinstance(
+        value,
+        str | bytes,
+    ), "allowed_tesseract_languages must be a sequence"
+    for item in value:
         assert _TESSERACT_LANGUAGE_PATTERN.match(
             item,
         ), "allowed_tesseract_languages contains unsupported value"

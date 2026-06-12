@@ -1,6 +1,8 @@
 from asyncio import to_thread
 from os import stat_result
 from pathlib import Path
+from shutil import rmtree
+from tempfile import mkdtemp
 
 DEFAULT_TEXT_ENCODING = "utf-8"
 
@@ -45,6 +47,36 @@ async def stat_path(
         Path(path).stat,
         follow_symlinks=follow_symlinks,
     )
+
+
+async def resolve_path(
+    path: str | Path,
+    *,
+    strict: bool = False,
+) -> Path:
+    assert isinstance(path, str | Path), "path must be a string or path"
+    assert isinstance(strict, bool), "strict must be boolean"
+    return await to_thread(Path(path).resolve, strict=strict)
+
+
+async def make_private_directory(
+    *,
+    prefix: str,
+    directory: str | Path | None = None,
+) -> Path:
+    assert isinstance(prefix, str), "prefix must be a string"
+    assert prefix.strip(), "prefix must not be empty"
+    if directory is not None:
+        assert isinstance(
+            directory,
+            str | Path,
+        ), "directory must be a string or path"
+    return Path(await to_thread(mkdtemp, prefix=prefix, dir=directory))
+
+
+async def remove_tree(path: str | Path) -> None:
+    assert isinstance(path, str | Path), "path must be a string or path"
+    await to_thread(rmtree, path)
 
 
 async def write_text(

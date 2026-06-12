@@ -16,6 +16,10 @@ LooseJsonValue: TypeAlias = JsonScalar | list[object] | dict[str, object]
 JsonObject: TypeAlias = dict[str, MutableJsonValue]
 
 _ENV_NAME_PATTERN = compile_pattern(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_MEDIA_TYPE_PATTERN = compile_pattern(
+    r"^[A-Za-z0-9][A-Za-z0-9.+-]*/[A-Za-z0-9][A-Za-z0-9.+-]*$"
+)
+_SHA256_HEX_PATTERN = compile_pattern(r"^[0-9a-f]{64}$")
 
 
 def assert_bool(value: object, field_name: str) -> None:
@@ -119,6 +123,35 @@ def assert_string_mapping(value: object, field_name: str) -> None:
         assert_non_empty_string(item, f"{field_name}.{key}")
 
 
+def assert_known_string(
+    value: object,
+    field_name: str,
+    known_values: Sequence[str],
+) -> None:
+    assert_non_empty_string(value, field_name)
+    assert known_values, "known_values must not be empty"
+    for known_value in known_values:
+        assert_non_empty_string(known_value, "known_values")
+    assert value in known_values, f"{field_name} contains unsupported value"
+
+
+def assert_known_string_sequence(
+    value: object,
+    field_name: str,
+    known_values: Sequence[str],
+) -> None:
+    assert_non_empty_string_sequence(value, field_name)
+    assert isinstance(value, Sequence), f"{field_name} must be a sequence"
+    assert not isinstance(
+        value, str | bytes
+    ), f"{field_name} must be a sequence"
+    assert known_values, "known_values must not be empty"
+    for known_value in known_values:
+        assert_non_empty_string(known_value, "known_values")
+    for item in value:
+        assert item in known_values, f"{field_name} contains unsupported value"
+
+
 def assert_optional_bounded_number(
     value: object | None,
     field_name: str,
@@ -157,6 +190,48 @@ def assert_env_name(value: object, field_name: str) -> None:
     assert_non_empty_string(value, field_name)
     assert isinstance(value, str), f"{field_name} must be a string"
     assert _ENV_NAME_PATTERN.match(value), f"{field_name} must be an env name"
+
+
+def assert_safe_suffix(value: object, field_name: str) -> None:
+    assert_non_empty_string(value, field_name)
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert "\x00" not in value, f"{field_name} must not contain NUL"
+    assert "/" not in value, f"{field_name} must not contain path separators"
+    assert "\\" not in value, f"{field_name} must not contain path separators"
+    assert value not in (".", ".."), f"{field_name} must be a file suffix"
+
+
+def assert_safe_suffix_sequence(value: object, field_name: str) -> None:
+    assert_non_empty_string_sequence(value, field_name)
+    assert isinstance(value, Sequence), f"{field_name} must be a sequence"
+    assert not isinstance(
+        value, str | bytes
+    ), f"{field_name} must be a sequence"
+    for item in value:
+        assert_safe_suffix(item, field_name)
+
+
+def assert_media_type(value: object, field_name: str) -> None:
+    assert_non_empty_string(value, field_name)
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert (
+        _MEDIA_TYPE_PATTERN.match(value) is not None
+    ), f"{field_name} must be a media type"
+
+
+def assert_suffix_media_type_mapping(value: object, field_name: str) -> None:
+    assert isinstance(value, Mapping), f"{field_name} must be a mapping"
+    for suffix, media_type in value.items():
+        assert_safe_suffix(suffix, f"{field_name} key")
+        assert_media_type(media_type, f"{field_name}.{suffix}")
+
+
+def assert_sha256_hex(value: object, field_name: str = "sha256") -> None:
+    assert_non_empty_string(value, field_name)
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert (
+        _SHA256_HEX_PATTERN.match(value) is not None
+    ), f"{field_name} must be a lowercase SHA-256 hex digest"
 
 
 def assert_absolute_path(value: object, field_name: str) -> None:
