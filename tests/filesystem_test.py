@@ -6,7 +6,9 @@ from unittest import TestCase, main
 from avalan.filesystem import (
     assert_text_encoding,
     read_bytes,
+    read_bytes_prefix,
     read_text,
+    stat_path,
     write_bytes,
     write_text,
 )
@@ -34,6 +36,32 @@ class FilesystemTestCase(TestCase):
             content = asyncio_run(read_bytes(path))
 
         self.assertEqual(content, b"abc")
+
+    def test_read_bytes_prefix_limits_file_contents(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "value.bin"
+            path.write_bytes(b"abcdef")
+
+            content = asyncio_run(read_bytes_prefix(path, 3))
+            empty = asyncio_run(read_bytes_prefix(path, 0))
+
+        self.assertEqual(content, b"abc")
+        self.assertEqual(empty, b"")
+
+    def test_stat_path_supports_symlink_policy(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            path = root / "value.txt"
+            path.write_text("hello", encoding="utf-8")
+            symlink = root / "link.txt"
+            symlink.symlink_to(path)
+
+            followed = asyncio_run(stat_path(symlink))
+            not_followed = asyncio_run(
+                stat_path(symlink, follow_symlinks=False)
+            )
+
+        self.assertNotEqual(followed.st_mode, not_followed.st_mode)
 
     def test_write_text_uses_default_and_explicit_encoding(self) -> None:
         with TemporaryDirectory() as temporary_directory:
@@ -73,6 +101,16 @@ class FilesystemTestCase(TestCase):
             asyncio_run(read_text("value.txt", encoding=""))
         with self.assertRaises(AssertionError):
             asyncio_run(read_bytes(object()))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(read_bytes_prefix(object(), 1))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(read_bytes_prefix("value.bin", True))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(read_bytes_prefix("value.bin", -1))
+        with self.assertRaises(AssertionError):
+            asyncio_run(stat_path(object()))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(stat_path("value.txt", follow_symlinks=1))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
             asyncio_run(write_text(object(), "value"))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):

@@ -90,6 +90,12 @@ from ...tool.graph import HAS_GRAPH_DEPENDENCIES, GraphToolSet
 from ...tool.graph_settings import GraphToolSettings
 from ...tool.manager import ToolManager
 from ...tool.math import MathToolSet
+from ...tool.shell import (
+    ShellToolSet,
+    ShellToolSettings,
+    normalize_shell_enabled_tools,
+    should_append_shell_toolset,
+)
 from .agent import get_tool_settings
 from .task import (
     TaskCliInputError,
@@ -2269,7 +2275,14 @@ def _flow_missing_tool_resolver_issues(
 
 
 def _flow_tool_manager(args: Namespace) -> ToolManager | None:
-    enabled_tools = _flow_enabled_tools(args)
+    shell_settings = get_tool_settings(
+        args,
+        prefix="shell",
+        settings_cls=ShellToolSettings,
+    )
+    enabled_tools = normalize_shell_enabled_tools(_flow_enabled_tools(args))
+    if not enabled_tools and shell_settings is not None:
+        enabled_tools = ["shell"]
     if not enabled_tools:
         return None
     available_toolsets: list[ToolSet] = [MathToolSet(namespace="math")]
@@ -2307,6 +2320,16 @@ def _flow_tool_manager(args: Namespace) -> ToolManager | None:
     if database_settings is not None:
         available_toolsets.append(
             DatabaseToolSet(settings=database_settings, namespace="database")
+        )
+    if should_append_shell_toolset(
+        shell_settings=shell_settings,
+        enabled_tools=enabled_tools,
+    ):
+        available_toolsets.append(
+            ShellToolSet(
+                settings=shell_settings or ShellToolSettings(),
+                namespace="shell",
+            )
         )
     return ToolManager.create_instance(
         available_toolsets=available_toolsets,

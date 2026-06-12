@@ -35,6 +35,12 @@ from ..tool.graph_settings import GraphToolSettings
 from ..tool.manager import ToolManager
 from ..tool.math import MathToolSet
 from ..tool.memory import MemoryToolSet
+from ..tool.shell import (
+    ShellToolSet,
+    ShellToolSettings,
+    normalize_shell_enabled_tools,
+    should_append_shell_toolset,
+)
 
 from contextlib import AsyncExitStack
 from importlib import import_module
@@ -412,6 +418,7 @@ class OrchestratorLoader:
                         tool_name, str
                     ), "tool.enable entries must be strings"
                     enable_tools.append(tool_name)
+        enable_tools = normalize_shell_enabled_tools(enable_tools)
         engine_config.pop("uri", None)
         engine_config.pop("file_delivery_profile", None)
         orchestrator_type = (
@@ -571,10 +578,19 @@ class OrchestratorLoader:
             ), "tool.graph section must be a mapping"
             graph_settings = GraphToolSettings(**graph_config)
 
+        shell_settings = None
+        if "shell" in tool_section:
+            shell_config = tool_section["shell"]
+            assert isinstance(
+                shell_config, dict
+            ), "tool.shell section must be a mapping"
+            shell_settings = ShellToolSettings(**shell_config)
+
         if tool_settings:
             browser_settings = tool_settings.browser or browser_settings
             database_settings = tool_settings.database or database_settings
             graph_settings = tool_settings.graph or graph_settings
+            shell_settings = tool_settings.shell or shell_settings
             extra = tool_settings.extra
         else:
             extra = None
@@ -583,6 +599,7 @@ class OrchestratorLoader:
             browser=browser_settings,
             database=database_settings,
             graph=graph_settings,
+            shell=shell_settings,
             extra=extra,
         )
 
@@ -704,12 +721,15 @@ class OrchestratorLoader:
         browser_settings = tool_settings.browser if tool_settings else None
         database_settings = tool_settings.database if tool_settings else None
         graph_settings = tool_settings.graph if tool_settings else None
+        shell_settings = tool_settings.shell if tool_settings else None
+        enabled_tools = normalize_shell_enabled_tools(settings.tools)
 
         _l(
-            "Tool settings: browser=%s, database=%s, graph=%s",
+            "Tool settings: browser=%s, database=%s, graph=%s, shell=%s",
             browser_settings,
             database_settings,
             graph_settings,
+            shell_settings,
         )
 
         available_toolsets = [
@@ -739,10 +759,20 @@ class OrchestratorLoader:
                     settings=database_settings, namespace="database"
                 )
             )
+        if should_append_shell_toolset(
+            shell_settings=shell_settings,
+            enabled_tools=enabled_tools,
+        ):
+            available_toolsets.append(
+                ShellToolSet(
+                    settings=shell_settings or ShellToolSettings(),
+                    namespace="shell",
+                )
+            )
 
         tool = ToolManager.create_instance(
             available_toolsets=available_toolsets,
-            enable_tools=settings.tools,
+            enable_tools=enabled_tools,
             settings=ToolManagerSettings(
                 tool_format=tool_format,
                 recovery_formats=tool_recovery_formats or [],

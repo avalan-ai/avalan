@@ -3193,6 +3193,75 @@ class FlowRunCommandTestCase(TestCase):
         self.assertIsNotNone(manager.describe_tool("math.calculator"))
         self.assertIsNone(manager.describe_tool("code.python"))
 
+    def test_flow_tool_manager_synthesizes_shell_for_shell_settings(
+        self,
+    ) -> None:
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(
+                flow_cmds.ToolManager,
+                "create_instance",
+                return_value="manager",
+            ) as create_instance,
+        ):
+            manager = flow_cmds._flow_tool_manager(
+                _args(tool_shell_allow_media_tools=True)
+            )
+
+        self.assertEqual(manager, "manager")
+        kwargs = create_instance.call_args.kwargs
+        self.assertEqual(kwargs["enable_tools"], ["shell"])
+        namespaces = [
+            toolset.namespace for toolset in kwargs["available_toolsets"]
+        ]
+        self.assertIn("shell", namespaces)
+
+    def test_flow_tool_manager_normalizes_shell_wildcard(self) -> None:
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(
+                flow_cmds.ToolManager,
+                "create_instance",
+                return_value="manager",
+            ) as create_instance,
+        ):
+            manager = flow_cmds._flow_tool_manager(_args(tools=["shell.*"]))
+
+        self.assertEqual(manager, "manager")
+        kwargs = create_instance.call_args.kwargs
+        self.assertEqual(kwargs["enable_tools"], ["shell"])
+        namespaces = [
+            toolset.namespace for toolset in kwargs["available_toolsets"]
+        ]
+        self.assertIn("shell", namespaces)
+
+    def test_flow_tool_manager_does_not_match_shell_like_namespaces(
+        self,
+    ) -> None:
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(
+                flow_cmds.ToolManager,
+                "create_instance",
+                return_value="manager",
+            ) as create_instance,
+        ):
+            manager = flow_cmds._flow_tool_manager(_args(tools=["shellx.*"]))
+
+        self.assertEqual(manager, "manager")
+        kwargs = create_instance.call_args.kwargs
+        self.assertEqual(kwargs["enable_tools"], ["shellx.*"])
+        namespaces = [
+            toolset.namespace for toolset in kwargs["available_toolsets"]
+        ]
+        self.assertNotIn("shell", namespaces)
+
     def test_flow_run_text_output_prints_human_summary(self) -> None:
         console = Console(record=True, width=160)
 

@@ -23,6 +23,89 @@ from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.graph_settings import GraphToolSettings
+from avalan.tool.shell import ShellToolSettings
+
+
+def _minimal_agent_toml() -> str:
+    return """
+[agent]
+role = "assistant"
+
+[engine]
+uri = "ai://local/model"
+"""
+
+
+def _orchestrator_settings(
+    *,
+    tools: list[str] | None,
+) -> OrchestratorSettings:
+    return OrchestratorSettings(
+        agent_id=uuid4(),
+        orchestrator_type=None,
+        agent_config={"role": "assistant"},
+        uri="ai://local/model",
+        engine_config={},
+        tools=tools,
+        call_options=None,
+        template_vars=None,
+        memory_permanent_message=None,
+        permanent_memory=None,
+        memory_recent=False,
+        sentence_model_id=OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
+        sentence_model_engine_config=None,
+        sentence_model_max_tokens=500,
+        sentence_model_overlap_size=125,
+        sentence_model_window_size=250,
+        json_config=None,
+        log_events=True,
+    )
+
+
+async def _from_settings_tool_manager_kwargs(
+    settings: OrchestratorSettings,
+    *,
+    tool_settings: ToolSettingsContext | None = None,
+) -> dict[str, Any]:
+    hub = MagicMock(spec=HuggingfaceHub)
+    logger = MagicMock(spec=Logger)
+    stack = AsyncExitStack()
+    memory = MagicMock()
+    tool = MagicMock()
+    tool.__aenter__ = AsyncMock(return_value=tool)
+
+    with (
+        patch(
+            "avalan.agent.loader.MemoryManager.create_instance",
+            new=AsyncMock(return_value=memory),
+        ),
+        patch("avalan.agent.loader.ModelManager", return_value=MagicMock()),
+        patch("avalan.agent.loader.DefaultOrchestrator", return_value="orch"),
+        patch(
+            "avalan.agent.loader.ToolManager.create_instance",
+            return_value=tool,
+        ) as tm_patch,
+        patch("avalan.agent.loader.EventManager", return_value=MagicMock()),
+        patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", False),
+        patch("avalan.agent.loader.HAS_CODE_DEPENDENCIES", False),
+        patch("avalan.agent.loader.HAS_BROWSER_DEPENDENCIES", False),
+        patch("avalan.agent.loader.MathToolSet", return_value=MagicMock()),
+        patch("avalan.agent.loader.MemoryToolSet", return_value=MagicMock()),
+    ):
+        loader = OrchestratorLoader(
+            hub=hub,
+            logger=logger,
+            participant_id=uuid4(),
+            stack=stack,
+        )
+        result = await loader.from_settings(
+            settings,
+            tool_settings=tool_settings,
+        )
+
+    await stack.aclose()
+    assert result == "orch"
+    return dict(tm_patch.call_args.kwargs)
 
 
 class LoaderPropertyTestCase(IsolatedAsyncioTestCase):
@@ -51,6 +134,74 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(FileNotFoundError):
             await loader.from_file("missing.toml", agent_id=uuid4())
         await stack.aclose()
+
+    async def test_empty_shell_section_enables_default_shell_settings(self):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + "\n[tool.shell]\n")
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(tmp.name, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+            self.assertFalse(tool_settings.shell.allow_media_tools)
+            await stack.aclose()
+
+    async def test_shell_section_rejects_non_mapping(self):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml() + '\n[tool]\nshell = "yes"\n')
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with self.assertRaises(AssertionError):
+                await loader.from_file(tmp.name, agent_id=uuid4())
+            await stack.aclose()
+
+    async def test_shell_enable_wildcard_is_normalized_from_file(self):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(
+                _minimal_agent_toml()
+                + '\n[tool]\nenable = ["shell.*", "math.calculator"]\n'
+            )
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(tmp.name, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            settings = from_settings.call_args.args[0]
+            self.assertEqual(settings.tools, ["shell", "math.calculator"])
+            await stack.aclose()
 
     async def test_permission_error(self):
         if geteuid() == 0:
@@ -2015,6 +2166,42 @@ schema_ref = \"../private/answer.json\"
 
 
 class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
+    async def test_shell_toolset_is_not_registered_without_shell_opt_in(self):
+        kwargs = await _from_settings_tool_manager_kwargs(
+            _orchestrator_settings(tools=None)
+        )
+
+        namespaces = [
+            toolset.namespace for toolset in kwargs["available_toolsets"]
+        ]
+        self.assertNotIn("shell", namespaces)
+        self.assertIsNone(kwargs["enable_tools"])
+
+    async def test_shell_toolset_is_registered_for_shell_selection(self):
+        kwargs = await _from_settings_tool_manager_kwargs(
+            _orchestrator_settings(tools=["shell.*"])
+        )
+
+        namespaces = [
+            toolset.namespace for toolset in kwargs["available_toolsets"]
+        ]
+        self.assertIn("shell", namespaces)
+        self.assertEqual(kwargs["enable_tools"], ["shell"])
+
+    async def test_shell_toolset_is_registered_for_explicit_empty_selection(
+        self,
+    ):
+        kwargs = await _from_settings_tool_manager_kwargs(
+            _orchestrator_settings(tools=[]),
+            tool_settings=ToolSettingsContext(shell=ShellToolSettings()),
+        )
+
+        namespaces = [
+            toolset.namespace for toolset in kwargs["available_toolsets"]
+        ]
+        self.assertIn("shell", namespaces)
+        self.assertEqual(kwargs["enable_tools"], [])
+
     async def test_load_default_orchestrator_from_settings(self):
         hub = MagicMock(spec=HuggingfaceHub)
         logger = MagicMock(spec=Logger)
@@ -2384,6 +2571,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         browser_settings = BrowserToolSettings()
         db_settings = DatabaseToolSettings(dsn="sqlite:///db.sqlite")
         graph_settings = GraphToolSettings(file="/tmp/chart.png")
+        shell_settings = ShellToolSettings()
 
         with (
             patch(
@@ -2428,6 +2616,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                     browser=browser_settings,
                     database=db_settings,
                     graph=graph_settings,
+                    shell=shell_settings,
                 ),
             )
 
@@ -2435,10 +2624,11 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             logger.log.assert_any_call(
                 DEBUG,
                 "<OrchestratorLoader> Tool settings: browser=%s, database=%s,"
-                " graph=%s",
+                " graph=%s, shell=%s",
                 browser_settings,
                 db_settings,
                 graph_settings,
+                shell_settings,
             )
         await stack.aclose()
 

@@ -1,0 +1,3 @@
+root = "."
+allow_hidden = false
+allow_symlinks = false
