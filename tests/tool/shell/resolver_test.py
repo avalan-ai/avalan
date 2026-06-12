@@ -1,4 +1,6 @@
 from collections.abc import Awaitable, Callable
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
 
 from avalan.tool.shell.registry import (
@@ -6,13 +8,24 @@ from avalan.tool.shell.registry import (
     ShellCommandDefinition,
 )
 from avalan.tool.shell.resolver import (
+    ExecutableResolver,
     TrustedExecutableResolver,
+    trusted_search_path_executable_lookup,
     unavailable_executable_lookup,
 )
 from avalan.tool.shell.toolset import ShellToolSet
 
 
 class TrustedExecutableResolverTest(IsolatedAsyncioTestCase):
+    async def test_protocol_stub_is_inert(self) -> None:
+        class InertExecutableResolver(ExecutableResolver):
+            pass
+
+        resolver = InertExecutableResolver()
+
+        with self.assertRaises(NotImplementedError):
+            await resolver.resolve(SHELL_COMMAND_DEFINITIONS["rg"])
+
     async def test_explicit_path_resolves_without_lookup(self) -> None:
         calls: list[str] = []
 
@@ -80,6 +93,35 @@ class TrustedExecutableResolverTest(IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_default_resolver_uses_trusted_search_paths(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            executable = root / "rg"
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            executable.chmod(0o755)
+
+            resolver = TrustedExecutableResolver(
+                executable_search_paths=(str(root),),
+            )
+            resolved = await resolver.resolve_command("rg")
+            missing = await trusted_search_path_executable_lookup(
+                SHELL_COMMAND_DEFINITIONS["jq"],
+                (str(root),),
+            )
+
+        self.assertEqual(resolved, str(executable))
+        self.assertIsNone(missing)
+
+    async def test_default_lookup_without_search_paths_reports_unavailable(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            await trusted_search_path_executable_lookup(
+                SHELL_COMMAND_DEFINITIONS["rg"],
+                (),
+            )
+        )
+
     async def test_rejects_invalid_configuration_and_inputs(self) -> None:
         invalid_kwargs = (
             {"executable_paths": []},
@@ -105,6 +147,13 @@ class TrustedExecutableResolverTest(IsolatedAsyncioTestCase):
             await unavailable_executable_lookup("rg", ())  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
             await unavailable_executable_lookup(
+                SHELL_COMMAND_DEFINITIONS["rg"],
+                ("relative",),
+            )
+        with self.assertRaises(AssertionError):
+            await trusted_search_path_executable_lookup("rg", ())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            await trusted_search_path_executable_lookup(
                 SHELL_COMMAND_DEFINITIONS["rg"],
                 ("relative",),
             )

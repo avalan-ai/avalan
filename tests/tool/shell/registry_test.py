@@ -1,5 +1,7 @@
+from importlib import import_module
 from unittest import TestCase, main
 
+from avalan.tool.shell.entities import ShellOutputKind
 from avalan.tool.shell.registry import (
     SHELL_COMMAND_DEFINITIONS,
     SHELL_COMMAND_IDS,
@@ -7,6 +9,20 @@ from avalan.tool.shell.registry import (
     ShellCommandDefinition,
     ShellDependencyGroup,
 )
+
+
+def _build_noop_argv(
+    context: object,
+) -> tuple[tuple[str, ...], tuple[str, ...], None]:
+    return (), (), None
+
+
+def _text_output_contract(request: object) -> tuple[str, ShellOutputKind]:
+    return "text/plain", ShellOutputKind.TEXT
+
+
+def _uppercase_output_filter(value: str) -> str:
+    return value.upper()
 
 
 class ShellRegistryTest(TestCase):
@@ -35,6 +51,36 @@ class ShellRegistryTest(TestCase):
         self.assertEqual(
             set(SHELL_COMMAND_DEFINITIONS),
             set(SHELL_COMMAND_IDS),
+        )
+
+    def test_command_definitions_are_owned_by_command_modules(self) -> None:
+        for command_id in SHELL_COMMAND_IDS:
+            with self.subTest(command_id=command_id):
+                module = import_module(
+                    f"avalan.tool.shell.commands.{command_id}"
+                )
+                self.assertIs(
+                    SHELL_COMMAND_DEFINITIONS[command_id],
+                    module.COMMAND_DEFINITION,
+                )
+                self.assertIs(
+                    SHELL_COMMAND_DEFINITIONS[command_id].argv_builder,
+                    module.build_argv,
+                )
+
+    def test_command_specific_output_filters_are_owned_by_modules(
+        self,
+    ) -> None:
+        rg_module = import_module("avalan.tool.shell.commands.rg")
+        ls_module = import_module("avalan.tool.shell.commands.ls")
+
+        self.assertIs(
+            SHELL_COMMAND_DEFINITIONS["rg"].output_filter,
+            rg_module.filter_output,
+        )
+        self.assertIs(
+            SHELL_COMMAND_DEFINITIONS["ls"].output_filter,
+            ls_module.filter_output,
         )
 
     def test_command_definitions_record_dependency_groups(self) -> None:
@@ -100,12 +146,16 @@ class ShellRegistryTest(TestCase):
             "executable_name": "rg",
             "dependency_group": ShellDependencyGroup.CORE,
             "container_package_hints": ("ripgrep",),
+            "argv_builder": _build_noop_argv,
         }
         invalid_values = {
             "logical_id": "",
             "executable_name": "",
             "dependency_group": "core",
             "container_package_hints": (),
+            "argv_builder": None,
+            "output_contract": None,
+            "output_filter": None,
             "public": 1,
             "media_risk": 1,
             "supports_double_dash": 1,
@@ -116,6 +166,41 @@ class ShellRegistryTest(TestCase):
                 kwargs[field_name] = value
                 with self.assertRaises(AssertionError):
                     ShellCommandDefinition(**kwargs)  # type: ignore[arg-type]
+
+        definition = ShellCommandDefinition(
+            **{
+                **valid,
+                "output_contract": _text_output_contract,
+                "output_filter": _uppercase_output_filter,
+            }
+        )
+        self.assertIs(definition.output_contract, _text_output_contract)
+        self.assertIs(definition.output_filter, _uppercase_output_filter)
+
+    def test_command_definition_defaults_format_text_output(self) -> None:
+        definition = ShellCommandDefinition(
+            logical_id="cat",
+            executable_name="cat",
+            dependency_group=ShellDependencyGroup.CORE,
+            container_package_hints=("coreutils",),
+            argv_builder=_build_noop_argv,
+        )
+
+        self.assertEqual(
+            definition.output_contract(object()),
+            ("text/plain", ShellOutputKind.TEXT),
+        )
+        self.assertEqual(definition.output_filter("visible"), "visible")
+        with self.assertRaises(AssertionError):
+            definition.output_filter(object())  # type: ignore[arg-type]
+
+    def test_command_output_filters_reject_invalid_values(self) -> None:
+        for command_id in ("rg", "ls"):
+            with self.subTest(command_id=command_id):
+                with self.assertRaises(AssertionError):
+                    SHELL_COMMAND_DEFINITIONS[command_id].output_filter(
+                        object()  # type: ignore[arg-type]
+                    )
 
 
 if __name__ == "__main__":

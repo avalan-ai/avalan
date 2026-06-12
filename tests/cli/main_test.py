@@ -135,7 +135,13 @@ class CliParallelOptionTestCase(TestCase):
 
         default_args = cli._parser.parse_args(["flow", "run", "flow.toml"])
         explicit_args = cli._parser.parse_args(
-            ["flow", "run", "flow.toml", "--flow-parallel", "4"]
+            [
+                "flow",
+                "run",
+                "flow.toml",
+                "--flow-parallel",
+                "4",
+            ]
         )
 
         self.assertIsNone(getattr(default_args, "parallel", None))
@@ -150,7 +156,13 @@ class CliParallelOptionTestCase(TestCase):
         for value in ("0", "many"):
             with self.subTest(value=value), self.assertRaises(SystemExit):
                 cli._parser.parse_args(
-                    ["flow", "run", "flow.toml", "--flow-parallel", value]
+                    [
+                        "flow",
+                        "run",
+                        "flow.toml",
+                        "--flow-parallel",
+                        value,
+                    ]
                 )
 
 
