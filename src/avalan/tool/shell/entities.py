@@ -2,6 +2,12 @@ from ...types import (
     assert_bool as _assert_bool,
 )
 from ...types import (
+    assert_int as _assert_int,
+)
+from ...types import (
+    assert_media_type as _assert_media_type,
+)
+from ...types import (
     assert_non_empty_string as _assert_non_empty_string,
 )
 from ...types import (
@@ -14,10 +20,22 @@ from ...types import (
     assert_optional_non_negative_int as _assert_optional_non_negative_int,
 )
 from ...types import (
+    assert_safe_suffix as _assert_safe_suffix,
+)
+from ...types import (
+    assert_safe_suffix_sequence as _assert_safe_suffix_sequence,
+)
+from ...types import (
+    assert_sha256_hex as _assert_sha256_hex,
+)
+from ...types import (
     assert_string_tuple as _assert_string_tuple,
 )
+from ...types import (
+    assert_suffix_media_type_mapping as _assert_suffix_media_type_mapping,
+)
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from enum import StrEnum
 from typing import Literal, final
 
@@ -93,6 +111,36 @@ class ShellOutputKind(StrEnum):
     TEXT = "text"
     JSON = "json"
     GENERATED_FILES = "generated_files"
+
+
+SHELL_STATUS_ERROR_CODES: dict[
+    ShellExecutionStatus,
+    ShellExecutionErrorCode,
+] = {
+    status: ShellExecutionErrorCode(status.value)
+    for status in ShellExecutionStatus
+}
+
+
+class ShellToolError(Exception):
+    error_code: ShellExecutionErrorCode
+
+    def __init__(
+        self,
+        error_code: ShellExecutionErrorCode,
+        message: str,
+    ) -> None:
+        assert isinstance(
+            error_code,
+            ShellExecutionErrorCode,
+        ), "error_code must be a shell execution error code"
+        _assert_non_empty_string(message, "message")
+        super().__init__(message)
+        self.error_code = error_code
+
+
+class ShellPolicyDenied(ShellToolError):
+    pass
 
 
 @final
@@ -172,6 +220,7 @@ class ShellCommandRequest:
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ExecutionSpec:
+    _policy_owned: InitVar[object]
     backend: Literal["local"]
     tool_name: str
     command: str
@@ -191,7 +240,10 @@ class ExecutionSpec:
     max_stderr_bytes: int
     metadata: dict[str, object] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _policy_owned: object) -> None:
+        assert (
+            _policy_owned is _EXECUTION_SPEC_FACTORY_KEY
+        ), "ExecutionSpec must be created by policy"
         assert self.backend == "local", "backend must be local"
         _assert_non_empty_string(self.tool_name, "tool_name")
         _assert_non_empty_string(self.command, "command")
@@ -207,7 +259,7 @@ class ExecutionSpec:
             _assert_non_empty_string(value, f"env.{key}")
         if self.stdin is not None:
             assert isinstance(self.stdin, bytes), "stdin must be bytes"
-        _assert_non_empty_string(
+        _assert_media_type(
             self.stdout_media_type,
             "stdout_media_type",
         )
@@ -239,6 +291,58 @@ class ExecutionSpec:
         object.__setattr__(self, "metadata", dict(self.metadata))
 
 
+_EXECUTION_SPEC_FACTORY_KEY = object()
+
+
+def _create_execution_spec_from_policy(
+    *,
+    backend: Literal["local"],
+    tool_name: str,
+    command: str,
+    executable: str | None,
+    argv: tuple[str, ...],
+    display_argv: tuple[str, ...],
+    cwd: str,
+    display_cwd: str,
+    env: dict[str, str],
+    stdin: bytes | None,
+    stdout_media_type: str,
+    output_kind: ShellOutputKind,
+    resource_class: ShellResourceClass,
+    output_plan: "GeneratedOutputPlan | None",
+    timeout_seconds: float,
+    max_stdout_bytes: int,
+    max_stderr_bytes: int,
+    metadata: dict[str, object] | None = None,
+) -> ExecutionSpec:
+    if metadata is not None:
+        assert isinstance(
+            metadata,
+            dict,
+        ), "metadata must be a dictionary"
+    return ExecutionSpec(
+        _policy_owned=_EXECUTION_SPEC_FACTORY_KEY,
+        backend=backend,
+        tool_name=tool_name,
+        command=command,
+        executable=executable,
+        argv=argv,
+        display_argv=display_argv,
+        cwd=cwd,
+        display_cwd=display_cwd,
+        env=env,
+        stdin=stdin,
+        stdout_media_type=stdout_media_type,
+        output_kind=output_kind,
+        resource_class=resource_class,
+        output_plan=output_plan,
+        timeout_seconds=timeout_seconds,
+        max_stdout_bytes=max_stdout_bytes,
+        max_stderr_bytes=max_stderr_bytes,
+        metadata=dict(metadata if metadata is not None else {}),
+    )
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class GeneratedOutputPlan:
@@ -256,17 +360,15 @@ class GeneratedOutputPlan:
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.prefix, "prefix")
         _assert_non_empty_string(self.display_prefix, "display_prefix")
-        _assert_string_tuple(self.allowed_suffixes, "allowed_suffixes")
         assert isinstance(
+            self.allowed_suffixes,
+            tuple,
+        ), "allowed_suffixes must be a tuple"
+        _assert_safe_suffix_sequence(self.allowed_suffixes, "allowed_suffixes")
+        _assert_suffix_media_type_mapping(
             self.suffix_media_types,
-            dict,
-        ), "suffix_media_types must be a dictionary"
-        for suffix, media_type in self.suffix_media_types.items():
-            _assert_non_empty_string(suffix, "suffix_media_types key")
-            _assert_non_empty_string(
-                media_type,
-                f"suffix_media_types.{suffix}",
-            )
+            "suffix_media_types",
+        )
         _assert_non_negative_int(self.max_files, "max_files")
         _assert_non_negative_int(self.max_file_bytes, "max_file_bytes")
         _assert_non_negative_int(self.max_total_bytes, "max_total_bytes")
@@ -308,11 +410,11 @@ class GeneratedFile:
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.display_path, "display_path")
-        _assert_non_empty_string(self.media_type, "media_type")
-        _assert_non_empty_string(self.suffix, "suffix")
+        _assert_media_type(self.media_type, "media_type")
+        _assert_safe_suffix(self.suffix, "suffix")
         _assert_non_negative_int(self.bytes, "bytes")
         if self.sha256 is not None:
-            _assert_non_empty_string(self.sha256, "sha256")
+            _assert_sha256_hex(self.sha256)
         _assert_optional_non_negative_int(self.page, "page")
         _assert_optional_non_negative_int(self.width, "width")
         _assert_optional_non_negative_int(self.height, "height")
@@ -320,4 +422,87 @@ class GeneratedFile:
             _assert_non_empty_string(self.content_base64, "content_base64")
         _assert_bool(self.truncated, "truncated")
         assert isinstance(self.metadata, dict), "metadata must be a dictionary"
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ExecutionResult:
+    backend: str
+    tool_name: str
+    command: str
+    argv: tuple[str, ...]
+    display_argv: tuple[str, ...]
+    cwd: str
+    display_cwd: str
+    status: ShellExecutionStatus
+    exit_code: int | None
+    stdout: str
+    stderr: str
+    stdout_media_type: str
+    output_kind: ShellOutputKind
+    generated_files: tuple[GeneratedFile, ...] = ()
+    stdout_bytes: int = 0
+    stderr_bytes: int = 0
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    timed_out: bool = False
+    cancelled: bool = False
+    duration_ms: int = 0
+    error_code: ShellExecutionErrorCode | None = None
+    error_message: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.backend, "backend")
+        _assert_non_empty_string(self.tool_name, "tool_name")
+        _assert_non_empty_string(self.command, "command")
+        _assert_string_tuple(self.argv, "argv")
+        _assert_string_tuple(self.display_argv, "display_argv")
+        _assert_non_empty_string(self.cwd, "cwd")
+        _assert_non_empty_string(self.display_cwd, "display_cwd")
+        assert isinstance(
+            self.status,
+            ShellExecutionStatus,
+        ), "status must be a shell execution status"
+        if self.exit_code is not None:
+            _assert_int(self.exit_code, "exit_code")
+        assert isinstance(self.stdout, str), "stdout must be a string"
+        assert isinstance(self.stderr, str), "stderr must be a string"
+        _assert_media_type(self.stdout_media_type, "stdout_media_type")
+        assert isinstance(
+            self.output_kind,
+            ShellOutputKind,
+        ), "output_kind must be a shell output kind"
+        assert isinstance(
+            self.generated_files,
+            tuple,
+        ), "generated_files must be a tuple"
+        for generated_file in self.generated_files:
+            assert isinstance(
+                generated_file,
+                GeneratedFile,
+            ), "generated_files must contain generated files"
+        _assert_non_negative_int(self.stdout_bytes, "stdout_bytes")
+        _assert_non_negative_int(self.stderr_bytes, "stderr_bytes")
+        _assert_bool(self.stdout_truncated, "stdout_truncated")
+        _assert_bool(self.stderr_truncated, "stderr_truncated")
+        _assert_bool(self.timed_out, "timed_out")
+        _assert_bool(self.cancelled, "cancelled")
+        _assert_non_negative_int(self.duration_ms, "duration_ms")
+        if self.error_code is not None:
+            assert isinstance(
+                self.error_code,
+                ShellExecutionErrorCode,
+            ), "error_code must be a shell execution error code"
+        if self.error_message is not None:
+            _assert_non_empty_string(self.error_message, "error_message")
+        assert isinstance(self.metadata, dict), "metadata must be a dictionary"
+        object.__setattr__(self, "argv", tuple(self.argv))
+        object.__setattr__(self, "display_argv", tuple(self.display_argv))
+        object.__setattr__(
+            self,
+            "generated_files",
+            tuple(self.generated_files),
+        )
         object.__setattr__(self, "metadata", dict(self.metadata))

@@ -17,6 +17,7 @@ from avalan.cli.__main__ import (
     _consume_task_input_field_args,
     _task_run_json_stdout,
 )
+from avalan.tool.shell import ShellToolSettings
 
 
 def _collect_progs(parser: ArgumentParser) -> list[str]:
@@ -1934,6 +1935,25 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         )
         args = parser.parse_args(["--tool-y-names", "Alice"])
         self.assertEqual(args.tool_y_names, "Alice")
+
+    def test_add_shell_tool_settings_arguments_uses_scalar_allowlist(self):
+        parser = ArgumentParser()
+        CLI._add_tool_settings_arguments(
+            parser, prefix="shell", settings_cls=ShellToolSettings
+        )
+
+        args = parser.parse_args(
+            [
+                "--tool-shell-allow-media-tools",
+                "--tool-shell-max-stdout-bytes",
+                "4096",
+            ]
+        )
+
+        self.assertTrue(args.tool_shell_allow_media_tools)
+        self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["--tool-shell-environment", "TOKEN=value"])
 
     async def test_call_prompts_for_token_and_handles_exception(self):
         with (

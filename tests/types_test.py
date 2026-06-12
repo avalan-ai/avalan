@@ -9,6 +9,9 @@ from avalan.types import (
     assert_counter,
     assert_env_name,
     assert_int,
+    assert_known_string,
+    assert_known_string_sequence,
+    assert_media_type,
     assert_non_empty_string,
     assert_non_empty_string_sequence,
     assert_non_negative_int,
@@ -20,8 +23,12 @@ from avalan.types import (
     assert_optional_positive_number,
     assert_positive_int,
     assert_positive_number,
+    assert_safe_suffix,
+    assert_safe_suffix_sequence,
+    assert_sha256_hex,
     assert_string_mapping,
     assert_string_tuple,
+    assert_suffix_media_type_mapping,
     coerce_datetime,
 )
 
@@ -155,6 +162,44 @@ class TypesTest(TestCase):
         with self.assertRaises(AssertionError):
             assert_string_mapping({"KEY": ""}, "field")
 
+    def test_assert_known_string_accepts_allowlisted_value(self) -> None:
+        assert_known_string("txt", "field", ("txt", "json"))
+
+    def test_assert_known_string_rejects_unknown_or_bad_allowlist(
+        self,
+    ) -> None:
+        with self.assertRaises(AssertionError):
+            assert_known_string("xml", "field", ("txt", "json"))
+        with self.assertRaises(AssertionError):
+            assert_known_string("txt", "field", ())
+        with self.assertRaises(AssertionError):
+            assert_known_string("txt", "field", ("",))
+
+    def test_assert_known_string_sequence_accepts_allowlisted_values(
+        self,
+    ) -> None:
+        assert_known_string_sequence(("txt", "json"), "field", ("txt", "json"))
+
+    def test_assert_known_string_sequence_rejects_invalid_values(
+        self,
+    ) -> None:
+        invalid_values = (
+            "txt",
+            (),
+            ("",),
+            ("xml",),
+        )
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_known_string_sequence(
+                        value,
+                        "field",
+                        ("txt", "json"),
+                    )
+        with self.assertRaises(AssertionError):
+            assert_known_string_sequence(("txt",), "field", ())
+
     def test_assert_optional_bounded_number_accepts_none(self) -> None:
         assert_optional_bounded_number(
             None,
@@ -199,10 +244,72 @@ class TypesTest(TestCase):
         assert_env_name("_NAME1", "field")
 
     def test_assert_env_name_rejects_invalid_values(self) -> None:
-        for value in ("", "1NAME", "A-B"):
+        for value in ("", "1NAME", "A-B", "A.B", "A B"):
             with self.subTest(value=value):
                 with self.assertRaises(AssertionError):
                     assert_env_name(value, "field")
+
+    def test_assert_safe_suffix_accepts_file_suffixes(self) -> None:
+        assert_safe_suffix(".png", "field")
+        assert_safe_suffix("txt", "field")
+
+    def test_assert_safe_suffix_rejects_path_like_values(self) -> None:
+        for value in ("", ".", "..", "../png", "dir/png", "dir\\png", "x\x00"):
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_safe_suffix(value, "field")
+
+    def test_assert_safe_suffix_sequence_accepts_suffixes(self) -> None:
+        assert_safe_suffix_sequence((".png", ".txt"), "field")
+
+    def test_assert_safe_suffix_sequence_rejects_invalid_sequences(
+        self,
+    ) -> None:
+        for value in (".png", (), ("../png",)):
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_safe_suffix_sequence(value, "field")
+
+    def test_assert_media_type_accepts_type_and_subtype(self) -> None:
+        assert_media_type("text/plain", "field")
+        assert_media_type("application/vnd.test+json", "field")
+
+    def test_assert_media_type_rejects_invalid_values(self) -> None:
+        for value in (
+            "",
+            "text",
+            "text/",
+            "/plain",
+            "text/plain; charset=utf-8",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_media_type(value, "field")
+
+    def test_assert_suffix_media_type_mapping_accepts_mapping(self) -> None:
+        assert_suffix_media_type_mapping({".png": "image/png"}, "field")
+
+    def test_assert_suffix_media_type_mapping_rejects_bad_mapping(
+        self,
+    ) -> None:
+        invalid_values = (
+            [],
+            {"../png": "image/png"},
+            {".png": "image"},
+        )
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_suffix_media_type_mapping(value, "field")
+
+    def test_assert_sha256_hex_accepts_lowercase_digest(self) -> None:
+        assert_sha256_hex("a" * 64)
+
+    def test_assert_sha256_hex_rejects_invalid_digests(self) -> None:
+        for value in ("", "a" * 63, "A" * 64, "g" * 64):
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_sha256_hex(value)
 
     def test_assert_absolute_path_accepts_absolute_string(self) -> None:
         assert_absolute_path("/tmp/value", "field")

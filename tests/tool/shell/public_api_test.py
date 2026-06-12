@@ -21,10 +21,12 @@ from avalan.tool.shell import (
     SHELL_COMMAND_DEFINITIONS,
     SHELL_COMMAND_IDS,
     SHELL_COMMANDS,
+    SHELL_STATUS_ERROR_CODES,
     CommandExecutor,
     ExecutableLookup,
     ExecutableResolver,
     ExecutionPolicy,
+    ExecutionResult,
     ExecutionSpec,
     GeneratedFile,
     GeneratedOutputPlan,
@@ -36,12 +38,23 @@ from avalan.tool.shell import (
     ShellExecutionErrorCode,
     ShellExecutionStatus,
     ShellOutputKind,
+    ShellPathMetadata,
     ShellPolicyDenied,
+    ShellToolError,
     ShellToolSet,
     ShellToolSettings,
     TrustedExecutableResolver,
     enables_shell_tools,
+    ensure_file_size_at_most,
+    file_size,
+    inspect_path,
     normalize_shell_enabled_tools,
+    private_temp_directory,
+    probe_image_dimensions,
+    read_image_signature,
+    read_pdf_signature,
+    read_signature,
+    resolve_policy_path,
     should_append_shell_toolset,
     unavailable_executable_lookup,
 )
@@ -65,6 +78,10 @@ class ShellPublicApiTest(TestCase):
             import_module("avalan.tool.shell").LocalCommandExecutor,
         )
         self.assertIs(
+            ShellPathMetadata,
+            import_module("avalan.tool.shell").ShellPathMetadata,
+        )
+        self.assertIs(
             CommandExecutor, import_module("avalan.tool.shell").CommandExecutor
         )
         self.assertIs(
@@ -84,6 +101,39 @@ class ShellPublicApiTest(TestCase):
             import_module("avalan.tool.shell").unavailable_executable_lookup,
         )
         self.assertIs(
+            resolve_policy_path,
+            import_module("avalan.tool.shell").resolve_policy_path,
+        )
+        self.assertIs(
+            inspect_path,
+            import_module("avalan.tool.shell").inspect_path,
+        )
+        self.assertIs(file_size, import_module("avalan.tool.shell").file_size)
+        self.assertIs(
+            ensure_file_size_at_most,
+            import_module("avalan.tool.shell").ensure_file_size_at_most,
+        )
+        self.assertIs(
+            read_signature,
+            import_module("avalan.tool.shell").read_signature,
+        )
+        self.assertIs(
+            read_pdf_signature,
+            import_module("avalan.tool.shell").read_pdf_signature,
+        )
+        self.assertIs(
+            read_image_signature,
+            import_module("avalan.tool.shell").read_image_signature,
+        )
+        self.assertIs(
+            probe_image_dimensions,
+            import_module("avalan.tool.shell").probe_image_dimensions,
+        )
+        self.assertIs(
+            private_temp_directory,
+            import_module("avalan.tool.shell").private_temp_directory,
+        )
+        self.assertIs(
             PathOperand, import_module("avalan.tool.shell").PathOperand
         )
         self.assertIs(
@@ -94,8 +144,16 @@ class ShellPublicApiTest(TestCase):
             ExecutionSpec, import_module("avalan.tool.shell").ExecutionSpec
         )
         self.assertIs(
+            ExecutionResult,
+            import_module("avalan.tool.shell").ExecutionResult,
+        )
+        self.assertIs(
             ShellPolicyDenied,
             import_module("avalan.tool.shell").ShellPolicyDenied,
+        )
+        self.assertIs(
+            ShellToolError,
+            import_module("avalan.tool.shell").ShellToolError,
         )
         self.assertIs(
             GeneratedFile, import_module("avalan.tool.shell").GeneratedFile
@@ -135,6 +193,10 @@ class ShellPublicApiTest(TestCase):
             import_module("avalan.tool.shell").SHELL_COMMAND_DEFINITIONS,
         )
         self.assertIs(
+            SHELL_STATUS_ERROR_CODES,
+            import_module("avalan.tool.shell").SHELL_STATUS_ERROR_CODES,
+        )
+        self.assertIs(
             normalize_shell_enabled_tools,
             import_module("avalan.tool.shell").normalize_shell_enabled_tools,
         )
@@ -156,6 +218,7 @@ class ShellPublicApiTest(TestCase):
         for module_name in (
             "avalan.tool.shell.entities",
             "avalan.tool.shell.executor",
+            "avalan.tool.shell.filesystem",
             "avalan.tool.shell.formatting",
             "avalan.tool.shell.opt_in",
             "avalan.tool.shell.policy",
@@ -244,6 +307,128 @@ class ShellAsyncContractTest(IsolatedAsyncioTestCase):
         request = ShellCommandRequest(
             tool_name="shell.rg",
             command="rg",
+            options={},
+            paths=(),
+            cwd=None,
+        )
+
+        with self.assertRaises(NotImplementedError):
+            await policy.normalize(request)
+
+    async def test_policy_denies_media_commands_by_default(self) -> None:
+        policy = ExecutionPolicy()
+        request = ShellCommandRequest(
+            tool_name="shell.pdftotext",
+            command="pdftotext",
+            options={},
+            paths=(),
+            cwd=None,
+        )
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy.normalize(request)
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.DENIED_COMMAND,
+        )
+
+    async def test_policy_denies_unknown_commands(self) -> None:
+        policy = ExecutionPolicy()
+        request = ShellCommandRequest(
+            tool_name="shell.unknown",
+            command="unknown",
+            options={},
+            paths=(),
+            cwd=None,
+        )
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy.normalize(request)
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.DENIED_COMMAND,
+        )
+
+    async def test_policy_denies_commands_outside_settings_allowlist(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(
+            settings=ShellToolSettings(allowed_commands=("rg",))
+        )
+        request = ShellCommandRequest(
+            tool_name="shell.cat",
+            command="cat",
+            options={},
+            paths=(),
+            cwd=None,
+        )
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy.normalize(request)
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.DENIED_COMMAND,
+        )
+
+    async def test_policy_allowlist_still_applies_to_enabled_media_tools(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(
+            settings=ShellToolSettings(
+                allow_media_tools=True,
+                allowed_commands=("rg",),
+            )
+        )
+        request = ShellCommandRequest(
+            tool_name="shell.pdftotext",
+            command="pdftotext",
+            options={},
+            paths=(),
+            cwd=None,
+        )
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy.normalize(request)
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.DENIED_COMMAND,
+        )
+
+    async def test_policy_denies_write_path_requests(self) -> None:
+        policy = ExecutionPolicy(
+            settings=ShellToolSettings(allow_media_tools=True)
+        )
+        request = ShellCommandRequest(
+            tool_name="shell.rg",
+            command="rg",
+            options={},
+            paths=(
+                PathOperand(
+                    name="output",
+                    path="out.txt",
+                    kind="file",
+                    access="write",
+                ),
+            ),
+            cwd=None,
+        )
+
+        with self.assertRaises(ShellPolicyDenied) as context:
+            await policy.normalize(request)
+        self.assertEqual(
+            context.exception.error_code,
+            ShellExecutionErrorCode.WRITE_DENIED,
+        )
+
+    async def test_policy_allows_media_commands_to_reach_future_normalizer(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(
+            settings=ShellToolSettings(allow_media_tools=True)
+        )
+        request = ShellCommandRequest(
+            tool_name="shell.pdftotext",
+            command="pdftotext",
             options={},
             paths=(),
             cwd=None,

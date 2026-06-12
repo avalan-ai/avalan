@@ -1,4 +1,10 @@
 from .entities import (
+    SHELL_STATUS_ERROR_CODES as SHELL_STATUS_ERROR_CODES,
+)
+from .entities import (
+    ExecutionResult as ExecutionResult,
+)
+from .entities import (
     ExecutionSpec as ExecutionSpec,
 )
 from .entities import (
@@ -22,8 +28,22 @@ from .entities import (
 from .entities import (
     ShellOutputKind as ShellOutputKind,
 )
+from .entities import ShellPolicyDenied as ShellPolicyDenied
+from .entities import ShellToolError as ShellToolError
 from .executor import CommandExecutor as CommandExecutor
 from .executor import LocalCommandExecutor as LocalCommandExecutor
+from .filesystem import DEFAULT_SIGNATURE_BYTES as DEFAULT_SIGNATURE_BYTES
+from .filesystem import PNG_SIGNATURE as PNG_SIGNATURE
+from .filesystem import ShellPathMetadata as ShellPathMetadata
+from .filesystem import ensure_file_size_at_most as ensure_file_size_at_most
+from .filesystem import file_size as file_size
+from .filesystem import inspect_path as inspect_path
+from .filesystem import private_temp_directory as private_temp_directory
+from .filesystem import probe_image_dimensions as probe_image_dimensions
+from .filesystem import read_image_signature as read_image_signature
+from .filesystem import read_pdf_signature as read_pdf_signature
+from .filesystem import read_signature as read_signature
+from .filesystem import resolve_policy_path as resolve_policy_path
 from .opt_in import SHELL_TOOL_NAMESPACE as SHELL_TOOL_NAMESPACE
 from .opt_in import SHELL_TOOL_WILDCARD as SHELL_TOOL_WILDCARD
 from .opt_in import enables_shell_tools as enables_shell_tools
@@ -32,7 +52,6 @@ from .opt_in import (
 )
 from .opt_in import should_append_shell_toolset as should_append_shell_toolset
 from .policy import ExecutionPolicy as ExecutionPolicy
-from .policy import ShellPolicyDenied as ShellPolicyDenied
 from .registry import (
     SHELL_COMMAND_DEFINITIONS as SHELL_COMMAND_DEFINITIONS,
 )

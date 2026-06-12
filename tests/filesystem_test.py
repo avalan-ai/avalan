@@ -5,9 +5,12 @@ from unittest import TestCase, main
 
 from avalan.filesystem import (
     assert_text_encoding,
+    make_private_directory,
     read_bytes,
     read_bytes_prefix,
     read_text,
+    remove_tree,
+    resolve_path,
     stat_path,
     write_bytes,
     write_text,
@@ -63,6 +66,29 @@ class FilesystemTestCase(TestCase):
 
         self.assertNotEqual(followed.st_mode, not_followed.st_mode)
 
+    def test_resolve_path_does_not_expand_user_syntax(self) -> None:
+        resolved = asyncio_run(resolve_path("~"))
+
+        self.assertEqual(resolved.name, "~")
+
+    def test_private_directory_helpers_create_and_remove_tree(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+
+            path = asyncio_run(
+                make_private_directory(
+                    prefix="avalan-test-",
+                    directory=root,
+                )
+            )
+            child = path / "child.txt"
+            child.write_text("value", encoding="utf-8")
+
+            self.assertTrue(path.is_dir())
+            self.assertTrue(child.is_file())
+            asyncio_run(remove_tree(path))
+            self.assertFalse(path.exists())
+
     def test_write_text_uses_default_and_explicit_encoding(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             path = Path(temporary_directory) / "value.txt"
@@ -111,6 +137,21 @@ class FilesystemTestCase(TestCase):
             asyncio_run(stat_path(object()))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
             asyncio_run(stat_path("value.txt", follow_symlinks=1))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(resolve_path(object()))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(resolve_path("value.txt", strict=1))  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            asyncio_run(make_private_directory(prefix=""))
+        with self.assertRaises(AssertionError):
+            asyncio_run(
+                make_private_directory(
+                    prefix="tmp-",
+                    directory=object(),  # type: ignore[arg-type]
+                )
+            )
+        with self.assertRaises(AssertionError):
+            asyncio_run(remove_tree(object()))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
             asyncio_run(write_text(object(), "value"))  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):

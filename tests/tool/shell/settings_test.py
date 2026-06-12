@@ -9,20 +9,90 @@ from avalan.tool.shell.settings import ShellToolSettings
 class ShellToolSettingsTest(TestCase):
     def test_defaults_lock_complete_contract(self) -> None:
         settings = ShellToolSettings()
+        expected_defaults = {
+            "backend": "local",
+            "workspace_root": ".",
+            "cwd": ".",
+            "default_timeout_seconds": 10.0,
+            "max_timeout_seconds": 60.0,
+            "max_stdout_bytes": 65536,
+            "max_stderr_bytes": 32768,
+            "max_stdin_bytes": 0,
+            "max_arguments": 128,
+            "max_argument_bytes": 8192,
+            "max_command_bytes": 32768,
+            "max_path_count": 128,
+            "max_glob_count": 32,
+            "max_glob_bytes_per_glob": 2048,
+            "max_total_glob_bytes": 8192,
+            "max_full_file_bytes": 1048576,
+            "max_rg_columns": 1000,
+            "max_rg_context_lines": 10,
+            "max_rg_matches_per_file": 1000,
+            "max_head_lines": 500,
+            "max_tail_lines": 500,
+            "max_text_filter_input_bytes": 1048576,
+            "max_filter_program_bytes": 8192,
+            "max_filter_pattern_bytes": 2048,
+            "max_filter_selectors": 32,
+            "max_awk_fields": 64,
+            "max_awk_separator_bytes": 16,
+            "max_json_input_bytes": 5242880,
+            "max_jq_filter_bytes": 4096,
+            "max_pdf_input_bytes": 104857600,
+            "max_pdf_text_pages": 50,
+            "max_pdf_raster_pages": 8,
+            "max_pdf_raster_dpi": 300,
+            "max_raster_long_edge_pixels": 2048,
+            "max_raster_pixels": 40000000,
+            "max_output_files": 8,
+            "max_output_file_bytes": 10485760,
+            "max_total_output_file_bytes": 52428800,
+            "max_inline_output_file_bytes": 2097152,
+            "max_ocr_input_bytes": 26214400,
+            "max_ocr_pixels": 20000000,
+            "max_ocr_languages": 4,
+            "max_tesseract_dpi": 600,
+            "stream_read_chunk_bytes": 8192,
+            "max_concurrent_processes": 4,
+            "max_concurrent_heavy_processes": 1,
+            "default_pdf_timeout_seconds": 30.0,
+            "max_pdf_timeout_seconds": 120.0,
+            "default_ocr_timeout_seconds": 60.0,
+            "max_ocr_timeout_seconds": 300.0,
+            "tesseract_thread_limit": 1,
+            "allow_media_tools": False,
+            "allow_write": False,
+            "allow_shell": False,
+            "allow_absolute_paths": False,
+            "allow_symlinks": False,
+            "allow_hidden": False,
+        }
 
-        self.assertEqual(settings.backend, "local")
-        self.assertEqual(settings.workspace_root, ".")
-        self.assertEqual(settings.cwd, ".")
-        self.assertEqual(settings.max_stdin_bytes, 0)
-        self.assertFalse(settings.allow_media_tools)
-        self.assertFalse(settings.allow_write)
-        self.assertFalse(settings.allow_shell)
+        for field_name, value in expected_defaults.items():
+            with self.subTest(field_name=field_name):
+                self.assertEqual(getattr(settings, field_name), value)
         self.assertEqual(settings.allowed_commands, SHELL_COMMAND_IDS)
         self.assertEqual(settings.allowed_pdf_raster_formats, ("png",))
         self.assertEqual(settings.allowed_tesseract_output_formats, ("txt",))
         self.assertEqual(settings.allowed_tesseract_languages, ("eng",))
         self.assertIsInstance(settings.environment, MappingProxyType)
         self.assertIsInstance(settings.executable_paths, MappingProxyType)
+
+    def test_cli_scalar_fields_expose_only_safe_scalar_settings(self) -> None:
+        field_names = {field.name for field in fields(ShellToolSettings)}
+        scalar_fields = set(ShellToolSettings.CLI_SCALAR_FIELDS)
+
+        self.assertLess(scalar_fields, field_names)
+        self.assertIn("allow_media_tools", scalar_fields)
+        self.assertIn("max_stdout_bytes", scalar_fields)
+        self.assertNotIn("allowed_commands", scalar_fields)
+        self.assertNotIn("environment", scalar_fields)
+        self.assertNotIn("environment_allowlist", scalar_fields)
+        self.assertNotIn("executable_paths", scalar_fields)
+        self.assertNotIn("executable_search_paths", scalar_fields)
+        self.assertNotIn("allow_write", scalar_fields)
+        self.assertNotIn("allow_shell", scalar_fields)
 
     def test_mutable_inputs_are_copied(self) -> None:
         allowed_commands = ["rg"]
