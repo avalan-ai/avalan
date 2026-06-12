@@ -47,6 +47,20 @@ from avalan.flow import (
     compile_flow_source,
     default_flow_node_registry,
     serialize_flow_definition,
+    tool_flow_node_registry,
+)
+from avalan.tool import ToolSet
+from avalan.tool.manager import ToolManager
+from avalan.tool.shell import (
+    ExecutionPolicy,
+    ExecutionResult,
+    ExecutionSpec,
+    ShellCommandRequest,
+    ShellExecutionErrorCode,
+    ShellExecutionStatus,
+    ShellOutputKind,
+    ShellPolicyDenied,
+    ShellToolSet,
 )
 
 
@@ -138,6 +152,172 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(loaded.definition, "graph"))
         self.assertNotIn(
             "[graph]", serialize_flow_definition(loaded.definition)
+        )
+
+    async def test_shell_tool_node_runs_through_enabled_tool_manager(
+        self,
+    ) -> None:
+        policy = _FlowShellPolicy()
+        executor = _FlowShellExecutor("shell flow output\n")
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.cat"],
+            available_toolsets=[
+                ShellToolSet(
+                    policy=policy,
+                    executor=executor,
+                    formatter=lambda result: result.stdout,
+                )
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        loaded = await FlowDefinitionLoader(registry).loads_result(
+            _shell_cat_flow_source()
+        )
+        self.assertTrue(loaded.ok, loaded.public_diagnostics)
+        assert loaded.definition is not None
+
+        result = await FlowExecutor(registry=registry).run(
+            loaded.definition,
+            inputs={"payload": {"path": "visible.txt"}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(result.outputs, {"answer": "shell flow output\n"})
+        self.assertEqual(
+            [request.tool_name for request in policy.requests],
+            [
+                "shell.cat",
+            ],
+        )
+        self.assertEqual(policy.requests[0].paths[0].path, "visible.txt")
+        self.assertEqual(
+            [spec.tool_name for spec in executor.specs],
+            [
+                "shell.cat",
+            ],
+        )
+
+    async def test_shell_tool_node_returns_policy_denied_result(self) -> None:
+        policy = _FlowShellPolicy(
+            denial=ShellPolicyDenied(
+                ShellExecutionErrorCode.DENIED_PATH,
+                "path is denied",
+            )
+        )
+        executor = _FlowShellExecutor("unused")
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.cat"],
+            available_toolsets=[
+                ShellToolSet(policy=policy, executor=executor)
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        loaded = await FlowDefinitionLoader(registry).loads_result(
+            _shell_cat_flow_source()
+        )
+        self.assertTrue(loaded.ok, loaded.public_diagnostics)
+        assert loaded.definition is not None
+
+        result = await FlowExecutor(registry=registry).run(
+            loaded.definition,
+            inputs={"payload": {"path": "denied.txt"}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(executor.specs, [])
+        assert isinstance(result.outputs["answer"], str)
+        self.assertIn("tool: shell.cat", result.outputs["answer"])
+        self.assertIn("status: policy_denied", result.outputs["answer"])
+        self.assertIn("error_code: denied_path", result.outputs["answer"])
+        self.assertIn(
+            "error_message: path is denied", result.outputs["answer"]
+        )
+
+    async def test_shell_tool_node_returns_command_unavailable_result(
+        self,
+    ) -> None:
+        policy = _FlowShellPolicy(executable=None)
+        manager = ToolManager.create_instance(
+            enable_tools=["shell.cat"],
+            available_toolsets=[ShellToolSet(policy=policy)],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        loaded = await FlowDefinitionLoader(registry).loads_result(
+            _shell_cat_flow_source()
+        )
+        self.assertTrue(loaded.ok, loaded.public_diagnostics)
+        assert loaded.definition is not None
+
+        result = await FlowExecutor(registry=registry).run(
+            loaded.definition,
+            inputs={"payload": {"path": "missing.txt"}},
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        self.assertEqual(len(policy.requests), 1)
+        assert isinstance(result.outputs["answer"], str)
+        self.assertIn("tool: shell.cat", result.outputs["answer"])
+        self.assertIn(
+            "status: command_unavailable",
+            result.outputs["answer"],
+        )
+        self.assertIn(
+            "error_code: command_unavailable",
+            result.outputs["answer"],
+        )
+        self.assertIn(
+            "error_message: command is unavailable",
+            result.outputs["answer"],
+        )
+
+    async def test_shell_tool_node_reports_disabled_tool_diagnostic(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=["math"],
+            available_toolsets=[
+                ToolSet(namespace="math", tools=[]),
+                ShellToolSet(
+                    policy=_FlowShellPolicy(),
+                    executor=_FlowShellExecutor("unused"),
+                ),
+            ],
+        )
+        registry = tool_flow_node_registry(manager)
+
+        result = await FlowDefinitionLoader(registry).loads_result(
+            _shell_cat_flow_source()
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.definition)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.tool_disabled"],
+        )
+        self.assertEqual(
+            result.public_diagnostics[0]["path"],
+            "nodes.read.ref",
+        )
+
+    async def test_shell_tool_node_is_not_available_by_default(self) -> None:
+        result = await FlowDefinitionLoader().loads_result(
+            _shell_cat_flow_source()
+        )
+
+        self.assertFalse(result.ok)
+        self.assertIsNone(result.definition)
+        self.assertEqual(
+            [diagnostic["code"] for diagnostic in result.public_diagnostics],
+            ["flow.unsupported_node_type"],
+        )
+        self.assertEqual(
+            result.public_diagnostics[0]["path"],
+            "nodes.read.type",
         )
 
     async def test_native_strict_toml_rejects_invalid_edges_before_runtime(
@@ -1586,6 +1766,117 @@ def _repair_loop_definition(
             ),
         ),
     )
+
+
+def _shell_cat_flow_source() -> str:
+    return """
+        [flow]
+        name = "shell_tool_flow"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "json"
+
+        [entry]
+        type = "node"
+        node = "read"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "read.result"
+
+        [nodes.read]
+        type = "tool"
+        ref = "shell.cat"
+
+        [nodes.read.mapping.arguments]
+        type = "object"
+
+        [nodes.read.mapping.arguments.fields]
+        path = "inputs.payload.path"
+
+        [nodes.read.config.arguments]
+        path = "path"
+        """
+
+
+class _FlowShellPolicy(ExecutionPolicy):
+    def __init__(
+        self,
+        *,
+        denial: ShellPolicyDenied | None = None,
+        executable: str | None = "/usr/bin/cat",
+    ) -> None:
+        self._denial = denial
+        self._executable = executable
+        self.requests: list[ShellCommandRequest] = []
+
+    async def normalize(
+        self,
+        request: ShellCommandRequest,
+    ) -> ExecutionSpec:
+        self.requests.append(request)
+        if self._denial is not None:
+            raise self._denial
+        return ExecutionPolicy().create_execution_spec(
+            backend="local",
+            tool_name=request.tool_name,
+            command=request.command,
+            executable=self._executable,
+            argv=("cat", "--", "visible.txt"),
+            display_argv=("cat", "--", "visible.txt"),
+            cwd=".",
+            display_cwd=".",
+            env={"LC_ALL": "C"},
+            stdin=None,
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.TEXT,
+            resource_class="standard",
+            output_plan=None,
+            timeout_seconds=1.0,
+            max_stdout_bytes=1024,
+            max_stderr_bytes=1024,
+        )
+
+
+class _FlowShellExecutor:
+    def __init__(self, stdout: str) -> None:
+        self._stdout = stdout
+        self.specs: list[ExecutionSpec] = []
+
+    async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
+        self.specs.append(spec)
+        return ExecutionResult(
+            backend=spec.backend,
+            tool_name=spec.tool_name,
+            command=spec.command,
+            argv=spec.argv,
+            display_argv=spec.display_argv,
+            cwd=spec.cwd,
+            display_cwd=spec.display_cwd,
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout=self._stdout,
+            stderr="",
+            stdout_media_type=spec.stdout_media_type,
+            output_kind=spec.output_kind,
+            stdout_bytes=len(self._stdout.encode()),
+            stderr_bytes=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+            cancelled=False,
+            duration_ms=1,
+            error_code=ShellExecutionErrorCode.COMPLETED,
+            metadata=spec.metadata,
+        )
 
 
 def _event_payloads(

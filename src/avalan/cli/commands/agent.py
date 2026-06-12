@@ -30,11 +30,12 @@ from ...tool.graph_settings import GraphToolSettings
 from ...tool.shell import ShellToolSettings
 
 from argparse import Namespace
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import fields
 from logging import Logger
 from os.path import dirname, getmtime, join
-from typing import Any, Iterable, Mapping, cast, overload
+from typing import Any, cast, overload
 from uuid import UUID, uuid4
 
 from jinja2 import Environment, FileSystemLoader
@@ -42,6 +43,13 @@ from rich.console import Console
 from rich.live import Live
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
+
+
+class _Unset:
+    pass
+
+
+_UNSET = _Unset()
 
 
 def _parse_permanent_memory_items(
@@ -77,7 +85,7 @@ def get_orchestrator_settings(
     memory_permanent: list[str] | None = None,
     max_new_tokens: int | None = None,
     temperature: float | None = None,
-    tools: list[str] | None = None,
+    tools: list[str] | None | _Unset = _UNSET,
     top_k: int | None = None,
     top_p: float | None = None,
     use_cache: bool | None = None,
@@ -200,7 +208,7 @@ def get_orchestrator_settings(
         json_config=None,
         tools=(
             tools
-            if tools is not None
+            if not isinstance(tools, _Unset)
             else (args.tool or []) + (getattr(args, "tools", None) or [])
         ),
         log_events=True,
@@ -327,16 +335,54 @@ def get_tool_settings(
     )
 
 
-def _agent_enabled_tools(
-    args: Namespace,
-    shell_settings: ShellToolSettings | None,
-) -> list[str] | None:
+def _shell_tool_template_settings(
+    settings: ShellToolSettings | None,
+) -> dict[str, bool | int | float | str | tuple[str, ...]] | None:
+    if settings is None:
+        return None
+
+    default_settings = ShellToolSettings()
+    rendered: dict[str, bool | int | float | str | tuple[str, ...]] = {}
+    for field in fields(ShellToolSettings):
+        name = field.name
+        value = getattr(settings, name)
+        if value == getattr(default_settings, name):
+            continue
+        if isinstance(value, bool | int | float | str):
+            rendered[name] = value
+        elif _is_simple_string_sequence(value):
+            rendered[name] = tuple(value)
+    return rendered
+
+
+def _is_simple_string_sequence(value: object) -> bool:
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        return False
+    return all(isinstance(item, str) for item in value)
+
+
+def _agent_enabled_tools(args: Namespace) -> list[str] | None:
     tools = (args.tool or []) + (getattr(args, "tools", None) or [])
     if tools:
         return tools
-    if shell_settings is not None:
-        return None
-    return tools
+    return None
+
+
+def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
+    return ToolSettingsContext(
+        browser=get_tool_settings(
+            args, prefix="browser", settings_cls=BrowserToolSettings
+        ),
+        database=get_tool_settings(
+            args, prefix="database", settings_cls=DatabaseToolSettings
+        ),
+        graph=get_tool_settings(
+            args, prefix="graph", settings_cls=GraphToolSettings
+        ),
+        shell=get_tool_settings(
+            args, prefix="shell", settings_cls=ShellToolSettings
+        ),
+    )
 
 
 def _uses_ds4_backend(orchestrator: Orchestrator) -> bool:
@@ -430,15 +476,14 @@ async def agent_message_search(
                 orchestrator = await loader.from_file(
                     specs_path,
                     agent_id=agent_id,
+                    tool_settings=_agent_tool_settings(args),
                 )
             else:
                 assert (
                     args.engine_uri
                 ), "--engine-uri required when no specifications file"
                 logger.debug("Loading agent from inline settings")
-                shell_settings = get_tool_settings(
-                    args, prefix="shell", settings_cls=ShellToolSettings
-                )
+                tool_settings = _agent_tool_settings(args)
                 memory_recent = (
                     args.memory_recent
                     if args.memory_recent is not None
@@ -448,22 +493,7 @@ async def agent_message_search(
                     args,
                     agent_id=agent_id,
                     memory_recent=memory_recent,
-                    tools=_agent_enabled_tools(args, shell_settings),
-                )
-                browser_settings = get_tool_settings(
-                    args, prefix="browser", settings_cls=BrowserToolSettings
-                )
-                database_settings = get_tool_settings(
-                    args, prefix="database", settings_cls=DatabaseToolSettings
-                )
-                graph_settings = get_tool_settings(
-                    args, prefix="graph", settings_cls=GraphToolSettings
-                )
-                tool_settings = ToolSettingsContext(
-                    browser=browser_settings,
-                    database=database_settings,
-                    graph=graph_settings,
-                    shell=shell_settings,
+                    tools=_agent_enabled_tools(args),
                 )
                 orchestrator = await loader.from_settings(
                     settings, tool_settings=tool_settings
@@ -582,15 +612,14 @@ async def agent_run(
                 specs_path,
                 agent_id=agent_id,
                 disable_memory=args.no_session,
+                tool_settings=_agent_tool_settings(args),
             )
         else:
             assert (
                 args.engine_uri
             ), "--engine-uri required when no specifications file"
             assert not args.specifications_file or not args.engine_uri
-            shell_settings = get_tool_settings(
-                args, prefix="shell", settings_cls=ShellToolSettings
-            )
+            tool_settings = _agent_tool_settings(args)
             memory_recent = (
                 args.memory_recent
                 if args.memory_recent is not None
@@ -600,7 +629,7 @@ async def agent_run(
                 args,
                 agent_id=agent_id or uuid4(),
                 memory_recent=memory_recent,
-                tools=_agent_enabled_tools(args, shell_settings),
+                tools=_agent_enabled_tools(args),
                 max_new_tokens=getattr(args, "run_max_new_tokens", None),
                 temperature=getattr(args, "run_temperature", None),
                 top_k=getattr(args, "run_top_k", None),
@@ -609,21 +638,6 @@ async def agent_run(
                 cache_strategy=getattr(args, "run_cache_strategy", None),
             )
             logger.debug("Loading agent from inline settings")
-            browser_settings = get_tool_settings(
-                args, prefix="browser", settings_cls=BrowserToolSettings
-            )
-            database_settings = get_tool_settings(
-                args, prefix="database", settings_cls=DatabaseToolSettings
-            )
-            graph_settings = get_tool_settings(
-                args, prefix="graph", settings_cls=GraphToolSettings
-            )
-            tool_settings = ToolSettingsContext(
-                browser=browser_settings,
-                database=database_settings,
-                graph=graph_settings,
-                shell=shell_settings,
-            )
             tool_format = (
                 ToolFormat(args.tool_format) if args.tool_format else None
             )
@@ -830,10 +844,7 @@ async def agent_serve(
     ), "specifications file or --engine-uri must be specified"
 
     settings: OrchestratorSettings | None = None
-    browser_settings: BrowserToolSettings | None = None
-    database_settings: DatabaseToolSettings | None = None
-    graph_settings: GraphToolSettings | None = None
-    shell_settings: ShellToolSettings | None = None
+    tool_settings = _agent_tool_settings(args)
 
     protocols = await OrchestratorLoader.resolve_serve_protocols(
         specs_path=specs_path,
@@ -841,9 +852,6 @@ async def agent_serve(
     )
 
     if not specs_path:
-        shell_settings = get_tool_settings(
-            args, prefix="shell", settings_cls=ShellToolSettings
-        )
         memory_recent = (
             args.memory_recent if args.memory_recent is not None else True
         )
@@ -851,26 +859,8 @@ async def agent_serve(
             args,
             agent_id=agent_id or uuid4(),
             memory_recent=memory_recent,
-            tools=_agent_enabled_tools(args, shell_settings),
+            tools=_agent_enabled_tools(args),
         )
-        browser_settings = get_tool_settings(
-            args, prefix="browser", settings_cls=BrowserToolSettings
-        )
-        database_settings = get_tool_settings(
-            args, prefix="database", settings_cls=DatabaseToolSettings
-        )
-        graph_settings = get_tool_settings(
-            args, prefix="graph", settings_cls=GraphToolSettings
-        )
-    else:
-        shell_settings = None
-
-    tool_settings = ToolSettingsContext(
-        browser=browser_settings,
-        database=database_settings,
-        graph=graph_settings,
-        shell=shell_settings,
-    )
 
     server = agents_server(
         hub=hub,
@@ -1029,7 +1019,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         browser_tool=browser_tool,
         database_tool=database_tool,
         graph_tool=graph_tool,
-        shell_tool=shell_tool,
+        shell_tool=_shell_tool_template_settings(shell_tool),
         tool_format=tool_format,
         tool_recovery_formats=tool_recovery_formats,
     )

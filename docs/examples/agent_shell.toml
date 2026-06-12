@@ -1,0 +1,29 @@
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4.1-mini"
+
+[tool]
+enable = [
+    "shell.rg",
+    "shell.head",
+]
+
+[tool.shell]
+workspace_root = "."
+cwd = "."
+max_stdout_bytes = 65536
+max_stderr_bytes = 32768
+max_head_lines = 120
+allow_media_tools = false
+
+[memory]
+recent = true
+
+[run]
+max_new_tokens = 1024
+
+[agent]
+name = "Workspace Reader"
+role = """
+Use the enabled read-only shell tools to inspect files in the configured
+workspace, then answer with concise citations to the relevant paths.
+"""

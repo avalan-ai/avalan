@@ -3239,6 +3239,38 @@ class FlowRunCommandTestCase(TestCase):
         ]
         self.assertIn("shell", namespaces)
 
+    def test_flow_tool_manager_uses_explicit_shell_settings(self) -> None:
+        with (
+            patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+            patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+            patch.object(
+                flow_cmds.ToolManager,
+                "create_instance",
+                return_value="manager",
+            ) as create_instance,
+        ):
+            manager = flow_cmds._flow_tool_manager(
+                _args(
+                    tool=["shell.rg"],
+                    tool_shell_allow_media_tools=True,
+                    tool_shell_max_head_lines=12,
+                )
+            )
+
+        self.assertEqual(manager, "manager")
+        kwargs = create_instance.call_args.kwargs
+        self.assertEqual(kwargs["enable_tools"], ["shell.rg"])
+        shell_toolsets = [
+            toolset
+            for toolset in kwargs["available_toolsets"]
+            if toolset.namespace == "shell"
+        ]
+        self.assertEqual(len(shell_toolsets), 1)
+        settings = getattr(shell_toolsets[0], "_settings")
+        self.assertTrue(settings.allow_media_tools)
+        self.assertEqual(settings.max_head_lines, 12)
+
     def test_flow_tool_manager_does_not_match_shell_like_namespaces(
         self,
     ) -> None:

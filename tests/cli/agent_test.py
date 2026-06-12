@@ -1,3 +1,4 @@
+import tomllib
 import unittest
 from argparse import Namespace
 from dataclasses import asdict, dataclass
@@ -140,6 +141,39 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
         self.console.print.assert_any_call("agent_panel")
         self.console.print.assert_any_call("matches_panel")
 
+    async def test_search_messages_from_file_forwards_shell_settings(self):
+        self.args.tool_shell_max_head_lines = 13
+        orch = MagicMock()
+        orch.engine_agent = True
+        orch.engine = MagicMock(model_id="m")
+        orch.model_ids = ["m"]
+        orch.memory.search_messages = AsyncMock(return_value=["msg"])
+
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=orch),
+            ) as lf,
+        ):
+            await agent_cmds.agent_message_search(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        lf.assert_awaited_once()
+        tool_settings = lf.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertEqual(tool_settings.shell.max_head_lines, 13)
+
     async def test_search_messages_from_settings(self):
         self.args.specifications_file = None
         self.args.engine_uri = "engine"
@@ -196,9 +230,50 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         lfs.assert_awaited_once()
+        settings = lfs.call_args.args[0]
+        self.assertIsNone(settings.tools)
         lf.assert_not_called()
         dummy_stack.enter_async_context.assert_awaited_once_with(orch)
         orch.memory.search_messages.assert_awaited_once()
+
+
+def _serve_from_settings_args(**overrides: object) -> Namespace:
+    values = {
+        "host": "0.0.0.0",
+        "port": 80,
+        "specifications_file": None,
+        "openai_prefix": "oa",
+        "mcp_name": "run",
+        "mcp_description": None,
+        "reload": False,
+        "backend": "transformers",
+        "engine_uri": "uri",
+        "role": "assistant",
+        "name": None,
+        "task": None,
+        "instructions": None,
+        "memory_recent": None,
+        "memory_permanent_message": None,
+        "memory_permanent": None,
+        "memory_engine_model_id": (
+            agent_cmds.OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID
+        ),
+        "memory_engine_max_tokens": 500,
+        "memory_engine_overlap": 125,
+        "memory_engine_window": 250,
+        "run_max_new_tokens": None,
+        "run_skip_special_tokens": False,
+        "tool": None,
+        "id": None,
+        "participant": "pid",
+        "cors_origin": None,
+        "cors_origin_regex": None,
+        "cors_method": None,
+        "cors_header": None,
+        "cors_credentials": False,
+    }
+    values.update(overrides)
+    return Namespace(**values)
 
 
 class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
@@ -379,7 +454,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds,
                 "get_tool_settings",
-                side_effect=[None, browser_settings, None, None],
+                side_effect=[browser_settings, None, None, None],
             ) as gts,
             patch.object(
                 agent_cmds, "agents_server", return_value=server
@@ -388,14 +463,15 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
 
         gos.assert_called_once()
+        self.assertIsNone(gos.call_args.kwargs["tools"])
         gts.assert_has_calls(
             [
-                call(args, prefix="shell", settings_cls=ShellToolSettings),
                 call(args, prefix="browser", settings_cls=BrowserToolSettings),
                 call(
                     args, prefix="database", settings_cls=DatabaseToolSettings
                 ),
                 call(args, prefix="graph", settings_cls=GraphToolSettings),
+                call(args, prefix="shell", settings_cls=ShellToolSettings),
             ]
         )
         asrv.assert_called_once_with(
@@ -427,6 +503,79 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             allow_credentials=False,
             protocols=None,
         )
+        server.serve.assert_awaited_once()
+
+    async def test_agent_serve_from_file_forwards_shell_settings(self):
+        args = _serve_from_settings_args(
+            tool_shell_max_head_lines=9,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+        server = MagicMock()
+        server.serve = AsyncMock()
+
+        with NamedTemporaryFile("w") as spec:
+            args.specifications_file = spec.name
+            args.engine_uri = None
+            with patch.object(
+                agent_cmds, "agents_server", return_value=server
+            ) as asrv:
+                await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
+
+        asrv.assert_called_once()
+        self.assertEqual(asrv.call_args.kwargs["specs_path"], spec.name)
+        self.assertIsNone(asrv.call_args.kwargs["settings"])
+        tool_settings = asrv.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertEqual(tool_settings.shell.max_head_lines, 9)
+        server.serve.assert_awaited_once()
+
+    async def test_agent_serve_shell_settings_preserve_default_tools(self):
+        args = _serve_from_settings_args(
+            tool_shell_max_head_lines=9,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+        server = MagicMock()
+        server.serve = AsyncMock()
+
+        with patch.object(
+            agent_cmds, "agents_server", return_value=server
+        ) as asrv:
+            await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
+
+        asrv.assert_called_once()
+        settings = asrv.call_args.kwargs["settings"]
+        self.assertIsNone(settings.tools)
+        tool_settings = asrv.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertEqual(tool_settings.shell.max_head_lines, 9)
+        self.assertIsNone(tool_settings.browser)
+        self.assertIsNone(tool_settings.database)
+        self.assertIsNone(tool_settings.graph)
+        server.serve.assert_awaited_once()
+
+    async def test_agent_serve_shell_explicit_tool_is_preserved(self):
+        args = _serve_from_settings_args(
+            tool=["shell.cat"],
+            tool_shell_max_head_lines=9,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+        server = MagicMock()
+        server.serve = AsyncMock()
+
+        with patch.object(
+            agent_cmds, "agents_server", return_value=server
+        ) as asrv:
+            await agent_cmds.agent_serve(args, hub, logger, "name", "1.0")
+
+        asrv.assert_called_once()
+        settings = asrv.call_args.kwargs["settings"]
+        self.assertEqual(settings.tools, ["shell.cat"])
+        tool_settings = asrv.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertEqual(tool_settings.shell.max_head_lines, 9)
         server.serve.assert_awaited_once()
 
     async def test_agent_serve_needs_settings(self):
@@ -543,6 +692,38 @@ class CliAgentProxyTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args.cors_method, ["GET"])
         self.assertEqual(args.cors_header, ["X-Test"])
         self.assertTrue(args.cors_credentials)
+
+    async def test_agent_proxy_forwards_shell_settings(self):
+        args = _serve_from_settings_args(
+            name=None,
+            memory_recent=None,
+            memory_permanent_message=None,
+            tool=["shell.cat"],
+            tool_shell_max_stdout_bytes=2048,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+        server = MagicMock()
+        server.serve = AsyncMock()
+
+        with patch.object(
+            agent_cmds, "agents_server", return_value=server
+        ) as asrv:
+            await agent_cmds.agent_proxy(args, hub, logger, "name", "1.0")
+
+        asrv.assert_called_once()
+        self.assertEqual(args.name, "Proxy")
+        self.assertTrue(args.memory_recent)
+        self.assertEqual(
+            args.memory_permanent_message,
+            "postgresql://avalan:password@localhost:5432/avalan",
+        )
+        settings = asrv.call_args.kwargs["settings"]
+        self.assertEqual(settings.tools, ["shell.cat"])
+        tool_settings = asrv.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
+        server.serve.assert_awaited_once()
 
     async def test_agent_proxy_requires_engine(self):
         args = Namespace(
@@ -690,6 +871,7 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         output = console.print.call_args.args[0].code
         self.assertNotIn("[tool.browser.open]", output)
         self.assertNotIn("[tool.database]", output)
+        self.assertNotIn("[tool.shell]", output)
 
     async def test_agent_init_tool_settings_output(self):
         args = Namespace(
@@ -914,6 +1096,91 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"fenced"', output)
         self.assertIn('"tool_call_block"', output)
 
+    async def test_agent_init_shell_tool_settings_output(self):
+        args = Namespace(
+            name="N",
+            role="R",
+            task="T",
+            instructions=None,
+            goal_instructions="I",
+            memory_recent=True,
+            memory_permanent_message="",
+            memory_permanent=None,
+            memory_engine_model_id=None,
+            memory_engine_max_tokens=500,
+            memory_engine_overlap=125,
+            memory_engine_window=250,
+            engine_uri="uri",
+            run_max_new_tokens=10,
+            run_skip_special_tokens=True,
+            run_temperature=None,
+            run_top_k=None,
+            run_top_p=None,
+            run_use_cache=None,
+            run_cache_strategy=None,
+            tool=["shell.rg"],
+            tool_shell_workspace_root="workspace",
+            tool_shell_max_stdout_bytes=4096,
+            tool_shell_allow_media_tools=True,
+            tool_shell_allowed_commands=("rg", "cat"),
+            backend="transformers",
+            no_repl=False,
+            quiet=False,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+
+        with (
+            patch.object(agent_cmds.Confirm, "ask", return_value=True),
+            patch.object(agent_cmds, "get_input", side_effect=["R", "T", "I"]),
+            patch.object(
+                agent_cmds.Prompt, "ask", side_effect=["N", "", "uri"]
+            ),
+        ):
+            await agent_cmds.agent_init(args, console, theme)
+
+        output = console.print.call_args.args[0].code
+        self.assertIn("[tool.shell]", output)
+        self.assertIn('workspace_root = "workspace"', output)
+        self.assertIn("max_stdout_bytes = 4096", output)
+        self.assertIn("allow_media_tools = true", output)
+        self.assertIn("allowed_commands = [", output)
+        self.assertIn('"rg"', output)
+        self.assertIn('"cat"', output)
+        parsed = tomllib.loads(output)
+        self.assertEqual(
+            parsed["tool"]["shell"],
+            {
+                "workspace_root": "workspace",
+                "max_stdout_bytes": 4096,
+                "allow_media_tools": True,
+                "allowed_commands": ["rg", "cat"],
+            },
+        )
+
+    def test_shell_tool_template_settings_filters_defaults(self):
+        settings = ShellToolSettings(
+            max_head_lines=7,
+            allowed_commands=("rg",),
+        )
+
+        rendered = agent_cmds._shell_tool_template_settings(settings)
+
+        self.assertFalse(hasattr(settings, "items"))
+        self.assertEqual(
+            rendered,
+            {
+                "max_head_lines": 7,
+                "allowed_commands": ("rg",),
+            },
+        )
+
+    def test_shell_tool_template_settings_rejects_non_simple_sequences(self):
+        self.assertFalse(agent_cmds._is_simple_string_sequence("rg"))
+        self.assertFalse(agent_cmds._is_simple_string_sequence(1))
+        self.assertFalse(agent_cmds._is_simple_string_sequence(("rg", 1)))
+
 
 class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -1025,6 +1292,32 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.console.print.assert_any_call("agent_panel")
         self.assertEqual(len(self.console.print.call_args_list), 1)
+
+    async def test_run_from_file_forwards_shell_settings(self):
+        self.args.tool_shell_max_stdout_bytes = 2048
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ) as lf,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        lf.assert_awaited_once()
+        tool_settings = lf.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
 
     async def test_no_session_option_skips_session(self):
         self.args.no_session = True
@@ -1412,6 +1705,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         fs_patch.assert_awaited_once()
         settings = fs_patch.call_args.args[0]
+        self.assertIsNone(settings.tools)
         self.assertTrue(settings.call_options["skip_special_tokens"])
         tool_settings = fs_patch.call_args.kwargs["tool_settings"]
         self.assertIsNone(tool_settings.browser)
@@ -1424,6 +1718,86 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 ToolCallRecoveryFormat.TOOL_CALL_BLOCK,
             ],
         )
+        ff_patch.assert_not_called()
+
+    async def test_run_from_settings_shell_settings_preserve_default_tools(
+        self,
+    ):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+        self.args.tool_shell_max_stdout_bytes = 2048
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ) as ff_patch,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        settings = fs_patch.call_args.args[0]
+        self.assertIsNone(settings.tools)
+        tool_settings = fs_patch.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
+        self.assertIsNone(tool_settings.browser)
+        self.assertIsNone(tool_settings.database)
+        self.assertIsNone(tool_settings.graph)
+        ff_patch.assert_not_called()
+
+    async def test_run_from_settings_shell_explicit_tool_is_preserved(self):
+        self.args.specifications_file = None
+        self.args.engine_uri = "engine"
+        self.args.role = "assistant"
+        self.args.tool = ["shell.cat"]
+        self.args.tool_shell_max_stdout_bytes = 2048
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=self.orch),
+            ) as fs_patch,
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ) as ff_patch,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        fs_patch.assert_awaited_once()
+        settings = fs_patch.call_args.args[0]
+        self.assertEqual(settings.tools, ["shell.cat"])
+        tool_settings = fs_patch.call_args.kwargs["tool_settings"]
+        self.assertIsInstance(tool_settings.shell, ShellToolSettings)
+        self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
         ff_patch.assert_not_called()
 
     async def test_run_sets_hidden_states(self):

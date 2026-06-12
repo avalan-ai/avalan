@@ -25,7 +25,12 @@ from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
     SHELL_COMMAND_IDS,
     ExecutionPolicy,
+    ExecutionResult,
+    ExecutionSpec,
+    ShellCommandRequest,
+    ShellExecutionErrorCode,
     ShellExecutionStatus,
+    ShellPolicyDenied,
     ShellToolSet,
     ShellToolSettings,
     TrustedExecutableResolver,
@@ -165,6 +170,44 @@ class ShellToolManagerExecutionTest(IsolatedAsyncioTestCase):
             outcome.result,
         )
         self.assertIn("error_code: command_unavailable", outcome.result)
+
+    async def test_policy_denied_shell_tool_formats_through_manager(
+        self,
+    ) -> None:
+        policy = _DenyingExecutionPolicy(
+            ShellExecutionErrorCode.DENIED_PATH,
+            "path is denied",
+        )
+        executor = _RecordingExecutor()
+        manager = _denying_shell_manager(["shell.rg"], policy, executor)
+
+        outcome = await manager.execute_call(
+            ToolCall(
+                id="call-1",
+                name="shell.rg",
+                arguments={
+                    "pattern": "visible",
+                    "paths": ["filesystem/visible.txt"],
+                },
+            ),
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(outcome, ToolCallResult)
+        assert isinstance(outcome, ToolCallResult)
+        self.assertEqual(outcome.call.name, "shell.rg")
+        assert isinstance(outcome.result, str)
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(policy.requests[0].tool_name, "shell.rg")
+        self.assertEqual(policy.requests[0].command, "rg")
+        self.assertEqual(executor.calls, 0)
+        self.assertIn("tool: shell.rg", outcome.result)
+        self.assertIn(
+            f"status: {ShellExecutionStatus.POLICY_DENIED}",
+            outcome.result,
+        )
+        self.assertIn("error_code: denied_path", outcome.result)
+        self.assertIn("error_message: path is denied", outcome.result)
 
     async def test_provider_encoded_shell_tool_executes_through_manager(
         self,
@@ -375,6 +418,56 @@ def _unavailable_shell_manager(enabled_tools: list[str]) -> ToolManager:
         enable_tools=enabled_tools,
         settings=ToolManagerSettings(),
     )
+
+
+def _denying_shell_manager(
+    enabled_tools: list[str],
+    policy: "_DenyingExecutionPolicy",
+    executor: "_RecordingExecutor",
+) -> ToolManager:
+    return ToolManager.create_instance(
+        available_toolsets=[
+            ShellToolSet(
+                policy=policy,
+                executor=executor,
+            )
+        ],
+        enable_tools=enabled_tools,
+        settings=ToolManagerSettings(),
+    )
+
+
+class _DenyingExecutionPolicy(ExecutionPolicy):
+    requests: list[ShellCommandRequest]
+    _error_code: ShellExecutionErrorCode
+    _message: str
+
+    def __init__(
+        self,
+        error_code: ShellExecutionErrorCode,
+        message: str,
+    ) -> None:
+        self.requests = []
+        self._error_code = error_code
+        self._message = message
+
+    async def normalize(
+        self,
+        request: ShellCommandRequest,
+    ) -> ExecutionSpec:
+        self.requests.append(request)
+        raise ShellPolicyDenied(self._error_code, self._message)
+
+
+class _RecordingExecutor:
+    calls: int
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
+        self.calls += 1
+        raise AssertionError("executor should not be called")
 
 
 def _tool_names(manager: ToolManager) -> tuple[str, ...]:

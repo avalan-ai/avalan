@@ -25,6 +25,7 @@ from ..model.manager import ModelManager
 from ..tool.browser import BrowserToolSettings
 from ..tool.database.settings import DatabaseToolSettings
 from ..tool.graph_settings import GraphToolSettings
+from ..tool.shell import ShellToolSettings
 from ..types import assert_positive_int
 from ..utils import logger_replace
 
@@ -1307,6 +1308,11 @@ class CLI:
             prefix="database",
             settings_cls=DatabaseToolSettings,
         )
+        CLI._add_tool_settings_arguments(
+            agent_message_search_parser,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+        )
 
         agent_common_parser = ArgumentParser(add_help=False)
         agent_common_parser.add_argument(
@@ -1431,6 +1437,11 @@ class CLI:
             prefix="graph",
             settings_cls=GraphToolSettings,
         )
+        CLI._add_tool_settings_arguments(
+            agent_run_parser,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+        )
 
         agent_serve_parser = agent_command_parsers.add_parser(
             name="serve",
@@ -1453,6 +1464,11 @@ class CLI:
             agent_serve_parser,
             prefix="graph",
             settings_cls=GraphToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            agent_serve_parser,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
         )
 
         agent_proxy_parser = agent_command_parsers.add_parser(
@@ -1477,6 +1493,11 @@ class CLI:
             prefix="graph",
             settings_cls=GraphToolSettings,
         )
+        CLI._add_tool_settings_arguments(
+            agent_proxy_parser,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
+        )
 
         agent_init_parser = agent_command_parsers.add_parser(
             name="init",
@@ -1488,6 +1509,11 @@ class CLI:
             agent_init_parser,
             prefix="graph",
             settings_cls=GraphToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            agent_init_parser,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
         )
 
         # Cache command
@@ -1672,6 +1698,11 @@ class CLI:
             flow_run_parser,
             prefix="graph",
             settings_cls=GraphToolSettings,
+        )
+        CLI._add_tool_settings_arguments(
+            flow_run_parser,
+            prefix="shell",
+            settings_cls=ShellToolSettings,
         )
         flow_inspect_parser = flow_command_parsers.add_parser(
             name="inspect",

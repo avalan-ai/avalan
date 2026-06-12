@@ -92,6 +92,67 @@ You'll need your Huggingface access token exported as `HF_TOKEN`.
 > script, created by [@AlexCheema](https://github.com/AlexCheema), which
 > empirically reduces the time to first token and the tokens per second ratio.
 
+## Shell Toolset
+
+Shell tools are opt-in read-only tools for inspecting files under a configured
+workspace. Enable the namespace with TOML:
+
+```toml
+[tool]
+enable = ["shell.rg", "shell.head"]
+
+[tool.shell]
+workspace_root = "."
+max_stdout_bytes = 65536
+```
+
+Agent CLI commands also accept scalar shell settings:
+
+```bash
+avalan agent run \
+  --engine-uri "ai://env:OPENAI_API_KEY@openai/gpt-4.1-mini" \
+  --tool shell.rg \
+  --tool-shell-workspace-root . \
+  --tool-shell-max-stdout-bytes 65536
+```
+
+Use `shell` or `shell.*` to enable the full namespace, or a concrete name such
+as `shell.rg` for one command. An empty `[tool.shell]` section enables shell
+tools with defaults. Shell settings alone opt the agent CLI into shell tools
+without requiring a separate `--tool`; strict flow tool nodes still execute
+through the enabled `ToolManager`.
+
+Public shell tools:
+
+| Tool | Use | Dependency group | Typical binary package |
+| --- | --- | --- | --- |
+| `shell.rg` | Search workspace text with ripgrep. | core | `ripgrep` |
+| `shell.head` | Read leading lines from one text file. | core | `coreutils` |
+| `shell.tail` | Read trailing lines from one text file. | core | `coreutils` |
+| `shell.ls` | List a directory or file path. | core | `coreutils` |
+| `shell.cat` | Read a bounded text file. | core | `coreutils` |
+| `shell.wc` | Count lines, words, or bytes. | core | `coreutils` |
+| `shell.awk` | Select constrained fields and lines. | text filters | `gawk` or `mawk` |
+| `shell.sed` | Select constrained line ranges and patterns. | text filters | `sed` |
+| `shell.jq` | Transform JSON with a constrained jq filter. | JSON | `jq` |
+| `shell.pdftotext` | Extract text from a PDF. | Poppler | `poppler-utils` or `poppler` |
+| `shell.pdftoppm` | Rasterize bounded PDF pages. | Poppler | `poppler-utils` or `poppler` |
+| `shell.tesseract` | Recognize text in an image. | OCR | `tesseract-ocr` or `tesseract` |
+
+Media tools (`shell.pdftotext`, `shell.pdftoppm`, and `shell.tesseract`) are
+disabled unless `allow_media_tools = true`. Optional binaries are resolved at
+invocation time: if a configured command is not installed, the tool returns a
+formatted `command_unavailable` result instead of failing agent loading.
+
+The shell toolset does not provide generic shell execution. It never evaluates
+model-supplied shell strings, never accepts arbitrary executable paths from
+tool calls, and rejects write access. Paths are normalized under
+`workspace_root`; hidden, sensitive, symlink, special-file, binary-content, and
+size-limit checks are enforced before execution. These checks reduce race and
+leak risk, but they cannot eliminate every time-of-check/time-of-use race on a
+mutable local filesystem, so run shell-enabled agents only in workspaces whose
+contents and binaries you trust.
+
 # avalan
 
 ```

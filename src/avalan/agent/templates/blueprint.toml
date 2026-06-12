@@ -143,3 +143,21 @@ cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
 {% endif %}
 {% endfor %}
 {% endif %}
+
+{% if shell_tool is not none %}
+[tool.shell]
+{% for k, v in shell_tool.items() %}
+{% if v is boolean %}
+{{ k }} = {{ v | lower }}
+{% elif v is number %}
+{{ k }} = {{ v }}
+{% elif v is string %}
+{{ k }} = "{{ v }}"
+{% else %}
+{{ k }} = [
+{% for item in v %}    "{{ item }}"{% if not loop.last %},{% endif %}
+{% endfor %}
+]
+{% endif %}
+{% endfor %}
+{% endif %}
