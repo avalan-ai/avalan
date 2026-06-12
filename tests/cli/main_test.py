@@ -166,6 +166,118 @@ class CliParallelOptionTestCase(TestCase):
                 )
 
 
+class CliShellToolOptionTestCase(TestCase):
+    def _cli(self) -> CLI:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            return CLI(logger)
+
+    def test_shell_tool_settings_arguments_parse_for_agent_and_flow(
+        self,
+    ) -> None:
+        cli = self._cli()
+        cases = [
+            [
+                "agent",
+                "message",
+                "search",
+                "--function",
+                "l2_distance",
+                "--id",
+                "aid",
+                "--participant",
+                "pid",
+                "--session",
+                "sid",
+            ],
+            ["agent", "run"],
+            ["agent", "serve"],
+            ["agent", "proxy"],
+            ["agent", "init"],
+            ["flow", "run", "flow.toml", "--tool", "shell.rg"],
+        ]
+
+        for command in cases:
+            with self.subTest(command=command):
+                args = cli._parser.parse_args(
+                    command
+                    + [
+                        "--tool-shell-allow-media-tools",
+                        "--tool-shell-max-stdout-bytes",
+                        "4096",
+                    ]
+                )
+
+                self.assertTrue(args.tool_shell_allow_media_tools)
+                self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+
+    def test_shell_tool_settings_arguments_use_scalar_allowlist(
+        self,
+    ) -> None:
+        cli = self._cli()
+        parser_suffixes = [
+            "agent message search",
+            "agent run",
+            "agent serve",
+            "agent proxy",
+            "agent init",
+            "flow run",
+        ]
+        expected = {
+            f"--tool-shell-{field.replace('_', '-')}"
+            for field in ShellToolSettings.CLI_SCALAR_FIELDS
+        }
+        absent_fields = {
+            "environment",
+            "environment_allowlist",
+            "executable_paths",
+            "executable_search_paths",
+            "allowed_commands",
+            "allowed_pdf_raster_formats",
+            "allowed_tesseract_output_formats",
+            "allowed_tesseract_languages",
+        }
+        absent_options = {
+            f"--tool-shell-{field.replace('_', '-')}"
+            for field in absent_fields
+        }
+
+        for suffix in parser_suffixes:
+            parser = _find_parser_with_suffix(cli._parser, suffix)
+            option_strings = {
+                option
+                for action in parser._actions
+                for option in action.option_strings
+            }
+            actual = {
+                option
+                for option in option_strings
+                if option.startswith("--tool-shell-")
+            }
+
+            with self.subTest(parser=suffix):
+                self.assertEqual(actual, expected)
+                self.assertFalse(actual & absent_options)
+
+    def test_shell_tool_settings_invalid_scalar_values_are_rejected(
+        self,
+    ) -> None:
+        cli = self._cli()
+
+        with self.assertRaises(SystemExit):
+            cli._parser.parse_args(
+                [
+                    "flow",
+                    "run",
+                    "flow.toml",
+                    "--tool",
+                    "shell.rg",
+                    "--tool-shell-max-stdout-bytes",
+                    "many",
+                ]
+            )
+
+
 class CliTaskOptionTestCase(TestCase):
     def test_task_validate_argument(self) -> None:
         logger = MagicMock()

@@ -14,16 +14,41 @@ from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import (
     OrchestratorSettings,
     PermanentMemoryStoreSettings,
+    ToolCall,
+    ToolCallContext,
+    ToolCallDiagnosticCode,
     ToolCallRecoveryFormat,
+    ToolCallResult,
     ToolFormat,
+    ToolManagerSettings,
+    ToolNameResolutionStatus,
 )
 from avalan.event import Event, EventType
 from avalan.model.hubs.huggingface import HuggingfaceHub
+from avalan.tool import ToolSet
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.graph_settings import GraphToolSettings
-from avalan.tool.shell import ShellToolSettings
+from avalan.tool.manager import ToolManager
+from avalan.tool.shell import (
+    ExecutionPolicy,
+    ExecutionResult,
+    ExecutionSpec,
+    ShellCommandRequest,
+    ShellExecutionErrorCode,
+    ShellExecutionStatus,
+    ShellOutputKind,
+    ShellPolicyDenied,
+    ShellToolSet,
+    ShellToolSettings,
+)
+
+
+def _named_toolset(namespace: str) -> MagicMock:
+    toolset = MagicMock()
+    toolset.namespace = namespace
+    return toolset
 
 
 def _minimal_agent_toml() -> str:
@@ -89,8 +114,16 @@ async def _from_settings_tool_manager_kwargs(
         patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", False),
         patch("avalan.agent.loader.HAS_CODE_DEPENDENCIES", False),
         patch("avalan.agent.loader.HAS_BROWSER_DEPENDENCIES", False),
-        patch("avalan.agent.loader.MathToolSet", return_value=MagicMock()),
-        patch("avalan.agent.loader.MemoryToolSet", return_value=MagicMock()),
+        patch(
+            "avalan.agent.loader.MathToolSet",
+            side_effect=lambda *, namespace: _named_toolset(namespace),
+        ),
+        patch(
+            "avalan.agent.loader.MemoryToolSet",
+            side_effect=lambda _memory, *, namespace: _named_toolset(
+                namespace
+            ),
+        ),
     ):
         loader = OrchestratorLoader(
             hub=hub,
@@ -106,6 +139,252 @@ async def _from_settings_tool_manager_kwargs(
     await stack.aclose()
     assert result == "orch"
     return dict(tm_patch.call_args.kwargs)
+
+
+async def _from_file_tool_manager_kwargs(config: str) -> dict[str, Any]:
+    hub = MagicMock(spec=HuggingfaceHub)
+    logger = MagicMock(spec=Logger)
+    stack = AsyncExitStack()
+    memory = MagicMock()
+    tool = MagicMock()
+    tool.__aenter__ = AsyncMock(return_value=tool)
+
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "agent.toml"
+        path.write_text(config, encoding="utf-8")
+        with (
+            patch(
+                "avalan.agent.loader.MemoryManager.create_instance",
+                new=AsyncMock(return_value=memory),
+            ),
+            patch(
+                "avalan.agent.loader.ModelManager", return_value=MagicMock()
+            ),
+            patch(
+                "avalan.agent.loader.DefaultOrchestrator",
+                return_value="orch",
+            ),
+            patch(
+                "avalan.agent.loader.ToolManager.create_instance",
+                return_value=tool,
+            ) as tm_patch,
+            patch(
+                "avalan.agent.loader.EventManager", return_value=MagicMock()
+            ),
+            patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", False),
+            patch("avalan.agent.loader.HAS_CODE_DEPENDENCIES", False),
+            patch("avalan.agent.loader.HAS_BROWSER_DEPENDENCIES", False),
+            patch(
+                "avalan.agent.loader.MathToolSet",
+                side_effect=lambda *, namespace: _named_toolset(namespace),
+            ),
+            patch(
+                "avalan.agent.loader.MemoryToolSet",
+                side_effect=lambda _memory, *, namespace: _named_toolset(
+                    namespace
+                ),
+            ),
+        ):
+            loader = OrchestratorLoader(
+                hub=hub,
+                logger=logger,
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            result = await loader.from_file(str(path), agent_id=uuid4())
+
+    await stack.aclose()
+    assert result == "orch"
+    return dict(tm_patch.call_args.kwargs)
+
+
+def _shell_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
+    return [
+        toolset.namespace
+        for toolset in kwargs["available_toolsets"]
+        if toolset.namespace == "shell"
+    ]
+
+
+def _toolset_namespaces(kwargs: dict[str, Any]) -> list[str | None]:
+    return [toolset.namespace for toolset in kwargs["available_toolsets"]]
+
+
+def _shell_only_manager(kwargs: dict[str, Any]) -> ToolManager:
+    shell_toolsets = [
+        toolset
+        for toolset in kwargs["available_toolsets"]
+        if toolset.namespace == "shell"
+    ]
+    return ToolManager.create_instance(
+        available_toolsets=shell_toolsets,
+        enable_tools=kwargs["enable_tools"],
+        settings=ToolManagerSettings(),
+    )
+
+
+class _AgentShellPolicy(ExecutionPolicy):
+    def __init__(
+        self,
+        *,
+        denial: ShellPolicyDenied | None = None,
+    ) -> None:
+        self._denial = denial
+        self.requests: list[ShellCommandRequest] = []
+
+    async def normalize(
+        self,
+        request: ShellCommandRequest,
+    ) -> ExecutionSpec:
+        self.requests.append(request)
+        if self._denial is not None:
+            raise self._denial
+        return ExecutionPolicy().create_execution_spec(
+            backend="local",
+            tool_name=request.tool_name,
+            command=request.command,
+            executable="/usr/bin/cat",
+            argv=("cat", "--", "agent.txt"),
+            display_argv=("cat", "--", "agent.txt"),
+            cwd=".",
+            display_cwd=".",
+            env={"LC_ALL": "C"},
+            stdin=None,
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.TEXT,
+            resource_class="standard",
+            output_plan=None,
+            timeout_seconds=1.0,
+            max_stdout_bytes=1024,
+            max_stderr_bytes=1024,
+        )
+
+
+class _AgentShellExecutor:
+    def __init__(self, stdout: str) -> None:
+        self._stdout = stdout
+        self.specs: list[ExecutionSpec] = []
+
+    async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
+        self.specs.append(spec)
+        return ExecutionResult(
+            backend=spec.backend,
+            tool_name=spec.tool_name,
+            command=spec.command,
+            argv=spec.argv,
+            display_argv=spec.display_argv,
+            cwd=spec.cwd,
+            display_cwd=spec.display_cwd,
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout=self._stdout,
+            stderr="",
+            stdout_media_type=spec.stdout_media_type,
+            output_kind=spec.output_kind,
+            stdout_bytes=len(self._stdout.encode()),
+            stderr_bytes=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+            cancelled=False,
+            duration_ms=1,
+            error_code=ShellExecutionErrorCode.COMPLETED,
+            metadata=spec.metadata,
+        )
+
+
+async def _load_shell_agent_tool_result(
+    *,
+    policy: _AgentShellPolicy,
+    executor: _AgentShellExecutor,
+    path: str,
+) -> tuple[list[str], object]:
+    def shell_toolset_factory(
+        *,
+        settings: ShellToolSettings,
+        namespace: str,
+    ) -> ShellToolSet:
+        return ShellToolSet(
+            settings=settings,
+            policy=policy,
+            executor=executor,
+            namespace=namespace,
+        )
+
+    with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+        tmp.write(
+            _minimal_agent_toml()
+            + '\n[tool]\nenable = ["shell.cat"]\n'
+            + '\n[tool.shell]\nworkspace_root = "."\n'
+        )
+        tmp.flush()
+        stack = AsyncExitStack()
+        model_manager = MagicMock()
+        model_manager.__enter__.return_value = model_manager
+        model_manager.parse_uri.return_value = "uri_obj"
+        model_manager.get_engine_settings.return_value = "settings_obj"
+
+        try:
+            with (
+                patch(
+                    "avalan.agent.loader.MemoryManager.create_instance",
+                    new=AsyncMock(return_value=MagicMock()),
+                ),
+                patch(
+                    "avalan.agent.loader.ModelManager",
+                    return_value=model_manager,
+                ),
+                patch(
+                    "avalan.agent.loader.ShellToolSet",
+                    side_effect=shell_toolset_factory,
+                ),
+                patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", False),
+                patch("avalan.agent.loader.HAS_CODE_DEPENDENCIES", False),
+                patch(
+                    "avalan.agent.loader.HAS_BROWSER_DEPENDENCIES",
+                    False,
+                ),
+                patch(
+                    "avalan.agent.loader.MathToolSet",
+                    side_effect=lambda *, namespace: ToolSet(
+                        namespace=namespace,
+                        tools=[],
+                    ),
+                ),
+                patch(
+                    "avalan.agent.loader.MemoryToolSet",
+                    side_effect=lambda _memory, *, namespace: ToolSet(
+                        namespace=namespace,
+                        tools=[],
+                    ),
+                ),
+            ):
+                loader = OrchestratorLoader(
+                    hub=MagicMock(spec=HuggingfaceHub),
+                    logger=MagicMock(spec=Logger),
+                    participant_id=uuid4(),
+                    stack=stack,
+                )
+                agent = await loader.from_file(
+                    tmp.name,
+                    agent_id=uuid4(),
+                )
+
+                schemas = agent.tool.json_schemas() or []
+                schema_names = [
+                    schema["function"]["name"] for schema in schemas
+                ]
+                outcome = await agent.tool.execute_call(
+                    ToolCall(
+                        id="call-1",
+                        name="shell.cat",
+                        arguments={"path": path},
+                    ),
+                    context=ToolCallContext(),
+                )
+        finally:
+            await stack.aclose()
+    return schema_names, outcome
 
 
 class LoaderPropertyTestCase(IsolatedAsyncioTestCase):
@@ -160,6 +439,78 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             self.assertFalse(tool_settings.shell.allow_media_tools)
             await stack.aclose()
 
+    async def test_shell_section_builds_settings_from_toml(self):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(
+                _minimal_agent_toml()
+                + "\n[tool.shell]\n"
+                + 'workspace_root = "/tmp"\n'
+                + 'cwd = "fixtures"\n'
+                + "max_head_lines = 12\n"
+                + "allow_hidden = true\n"
+                + 'allowed_commands = ["head", "cat"]\n'
+            )
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(tmp.name, agent_id=uuid4())
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertEqual(tool_settings.shell.workspace_root, "/tmp")
+            self.assertEqual(tool_settings.shell.cwd, "fixtures")
+            self.assertEqual(tool_settings.shell.max_head_lines, 12)
+            self.assertTrue(tool_settings.shell.allow_hidden)
+            self.assertEqual(
+                tool_settings.shell.allowed_commands, ("head", "cat")
+            )
+            await stack.aclose()
+
+    async def test_shell_tool_settings_override_toml(self):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(
+                _minimal_agent_toml()
+                + "\n[tool.shell]\n"
+                + "max_head_lines = 12\n"
+            )
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+            override = ShellToolSettings(max_head_lines=7)
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(
+                    tmp.name,
+                    agent_id=uuid4(),
+                    tool_settings=ToolSettingsContext(shell=override),
+                )
+
+            self.assertEqual(result, "orch")
+            tool_settings = from_settings.call_args.kwargs["tool_settings"]
+            self.assertIs(tool_settings.shell, override)
+            self.assertEqual(tool_settings.shell.max_head_lines, 7)
+            await stack.aclose()
+
     async def test_shell_section_rejects_non_mapping(self):
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
             tmp.write(_minimal_agent_toml() + '\n[tool]\nshell = "yes"\n')
@@ -202,6 +553,96 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             settings = from_settings.call_args.args[0]
             self.assertEqual(settings.tools, ["shell", "math.calculator"])
             await stack.aclose()
+
+    async def test_from_file_registers_shell_for_opt_in_inputs(self):
+        cases = (
+            ("\n[tool.shell]\n", None),
+            ('\n[tool]\nenable = ["shell"]\n', ["shell"]),
+            ('\n[tool]\nenable = ["shell.*"]\n', ["shell"]),
+            ('\n[tool]\nenable = ["shell.rg"]\n', ["shell.rg"]),
+        )
+
+        for tool_config, expected_enable in cases:
+            with self.subTest(tool_config=tool_config):
+                kwargs = await _from_file_tool_manager_kwargs(
+                    _minimal_agent_toml() + tool_config
+                )
+
+                self.assertEqual(_shell_namespaces(kwargs), ["shell"])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
+
+    async def test_from_file_shell_agent_invokes_tool_with_fake_executor(
+        self,
+    ) -> None:
+        policy = _AgentShellPolicy()
+        executor = _AgentShellExecutor("agent shell output\n")
+
+        schema_names, outcome = await _load_shell_agent_tool_result(
+            policy=policy,
+            executor=executor,
+            path="agent.txt",
+        )
+
+        self.assertEqual(schema_names, ["shell.cat"])
+        self.assertIsInstance(outcome, ToolCallResult)
+        assert isinstance(outcome, ToolCallResult)
+        assert isinstance(outcome.result, str)
+        self.assertIn("tool: shell.cat", outcome.result)
+        self.assertIn("status: completed", outcome.result)
+        self.assertIn("agent shell output", outcome.result)
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(policy.requests[0].paths[0].path, "agent.txt")
+        self.assertEqual(
+            [spec.tool_name for spec in executor.specs],
+            [
+                "shell.cat",
+            ],
+        )
+
+    async def test_from_file_shell_agent_returns_policy_denied_result(
+        self,
+    ) -> None:
+        policy = _AgentShellPolicy(
+            denial=ShellPolicyDenied(
+                ShellExecutionErrorCode.DENIED_PATH,
+                "path is denied",
+            )
+        )
+        executor = _AgentShellExecutor("unused")
+
+        schema_names, outcome = await _load_shell_agent_tool_result(
+            policy=policy,
+            executor=executor,
+            path="denied.txt",
+        )
+
+        self.assertEqual(schema_names, ["shell.cat"])
+        self.assertIsInstance(outcome, ToolCallResult)
+        assert isinstance(outcome, ToolCallResult)
+        assert isinstance(outcome.result, str)
+        self.assertIn("tool: shell.cat", outcome.result)
+        self.assertIn("status: policy_denied", outcome.result)
+        self.assertIn("error_code: denied_path", outcome.result)
+        self.assertIn("error_message: path is denied", outcome.result)
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(policy.requests[0].paths[0].path, "denied.txt")
+        self.assertEqual(executor.specs, [])
+
+    async def test_from_file_does_not_register_shell_without_opt_in(self):
+        cases = (
+            (_minimal_agent_toml(), None),
+            (
+                _minimal_agent_toml() + '\n[tool]\nenable = ["shellx.*"]\n',
+                ["shellx.*"],
+            ),
+        )
+
+        for config, expected_enable in cases:
+            with self.subTest(config=config):
+                kwargs = await _from_file_tool_manager_kwargs(config)
+
+                self.assertEqual(_shell_namespaces(kwargs), [])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
 
     async def test_permission_error(self):
         if geteuid() == 0:
@@ -2171,22 +2612,41 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             _orchestrator_settings(tools=None)
         )
 
-        namespaces = [
-            toolset.namespace for toolset in kwargs["available_toolsets"]
-        ]
-        self.assertNotIn("shell", namespaces)
+        self.assertEqual(_shell_namespaces(kwargs), [])
         self.assertIsNone(kwargs["enable_tools"])
 
-    async def test_shell_toolset_is_registered_for_shell_selection(self):
-        kwargs = await _from_settings_tool_manager_kwargs(
-            _orchestrator_settings(tools=["shell.*"])
+    async def test_shell_toolset_is_not_registered_for_empty_or_nonmatch(
+        self,
+    ):
+        cases = (
+            ([], []),
+            (["shellx.*"], ["shellx.*"]),
         )
 
-        namespaces = [
-            toolset.namespace for toolset in kwargs["available_toolsets"]
-        ]
-        self.assertIn("shell", namespaces)
-        self.assertEqual(kwargs["enable_tools"], ["shell"])
+        for tools, expected_enable in cases:
+            with self.subTest(tools=tools):
+                kwargs = await _from_settings_tool_manager_kwargs(
+                    _orchestrator_settings(tools=tools)
+                )
+
+                self.assertEqual(_shell_namespaces(kwargs), [])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
+
+    async def test_shell_toolset_is_registered_for_shell_selections(self):
+        cases = (
+            (["shell"], ["shell"]),
+            (["shell.*"], ["shell"]),
+            (["shell.rg"], ["shell.rg"]),
+        )
+
+        for tools, expected_enable in cases:
+            with self.subTest(tools=tools):
+                kwargs = await _from_settings_tool_manager_kwargs(
+                    _orchestrator_settings(tools=tools)
+                )
+
+                self.assertEqual(_shell_namespaces(kwargs), ["shell"])
+                self.assertEqual(kwargs["enable_tools"], expected_enable)
 
     async def test_shell_toolset_is_registered_for_explicit_empty_selection(
         self,
@@ -2196,11 +2656,70 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             tool_settings=ToolSettingsContext(shell=ShellToolSettings()),
         )
 
-        namespaces = [
-            toolset.namespace for toolset in kwargs["available_toolsets"]
-        ]
-        self.assertIn("shell", namespaces)
+        self.assertEqual(_shell_namespaces(kwargs), ["shell"])
         self.assertEqual(kwargs["enable_tools"], [])
+
+    async def test_shell_toolset_is_registered_for_settings_context(self):
+        kwargs = await _from_settings_tool_manager_kwargs(
+            _orchestrator_settings(tools=None),
+            tool_settings=ToolSettingsContext(shell=ShellToolSettings()),
+        )
+
+        self.assertEqual(_shell_namespaces(kwargs), ["shell"])
+        self.assertIsNone(kwargs["enable_tools"])
+
+    async def test_cli_shell_settings_preserve_default_toolsets(self):
+        kwargs = await _from_settings_tool_manager_kwargs(
+            _orchestrator_settings(tools=None),
+            tool_settings=ToolSettingsContext(shell=ShellToolSettings()),
+        )
+
+        self.assertEqual(
+            _toolset_namespaces(kwargs),
+            ["math", "memory", "shell"],
+        )
+        self.assertIsNone(kwargs["enable_tools"])
+
+    async def test_shell_diagnostics_distinguish_disabled_from_unknown(self):
+        available_kwargs = await _from_settings_tool_manager_kwargs(
+            _orchestrator_settings(tools=["shell.rg"])
+        )
+        available_manager = _shell_only_manager(available_kwargs)
+        disabled = available_manager.resolve_tool_name("shell.cat")
+        disabled_diagnostic = available_manager.validate_tool_call(
+            ToolCall(id="call-1", name="shell.cat", arguments={})
+        )
+
+        self.assertIs(disabled.status, ToolNameResolutionStatus.DISABLED)
+        self.assertIs(
+            disabled.diagnostic_code,
+            ToolCallDiagnosticCode.DISABLED_TOOL,
+        )
+        assert disabled_diagnostic is not None
+        self.assertIs(
+            disabled_diagnostic.code,
+            ToolCallDiagnosticCode.DISABLED_TOOL,
+        )
+
+        unavailable_kwargs = await _from_settings_tool_manager_kwargs(
+            _orchestrator_settings(tools=None)
+        )
+        unavailable_manager = _shell_only_manager(unavailable_kwargs)
+        unknown = unavailable_manager.resolve_tool_name("shell.cat")
+        unknown_diagnostic = unavailable_manager.validate_tool_call(
+            ToolCall(id="call-1", name="shell.cat", arguments={})
+        )
+
+        self.assertIs(unknown.status, ToolNameResolutionStatus.UNKNOWN)
+        self.assertIs(
+            unknown.diagnostic_code,
+            ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        )
+        assert unknown_diagnostic is not None
+        self.assertIs(
+            unknown_diagnostic.code,
+            ToolCallDiagnosticCode.UNKNOWN_TOOL,
+        )
 
     async def test_load_default_orchestrator_from_settings(self):
         hub = MagicMock(spec=HuggingfaceHub)

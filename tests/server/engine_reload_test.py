@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from avalan.server.entities import EngineRequest, OrchestratorContext
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
+from avalan.tool.shell import ShellToolSettings
 
 
 class EngineReloadTestCase(IsolatedAsyncioTestCase):
@@ -165,6 +166,62 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(passed_tool_settings.database.dsn, "postgres://db")
         self.assertEqual(
             request.app.state.ctx.tool_settings.database.dsn, "postgres://db"
+        )
+        self.assertEqual(request.app.state.ctx.settings.uri, "new")
+
+    async def test_reload_preserves_shell_settings_when_database_changes(
+        self,
+    ) -> None:
+        import avalan.server.routers.engine as eng
+
+        @dataclass
+        class DummySettings:
+            uri: str
+
+        settings = DummySettings(uri="old")
+        pid = uuid4()
+        orchestrator = MagicMock()
+        orchestrator.id = uuid4()
+        orchestrator_cm = MagicMock()
+        shell_settings = ShellToolSettings(max_head_lines=9)
+        tool_settings = ToolSettingsContext(shell=shell_settings)
+        loader = SimpleNamespace(
+            from_settings=AsyncMock(return_value=orchestrator_cm)
+        )
+        stack = SimpleNamespace(
+            aclose=AsyncMock(),
+            enter_async_context=AsyncMock(return_value=orchestrator),
+        )
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    ctx=OrchestratorContext(
+                        participant_id=pid,
+                        settings=settings,
+                        tool_settings=tool_settings,
+                    ),
+                    stack=stack,
+                    loader=loader,
+                )
+            )
+        )
+        with patch.object(eng, "di_set"):
+            logger = MagicMock()
+            await eng.set_engine(
+                request,
+                EngineRequest(uri="new", database="postgres://db"),
+                logger,
+            )
+        stack.aclose.assert_called_once()
+        loader.from_settings.assert_called_once()
+        passed_tool_settings = loader.from_settings.call_args.kwargs[
+            "tool_settings"
+        ]
+        self.assertEqual(passed_tool_settings.database.dsn, "postgres://db")
+        self.assertIs(passed_tool_settings.shell, shell_settings)
+        self.assertIs(
+            request.app.state.ctx.tool_settings.shell,
+            shell_settings,
         )
         self.assertEqual(request.app.state.ctx.settings.uri, "new")
 

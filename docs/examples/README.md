@@ -4,6 +4,7 @@ This directory showcases configuration files and small programs that demonstrate
 
 ## Agent configurations
 - [agent_tool.toml](agent_tool.toml) – Agent with a calculator tool. Modify `engine.uri` to use another model, extend the `tool.enable` list, or change `run.max_new_tokens` to control response length.
+- [agent_shell.toml](agent_shell.toml) – Agent with opt-in read-only shell tools for workspace inspection. Adjust `tool.enable`, `tool.shell.workspace_root`, or output caps to fit the workspace.
 - [agent_gettext_translator.toml](agent_gettext_translator.toml) – Template-driven gettext translator. Adjust `source_language`, `destination_language`, or switch `engine.uri` to a different model.
 - [agent_support_reply.toml](agent_support_reply.toml) – Direct-prompt customer support reply drafter. Adapt the `system`, `developer`, or `user` prompts to fit your support policy.
 - [agent_messi.toml](agent_messi.toml) – Persona of Leo Messi with recent and PostgreSQL-backed memory. Change `engine.uri`, memory connection strings, or `run.max_new_tokens` for longer answers.

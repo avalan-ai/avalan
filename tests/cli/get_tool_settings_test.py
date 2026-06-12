@@ -82,28 +82,25 @@ class GetToolSettingsTestCase(unittest.TestCase):
         self.assertIsInstance(settings, ShellToolSettings)
         self.assertTrue(settings.allow_media_tools)
 
-    def test_agent_enabled_tools_preserves_shell_cli_opt_in(self):
-        settings = ShellToolSettings()
-
+    def test_agent_enabled_tools_preserves_omitted_and_explicit_selection(
+        self,
+    ):
         self.assertIsNone(
             agent_cmds._agent_enabled_tools(
                 Namespace(tool=None, tools=None),
-                settings,
             )
         )
         self.assertEqual(
             agent_cmds._agent_enabled_tools(
                 Namespace(tool=["shell.rg"], tools=None),
-                settings,
             ),
             ["shell.rg"],
         )
         self.assertEqual(
             agent_cmds._agent_enabled_tools(
-                Namespace(tool=None, tools=None),
-                None,
+                Namespace(tool=None, tools=["math"]),
             ),
-            [],
+            ["math"],
         )
 
     def test_uses_ds4_backend_requires_engine_agent(self):

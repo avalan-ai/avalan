@@ -525,7 +525,7 @@ def _shell_source_paths() -> tuple[Path, ...]:
     shell_root = (
         Path(__file__).parents[3] / "src" / "avalan" / "tool" / "shell"
     )
-    return tuple(sorted(shell_root.glob("*.py")))
+    return tuple(sorted(shell_root.rglob("*.py")))
 
 
 def _is_forbidden_import(node: object) -> bool:
