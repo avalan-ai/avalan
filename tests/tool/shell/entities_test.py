@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 from unittest import TestCase, main
 
 from avalan.tool.shell.entities import (
+    GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     SHELL_STATUS_ERROR_CODES,
     ExecutionResult,
     ExecutionSpec,
@@ -362,7 +363,7 @@ class ShellEntitiesTest(TestCase):
         suffixes = [".png"]
         media_types = {".png": "image/png"}
         plan = GeneratedOutputPlan(
-            prefix="page",
+            prefix_name="page",
             display_prefix="page",
             allowed_suffixes=tuple(suffixes),
             suffix_media_types=media_types,
@@ -380,7 +381,7 @@ class ShellEntitiesTest(TestCase):
 
     def test_generated_output_plan_is_frozen(self) -> None:
         plan = GeneratedOutputPlan(
-            prefix="page",
+            prefix_name="page",
             display_prefix="page",
             allowed_suffixes=(".png",),
             suffix_media_types={".png": "image/png"},
@@ -391,11 +392,11 @@ class ShellEntitiesTest(TestCase):
         )
 
         with self.assertRaises(FrozenInstanceError):
-            plan.prefix = "other"
+            plan.prefix_name = "other"
 
     def test_generated_output_plan_rejects_invalid_fields(self) -> None:
         valid = {
-            "prefix": "page",
+            "prefix_name": "page",
             "display_prefix": "page",
             "allowed_suffixes": (".png",),
             "suffix_media_types": {".png": "image/png"},
@@ -405,7 +406,7 @@ class ShellEntitiesTest(TestCase):
             "max_inline_bytes": 4,
         }
         invalid_values = {
-            "prefix": "",
+            "prefix_name": "../page",
             "display_prefix": "",
             "allowed_suffixes": [".png"],
             "suffix_media_types": {".png": "not a media type"},
@@ -422,6 +423,63 @@ class ShellEntitiesTest(TestCase):
                 kwargs[field_name] = value
                 with self.assertRaises(AssertionError):
                     GeneratedOutputPlan(**kwargs)  # type: ignore[arg-type]
+
+    def test_execution_spec_rejects_generated_output_without_placeholder(
+        self,
+    ) -> None:
+        plan = GeneratedOutputPlan(
+            prefix_name="page",
+            display_prefix="GENERATED_PREFIX",
+            allowed_suffixes=(".png",),
+            suffix_media_types={".png": "image/png"},
+            max_files=1,
+            max_file_bytes=2,
+            max_total_bytes=3,
+            max_inline_bytes=4,
+        )
+
+        with self.assertRaises(AssertionError):
+            _create_execution_spec(
+                backend="local",
+                tool_name="shell.pdftoppm",
+                command="pdftoppm",
+                executable="/trusted/bin/pdftoppm",
+                argv=("pdftoppm", "page"),
+                display_argv=("pdftoppm", plan.display_prefix),
+                cwd="/workspace",
+                display_cwd=".",
+                env={},
+                stdin=None,
+                stdout_media_type="application/json",
+                output_kind=ShellOutputKind.GENERATED_FILES,
+                resource_class="heavy",
+                output_plan=plan,
+                timeout_seconds=1.0,
+                max_stdout_bytes=1,
+                max_stderr_bytes=1,
+            )
+
+        spec = _create_execution_spec(
+            backend="local",
+            tool_name="shell.pdftoppm",
+            command="pdftoppm",
+            executable="/trusted/bin/pdftoppm",
+            argv=("pdftoppm", GENERATED_OUTPUT_PREFIX_PLACEHOLDER),
+            display_argv=("pdftoppm", plan.display_prefix),
+            cwd="/workspace",
+            display_cwd=".",
+            env={},
+            stdin=None,
+            stdout_media_type="application/json",
+            output_kind=ShellOutputKind.GENERATED_FILES,
+            resource_class="heavy",
+            output_plan=plan,
+            timeout_seconds=1.0,
+            max_stdout_bytes=1,
+            max_stderr_bytes=1,
+        )
+
+        self.assertEqual(spec.output_plan, plan)
 
     def test_generated_file_defaults_and_metadata_copy(self) -> None:
         metadata = {"page": 1}

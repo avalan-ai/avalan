@@ -23,10 +23,12 @@ from avalan.types import (
     assert_optional_positive_number,
     assert_positive_int,
     assert_positive_number,
+    assert_safe_path_name,
     assert_safe_suffix,
     assert_safe_suffix_sequence,
     assert_sha256_hex,
     assert_string_mapping,
+    assert_string_sequence,
     assert_string_tuple,
     assert_suffix_media_type_mapping,
     coerce_datetime,
@@ -131,6 +133,18 @@ class TypesTest(TestCase):
     def test_assert_string_tuple_rejects_blank_string(self) -> None:
         with self.assertRaises(AssertionError):
             assert_string_tuple((" ",), "field")
+
+    def test_assert_string_sequence_accepts_empty_and_strings(self) -> None:
+        assert_string_sequence((), "field")
+        assert_string_sequence(["", "value"], "field")
+
+    def test_assert_string_sequence_rejects_scalar_string(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_string_sequence("value", "field")
+
+    def test_assert_string_sequence_rejects_non_string_item(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_string_sequence(("value", 1), "field")
 
     def test_assert_non_empty_string_sequence_accepts_list(self) -> None:
         assert_non_empty_string_sequence(["one", "two"], "field")
@@ -252,6 +266,26 @@ class TypesTest(TestCase):
     def test_assert_safe_suffix_accepts_file_suffixes(self) -> None:
         assert_safe_suffix(".png", "field")
         assert_safe_suffix("txt", "field")
+
+    def test_assert_safe_path_name_accepts_simple_names(self) -> None:
+        assert_safe_path_name("page", "field")
+        assert_safe_path_name("page-1_value", "field")
+
+    def test_assert_safe_path_name_rejects_path_like_values(self) -> None:
+        for value in (
+            "",
+            ".",
+            "..",
+            "page.png",
+            "../page",
+            "dir/page",
+            "dir\\page",
+            "page value",
+            "x\x00",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_safe_path_name(value, "field")
 
     def test_assert_safe_suffix_rejects_path_like_values(self) -> None:
         for value in ("", ".", "..", "../png", "dir/png", "dir\\png", "x\x00"):

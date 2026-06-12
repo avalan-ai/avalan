@@ -12,14 +12,21 @@ from avalan.tool.shell.filesystem import (
     PNG_SIGNATURE,
     ShellPathMetadata,
     ensure_file_size_at_most,
+    file_digest_and_base64,
     file_size,
     inspect_path,
+    list_directory,
+    make_directory,
     private_temp_directory,
     probe_image_dimensions,
     read_image_signature,
     read_pdf_signature,
     read_signature,
+    remove_file,
+    remove_tree,
     resolve_policy_path,
+    signature_is_binary,
+    sniff_binary,
 )
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures"
@@ -39,6 +46,7 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(file_metadata.path.name, "visible.txt")
         self.assertEqual(file_metadata.size, 5)
+        self.assertGreaterEqual(file_metadata.hardlink_count, 1)
         self.assertTrue(file_metadata.is_file)
         self.assertFalse(file_metadata.is_directory)
         self.assertFalse(file_metadata.is_symlink)
@@ -127,6 +135,37 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(default_signature), DEFAULT_SIGNATURE_BYTES)
         self.assertEqual(explicit_signature, b"aaa")
 
+    async def test_sniff_binary_uses_bounded_signature(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            text_path = Path(temporary_directory) / "large.txt"
+            binary_path = Path(temporary_directory) / "binary.bin"
+            text_path.write_bytes(b"a" * (DEFAULT_SIGNATURE_BYTES + 10))
+            binary_path.write_bytes(b"a" * DEFAULT_SIGNATURE_BYTES + b"\x00")
+
+            with patch(
+                "avalan.tool.shell.filesystem._read_bytes_prefix",
+                wraps=shell_filesystem._read_bytes_prefix,
+            ) as read_prefix:
+                is_text_binary = await sniff_binary(text_path)
+                is_binary_binary = await sniff_binary(binary_path)
+
+        self.assertFalse(is_text_binary)
+        self.assertFalse(is_binary_binary)
+        self.assertEqual(read_prefix.call_count, 2)
+        self.assertEqual(
+            read_prefix.call_args_list[0].args,
+            (text_path, DEFAULT_SIGNATURE_BYTES),
+        )
+
+    def test_signature_binary_detection_rejects_nul_and_invalid_utf8(
+        self,
+    ) -> None:
+        self.assertFalse(signature_is_binary(b"text\n"))
+        self.assertTrue(signature_is_binary(b"text\x00more"))
+        self.assertTrue(signature_is_binary(b"text\xff"))
+        with self.assertRaises(AssertionError):
+            signature_is_binary("text")  # type: ignore[arg-type]
+
     async def test_file_size_helpers_return_and_bound_sizes(self) -> None:
         path = FIXTURE_ROOT / "filesystem" / "visible.txt"
 
@@ -195,6 +234,107 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
             self.assertIsNotNone(temp_path)
             self.assertFalse(temp_path.exists())
 
+    async def test_private_temp_directory_ignores_missing_cleanup_path(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "avalan.tool.shell.filesystem._remove_tree",
+                side_effect=OSError("remove failed"),
+            ),
+            patch(
+                "avalan.tool.shell.filesystem.inspect_path",
+                side_effect=OSError("missing"),
+            ),
+        ):
+            async with private_temp_directory():
+                pass
+
+    async def test_private_temp_directory_ignores_directory_cleanup_error(
+        self,
+    ) -> None:
+        metadata = ShellPathMetadata(
+            path=Path("/tmp/generated"),
+            resolved_path=Path("/tmp/generated"),
+            mode=0o700,
+            size=0,
+            is_file=False,
+            is_directory=True,
+            is_symlink=False,
+            is_special_file=False,
+        )
+
+        with (
+            patch(
+                "avalan.tool.shell.filesystem._remove_tree",
+                side_effect=OSError("remove failed"),
+            ),
+            patch(
+                "avalan.tool.shell.filesystem.inspect_path",
+                return_value=metadata,
+            ),
+        ):
+            async with private_temp_directory():
+                pass
+
+    async def test_private_temp_directory_ignores_unlink_cleanup_error(
+        self,
+    ) -> None:
+        metadata = ShellPathMetadata(
+            path=Path("/tmp/generated"),
+            resolved_path=Path("/tmp/generated"),
+            mode=0o600,
+            size=1,
+            is_file=True,
+            is_directory=False,
+            is_symlink=False,
+            is_special_file=False,
+        )
+
+        with (
+            patch(
+                "avalan.tool.shell.filesystem._remove_tree",
+                side_effect=OSError("remove failed"),
+            ),
+            patch(
+                "avalan.tool.shell.filesystem.inspect_path",
+                return_value=metadata,
+            ),
+            patch(
+                "avalan.tool.shell.filesystem._remove_file",
+                side_effect=OSError("unlink failed"),
+            ),
+        ):
+            async with private_temp_directory():
+                pass
+
+    async def test_generated_output_filesystem_helpers(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            directory = await make_directory(root / "generated")
+            file_path = directory / "page-1.png"
+            file_path.write_bytes(b"abc")
+            transient_path = directory / "transient.txt"
+            transient_path.write_text("remove", encoding="utf-8")
+
+            entries = await list_directory(directory)
+            digest, inline = await file_digest_and_base64(
+                file_path,
+                chunk_size=2,
+                max_inline_bytes=3,
+            )
+            await remove_file(transient_path)
+            await remove_tree(directory)
+
+            self.assertEqual(set(entries), {file_path, transient_path})
+            self.assertEqual(
+                digest,
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            )
+            self.assertEqual(inline, "YWJj")
+            self.assertFalse(transient_path.exists())
+            self.assertFalse(directory.exists())
+
     async def test_rejects_invalid_public_inputs(self) -> None:
         with self.assertRaises(AssertionError):
             await resolve_policy_path(object())  # type: ignore[arg-type]
@@ -206,6 +346,20 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
             await read_signature("value.bin", max_bytes=True)  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
             await ensure_file_size_at_most("value.bin", max_bytes=-1)
+        with self.assertRaises(AssertionError):
+            await file_digest_and_base64(
+                object(),  # type: ignore[arg-type]
+                chunk_size=1,
+                max_inline_bytes=1,
+            )
+        with self.assertRaises(AssertionError):
+            await list_directory(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            await make_directory(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            await remove_tree(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            await remove_file(object())  # type: ignore[arg-type]
 
 
 class ShellFilesystemPrivateProbeTest(TestCase):
@@ -225,6 +379,7 @@ class ShellFilesystemPrivateProbeTest(TestCase):
             {"resolved_path": "/workspace/input.txt"},
             {"mode": -1},
             {"size": -1},
+            {"hardlink_count": -1},
             {"is_file": 1},
             {"is_directory": 0},
             {"is_symlink": 1},

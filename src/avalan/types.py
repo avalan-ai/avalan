@@ -19,6 +19,7 @@ _ENV_NAME_PATTERN = compile_pattern(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _MEDIA_TYPE_PATTERN = compile_pattern(
     r"^[A-Za-z0-9][A-Za-z0-9.+-]*/[A-Za-z0-9][A-Za-z0-9.+-]*$"
 )
+_SAFE_PATH_NAME_PATTERN = compile_pattern(r"^[A-Za-z0-9_-]+$")
 _SHA256_HEX_PATTERN = compile_pattern(r"^[0-9a-f]{64}$")
 
 
@@ -82,6 +83,15 @@ def assert_string_tuple(value: object, field_name: str) -> None:
     assert isinstance(value, tuple), f"{field_name} must be a tuple"
     for item in value:
         assert_non_empty_string(item, field_name)
+
+
+def assert_string_sequence(value: object, field_name: str) -> None:
+    assert isinstance(value, Sequence), f"{field_name} must be a sequence"
+    assert not isinstance(
+        value, str | bytes
+    ), f"{field_name} must be a sequence"
+    for item in value:
+        assert isinstance(item, str), f"{field_name} must contain strings"
 
 
 def assert_counter(value: object | None, field_name: str) -> None:
@@ -199,6 +209,14 @@ def assert_safe_suffix(value: object, field_name: str) -> None:
     assert "/" not in value, f"{field_name} must not contain path separators"
     assert "\\" not in value, f"{field_name} must not contain path separators"
     assert value not in (".", ".."), f"{field_name} must be a file suffix"
+
+
+def assert_safe_path_name(value: object, field_name: str) -> None:
+    assert_non_empty_string(value, field_name)
+    assert isinstance(value, str), f"{field_name} must be a string"
+    assert (
+        _SAFE_PATH_NAME_PATTERN.match(value) is not None
+    ), f"{field_name} must be a safe path name"
 
 
 def assert_safe_suffix_sequence(value: object, field_name: str) -> None:

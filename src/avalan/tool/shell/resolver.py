@@ -1,3 +1,4 @@
+from ...filesystem import which_executable as _which_executable
 from ...types import (
     assert_absolute_path_mapping as _assert_absolute_path_mapping,
 )
@@ -37,12 +38,23 @@ async def unavailable_executable_lookup(
     return None
 
 
+async def trusted_search_path_executable_lookup(
+    command: ShellCommandDefinition,
+    search_paths: tuple[str, ...],
+) -> str | None:
+    _assert_command_definition(command)
+    _assert_absolute_path_sequence(search_paths, "search_paths")
+    if not search_paths:
+        return None
+    return await _which_executable(command.executable_name, search_paths)
+
+
 @final
 @dataclass(kw_only=True, slots=True)
 class TrustedExecutableResolver:
     executable_paths: Mapping[str, str] = field(default_factory=dict)
     executable_search_paths: Sequence[str] = field(default_factory=tuple)
-    lookup: ExecutableLookup = unavailable_executable_lookup
+    lookup: ExecutableLookup = trusted_search_path_executable_lookup
     _cache: dict[str, str | None] = field(
         default_factory=dict,
         init=False,

@@ -210,7 +210,8 @@ class FancyThemeFlowProgressTestCase(unittest.TestCase):
         )
 
         stat_line = next(
-            line for line in console.export_text().splitlines()
+            line
+            for line in console.export_text().splitlines()
             if "nodes 7" in line
         )
         self.assertGreaterEqual(stat_line.index("tool"), 75)

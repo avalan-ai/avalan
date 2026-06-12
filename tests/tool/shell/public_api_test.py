@@ -216,6 +216,21 @@ class ShellPublicApiTest(TestCase):
 
     def test_expected_layout_modules_import(self) -> None:
         for module_name in (
+            "avalan.tool.shell.commands",
+            "avalan.tool.shell.commands.awk",
+            "avalan.tool.shell.commands.base",
+            "avalan.tool.shell.commands.cat",
+            "avalan.tool.shell.commands.head",
+            "avalan.tool.shell.commands.helpers",
+            "avalan.tool.shell.commands.jq",
+            "avalan.tool.shell.commands.ls",
+            "avalan.tool.shell.commands.pdftoppm",
+            "avalan.tool.shell.commands.pdftotext",
+            "avalan.tool.shell.commands.rg",
+            "avalan.tool.shell.commands.sed",
+            "avalan.tool.shell.commands.tail",
+            "avalan.tool.shell.commands.tesseract",
+            "avalan.tool.shell.commands.wc",
             "avalan.tool.shell.entities",
             "avalan.tool.shell.executor",
             "avalan.tool.shell.filesystem",
@@ -267,8 +282,8 @@ class ShellPublicApiTest(TestCase):
         )
         self.assertEqual(str(error), "denied")
 
-    def test_formatter_is_inert_until_results_land(self) -> None:
-        with self.assertRaises(NotImplementedError):
+    def test_formatter_rejects_non_result_objects(self) -> None:
+        with self.assertRaises(AssertionError):
             format_shell_result(object())
 
 
@@ -302,18 +317,22 @@ class ShellAsyncContractTest(IsolatedAsyncioTestCase):
         with self.assertRaises(NotImplementedError):
             await resolver.resolve(SHELL_COMMAND_DEFINITIONS["rg"])
 
-    async def test_policy_normalize_is_async_and_inert(self) -> None:
+    async def test_policy_normalize_is_async_and_returns_spec(self) -> None:
         policy = ExecutionPolicy()
         request = ShellCommandRequest(
             tool_name="shell.rg",
             command="rg",
-            options={},
+            options={"pattern": "needle"},
             paths=(),
             cwd=None,
         )
 
-        with self.assertRaises(NotImplementedError):
-            await policy.normalize(request)
+        spec = await policy.normalize(request)
+
+        self.assertIsInstance(spec, ExecutionSpec)
+        self.assertEqual(spec.tool_name, "shell.rg")
+        self.assertEqual(spec.command, "rg")
+        self.assertIsNone(spec.executable)
 
     async def test_policy_denies_media_commands_by_default(self) -> None:
         policy = ExecutionPolicy()
@@ -401,7 +420,7 @@ class ShellAsyncContractTest(IsolatedAsyncioTestCase):
         request = ShellCommandRequest(
             tool_name="shell.rg",
             command="rg",
-            options={},
+            options={"pattern": "needle"},
             paths=(
                 PathOperand(
                     name="output",
@@ -420,22 +439,35 @@ class ShellAsyncContractTest(IsolatedAsyncioTestCase):
             ShellExecutionErrorCode.WRITE_DENIED,
         )
 
-    async def test_policy_allows_media_commands_to_reach_future_normalizer(
+    async def test_policy_allows_enabled_media_commands_to_normalize(
         self,
     ) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
         policy = ExecutionPolicy(
-            settings=ShellToolSettings(allow_media_tools=True)
+            settings=ShellToolSettings(
+                workspace_root=str(fixture_root),
+                allow_media_tools=True,
+            )
         )
         request = ShellCommandRequest(
             tool_name="shell.pdftotext",
             command="pdftotext",
             options={},
-            paths=(),
+            paths=(
+                PathOperand(
+                    name="input",
+                    path="media/small.pdf",
+                    kind="pdf_file",
+                    access="read",
+                ),
+            ),
             cwd=None,
         )
 
-        with self.assertRaises(NotImplementedError):
-            await policy.normalize(request)
+        spec = await policy.normalize(request)
+
+        self.assertEqual(spec.command, "pdftotext")
+        self.assertEqual(spec.resource_class, "heavy")
 
     async def test_local_executor_is_async_and_inert(self) -> None:
         executor = LocalCommandExecutor()

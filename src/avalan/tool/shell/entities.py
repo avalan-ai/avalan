@@ -20,6 +20,9 @@ from ...types import (
     assert_optional_non_negative_int as _assert_optional_non_negative_int,
 )
 from ...types import (
+    assert_safe_path_name as _assert_safe_path_name,
+)
+from ...types import (
     assert_safe_suffix as _assert_safe_suffix,
 )
 from ...types import (
@@ -50,6 +53,7 @@ ShellPathKind = Literal[
 ]
 ShellPathAccess = Literal["read", "create", "write"]
 ShellResourceClass = Literal["standard", "heavy"]
+GENERATED_OUTPUT_PREFIX_PLACEHOLDER = "__AVALAN_GENERATED_OUTPUT_PREFIX__"
 
 
 class ShellExecutionStatus(StrEnum):
@@ -276,6 +280,9 @@ class ExecutionSpec:
                 self.output_plan,
                 GeneratedOutputPlan,
             ), "output_plan must be a generated output plan"
+            assert (
+                self.argv[1:].count(GENERATED_OUTPUT_PREFIX_PLACEHOLDER) == 1
+            ), "generated output argv must include one output placeholder"
         _assert_optional_bounded_number(
             self.timeout_seconds,
             "timeout_seconds",
@@ -346,7 +353,7 @@ def _create_execution_spec_from_policy(
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class GeneratedOutputPlan:
-    prefix: str
+    prefix_name: str
     display_prefix: str
     allowed_suffixes: tuple[str, ...]
     suffix_media_types: dict[str, str]
@@ -358,7 +365,7 @@ class GeneratedOutputPlan:
     max_raster_pixels: int | None = None
 
     def __post_init__(self) -> None:
-        _assert_non_empty_string(self.prefix, "prefix")
+        _assert_safe_path_name(self.prefix_name, "prefix_name")
         _assert_non_empty_string(self.display_prefix, "display_prefix")
         assert isinstance(
             self.allowed_suffixes,
