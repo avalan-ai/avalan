@@ -23,11 +23,13 @@ class ToolNameMatchTestCase(TestCase):
     def test_namespace_matches_exact_name_and_child_segments(self):
         self.assertTrue(matches_tool_namespace("math", "math"))
         self.assertTrue(matches_tool_namespace("math.calculator", "math"))
+        self.assertTrue(matches_tool_namespace("math.calculator", "math.*"))
         self.assertTrue(matches_tool_namespace("calculator", None))
 
     def test_namespace_does_not_match_unsafe_prefix(self):
         self.assertFalse(matches_tool_namespace("mathx", "math"))
         self.assertFalse(matches_tool_namespace("mathx.calculator", "math"))
+        self.assertFalse(matches_tool_namespace("mathx.calculator", "math.*"))
 
 
 class DummyTool(Tool):
@@ -200,6 +202,24 @@ class ToolSetJsonSchemasTestCase(TestCase):
 
         math_set.with_enabled_tools(["math"])
         mathx_set.with_enabled_tools(["math"])
+
+        math_schemas = math_set.json_schemas()
+        mathx_schemas = mathx_set.json_schemas()
+
+        assert math_schemas is not None
+        assert mathx_schemas is not None
+        self.assertEqual(
+            [schema["function"]["name"] for schema in math_schemas],
+            ["math.calculator"],
+        )
+        self.assertEqual(mathx_schemas, [])
+
+    def test_enabled_wildcard_namespace_uses_segment_boundaries(self):
+        math_set = ToolSet(namespace="math", tools=[CalculatorTool()])
+        mathx_set = ToolSet(namespace="mathx", tools=[CalculatorTool()])
+
+        math_set.with_enabled_tools(["math.*"])
+        mathx_set.with_enabled_tools(["math.*"])
 
         math_schemas = math_set.json_schemas()
         mathx_schemas = mathx_set.json_schemas()

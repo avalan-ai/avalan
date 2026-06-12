@@ -240,6 +240,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.registry",
             "avalan.tool.shell.resolver",
             "avalan.tool.shell.settings",
+            "avalan.tool.shell.tools",
             "avalan.tool.shell.toolset",
         ):
             self.assertEqual(import_module(module_name).__name__, module_name)
@@ -255,21 +256,28 @@ class ShellPublicApiTest(TestCase):
         with self.assertRaises(FrozenInstanceError):
             settings.backend = "remote"
 
-    def test_shell_toolset_is_namespaced_and_empty_until_tools_land(
+    def test_shell_toolset_is_namespaced_with_available_tools(
         self,
     ) -> None:
         toolset = ShellToolSet()
 
         self.assertIsInstance(toolset, ToolSet)
         self.assertEqual(toolset.namespace, "shell")
-        self.assertEqual(toolset.tools, [])
-        self.assertEqual(toolset.json_schemas(), [])
+        self.assertEqual(
+            [tool.__name__ for tool in toolset.tools],
+            list(SHELL_COMMAND_IDS),
+        )
+        self.assertEqual(
+            [schema["function"]["name"] for schema in toolset.json_schemas()],
+            [f"shell.{command_id}" for command_id in SHELL_COMMAND_IDS],
+        )
 
     def test_shell_toolset_accepts_explicit_settings(self) -> None:
         settings = ShellToolSettings()
-        toolset = ShellToolSet(settings=settings, namespace="custom")
+        toolset = ShellToolSet(settings=settings)
 
-        self.assertEqual(toolset.namespace, "custom")
+        self.assertEqual(toolset.namespace, "shell")
+        self.assertIs(toolset._settings, settings)
 
     def test_policy_denied_preserves_stable_error_code(self) -> None:
         error = ShellPolicyDenied(
