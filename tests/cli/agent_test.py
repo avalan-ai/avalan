@@ -48,6 +48,7 @@ from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.graph_settings import GraphToolSettings
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.parser import ToolCallParser
+from avalan.tool.shell import ShellToolSettings
 
 
 class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
@@ -378,7 +379,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds,
                 "get_tool_settings",
-                side_effect=[browser_settings, None, None],
+                side_effect=[None, browser_settings, None, None],
             ) as gts,
             patch.object(
                 agent_cmds, "agents_server", return_value=server
@@ -389,6 +390,7 @@ class CliAgentServeTestCase(unittest.IsolatedAsyncioTestCase):
         gos.assert_called_once()
         gts.assert_has_calls(
             [
+                call(args, prefix="shell", settings_cls=ShellToolSettings),
                 call(args, prefix="browser", settings_cls=BrowserToolSettings),
                 call(
                     args, prefix="database", settings_cls=DatabaseToolSettings

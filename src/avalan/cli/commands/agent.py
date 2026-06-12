@@ -27,6 +27,7 @@ from ...tool.browser import BrowserToolSettings
 from ...tool.context import ToolSettingsContext
 from ...tool.database.settings import DatabaseToolSettings
 from ...tool.graph_settings import GraphToolSettings
+from ...tool.shell import ShellToolSettings
 
 from argparse import Namespace
 from contextlib import AsyncExitStack
@@ -214,9 +215,16 @@ def _tool_settings_from_mapping(
         type[BrowserToolSettings]
         | type[DatabaseToolSettings]
         | type[GraphToolSettings]
+        | type[ShellToolSettings]
     ),
     open_files: bool = True,
-) -> BrowserToolSettings | DatabaseToolSettings | GraphToolSettings | None:
+) -> (
+    BrowserToolSettings
+    | DatabaseToolSettings
+    | GraphToolSettings
+    | ShellToolSettings
+    | None
+):
     """Return tool settings from a mapping using dataclass ``settings_cls``."""
     values: dict[str, object] = {}
     for field in fields(settings_cls):
@@ -247,7 +255,10 @@ def _tool_settings_from_mapping(
         return None
 
     settings = cast(
-        BrowserToolSettings | DatabaseToolSettings | GraphToolSettings,
+        BrowserToolSettings
+        | DatabaseToolSettings
+        | GraphToolSettings
+        | ShellToolSettings,
         cast(Any, settings_cls)(**values),
     )
     return settings
@@ -283,6 +294,16 @@ def get_tool_settings(
 ) -> GraphToolSettings | None: ...
 
 
+@overload
+def get_tool_settings(
+    args: Namespace,
+    *,
+    prefix: str,
+    settings_cls: type[ShellToolSettings],
+    open_files: bool = True,
+) -> ShellToolSettings | None: ...
+
+
 def get_tool_settings(
     args: Namespace,
     *,
@@ -291,12 +312,31 @@ def get_tool_settings(
         type[BrowserToolSettings]
         | type[DatabaseToolSettings]
         | type[GraphToolSettings]
+        | type[ShellToolSettings]
     ),
     open_files: bool = True,
-) -> BrowserToolSettings | DatabaseToolSettings | GraphToolSettings | None:
+) -> (
+    BrowserToolSettings
+    | DatabaseToolSettings
+    | GraphToolSettings
+    | ShellToolSettings
+    | None
+):
     return _tool_settings_from_mapping(
         args, prefix=prefix, settings_cls=settings_cls, open_files=open_files
     )
+
+
+def _agent_enabled_tools(
+    args: Namespace,
+    shell_settings: ShellToolSettings | None,
+) -> list[str] | None:
+    tools = (args.tool or []) + (getattr(args, "tools", None) or [])
+    if tools:
+        return tools
+    if shell_settings is not None:
+        return None
+    return tools
 
 
 def _uses_ds4_backend(orchestrator: Orchestrator) -> bool:
@@ -396,6 +436,9 @@ async def agent_message_search(
                     args.engine_uri
                 ), "--engine-uri required when no specifications file"
                 logger.debug("Loading agent from inline settings")
+                shell_settings = get_tool_settings(
+                    args, prefix="shell", settings_cls=ShellToolSettings
+                )
                 memory_recent = (
                     args.memory_recent
                     if args.memory_recent is not None
@@ -405,8 +448,7 @@ async def agent_message_search(
                     args,
                     agent_id=agent_id,
                     memory_recent=memory_recent,
-                    tools=(args.tool or [])
-                    + (getattr(args, "tools", None) or []),
+                    tools=_agent_enabled_tools(args, shell_settings),
                 )
                 browser_settings = get_tool_settings(
                     args, prefix="browser", settings_cls=BrowserToolSettings
@@ -421,6 +463,7 @@ async def agent_message_search(
                     browser=browser_settings,
                     database=database_settings,
                     graph=graph_settings,
+                    shell=shell_settings,
                 )
                 orchestrator = await loader.from_settings(
                     settings, tool_settings=tool_settings
@@ -545,6 +588,9 @@ async def agent_run(
                 args.engine_uri
             ), "--engine-uri required when no specifications file"
             assert not args.specifications_file or not args.engine_uri
+            shell_settings = get_tool_settings(
+                args, prefix="shell", settings_cls=ShellToolSettings
+            )
             memory_recent = (
                 args.memory_recent
                 if args.memory_recent is not None
@@ -554,7 +600,7 @@ async def agent_run(
                 args,
                 agent_id=agent_id or uuid4(),
                 memory_recent=memory_recent,
-                tools=(args.tool or []) + (getattr(args, "tools", None) or []),
+                tools=_agent_enabled_tools(args, shell_settings),
                 max_new_tokens=getattr(args, "run_max_new_tokens", None),
                 temperature=getattr(args, "run_temperature", None),
                 top_k=getattr(args, "run_top_k", None),
@@ -576,6 +622,7 @@ async def agent_run(
                 browser=browser_settings,
                 database=database_settings,
                 graph=graph_settings,
+                shell=shell_settings,
             )
             tool_format = (
                 ToolFormat(args.tool_format) if args.tool_format else None
@@ -786,6 +833,7 @@ async def agent_serve(
     browser_settings: BrowserToolSettings | None = None
     database_settings: DatabaseToolSettings | None = None
     graph_settings: GraphToolSettings | None = None
+    shell_settings: ShellToolSettings | None = None
 
     protocols = await OrchestratorLoader.resolve_serve_protocols(
         specs_path=specs_path,
@@ -793,6 +841,9 @@ async def agent_serve(
     )
 
     if not specs_path:
+        shell_settings = get_tool_settings(
+            args, prefix="shell", settings_cls=ShellToolSettings
+        )
         memory_recent = (
             args.memory_recent if args.memory_recent is not None else True
         )
@@ -800,7 +851,7 @@ async def agent_serve(
             args,
             agent_id=agent_id or uuid4(),
             memory_recent=memory_recent,
-            tools=(args.tool or []) + (getattr(args, "tools", None) or []),
+            tools=_agent_enabled_tools(args, shell_settings),
         )
         browser_settings = get_tool_settings(
             args, prefix="browser", settings_cls=BrowserToolSettings
@@ -811,11 +862,14 @@ async def agent_serve(
         graph_settings = get_tool_settings(
             args, prefix="graph", settings_cls=GraphToolSettings
         )
+    else:
+        shell_settings = None
 
     tool_settings = ToolSettingsContext(
         browser=browser_settings,
         database=database_settings,
         graph=graph_settings,
+        shell=shell_settings,
     )
 
     server = agents_server(
@@ -953,6 +1007,12 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         settings_cls=GraphToolSettings,
         open_files=False,
     )
+    shell_tool = get_tool_settings(
+        args,
+        prefix="shell",
+        settings_cls=ShellToolSettings,
+        open_files=False,
+    )
 
     env = Environment(
         loader=FileSystemLoader(
@@ -969,6 +1029,7 @@ async def agent_init(args: Namespace, console: Console, theme: Theme) -> None:
         browser_tool=browser_tool,
         database_tool=database_tool,
         graph_tool=graph_tool,
+        shell_tool=shell_tool,
         tool_format=tool_format,
         tool_recovery_formats=tool_recovery_formats,
     )

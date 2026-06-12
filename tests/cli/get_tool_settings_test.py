@@ -6,6 +6,7 @@ from tempfile import NamedTemporaryFile
 from avalan.cli.commands import agent as agent_cmds
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.database import DatabaseToolSettings
+from avalan.tool.shell import ShellToolSettings
 
 
 class GetToolSettingsTestCase(unittest.TestCase):
@@ -72,6 +73,38 @@ class GetToolSettingsTestCase(unittest.TestCase):
         )
         self.assertIsInstance(settings, DatabaseToolSettings)
         self.assertEqual(settings.dsn, "sqlite:///db.sqlite")
+
+    def test_shell_settings(self):
+        args = Namespace(tool_shell_allow_media_tools=True)
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="shell", settings_cls=ShellToolSettings
+        )
+        self.assertIsInstance(settings, ShellToolSettings)
+        self.assertTrue(settings.allow_media_tools)
+
+    def test_agent_enabled_tools_preserves_shell_cli_opt_in(self):
+        settings = ShellToolSettings()
+
+        self.assertIsNone(
+            agent_cmds._agent_enabled_tools(
+                Namespace(tool=None, tools=None),
+                settings,
+            )
+        )
+        self.assertEqual(
+            agent_cmds._agent_enabled_tools(
+                Namespace(tool=["shell.rg"], tools=None),
+                settings,
+            ),
+            ["shell.rg"],
+        )
+        self.assertEqual(
+            agent_cmds._agent_enabled_tools(
+                Namespace(tool=None, tools=None),
+                None,
+            ),
+            [],
+        )
 
     def test_uses_ds4_backend_requires_engine_agent(self):
         orchestrator = Namespace(engine_agent=None, engine=Namespace())

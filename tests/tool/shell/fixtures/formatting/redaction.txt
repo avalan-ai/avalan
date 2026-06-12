@@ -1,0 +1,2 @@
+api_key=SECRET_VALUE
+visible=kept
