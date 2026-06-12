@@ -943,6 +943,23 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
         main_mock.assert_not_called()
         help_mock.assert_not_called()
 
+    def test_module_main_version_outputs_version_and_exits(self) -> None:
+        cli_module = sys.modules[CLI.__module__]
+
+        with (
+            patch.object(sys, "argv", ["prog", "--version"]),
+            patch("builtins.print") as print_patch,
+            patch.object(cli_module, "CLI") as cli_class,
+            patch.object(cli_module, "run_in_loop") as run_loop,
+        ):
+            cli_module.main()
+
+        print_patch.assert_called_once_with(
+            f"{cli_module.name()} {cli_module.version()}"
+        )
+        cli_class.assert_not_called()
+        run_loop.assert_not_called()
+
     async def test_call_parallel_invokes_torchrun(self):
         with (
             patch.object(sys, "argv", ["prog", "--parallel", "colwise"]),

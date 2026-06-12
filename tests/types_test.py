@@ -9,6 +9,7 @@ from avalan.types import (
     assert_counter,
     assert_env_name,
     assert_int,
+    assert_int_sequence,
     assert_known_string,
     assert_known_string_sequence,
     assert_media_type,
@@ -61,6 +62,20 @@ class TypesTest(TestCase):
     def test_assert_int_rejects_bool(self) -> None:
         with self.assertRaises(AssertionError):
             assert_int(True, "field")
+
+    def test_assert_int_sequence_accepts_ints(self) -> None:
+        assert_int_sequence((), "field")
+        assert_int_sequence([1, 2], "field")
+
+    def test_assert_int_sequence_rejects_scalar_string(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_int_sequence("1", "field")
+
+    def test_assert_int_sequence_rejects_bool_or_non_int_item(self) -> None:
+        for value in ((1, True), (1, "2")):
+            with self.subTest(value=value):
+                with self.assertRaises(AssertionError):
+                    assert_int_sequence(value, "field")
 
     def test_assert_positive_int_accepts_positive_int(self) -> None:
         assert_positive_int(1, "field")

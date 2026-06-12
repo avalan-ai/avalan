@@ -94,6 +94,15 @@ def assert_string_sequence(value: object, field_name: str) -> None:
         assert isinstance(item, str), f"{field_name} must contain strings"
 
 
+def assert_int_sequence(value: object, field_name: str) -> None:
+    assert isinstance(value, Sequence), f"{field_name} must be a sequence"
+    assert not isinstance(
+        value, str | bytes
+    ), f"{field_name} must be a sequence"
+    for item in value:
+        assert_int(item, field_name)
+
+
 def assert_counter(value: object | None, field_name: str) -> None:
     assert_optional_non_negative_int(value, field_name)
 
