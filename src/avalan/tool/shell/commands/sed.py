@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ..settings import ShellToolSettings
 
 _LINE_RANGE_PATTERN = compile_pattern(r"^[1-9][0-9]*(,[1-9][0-9]*)?$")
+_SED_LITERAL_PATTERN_ESCAPES = frozenset(("\\", "/", ".", "*", "[", "^", "$"))
 
 
 def _sed_selectors(
@@ -121,7 +122,14 @@ def _add_selector_bytes(
 
 
 def _escape_sed_pattern(pattern: str) -> str:
-    return pattern.replace("\\", "\\\\").replace("/", "\\/")
+    return "".join(
+        (
+            f"\\{character}"
+            if character in _SED_LITERAL_PATTERN_ESCAPES
+            else character
+        )
+        for character in pattern
+    )
 
 
 def _contains_unsafe_sed_pattern(value: str) -> bool:

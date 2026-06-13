@@ -194,13 +194,13 @@ async def private_temp_directory(
             try:
                 metadata = await inspect_path(temp_path)
             except OSError:
-                return
-            if not metadata.is_file and not metadata.is_symlink:
-                return
-            try:
-                await _remove_file(temp_path)
-            except OSError:
                 pass
+            else:
+                if metadata.is_file or metadata.is_symlink:
+                    try:
+                        await _remove_file(temp_path)
+                    except OSError:
+                        pass
 
 
 def _probe_png_dimensions(signature: bytes) -> tuple[int, int] | None:
