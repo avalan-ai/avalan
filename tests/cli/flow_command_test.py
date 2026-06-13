@@ -93,6 +93,17 @@ from avalan.task.converters.pdf_image import pdf_image_converter_capability
 from avalan.task.store import TaskStoreConflictError, TaskStoreNotFoundError
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
+from avalan.tool.shell import (
+    ExecutionPolicy,
+    ExecutionResult,
+    ExecutionSpec,
+    ShellCommandRequest,
+    ShellExecutionErrorCode,
+    ShellExecutionStatus,
+    ShellOutputKind,
+    ShellToolSet,
+    ShellToolSettings,
+)
 
 TASK_HMAC_ENV = {
     "AVALAN_TASK_HMAC_KEY_ID": "flow-cli-test-v1",
@@ -3116,6 +3127,72 @@ class FlowRunCommandTestCase(TestCase):
         self.assertTrue(result)
         self.assertEqual(stream.getvalue(), "7\n")
 
+    def test_flow_run_shell_tool_uses_cli_settings_and_tool_filter(
+        self,
+    ) -> None:
+        stream = StringIO()
+        console = Console(file=stream, width=160)
+        policy = _FlowCliShellPolicy()
+        executor = _FlowCliShellExecutor("cli shell output\n")
+        captured_settings: list[ShellToolSettings] = []
+
+        def shell_toolset_factory(
+            *,
+            settings: ShellToolSettings,
+            namespace: str,
+        ) -> ShellToolSet:
+            captured_settings.append(settings)
+            return ShellToolSet(
+                settings=settings,
+                policy=policy,
+                executor=executor,
+                namespace=namespace,
+            )
+
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            flow_path = _write_shell_cat_tool_flow(root)
+            with (
+                patch.object(flow_cmds, "HAS_GRAPH_DEPENDENCIES", False),
+                patch.object(flow_cmds, "HAS_CODE_DEPENDENCIES", False),
+                patch.object(flow_cmds, "HAS_BROWSER_DEPENDENCIES", False),
+                patch.object(
+                    flow_cmds,
+                    "ShellToolSet",
+                    side_effect=shell_toolset_factory,
+                ),
+                patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True),
+            ):
+                result = flow_cmds.flow_run(
+                    _args(
+                        flow=flow_path,
+                        task_input_json='{"path":"visible.txt"}',
+                        task_run_json=True,
+                        tool=["shell.cat"],
+                        tool_shell_allow_media_tools=True,
+                        tool_shell_max_stdout_bytes=4096,
+                    ),
+                    console,
+                    self.theme,
+                )
+
+        output = stream.getvalue()
+        self.assertTrue(result)
+        self.assertIn("tool: shell.cat", output)
+        self.assertIn("status: completed", output)
+        self.assertIn("cli shell output", output)
+        self.assertEqual(len(captured_settings), 1)
+        self.assertTrue(captured_settings[0].allow_media_tools)
+        self.assertEqual(captured_settings[0].max_stdout_bytes, 4096)
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(policy.requests[0].paths[0].path, "visible.txt")
+        self.assertEqual(
+            [spec.tool_name for spec in executor.specs],
+            [
+                "shell.cat",
+            ],
+        )
+
     def test_flow_run_strict_tool_node_requires_enabled_resolver(self) -> None:
         console = Console(record=True, width=160)
 
@@ -5703,6 +5780,50 @@ def _write_strict_tool_flow(root: Path) -> Path:
     return flow_path
 
 
+def _write_shell_cat_tool_flow(root: Path) -> Path:
+    flow_path = root / "shell_cat.flow.toml"
+    flow_path.write_text(
+        """
+        [flow]
+        name = "shell_cat"
+        version = "1"
+
+        [[inputs]]
+        name = "payload"
+        type = "object"
+
+        [[outputs]]
+        name = "answer"
+        type = "json"
+
+        [entry]
+        type = "node"
+        node = "read"
+
+        [output_behavior]
+        type = "map"
+
+        [output_behavior.outputs]
+        answer = "read.result"
+
+        [nodes.read]
+        type = "tool"
+        ref = "shell.cat"
+
+        [nodes.read.mapping.arguments]
+        type = "object"
+
+        [nodes.read.mapping.arguments.fields]
+        path = "input.payload.path"
+
+        [nodes.read.config.arguments]
+        path = "path"
+        """,
+        encoding="utf-8",
+    )
+    return flow_path
+
+
 def _write_strict_topology_flow(root: Path) -> Path:
     flow_path = root / "topology.flow.toml"
     flow_path.write_text(
@@ -5898,6 +6019,69 @@ def _working_directory(path: Path) -> Iterator[None]:
         yield
     finally:
         chdir(previous)
+
+
+class _FlowCliShellPolicy(ExecutionPolicy):
+    def __init__(self) -> None:
+        self.requests: list[ShellCommandRequest] = []
+
+    async def normalize(
+        self,
+        request: ShellCommandRequest,
+    ) -> ExecutionSpec:
+        self.requests.append(request)
+        return ExecutionPolicy().create_execution_spec(
+            backend="local",
+            tool_name=request.tool_name,
+            command=request.command,
+            executable="/usr/bin/cat",
+            argv=("cat", "--", "visible.txt"),
+            display_argv=("cat", "--", "visible.txt"),
+            cwd=".",
+            display_cwd=".",
+            env={"LC_ALL": "C"},
+            stdin=None,
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.TEXT,
+            resource_class="standard",
+            output_plan=None,
+            timeout_seconds=1.0,
+            max_stdout_bytes=1024,
+            max_stderr_bytes=1024,
+        )
+
+
+class _FlowCliShellExecutor:
+    def __init__(self, stdout: str) -> None:
+        self._stdout = stdout
+        self.specs: list[ExecutionSpec] = []
+
+    async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
+        self.specs.append(spec)
+        return ExecutionResult(
+            backend=spec.backend,
+            tool_name=spec.tool_name,
+            command=spec.command,
+            argv=spec.argv,
+            display_argv=spec.display_argv,
+            cwd=spec.cwd,
+            display_cwd=spec.display_cwd,
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout=self._stdout,
+            stderr="",
+            stdout_media_type=spec.stdout_media_type,
+            output_kind=spec.output_kind,
+            stdout_bytes=len(self._stdout.encode()),
+            stderr_bytes=0,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            timed_out=False,
+            cancelled=False,
+            duration_ms=1,
+            error_code=ShellExecutionErrorCode.COMPLETED,
+            metadata=spec.metadata,
+        )
 
 
 class _FailingFlowClientContext:
