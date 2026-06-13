@@ -1925,6 +1925,7 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 encoding="utf-8",
             )
             (root / "-dash.tsv").write_text("two\tactive\n", encoding="utf-8")
+            (root / "a=b.tsv").write_text("three\tactive\n", encoding="utf-8")
             settings = ShellToolSettings(
                 workspace_root=str(root),
                 max_filter_selectors=8,
@@ -1942,7 +1943,11 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                         "start_line": 2,
                         "end_line": 4,
                     },
-                    paths=(_path("table.tsv"), _path("-dash.tsv")),
+                    paths=(
+                        _path("table.tsv"),
+                        _path("-dash.tsv"),
+                        _path("a=b.tsv"),
+                    ),
                 )
             )
             default_program = await ExecutionPolicy(
@@ -1968,9 +1973,12 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 "NR >= 2 && NR <= 4 && $0 ~ pat { print $2, $1 }",
                 "table.tsv",
                 "./-dash.tsv",
+                "./a=b.tsv",
             ),
         )
-        self.assertEqual(projected.display_argv[-1], "./-dash.tsv")
+        self.assertEqual(
+            projected.display_argv[-2:], ("./-dash.tsv", "./a=b.tsv")
+        )
         self.assertEqual(
             default_program.argv,
             ("awk", "-v", "OFS= ", "{ print $0 }", "table.tsv"),
@@ -1992,7 +2000,7 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                     command="sed",
                     options={
                         "line_ranges": ("1", "2,3"),
-                        "patterns": ("two/three",),
+                        "patterns": ("two/three", "a.*b["),
                     },
                     paths=(_path("lines.txt"), _path("-dash.txt")),
                 )
@@ -2009,6 +2017,8 @@ class ExecutionPolicyTest(IsolatedAsyncioTestCase):
                 "2,3p",
                 "-e",
                 "/two\\/three/p",
+                "-e",
+                "/a\\.\\*b\\[/p",
                 "lines.txt",
                 "./-dash.txt",
             ),

@@ -277,6 +277,51 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
             async with private_temp_directory():
                 pass
 
+    async def test_private_temp_directory_preserves_error_when_inspect_fails(
+        self,
+    ) -> None:
+        with (
+            patch(
+                "avalan.tool.shell.filesystem._remove_tree",
+                side_effect=OSError("remove failed"),
+            ),
+            patch(
+                "avalan.tool.shell.filesystem.inspect_path",
+                side_effect=OSError("missing"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "body failed"):
+                async with private_temp_directory():
+                    raise RuntimeError("body failed")
+
+    async def test_private_temp_directory_preserves_error_for_directory(
+        self,
+    ) -> None:
+        metadata = ShellPathMetadata(
+            path=Path("/tmp/generated"),
+            resolved_path=Path("/tmp/generated"),
+            mode=0o700,
+            size=0,
+            is_file=False,
+            is_directory=True,
+            is_symlink=False,
+            is_special_file=False,
+        )
+
+        with (
+            patch(
+                "avalan.tool.shell.filesystem._remove_tree",
+                side_effect=OSError("remove failed"),
+            ),
+            patch(
+                "avalan.tool.shell.filesystem.inspect_path",
+                return_value=metadata,
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "body failed"):
+                async with private_temp_directory():
+                    raise RuntimeError("body failed")
+
     async def test_private_temp_directory_ignores_unlink_cleanup_error(
         self,
     ) -> None:

@@ -146,13 +146,13 @@ def _awk_program(
 
 def _awk_path_argument(cwd: Path, path: Path) -> str:
     argument = _relative_argv_path(cwd, path)
-    if argument.startswith("-"):
+    if argument.startswith("-") or "=" in argument:
         return f"./{argument}"
     return argument
 
 
 def _awk_display_path_argument(display_path: str) -> str:
-    if display_path.startswith("-"):
+    if display_path.startswith("-") or "=" in display_path:
         return f"./{display_path}"
     return display_path
 
