@@ -188,7 +188,9 @@ def _format_output(
     value: str,
     redactor: "_Redactor",
 ) -> str:
-    return redactor(_post_filter_output(command, _sanitize_controls(value)))
+    sanitized = _sanitize_controls(value)
+    sanitized = _PRIVATE_KEY_PATTERN.sub(_REDACTED_SECRET, sanitized)
+    return redactor(_post_filter_output(command, sanitized))
 
 
 class _Redactor:

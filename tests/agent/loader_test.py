@@ -228,8 +228,10 @@ class _AgentShellPolicy(ExecutionPolicy):
         self,
         *,
         denial: ShellPolicyDenied | None = None,
+        executable: str | None = "/usr/bin/cat",
     ) -> None:
         self._denial = denial
+        self._executable = executable
         self.requests: list[ShellCommandRequest] = []
 
     async def normalize(
@@ -243,7 +245,7 @@ class _AgentShellPolicy(ExecutionPolicy):
             backend="local",
             tool_name=request.tool_name,
             command=request.command,
-            executable="/usr/bin/cat",
+            executable=self._executable,
             argv=("cat", "--", "agent.txt"),
             display_argv=("cat", "--", "agent.txt"),
             cwd=".",
@@ -267,6 +269,32 @@ class _AgentShellExecutor:
 
     async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
         self.specs.append(spec)
+        if spec.executable is None:
+            return ExecutionResult(
+                backend=spec.backend,
+                tool_name=spec.tool_name,
+                command=spec.command,
+                argv=spec.argv,
+                display_argv=spec.display_argv,
+                cwd=spec.cwd,
+                display_cwd=spec.display_cwd,
+                status=ShellExecutionStatus.COMMAND_UNAVAILABLE,
+                exit_code=None,
+                stdout="",
+                stderr="",
+                stdout_media_type=spec.stdout_media_type,
+                output_kind=spec.output_kind,
+                stdout_bytes=0,
+                stderr_bytes=0,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                timed_out=False,
+                cancelled=False,
+                duration_ms=1,
+                error_code=ShellExecutionErrorCode.COMMAND_UNAVAILABLE,
+                error_message="command is unavailable",
+                metadata=spec.metadata,
+            )
         return ExecutionResult(
             backend=spec.backend,
             tool_name=spec.tool_name,
@@ -627,6 +655,31 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(len(policy.requests), 1)
         self.assertEqual(policy.requests[0].paths[0].path, "denied.txt")
         self.assertEqual(executor.specs, [])
+
+    async def test_from_file_shell_agent_returns_unavailable_result(
+        self,
+    ) -> None:
+        policy = _AgentShellPolicy(executable=None)
+        executor = _AgentShellExecutor("unused")
+
+        schema_names, outcome = await _load_shell_agent_tool_result(
+            policy=policy,
+            executor=executor,
+            path="missing.txt",
+        )
+
+        self.assertEqual(schema_names, ["shell.cat"])
+        self.assertIsInstance(outcome, ToolCallResult)
+        assert isinstance(outcome, ToolCallResult)
+        assert isinstance(outcome.result, str)
+        self.assertIn("tool: shell.cat", outcome.result)
+        self.assertIn("status: command_unavailable", outcome.result)
+        self.assertIn("error_code: command_unavailable", outcome.result)
+        self.assertIn("error_message: command is unavailable", outcome.result)
+        self.assertEqual(len(policy.requests), 1)
+        self.assertEqual(policy.requests[0].paths[0].path, "missing.txt")
+        self.assertEqual(len(executor.specs), 1)
+        self.assertIsNone(executor.specs[0].executable)
 
     async def test_from_file_does_not_register_shell_without_opt_in(self):
         cases = (
