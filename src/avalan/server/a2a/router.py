@@ -11,6 +11,7 @@ from ...entities import (
     ToolCallToken,
 )
 from ...event import Event, EventType
+from ...model.stream import CanonicalStreamItem, StreamItemKind
 from ...utils import (
     to_json,
     tool_call_diagnostic_payload,
@@ -466,7 +467,9 @@ class A2AResponseTranslator:
 
     async def run_stream(
         self,
-        response: AsyncIterable[Token | TokenDetail | Event | str],
+        response: AsyncIterable[
+            CanonicalStreamItem | Token | TokenDetail | Event | str
+        ],
     ) -> AsyncGenerator[dict[str, Any], None]:
         for event in await self._store.set_status(
             self._task_id, "in_progress"
@@ -480,19 +483,39 @@ class A2AResponseTranslator:
 
     async def consume(
         self,
-        response: AsyncIterable[Token | TokenDetail | Event | str],
+        response: AsyncIterable[
+            CanonicalStreamItem | Token | TokenDetail | Event | str
+        ],
     ) -> str:
         async for _ in self.run_stream(response):
             continue
         return self.text
 
     async def _process_item(
-        self, item: Token | TokenDetail | Event | str
+        self, item: CanonicalStreamItem | Token | TokenDetail | Event | str
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         call_id = _call_identifier(item)
         state = _state_for_item(item)
         events.extend(await self._switch_state(state, call_id))
+
+        if isinstance(item, CanonicalStreamItem):
+            if item.kind is StreamItemKind.REASONING_DELTA:
+                events.extend(await self._ensure_reasoning_artifact())
+                assert self._reasoning_artifact_id
+                events.extend(
+                    await self._store.add_artifact_delta(
+                        self._task_id,
+                        self._reasoning_artifact_id,
+                        {"type": "text", "text": item.text_delta or ""},
+                    )
+                )
+                return events
+            if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+                events.extend(await self._handle_canonical_tool_delta(item))
+                return events
+            if item.kind is not StreamItemKind.ANSWER_DELTA:
+                return events
 
         if isinstance(item, ReasoningToken):
             events.extend(await self._ensure_reasoning_artifact())
@@ -846,6 +869,41 @@ class A2AResponseTranslator:
                     {"type": "text", "text": token.token},
                 )
             )
+        return events
+
+    async def _handle_canonical_tool_delta(
+        self, item: CanonicalStreamItem
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        artifact_id = item.correlation.tool_call_id or str(uuid4())
+        (
+            self._tool_artifact_id,
+            created,
+        ) = await self._store.ensure_artifact(
+            self._task_id,
+            artifact_id=artifact_id,
+            name=None,
+            kind="tool_call",
+            role=str(MessageRole.ASSISTANT),
+        )
+        events.extend(created)
+        events.extend(
+            await self._store.add_artifact_delta(
+                self._task_id,
+                self._tool_artifact_id,
+                {"type": "text", "text": item.text_delta or ""},
+            )
+        )
+        events.extend(
+            await self._store.add_status_event(
+                self._task_id,
+                status="in_progress",
+                metadata={
+                    "phase": "tool_processing",
+                    "tool_call_id": artifact_id,
+                },
+            )
+        )
         return events
 
 
@@ -1318,8 +1376,16 @@ async def well_known_agent_card(
 
 
 def _state_for_item(
-    item: Token | TokenDetail | Event | str,
+    item: CanonicalStreamItem | Token | TokenDetail | Event | str,
 ) -> StreamState | None:
+    if isinstance(item, CanonicalStreamItem):
+        if item.kind is StreamItemKind.REASONING_DELTA:
+            return StreamState.REASONING
+        if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            return StreamState.TOOL
+        if item.kind is StreamItemKind.ANSWER_DELTA:
+            return StreamState.ANSWER
+        return None
     if isinstance(item, ReasoningToken):
         return StreamState.REASONING
     if isinstance(item, (ToolCallToken, Event)):
@@ -1335,7 +1401,11 @@ def _state_for_item(
     return StreamState.ANSWER if isinstance(item, Token) else None
 
 
-def _call_identifier(item: Token | TokenDetail | Event | str) -> str | None:
+def _call_identifier(
+    item: CanonicalStreamItem | Token | TokenDetail | Event | str,
+) -> str | None:
+    if isinstance(item, CanonicalStreamItem):
+        return item.correlation.tool_call_id
     if isinstance(item, ToolCallToken) and item.call is not None:
         return str(item.call.id)
     if isinstance(item, Event):
@@ -1370,7 +1440,13 @@ def _call_identifier(item: Token | TokenDetail | Event | str) -> str | None:
     return None
 
 
-def _token_text(item: Token | TokenDetail | Event | str) -> str:
+def _token_text(
+    item: CanonicalStreamItem | Token | TokenDetail | Event | str,
+) -> str:
+    if isinstance(item, CanonicalStreamItem):
+        if item.kind is StreamItemKind.ANSWER_DELTA:
+            return item.text_delta or ""
+        return ""
     if isinstance(item, str):
         return item
     if isinstance(item, Token):

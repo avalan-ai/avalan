@@ -11,6 +11,7 @@ from ...entities import (
     ToolCallToken,
 )
 from ...event import Event, EventType
+from ...model.stream import CanonicalStreamItem, StreamItemKind
 from ...server.entities import (
     ChatCompletionRequest,
     ChatMessage,
@@ -76,7 +77,13 @@ NotificationMethod = Literal[
 AllowedMethod = Method | NotificationMethod
 
 ResponseItem = (
-    ReasoningToken | ToolCallToken | Token | TokenDetail | Event | str
+    CanonicalStreamItem
+    | ReasoningToken
+    | ToolCallToken
+    | Token
+    | TokenDetail
+    | Event
+    | str
 )
 
 
@@ -690,6 +697,35 @@ async def _stream_mcp_response(
             if cancel_event.is_set():
                 break
 
+            if isinstance(item, CanonicalStreamItem):
+                reasoning_delta = _reasoning_delta(item)
+                if reasoning_delta is not None:
+                    if reasoning_delta:
+                        reasoning_chunks.append(reasoning_delta)
+                        reasoning_notification: JSONObject = {
+                            "jsonrpc": "2.0",
+                            "method": "notifications/message",
+                            "params": {
+                                "level": "debug",
+                                "message": {
+                                    "type": "reasoning",
+                                    "delta": reasoning_delta,
+                                },
+                            },
+                        }
+                        for payload in emit(reasoning_notification):
+                            yield payload
+                    continue
+
+            if isinstance(item, CanonicalStreamItem):
+                token_notification = _canonical_tool_notification(item)
+                if token_notification is not None:
+                    for payload in emit(token_notification):
+                        yield payload
+                    continue
+                if item.kind is not StreamItemKind.ANSWER_DELTA:
+                    continue
+
             if isinstance(item, ReasoningToken):
                 reasoning_chunks.append(item.token)
                 notification: JSONObject = {
@@ -848,11 +884,61 @@ async def _stream_mcp_response(
 
 
 def _token_text(item: ResponseItem) -> str:
+    if isinstance(item, CanonicalStreamItem):
+        if item.kind is StreamItemKind.ANSWER_DELTA:
+            return item.text_delta or ""
+        return ""
     if isinstance(item, (Token, TokenDetail)):
         return item.token
     if isinstance(item, str):
         return item
     return ""
+
+
+def _reasoning_delta(
+    item: CanonicalStreamItem | ReasoningToken,
+) -> str | None:
+    if isinstance(item, ReasoningToken):
+        return item.token
+    if item.kind is StreamItemKind.REASONING_DELTA:
+        return item.text_delta or ""
+    if item.kind in (
+        StreamItemKind.REASONING_DONE,
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.STREAM_COMPLETED,
+        StreamItemKind.STREAM_ERRORED,
+        StreamItemKind.STREAM_CANCELLED,
+        StreamItemKind.STREAM_CLOSED,
+        StreamItemKind.USAGE_UPDATE,
+        StreamItemKind.USAGE_COMPLETED,
+    ):
+        return ""
+    return None
+
+
+def _canonical_tool_notification(
+    item: CanonicalStreamItem,
+) -> JSONObject | None:
+    if item.kind is not StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+        return None
+    delta = item.text_delta or ""
+    if not delta:
+        return None
+    tool_call_id = item.correlation.tool_call_id
+    message: dict[str, JSONValue] = {
+        "type": "tool.input_delta",
+        "delta": delta,
+    }
+    if tool_call_id is not None:
+        message["toolCallId"] = tool_call_id
+    return {
+        "jsonrpc": "2.0",
+        "method": "notifications/message",
+        "params": {
+            "level": "info",
+            "message": message,
+        },
+    }
 
 
 async def _close_response_iterator(response: StreamResponse) -> None:

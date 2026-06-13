@@ -20,6 +20,7 @@ from ...model.input import input_files
 from ...model.manager import ModelManager
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
+from ...model.stream import CanonicalStreamItem, StreamItemKind
 from ...secrets import KeyringSecrets
 from . import ModelSettings, get_model_settings, is_ds4_backend_selected
 
@@ -471,7 +472,9 @@ async def token_generation(
         async for token in response:
             if isinstance(token, Event):
                 continue
-            text_token = token.token if isinstance(token, Token) else token
+            text_token = _stream_text(token)
+            if text_token is None:
+                continue
             console.print(text_token, end="")
             await sleep(0)
         return
@@ -719,7 +722,7 @@ async def _token_stream(
     try:
         async for token in response:
             is_event = False
-            is_reasoning_token = isinstance(token, ReasoningToken)
+            is_reasoning_token = _is_reasoning_stream_item(token)
 
             if isinstance(token, Event):
                 is_event = True
@@ -768,8 +771,10 @@ async def _token_stream(
                     reasoning_time = perf_counter() - started_reasoning
                     started_reasoning = None
 
-                text_token = token.token if isinstance(token, Token) else token
-                if isinstance(token, ToolCallToken):
+                text_token = _stream_text(token)
+                if text_token is None:
+                    continue
+                if _is_tool_call_stream_item(token):
                     tool_text_tokens.append(text_token)
                     tool_tokens += _tool_token_count(text_token)
                 elif is_reasoning_token:
@@ -802,7 +807,7 @@ async def _token_stream(
                     )
 
             elapsed = perf_counter() - start
-            is_tool_call_token = isinstance(token, ToolCallToken)
+            is_tool_call_token = _is_tool_call_stream_item(token)
             if not is_event and not is_tool_call_token:
                 total_tokens += 1
 
@@ -957,6 +962,37 @@ async def _token_stream(
     finally:
         if stop_signal:
             stop_signal.set()
+
+
+def _stream_text(
+    token: CanonicalStreamItem | ReasoningToken | ToolCallToken | Token | str,
+) -> str | None:
+    if isinstance(token, CanonicalStreamItem):
+        if token.kind in (
+            StreamItemKind.ANSWER_DELTA,
+            StreamItemKind.REASONING_DELTA,
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        ):
+            return token.text_delta or ""
+        return None
+    if isinstance(token, Token):
+        return token.token
+    return str(token)
+
+
+def _is_reasoning_stream_item(token: object) -> bool:
+    return isinstance(token, ReasoningToken) or (
+        isinstance(token, CanonicalStreamItem)
+        and token.kind is StreamItemKind.REASONING_DELTA
+    )
+
+
+def _is_tool_call_stream_item(token: object) -> bool:
+    return isinstance(token, ToolCallToken) or (
+        isinstance(token, CanonicalStreamItem)
+        and token.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+    )
 
 
 def _render_frame(

@@ -5,7 +5,15 @@ from ...entities import (
     TokenDetail,
     ToolCallToken,
 )
-from ..stream import TextGenerationSingleStream
+from ..stream import (
+    CanonicalStreamAccumulator,
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+    TextGenerationSingleStream,
+    canonical_item_from_token,
+)
 from . import InvalidJsonResponseException
 from .parsers.reasoning import ReasoningParser, ReasoningTokenLimitExceeded
 
@@ -51,6 +59,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     _parser_queue: Queue[Token | TokenDetail | str] | None = None
     _logger: Logger
     _prefetched_text: str | None = None
+    _final_text: str | None = None
 
     def __init__(
         self,
@@ -71,6 +80,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         self._output_token_count = 0
         self._buffer = StringIO()
         self._on_consumed_callbacks = []
+        self._final_text = None
         if generation_settings and generation_settings.reasoning.enabled:
             self._parser_queue = Queue()
             self._reasoning_parser = ReasoningParser(
@@ -138,12 +148,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         result = self._output_fn(*self._args, **self._kwargs)
         if isinstance(result, TextGenerationSingleStream):
             self._output = result
-            result_content: str | Token | TokenDetail = result.content
-            text = (
-                result_content.token
-                if isinstance(result_content, (Token, TokenDetail))
-                else str(result_content)
-            )
+            text = result.final_text
         elif isinstance(result, (Token, TokenDetail)):
             text = result.token
         else:
@@ -312,11 +317,16 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         return super().__str__()
 
     async def to_str(self) -> str:
+        if self._final_text is not None:
+            await self._trigger_consumed()
+            return self._final_text
+
         if not self._use_async_generator:
             self._ensure_non_stream_prefetched()
             if self._prefetched_text is None:
                 return ""
             await self._trigger_consumed()
+            self._final_text = self._prefetched_text
             return self._prefetched_text
 
         # Ensure buffer is filled, wether we were already iterating or not
@@ -324,13 +334,77 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
             self.__aiter__()
         assert self._output is not None
 
-        async for token in self._output:
-            token_text = token if isinstance(token, str) else token.token
-            self._buffer.write(token_text)
-            self._output_token_count += 1
+        accumulator = CanonicalStreamAccumulator()
+        sequence = 0
+        accumulator.add(
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=sequence,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+        )
+        sequence += 1
+        buffered_text = self._buffer.getvalue()
+        if buffered_text:
+            accumulator.add(
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=sequence,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta=buffered_text,
+                )
+            )
+            sequence += 1
 
+        while True:
+            try:
+                token = await self.__anext__()
+            except StopAsyncIteration:
+                break
+            accumulator.add(
+                canonical_item_from_token(
+                    token,
+                    sequence,
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                )
+            )
+            sequence += 1
+
+        accumulator.add(
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+        )
+        sequence += 1
+        accumulator.add(
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=sequence,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage=cast(Any, self.usage or {}),
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+        )
+        accumulator.validate_complete()
         await self._trigger_consumed()
-        return self._buffer.getvalue()
+        self._final_text = accumulator.answer_text
+        return self._final_text
 
     async def to_json(self) -> str:
         text = await self.to_str()

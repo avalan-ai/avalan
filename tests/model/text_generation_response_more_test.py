@@ -8,6 +8,7 @@ from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
     ReasoningToken,
+    ToolCallToken,
 )
 from avalan.model.response import InvalidJsonResponseException
 from avalan.model.response.text import TextGenerationResponse
@@ -100,6 +101,29 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         result = await resp.to_str()
         self.assertEqual(result, "ok")
         self.assertEqual(resp.output_token_count, 2)
+
+    async def test_to_str_uses_answer_channel_accumulation(self) -> None:
+        async def gen():
+            yield "answer "
+            yield "<think>"
+            yield "private"
+            yield "</think>"
+            yield ToolCallToken(token='{"expression":"2+2"}')
+            yield "done"
+
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        result = await resp.to_str()
+
+        self.assertEqual(result, "answer done")
+        self.assertEqual(resp.output_token_count, 6)
 
     async def test_to_json_patterns(self) -> None:
         settings = GenerationSettings()

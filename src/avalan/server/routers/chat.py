@@ -7,6 +7,7 @@ from ...entities import (
     ToolCallToken,
 )
 from ...event import Event, EventType
+from ...model.stream import CanonicalStreamItem, StreamItemKind
 from ...server.entities import (
     ChatCompletionChoice,
     ChatCompletionChunk,
@@ -71,7 +72,11 @@ async def create_chat_completion(
 
         async def generate_chunks() -> AsyncIterator[str]:
             async for token in response:
-                if isinstance(token, Event):
+                if isinstance(token, CanonicalStreamItem):
+                    token_text = _canonical_text(token)
+                    if not token_text:
+                        continue
+                elif isinstance(token, Event):
                     token_text = _event_text(token)
                     if not token_text:
                         continue
@@ -163,6 +168,17 @@ def _event_text(event: Event) -> str:
                     "error": tool_call_error_payload(result),
                 }
             )
+    return ""
+
+
+def _canonical_text(item: CanonicalStreamItem) -> str:
+    if item.kind in (
+        StreamItemKind.ANSWER_DELTA,
+        StreamItemKind.REASONING_DELTA,
+        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        StreamItemKind.TOOL_EXECUTION_OUTPUT,
+    ):
+        return item.text_delta or ""
     return ""
 
 

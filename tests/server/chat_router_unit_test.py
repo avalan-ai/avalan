@@ -24,6 +24,12 @@ from avalan.entities import (
     ToolCallToken,
 )
 from avalan.model import TextGenerationResponse
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.server.entities import (
     ChatCompletionRequest,
     ChatMessage,
@@ -288,6 +294,64 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertIn('"content":"b"', chunks[1])
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         orch.assert_awaited_once()
+
+    async def test_create_chat_completion_streams_canonical_items(
+        self,
+    ) -> None:
+        async def output_gen():
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="plan",
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.return_value = output_gen()
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+        chunks = [chunk async for chunk in resp.body_iterator]
+
+        self.assertIn('"content":"plan"', chunks[0])
+        self.assertIn('"content":"answer"', chunks[1])
+        self.assertEqual(chunks[-1], "data: [DONE]\n\n")
+        self.assertEqual(len(chunks), 3)
 
     async def test_create_chat_completion_stream_multiple_raises(self) -> None:
         logger = AsyncMock(spec=Logger)

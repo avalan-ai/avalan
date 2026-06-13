@@ -27,6 +27,13 @@ from avalan.entities import (
     ToolCallToken,
 )
 from avalan.event import Event, EventType
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.server.entities import (
     ChatCompletionRequest,
     ChatMessage,
@@ -243,8 +250,27 @@ class MCPUtilityTestCase(TestCase):
     def test_token_text_variants(self) -> None:
         token = Token(token="a")
         detail = TokenDetail(token="b")
+        control = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        answer = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
         self.assertEqual(mcp_router._token_text(token), "a")
         self.assertEqual(mcp_router._token_text(detail), "b")
+        self.assertEqual(mcp_router._token_text(control), "")
+        self.assertEqual(mcp_router._token_text(answer), "answer")
         self.assertEqual(mcp_router._token_text("text"), "text")
         self.assertEqual(mcp_router._token_text(123), "")
 
@@ -252,6 +278,30 @@ class MCPUtilityTestCase(TestCase):
         detail = TokenDetail(token="detail")
         with patch.object(mcp_router, "Token", type("DifferentToken", (), {})):
             self.assertEqual(mcp_router._token_text(detail), "detail")
+
+    def test_reasoning_delta_variants(self) -> None:
+        token = ReasoningToken(token="legacy")
+        control = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        answer = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
+
+        self.assertEqual(mcp_router._reasoning_delta(token), "legacy")
+        self.assertEqual(mcp_router._reasoning_delta(control), "")
+        self.assertIsNone(mcp_router._reasoning_delta(answer))
 
     def test_tool_call_token_notification_variants(self) -> None:
         empty = ToolCallToken(token="")
@@ -639,6 +689,121 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(result_messages)
         summary = result_messages[-1]["result"]["structuredContent"]
         self.assertEqual(summary["model"], "gpt")
+
+    async def test_stream_response_emits_canonical_notifications(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="plan",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta='{"x"',
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+
+        chunks = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=cancel_event,
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        notifications = [
+            msg for msg in messages if msg.get("method") is not None
+        ]
+        notification_text = dumps(notifications)
+        self.assertIn('"delta": "plan"', notification_text)
+        self.assertIn('"type": "tool.input_delta"', notification_text)
+        self.assertIn('"toolCallId": "call-1"', notification_text)
+        self.assertIn('"type":"answer.delta"', "".join(chunks))
+        result_messages = [msg for msg in messages if msg.get("result")]
+        summary = result_messages[-1]["result"]["structuredContent"]
+        self.assertEqual(summary["reasoning"], "plan")
+        self.assertEqual(
+            result_messages[-1]["result"]["content"],
+            [{"type": "text", "text": "answer"}],
+        )
+        orchestrator.sync_messages.assert_awaited()
 
     async def test_stream_response_handles_cancellation(self) -> None:
         response = DummyResponse([Token(token="Hi")])

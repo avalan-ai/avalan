@@ -10,6 +10,7 @@ from ...entities import (
     ToolCallToken,
 )
 from ...event import Event, EventType
+from ...model.stream import CanonicalStreamItem, StreamItemKind
 from ...server.entities import ResponsesRequest
 from ...utils import (
     to_json,
@@ -78,7 +79,20 @@ async def create_response(
 
             async for token in response:
                 call_id: str | None = None
-                if isinstance(token, Event):
+                if isinstance(token, CanonicalStreamItem):
+                    if token.kind in (
+                        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        StreamItemKind.TOOL_CALL_READY,
+                        StreamItemKind.TOOL_CALL_DONE,
+                        StreamItemKind.TOOL_EXECUTION_STARTED,
+                        StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                        StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                        StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                        StreamItemKind.TOOL_EXECUTION_ERROR,
+                        StreamItemKind.TOOL_EXECUTION_CANCELLED,
+                    ):
+                        call_id = token.correlation.tool_call_id
+                elif isinstance(token, Event):
                     if token.type not in (
                         EventType.TOOL_DIAGNOSTIC,
                         EventType.TOOL_PROCESS,
@@ -149,12 +163,22 @@ async def create_response(
 
 
 def _token_to_sse(
-    token: ReasoningToken | ToolCallToken | Token | TokenDetail | Event | str,
+    token: (
+        CanonicalStreamItem
+        | ReasoningToken
+        | ToolCallToken
+        | Token
+        | TokenDetail
+        | Event
+        | str
+    ),
     seq: int,
 ) -> list[str]:
     events: list[str] = []
 
-    if isinstance(token, ReasoningToken):
+    if isinstance(token, CanonicalStreamItem):
+        events.extend(_canonical_item_to_sse(token, seq))
+    elif isinstance(token, ReasoningToken):
         events.append(
             sse_message(
                 to_json(
@@ -271,6 +295,56 @@ def _token_to_sse(
     return events
 
 
+def _canonical_item_to_sse(item: CanonicalStreamItem, seq: int) -> list[str]:
+    if item.kind is StreamItemKind.REASONING_DELTA:
+        return [
+            sse_message(
+                to_json(
+                    {
+                        "type": "response.reasoning_text.delta",
+                        "delta": item.text_delta or "",
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }
+                ),
+                event="response.reasoning_text.delta",
+            )
+        ]
+    if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+        data: dict[str, Any] = {
+            "type": "response.custom_tool_call_input.delta",
+            "delta": item.text_delta or "",
+            "output_index": 0,
+            "content_index": 0,
+            "sequence_number": seq,
+        }
+        if item.correlation.tool_call_id is not None:
+            data["id"] = item.correlation.tool_call_id
+        return [
+            sse_message(
+                to_json(data),
+                event="response.custom_tool_call_input.delta",
+            )
+        ]
+    if item.kind is StreamItemKind.ANSWER_DELTA:
+        return [
+            sse_message(
+                to_json(
+                    {
+                        "type": "response.output_text.delta",
+                        "delta": item.text_delta or "",
+                        "output_index": 0,
+                        "content_index": 0,
+                        "sequence_number": seq,
+                    }
+                ),
+                event="response.output_text.delta",
+            )
+        ]
+    return []
+
+
 def _switch_state(
     state: ResponseState | None,
     new_state: ResponseState | None,
@@ -312,7 +386,8 @@ def _switch_state(
 
 def _new_state(
     token: (
-        ReasoningToken
+        CanonicalStreamItem
+        | ReasoningToken
         | ToolCallToken
         | Token
         | TokenDetail
@@ -321,7 +396,16 @@ def _new_state(
         | None
     ),
 ) -> ResponseState | None:
-    if isinstance(token, ReasoningToken):
+    if isinstance(token, CanonicalStreamItem):
+        if token.kind is StreamItemKind.REASONING_DELTA:
+            new_state = ResponseState.REASONING
+        elif token.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            new_state = ResponseState.TOOL_CALLING
+        elif token.kind is StreamItemKind.ANSWER_DELTA:
+            new_state = ResponseState.ANSWERING
+        else:
+            new_state = None
+    elif isinstance(token, ReasoningToken):
         new_state = ResponseState.REASONING
     elif isinstance(token, (ToolCallToken, Event)) and (
         not isinstance(token, Event)

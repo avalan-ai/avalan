@@ -23,6 +23,13 @@ from avalan.entities import (
     ToolCallToken,
 )
 from avalan.event import Event, EventType
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.server.entities import ChatMessage, ResponsesRequest
 
 
@@ -157,6 +164,138 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(answer_part["part"], {"type": "output_text"})
 
         orchestrator.sync_messages.assert_awaited_once()
+
+    async def test_streaming_emits_canonical_items(self) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        items = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="plan",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta='{"x"',
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+
+        class DummyResponse:
+            input_token_count = 0
+            output_token_count = 0
+
+            def __aiter__(self):  # type: ignore[override]
+                async def gen():
+                    for item in items:
+                        yield item
+
+                return gen()
+
+        async def orchestrate_stub(request, logger, orch):
+            return DummyResponse(), uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        chunks: list[str] = []
+        async for chunk in streaming_resp.body_iterator:
+            chunks.append(
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+            )
+
+        blocks = [b for b in "".join(chunks).strip().split("\n\n") if b]
+        events = [block.split("\n")[0].split(": ")[1] for block in blocks]
+        data_lines = [block.split("\n")[1] for block in blocks]
+
+        self.assertIn("response.reasoning_text.delta", events)
+        self.assertIn("response.custom_tool_call_input.delta", events)
+        self.assertIn("response.output_text.delta", events)
+        reasoning_data = loads(
+            data_lines[events.index("response.reasoning_text.delta")][6:]
+        )
+        tool_data = loads(
+            data_lines[events.index("response.custom_tool_call_input.delta")][
+                6:
+            ]
+        )
+        answer_data = loads(
+            data_lines[events.index("response.output_text.delta")][6:]
+        )
+        self.assertEqual(reasoning_data["delta"], "plan")
+        self.assertEqual(tool_data["delta"], '{"x"')
+        self.assertEqual(tool_data["id"], "call-1")
+        self.assertEqual(answer_data["delta"], "answer")
+        self.assertNotIn("stream.started", "".join(chunks))
+        orchestrator.sync_messages.assert_awaited_once()
+
+    def test_canonical_control_items_do_not_emit_response_sse(self) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+
+        self.assertEqual(self.responses._token_to_sse(item, 0), [])
+        self.assertIsNone(self.responses._new_state(item))
+        self.assertIsNone(self.responses._new_state(None))
 
     async def test_streaming_emits_done_events_for_multiple_groups(
         self,

@@ -16,6 +16,13 @@ from avalan.entities import (
     ToolCallToken,
 )
 from avalan.event import Event, EventType
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.server.a2a.router import (
     A2AResponseTranslator,
     A2AStreamEventConverter,
@@ -94,6 +101,100 @@ async def _run_translator_flow() -> None:
 
 def test_artifact_delta_parts_are_incremental() -> None:
     asyncio.run(_run_artifact_delta_parts_flow())
+
+
+def test_translator_streams_canonical_items() -> None:
+    asyncio.run(_run_canonical_translator_flow())
+
+
+def test_token_text_ignores_canonical_control_item() -> None:
+    item = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=0,
+        kind=StreamItemKind.STREAM_STARTED,
+        channel=StreamChannel.CONTROL,
+    )
+
+    assert a2a_router_module._token_text(item) == ""
+
+
+async def _run_canonical_translator_flow() -> None:
+    store = TaskStore()
+    task_id = "task-canonical"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+
+    translator = A2AResponseTranslator(task_id, store)
+
+    async def stream():
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="plan",
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta='{"x"',
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=4,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+
+    text = await translator.consume(stream())
+    task = await store.get_task(task_id)
+    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
+
+    assert text == "answer"
+    assert artifacts["reasoning"]["content"][0]["text"] == "plan"
+    assert artifacts["answer"]["content"][0]["text"] == "answer"
+    assert artifacts["call-1"]["content"][0]["text"] == '{"x"'
+    events = await store.get_events(task_id)
+    assert any(
+        event["data"].get("metadata", {}).get("phase") == "tool_processing"
+        for event in events
+        if event["event"] == "task.status.changed"
+    )
 
 
 async def _run_artifact_delta_parts_flow() -> None:
