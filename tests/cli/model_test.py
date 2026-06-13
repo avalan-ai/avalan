@@ -51,6 +51,13 @@ from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.tool.parser import ToolCallParser
 
 
@@ -476,6 +483,57 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             refresh_per_second=2,
         )
         console.print.assert_has_calls([call("a", end=""), call("b", end="")])
+
+    async def test_token_generation_no_stats_with_canonical_items(self):
+        async def gen():
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        await model_cmds.token_generation(
+            args=args,
+            console=console,
+            theme=MagicMock(),
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=MagicMock(),
+            input_string="i",
+            response=gen(),
+            display_tokens=0,
+            dtokens_pick=0,
+            with_stats=False,
+            tool_events_limit=2,
+            refresh_per_second=2,
+        )
+
+        console.print.assert_called_once_with("answer", end="")
 
     async def test_token_generation_no_stats_with_event(self):
         async def gen():
@@ -6599,6 +6657,115 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(stop_signal.is_set())
         self.assertEqual(captured, [["TOOL"], ["TOOL"]])
+
+    async def test_token_stream_tracks_canonical_items(self):
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    yield CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=0,
+                        kind=StreamItemKind.STREAM_STARTED,
+                        channel=StreamChannel.CONTROL,
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=1,
+                        kind=StreamItemKind.REASONING_DELTA,
+                        channel=StreamChannel.REASONING,
+                        text_delta="PLAN",
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=2,
+                        kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        channel=StreamChannel.TOOL_CALL,
+                        correlation=StreamItemCorrelation(
+                            tool_call_id="call-1"
+                        ),
+                        text_delta="TOOL",
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=3,
+                        kind=StreamItemKind.ANSWER_DELTA,
+                        channel=StreamChannel.ANSWER,
+                        text_delta="ANSWER",
+                    )
+
+                return gen()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+
+        captured: list[dict[str, list[str]]] = []
+
+        async def fake_tokens(*p, **kw):
+            captured.append(
+                {
+                    "thinking": list(p[7]),
+                    "tool": list(p[8]),
+                    "answer": list(p[9]),
+                }
+            )
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+        stop_signal = asyncio.Event()
+
+        await model_cmds._token_stream(
+            live=MagicMock(),
+            group=SimpleNamespace(renderables=[None]),
+            tokens_group_index=0,
+            args=args,
+            console=MagicMock(width=80),
+            theme=theme,
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(
+                model_id="m",
+                tokenizer_config=None,
+                input_token_count=lambda s: 1,
+            ),
+            input_string="text",
+            response=Resp(),
+            display_tokens=0,
+            dtokens_pick=0,
+            refresh_per_second=2,
+            stop_signal=stop_signal,
+            tool_events_limit=None,
+            with_stats=True,
+        )
+
+        self.assertTrue(stop_signal.is_set())
+        self.assertEqual(captured[-1]["thinking"], ["PLAN"])
+        self.assertEqual(captured[-1]["tool"], ["TOOL"])
+        self.assertEqual(captured[-1]["answer"], ["ANSWER"])
 
     async def test_tool_result_event_with_none_result_is_tracked(self):
         call_obj = ToolCall(id="call-none", name="tool", arguments={})
