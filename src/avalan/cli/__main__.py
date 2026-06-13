@@ -3727,7 +3727,38 @@ class CLI:
             else:
                 group.add_argument(option, dest=dest, type=str, default=None)
 
+        if settings_cls is ShellToolSettings and prefix == "shell":
+            group.add_argument(
+                "--tool-shell-executable-search-path",
+                dest="tool_shell_executable_search_paths",
+                action="append",
+                type=str,
+                default=None,
+                help="Add a trusted directory used to resolve shell tools.",
+            )
+            group.add_argument(
+                "--tool-shell-executable-path",
+                dest="tool_shell_executable_paths",
+                action="append",
+                type=CLI._parse_shell_executable_path,
+                default=None,
+                metavar="COMMAND=PATH",
+                help="Map a shell command to a trusted absolute executable.",
+            )
+
         return group
+
+    @staticmethod
+    def _parse_shell_executable_path(value: str) -> tuple[str, str]:
+        """Parse a shell executable mapping CLI value."""
+        command, separator, executable = value.partition("=")
+        if not separator or not command or not executable:
+            raise ArgumentTypeError(
+                "expected COMMAND=/absolute/executable/path"
+            )
+        if not Path(executable).is_absolute():
+            raise ArgumentTypeError("shell executable path must be absolute")
+        return command, executable
 
     @staticmethod
     async def _needs_hf_token(args: Namespace) -> bool:

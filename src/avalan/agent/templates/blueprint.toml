@@ -153,6 +153,8 @@ cache_strategy = "{{ orchestrator.call_options['cache_strategy'] }}"
 {{ k }} = {{ v }}
 {% elif v is string %}
 {{ k }} = "{{ v }}"
+{% elif v is mapping %}
+{{ k }} = { {% for key, item in v.items() %}{{ key }} = "{{ item }}"{% if not loop.last %}, {% endif %}{% endfor %} }
 {% else %}
 {{ k }} = [
 {% for item in v %}    "{{ item }}"{% if not loop.last %},{% endif %}
