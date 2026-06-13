@@ -257,6 +257,8 @@ def _tool_settings_from_mapping(
                 and isinstance(value, str)
             ):
                 value = open(value)
+            if settings_cls is ShellToolSettings:
+                value = _coerce_shell_tool_setting_value(field.name, value)
             values[field.name] = value
 
     if not values:
@@ -270,6 +272,37 @@ def _tool_settings_from_mapping(
         cast(Any, settings_cls)(**values),
     )
     return settings
+
+
+def _coerce_shell_tool_setting_value(field_name: str, value: object) -> object:
+    if field_name == "executable_paths":
+        return _coerce_shell_executable_paths(value)
+    return value
+
+
+def _coerce_shell_executable_paths(value: object) -> object:
+    if isinstance(value, Mapping):
+        return value
+    if not _is_tuple_pair_sequence(value):
+        return value
+
+    executable_paths: dict[str, str] = {}
+    for command, executable in cast(Sequence[tuple[str, str]], value):
+        executable_paths[command] = executable
+    return executable_paths
+
+
+def _is_tuple_pair_sequence(
+    value: object,
+) -> bool:
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        return False
+    return all(
+        isinstance(item, tuple)
+        and len(item) == 2
+        and all(isinstance(part, str) for part in item)
+        for item in value
+    )
 
 
 @overload
@@ -337,12 +370,21 @@ def get_tool_settings(
 
 def _shell_tool_template_settings(
     settings: ShellToolSettings | None,
-) -> dict[str, bool | int | float | str | tuple[str, ...]] | None:
+) -> (
+    dict[
+        str,
+        bool | int | float | str | tuple[str, ...] | dict[str, str],
+    ]
+    | None
+):
     if settings is None:
         return None
 
     default_settings = ShellToolSettings()
-    rendered: dict[str, bool | int | float | str | tuple[str, ...]] = {}
+    rendered: dict[
+        str,
+        bool | int | float | str | tuple[str, ...] | dict[str, str],
+    ] = {}
     for field in fields(ShellToolSettings):
         name = field.name
         value = getattr(settings, name)
@@ -350,9 +392,20 @@ def _shell_tool_template_settings(
             continue
         if isinstance(value, bool | int | float | str):
             rendered[name] = value
+        elif _is_simple_string_mapping(value):
+            rendered[name] = dict(value)
         elif _is_simple_string_sequence(value):
             rendered[name] = tuple(value)
     return rendered
+
+
+def _is_simple_string_mapping(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    return all(
+        isinstance(key, str) and isinstance(item, str)
+        for key, item in value.items()
+    )
 
 
 def _is_simple_string_sequence(value: object) -> bool:

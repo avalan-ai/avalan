@@ -82,6 +82,68 @@ class GetToolSettingsTestCase(unittest.TestCase):
         self.assertIsInstance(settings, ShellToolSettings)
         self.assertTrue(settings.allow_media_tools)
 
+    def test_shell_settings_executable_resolution(self):
+        args = Namespace(
+            tool_shell_executable_search_paths=["/usr/bin", "/bin"],
+            tool_shell_executable_paths=[
+                ("rg", "/usr/bin/rg"),
+                ("cat", "/bin/cat"),
+            ],
+        )
+
+        settings = agent_cmds.get_tool_settings(
+            args, prefix="shell", settings_cls=ShellToolSettings
+        )
+
+        self.assertIsInstance(settings, ShellToolSettings)
+        self.assertEqual(
+            settings.executable_search_paths,
+            ("/usr/bin", "/bin"),
+        )
+        self.assertEqual(
+            settings.executable_paths,
+            {"rg": "/usr/bin/rg", "cat": "/bin/cat"},
+        )
+
+    def test_shell_settings_rejects_unknown_executable_mapping(self):
+        args = Namespace(
+            tool_shell_executable_paths=[("unknown", "/usr/bin/unknown")],
+        )
+
+        with self.assertRaises(AssertionError):
+            agent_cmds.get_tool_settings(
+                args, prefix="shell", settings_cls=ShellToolSettings
+            )
+
+    def test_shell_settings_rejects_relative_executable_search_path(self):
+        args = Namespace(tool_shell_executable_search_paths=["bin"])
+
+        with self.assertRaises(AssertionError):
+            agent_cmds.get_tool_settings(
+                args, prefix="shell", settings_cls=ShellToolSettings
+            )
+
+    def test_shell_executable_path_coercion_preserves_non_cli_values(self):
+        mapping = {"rg": "/usr/bin/rg"}
+
+        self.assertIs(
+            agent_cmds._coerce_shell_tool_setting_value(
+                "executable_paths", mapping
+            ),
+            mapping,
+        )
+        self.assertEqual(
+            agent_cmds._coerce_shell_tool_setting_value("cwd", "."),
+            ".",
+        )
+        self.assertEqual(
+            agent_cmds._coerce_shell_tool_setting_value(
+                "executable_paths", "rg=/usr/bin/rg"
+            ),
+            "rg=/usr/bin/rg",
+        )
+        self.assertFalse(agent_cmds._is_tuple_pair_sequence("rg"))
+
     def test_agent_enabled_tools_preserves_omitted_and_explicit_selection(
         self,
     ):

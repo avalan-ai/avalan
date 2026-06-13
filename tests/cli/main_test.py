@@ -205,11 +205,22 @@ class CliShellToolOptionTestCase(TestCase):
                         "--tool-shell-allow-media-tools",
                         "--tool-shell-max-stdout-bytes",
                         "4096",
+                        "--tool-shell-executable-search-path",
+                        "/usr/bin",
+                        "--tool-shell-executable-path",
+                        "rg=/usr/bin/rg",
                     ]
                 )
 
                 self.assertTrue(args.tool_shell_allow_media_tools)
                 self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
+                self.assertEqual(
+                    args.tool_shell_executable_search_paths, ["/usr/bin"]
+                )
+                self.assertEqual(
+                    args.tool_shell_executable_paths,
+                    [("rg", "/usr/bin/rg")],
+                )
 
     def test_shell_tool_settings_arguments_use_scalar_allowlist(
         self,
@@ -227,11 +238,13 @@ class CliShellToolOptionTestCase(TestCase):
             f"--tool-shell-{field.replace('_', '-')}"
             for field in ShellToolSettings.CLI_SCALAR_FIELDS
         }
+        expected |= {
+            "--tool-shell-executable-path",
+            "--tool-shell-executable-search-path",
+        }
         absent_fields = {
             "environment",
             "environment_allowlist",
-            "executable_paths",
-            "executable_search_paths",
             "allowed_commands",
             "allowed_pdf_raster_formats",
             "allowed_tesseract_output_formats",
@@ -276,6 +289,28 @@ class CliShellToolOptionTestCase(TestCase):
                     "many",
                 ]
             )
+
+    def test_shell_tool_settings_invalid_executable_path_is_rejected(
+        self,
+    ) -> None:
+        cli = self._cli()
+        cases = [
+            ["--tool-shell-executable-path", "rg"],
+            ["--tool-shell-executable-path", "rg=relative"],
+        ]
+
+        for case in cases:
+            with self.subTest(case=case), self.assertRaises(SystemExit):
+                cli._parser.parse_args(
+                    [
+                        "flow",
+                        "run",
+                        "flow.toml",
+                        "--tool",
+                        "shell.rg",
+                        *case,
+                    ]
+                )
 
 
 class CliTaskOptionTestCase(TestCase):
@@ -2095,6 +2130,26 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(args.tool_shell_max_stdout_bytes, 4096)
         with self.assertRaises(SystemExit):
             parser.parse_args(["--tool-shell-environment", "TOKEN=value"])
+
+    def test_add_shell_tool_settings_arguments_accepts_executables(self):
+        parser = ArgumentParser()
+        CLI._add_tool_settings_arguments(
+            parser, prefix="shell", settings_cls=ShellToolSettings
+        )
+
+        args = parser.parse_args(
+            [
+                "--tool-shell-executable-search-path",
+                "/usr/bin",
+                "--tool-shell-executable-path",
+                "rg=/usr/bin/rg",
+            ]
+        )
+
+        self.assertEqual(args.tool_shell_executable_search_paths, ["/usr/bin"])
+        self.assertEqual(
+            args.tool_shell_executable_paths, [("rg", "/usr/bin/rg")]
+        )
 
     async def test_call_prompts_for_token_and_handles_exception(self):
         with (

@@ -1123,6 +1123,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             tool_shell_max_stdout_bytes=4096,
             tool_shell_allow_media_tools=True,
             tool_shell_allowed_commands=("rg", "cat"),
+            tool_shell_executable_search_paths=["/usr/bin", "/bin"],
+            tool_shell_executable_paths=[("rg", "/usr/bin/rg")],
             backend="transformers",
             no_repl=False,
             quiet=False,
@@ -1146,6 +1148,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("max_stdout_bytes = 4096", output)
         self.assertIn("allow_media_tools = true", output)
         self.assertIn("allowed_commands = [", output)
+        self.assertIn("executable_search_paths = [", output)
+        self.assertIn('executable_paths = { rg = "/usr/bin/rg" }', output)
         self.assertIn('"rg"', output)
         self.assertIn('"cat"', output)
         parsed = tomllib.loads(output)
@@ -1156,6 +1160,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
                 "max_stdout_bytes": 4096,
                 "allow_media_tools": True,
                 "allowed_commands": ["rg", "cat"],
+                "executable_search_paths": ["/usr/bin", "/bin"],
+                "executable_paths": {"rg": "/usr/bin/rg"},
             },
         )
 
@@ -1163,6 +1169,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         settings = ShellToolSettings(
             max_head_lines=7,
             allowed_commands=("rg",),
+            executable_paths={"rg": "/usr/bin/rg"},
+            executable_search_paths=("/usr/bin",),
         )
 
         rendered = agent_cmds._shell_tool_template_settings(settings)
@@ -1173,6 +1181,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
             {
                 "max_head_lines": 7,
                 "allowed_commands": ("rg",),
+                "executable_paths": {"rg": "/usr/bin/rg"},
+                "executable_search_paths": ("/usr/bin",),
             },
         )
 
@@ -1180,6 +1190,8 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(agent_cmds._is_simple_string_sequence("rg"))
         self.assertFalse(agent_cmds._is_simple_string_sequence(1))
         self.assertFalse(agent_cmds._is_simple_string_sequence(("rg", 1)))
+        self.assertFalse(agent_cmds._is_simple_string_mapping(("rg",)))
+        self.assertFalse(agent_cmds._is_simple_string_mapping({"rg": 1}))
 
 
 class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
