@@ -16,8 +16,19 @@ from .....entities import (
     ToolCallToken,
 )
 from .....model.provider import ProviderFamily
-from .....model.stream import TextGenerationSingleStream
+from .....model.stream import (
+    CanonicalStreamItem,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+    StreamVisibility,
+    TextGenerationSingleStream,
+    normalize_provider_stream,
+)
 from .....tool.manager import ToolManager
+from .....types import LooseJsonValue
 from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -85,12 +96,22 @@ def _merge_usage(left: object | None, right: object) -> object | None:
 
 
 class AnthropicStream(TextGenerationVendorStream):
+    _events: AsyncIterator[object]
+    _canonical_tool_blocks: dict[int, dict[str, Any]]
+    _canonical_ready_tool_call_ids: set[str]
+    _canonical_done_tool_call_ids: set[str]
+
     def __init__(self, events: AsyncIterator[object]):
+        self._events = events
+        self._canonical_tool_blocks = {}
+        self._canonical_ready_tool_call_ids = set()
+        self._canonical_done_tool_call_ids = set()
+
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
             cumulative_usage: object | None = None
 
-            async for event in events:
+            async for event in self._events:
                 etype = _field(event, "type")
                 event_usage = _anthropic_event_usage(event)
                 if event_usage is not None:
@@ -181,6 +202,242 @@ class AnthropicStream(TextGenerationVendorStream):
 
     async def __anext__(self) -> str | ToolCallToken:
         return cast(str | ToolCallToken, await self._generator.__anext__())
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        self._canonical_tool_blocks = {}
+        self._canonical_ready_tool_call_ids = set()
+        self._canonical_done_tool_call_ids = set()
+        return normalize_provider_stream(
+            self._provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=self._provider_family,
+            capabilities=StreamProviderCapabilities(
+                backend=StreamProducerBackend.HOSTED,
+                provider_family=self._provider_family,
+                supports_reasoning=True,
+                supports_tool_calls=True,
+                supports_usage=True,
+                supports_terminal_events=True,
+                supports_cancellation=True,
+            ),
+            close_after_terminal=close_after_terminal,
+        )
+
+    async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
+        cumulative_usage: object | None = None
+        async for event in self._events:
+            event_usage = _anthropic_event_usage(event)
+            if event_usage is not None:
+                cumulative_usage = _merge_usage(
+                    cumulative_usage,
+                    event_usage,
+                )
+            event_type = _field(event, "type")
+            if (
+                isinstance(event, RawMessageStopEvent)
+                or event_type == "message_stop"
+            ):
+                provider_payload = self._provider_payload(event)
+                provider_event_type = (
+                    event_type if isinstance(event_type, str) else None
+                )
+                if cumulative_usage is not None:
+                    yield StreamProviderEvent(
+                        kind=StreamItemKind.USAGE_COMPLETED,
+                        usage=cast(LooseJsonValue, cumulative_usage),
+                        provider_payload=provider_payload,
+                        provider_event_type=provider_event_type,
+                    )
+                yield StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    provider_payload=provider_payload,
+                    provider_event_type=provider_event_type,
+                )
+                break
+            for provider_event in self._provider_events_from_event(event):
+                yield provider_event
+
+    def _provider_events_from_event(
+        self, event: object
+    ) -> tuple[StreamProviderEvent, ...]:
+        event_type = _field(event, "type")
+        if event_type is not None and not isinstance(event_type, str):
+            raise ValueError("anthropic event type must be a string")
+        provider_payload = self._provider_payload(event)
+
+        if event_type == "content_block_start":
+            return self._content_block_start_events(
+                event, provider_payload, event_type
+            )
+        if isinstance(event, RawContentBlockDeltaEvent):
+            return self._content_block_delta_events(
+                event, provider_payload, event_type
+            )
+        if event_type == "content_block_stop":
+            return self._content_block_stop_events(
+                event, provider_payload, event_type
+            )
+        return ()
+
+    def _content_block_start_events(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        block = _field(event, "content_block")
+        if _field(block, "type") != "tool_use":
+            return ()
+        index = _field(event, "index")
+        if not isinstance(index, int):
+            raise ValueError("anthropic tool block index must be an integer")
+        call_id = self._tool_call_id(_field(block, "id"))
+        name = _field(block, "name")
+        if name is not None and not isinstance(name, str):
+            raise ValueError("anthropic tool call name must be a string")
+        self._canonical_tool_blocks[index] = {
+            "id": call_id,
+            "name": name,
+            "arguments_seen": False,
+        }
+        return ()
+
+    def _content_block_delta_events(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        delta = getattr(event, "delta")
+        thinking = getattr(delta, "thinking", None)
+        if isinstance(thinking, str) and thinking:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.REASONING_DELTA,
+                    text_delta=thinking,
+                    visibility=StreamVisibility.PRIVATE,
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+
+        partial_json = getattr(delta, "partial_json", None)
+        if partial_json is not None:
+            if not isinstance(partial_json, str):
+                raise ValueError(
+                    "anthropic tool call arguments must be a string"
+                )
+            index = _field(event, "index")
+            if not isinstance(index, int):
+                raise ValueError(
+                    "anthropic tool block index must be an integer"
+                )
+            block = self._canonical_tool_blocks.get(index)
+            if block is None:
+                raise ValueError("anthropic tool call is missing start event")
+            call_id = cast(str, block["id"])
+            block["arguments_seen"] = True
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    correlation=StreamItemCorrelation(tool_call_id=call_id),
+                    text_delta=partial_json,
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+
+        text = getattr(delta, "text", None)
+        if isinstance(text, str) and text:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=text,
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+        return ()
+
+    def _content_block_stop_events(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        block = _field(event, "content_block")
+        index = _field(event, "index")
+        if not isinstance(index, int):
+            raise ValueError("anthropic tool block index must be an integer")
+        cached = self._canonical_tool_blocks.pop(index, None)
+        if cached is None and _field(block, "type") != "tool_use":
+            return ()
+        name = _field(block, "name")
+        if cached is not None:
+            call_id = cast(str, cached["id"])
+            name = name or cached.get("name")
+        else:
+            call_id = self._tool_call_id(_field(block, "id"))
+        if name is not None and not isinstance(name, str):
+            raise ValueError("anthropic tool call name must be a string")
+        result = list(self._mark_tool_ready(call_id, name, provider_payload))
+        result.append(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            )
+        )
+        self._canonical_done_tool_call_ids.add(call_id)
+        return tuple(result)
+
+    def _mark_tool_ready(
+        self,
+        call_id: str,
+        name: object | None,
+        provider_payload: LooseJsonValue | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        if call_id in self._canonical_done_tool_call_ids:
+            raise ValueError("anthropic tool call already completed")
+        if call_id in self._canonical_ready_tool_call_ids:
+            return ()
+        self._canonical_ready_tool_call_ids.add(call_id)
+        return (
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_READY,
+                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                data={"name": name} if isinstance(name, str) else {},
+                provider_payload=provider_payload,
+                provider_event_type="content_block_stop",
+            ),
+        )
+
+    @staticmethod
+    def _tool_call_id(value: object) -> str:
+        if isinstance(value, str) and value.strip():
+            return value
+        raise ValueError("anthropic tool call id must be a non-empty string")
+
+    @staticmethod
+    def _provider_payload(event: object) -> LooseJsonValue | None:
+        if isinstance(event, Mapping):
+            return dict(event)
+        model_dump = getattr(event, "model_dump", None)
+        if callable(model_dump):
+            payload = model_dump(mode="json")
+            if isinstance(payload, Mapping):
+                return dict(payload)
+        return None
 
 
 class AnthropicClient(TextGenerationVendor):

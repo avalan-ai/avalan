@@ -18,6 +18,7 @@ from avalan.entities import (
 from avalan.model.nlp.text import generation as generation_module
 from avalan.model.nlp.text.generation import (
     TextGenerationModel,
+    _configure_lossless_streamer_handoff,
     _is_event_loop_closed_error,
 )
 
@@ -160,6 +161,93 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
         model._log = MagicMock()
         return model
 
+    async def test_lossless_streamer_handoff_uses_bounded_queue(self):
+        stop_event = Event()
+
+        class DummyStreamer:
+            def __init__(self):
+                self.stop_signal = object()
+                self.text_queue = asyncio.Queue()
+                self.loop = asyncio.get_running_loop()
+
+        streamer = DummyStreamer()
+        queue_size = _configure_lossless_streamer_handoff(
+            streamer, stop_event, max_queue_size=1
+        )
+
+        self.assertEqual(queue_size, 1)
+        self.assertEqual(streamer.text_queue.maxsize, 1)
+
+        await asyncio.to_thread(streamer.on_finalized_text, "a")
+        self.assertEqual(await streamer.text_queue.get(), "a")
+
+        ended = asyncio.create_task(
+            asyncio.to_thread(streamer.on_finalized_text, "", stream_end=True)
+        )
+        self.assertEqual(await streamer.text_queue.get(), "")
+        await ended
+        self.assertIs(await streamer.text_queue.get(), streamer.stop_signal)
+
+    async def test_lossless_streamer_handoff_blocks_until_consumed(self):
+        stop_event = Event()
+
+        class DummyStreamer:
+            def __init__(self):
+                self.stop_signal = object()
+                self.text_queue = asyncio.Queue()
+                self.loop = asyncio.get_running_loop()
+
+        streamer = DummyStreamer()
+        _configure_lossless_streamer_handoff(
+            streamer, stop_event, max_queue_size=1
+        )
+        await asyncio.to_thread(streamer.on_finalized_text, "first")
+
+        second = asyncio.create_task(
+            asyncio.to_thread(streamer.on_finalized_text, "second")
+        )
+        await asyncio.sleep(0.01)
+
+        self.assertFalse(second.done())
+        self.assertEqual(await streamer.text_queue.get(), "first")
+        await second
+        self.assertEqual(await streamer.text_queue.get(), "second")
+
+    async def test_lossless_streamer_handoff_stops_blocked_put(self):
+        stop_event = Event()
+
+        class DummyStreamer:
+            def __init__(self):
+                self.stop_signal = object()
+                self.text_queue = asyncio.Queue()
+                self.loop = asyncio.get_running_loop()
+
+        streamer = DummyStreamer()
+        _configure_lossless_streamer_handoff(
+            streamer, stop_event, max_queue_size=1
+        )
+        await asyncio.to_thread(streamer.on_finalized_text, "first")
+        stopped = asyncio.create_task(
+            asyncio.to_thread(streamer.on_finalized_text, "second")
+        )
+
+        await asyncio.sleep(0.01)
+        stop_event.set()
+
+        with self.assertRaisesRegex(RuntimeError, "Event loop is closed"):
+            await stopped
+
+    async def test_lossless_streamer_handoff_skips_unknown_streamer(self):
+        class DummyStreamer:
+            pass
+
+        streamer = DummyStreamer()
+
+        self.assertIsNone(
+            _configure_lossless_streamer_handoff(streamer, Event())
+        )
+        self.assertFalse(hasattr(streamer, "on_finalized_text"))
+
     async def test_stream_generator(self):
         model = TextGenerationModel(
             "m",
@@ -232,6 +320,54 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
 
         gen.assert_called_once()
         self.assertEqual(out, ["a", "b"])
+
+    async def test_stream_generator_uses_bounded_handoff(self):
+        model = self._model()
+
+        class DummyStreamer:
+            def __init__(self, *args, **kwargs):
+                self.stop_signal = object()
+                self.text_queue = asyncio.Queue()
+                self.loop = asyncio.get_running_loop()
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                val = await self.text_queue.get()
+                if val is self.stop_signal:
+                    raise StopAsyncIteration
+                return val
+
+        def gen_side_effect(*args, streamer=None, **kwargs):
+            streamer.on_finalized_text("a")
+            streamer.on_finalized_text("", stream_end=True)
+
+        with (
+            patch(
+                "avalan.model.nlp.text.generation.AsyncTextIteratorStreamer",
+                DummyStreamer,
+            ),
+            patch.object(
+                TextGenerationModel,
+                "_generate_output",
+                side_effect=gen_side_effect,
+            ) as gen,
+        ):
+            chunks = []
+            async for chunk in model._stream_generator(
+                {"input_ids": torch.tensor([[1, 2]])},
+                GenerationSettings(max_new_tokens=2),
+                None,
+                False,
+            ):
+                chunks.append(chunk)
+
+        gen.assert_called_once()
+        self.assertEqual(chunks, ["a", ""])
+        model._log.assert_any_call(
+            "Created generator async text token streamer with 64 queued chunks"
+        )
 
     async def test_stream_generator_stops_thread_when_closed(self):
         model = TextGenerationModel(

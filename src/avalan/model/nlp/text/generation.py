@@ -20,7 +20,8 @@ from ....model.vendor import TextGenerationVendor
 from ....tool.manager import ToolManager
 from ....tool.parser import ToolCallParser
 
-from asyncio import CancelledError, sleep
+from asyncio import CancelledError, Queue, run_coroutine_threadsafe, sleep
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import asdict, replace
 from importlib import import_module
 from importlib.util import find_spec
@@ -121,6 +122,7 @@ def gumbel_softmax(*args: object, **kwargs: object) -> Any:
 _TOOL_MESSAGE_PARSER = ToolCallParser()
 _STREAMER_TIMEOUT_SECONDS = 0.1
 _STREAM_THREAD_JOIN_TIMEOUT_SECONDS = 2.0
+_STREAM_HANDOFF_MAX_QUEUE_SIZE = 64
 
 
 class _StopOnEventCriteria(StoppingCriteria):
@@ -133,6 +135,40 @@ class _StopOnEventCriteria(StoppingCriteria):
 
 def _is_event_loop_closed_error(exc: RuntimeError) -> bool:
     return str(exc) == "Event loop is closed"
+
+
+def _configure_lossless_streamer_handoff(
+    streamer: object,
+    stop_event: ThreadEvent,
+    max_queue_size: int = _STREAM_HANDOFF_MAX_QUEUE_SIZE,
+) -> int | None:
+    assert max_queue_size > 0
+    text_queue = getattr(streamer, "text_queue", None)
+    loop = getattr(streamer, "loop", None)
+    if text_queue is None or loop is None:
+        return None
+
+    queue: Queue[object] = Queue(maxsize=max_queue_size)
+    setattr(streamer, "text_queue", queue)
+
+    def put_item(value: object) -> None:
+        while True:
+            if stop_event.is_set():
+                raise RuntimeError("Event loop is closed")
+            future = run_coroutine_threadsafe(queue.put(value), loop)
+            try:
+                future.result(timeout=_STREAMER_TIMEOUT_SECONDS)
+                return
+            except FutureTimeoutError:
+                future.cancel()
+
+    def on_finalized_text(text: str, stream_end: bool = False) -> None:
+        put_item(text)
+        if stream_end:
+            put_item(getattr(streamer, "stop_signal"))
+
+    setattr(streamer, "on_finalized_text", on_finalized_text)
+    return max_queue_size
 
 
 class TextGenerationModel(BaseNLPModel):
@@ -305,6 +341,7 @@ class TextGenerationModel(BaseNLPModel):
             skip_special_tokens=skip_special_tokens,
             use_async_generator=settings.use_async_generator,
             bos_token=self._tokenizer.bos_token,
+            provider_family="transformers",
         )
 
     async def _stream_generator(
@@ -327,8 +364,15 @@ class TextGenerationModel(BaseNLPModel):
             timeout=_STREAMER_TIMEOUT_SECONDS,
             decode_kwargs={"skip_special_tokens": skip_special_tokens},
         )
+        queue_size = _configure_lossless_streamer_handoff(streamer, stop_event)
 
-        _l("Created generator async text token streamer")
+        if queue_size is None:
+            _l("Created generator async text token streamer")
+        else:
+            _l(
+                "Created generator async text token streamer "
+                f"with {queue_size} queued chunks"
+            )
 
         def finish_stream() -> None:
             try:

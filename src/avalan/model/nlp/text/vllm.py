@@ -4,6 +4,7 @@ from ....entities import (
     TransformerEngineSettings,
 )
 from ....model.nlp.text.generation import TextGenerationModel
+from ....model.provider import provider_family_value
 from ....model.vendor import TextGenerationVendorStream
 from ....tool.manager import ToolManager
 
@@ -46,14 +47,22 @@ def _sampling_params_class() -> Any:
 
 class VllmStream(TextGenerationVendorStream):
     def __init__(
-        self, generator: Iterator[str] | AsyncGenerator[str, None]
+        self,
+        generator: Iterator[str] | AsyncGenerator[str, None],
+        *,
+        provider_family: str = "vllm",
     ) -> None:
         if hasattr(generator, "__anext__"):
-            super().__init__(cast(AsyncGenerator[str, None], generator))
+            super().__init__(
+                cast(AsyncGenerator[str, None], generator),
+                provider_family=provider_family,
+            )
             self._iterator = None
             return
 
         self._iterator = generator
+        self._provider_family = provider_family_value(provider_family)
+        self._usage = None
         self._generator = cast(
             AsyncGenerator[str, None], cast(Any, self._iterator)
         )
@@ -194,11 +203,14 @@ class VllmModel(TextGenerationModel):
         if settings.use_async_generator:
             stream = self._stream_generator(prompt, generation_settings)
             if isinstance(stream, Awaitable):
+                resolved_stream = await stream
+                if isinstance(resolved_stream, str):
+                    return resolved_stream
                 return cast(
                     TextGenerationVendorStream
                     | str
                     | AsyncGenerator[str, None],
-                    await stream,
+                    VllmStream(resolved_stream),
                 )
-            return stream
+            return VllmStream(stream)
         return self._string_output(prompt, generation_settings)

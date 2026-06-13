@@ -27,6 +27,10 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.model.stream import (
+    StreamItemKind,
+    accumulate_canonical_stream_items,
+)
 from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
@@ -395,6 +399,331 @@ class BedrockTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(totals.output_tokens, 0)
         self.assertIsNone(totals.reasoning_tokens)
         self.assertEqual(totals.total_tokens, 0)
+
+    async def test_canonical_stream_maps_bedrock_events(self):
+        events = [
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"reasoning": {"text": "think"}},
+                }
+            },
+            {
+                "contentBlockStart": {
+                    "contentBlockIndex": 1,
+                    "contentBlock": {
+                        "toolUse": {
+                            "toolUseId": "call-1",
+                            "name": "lookup",
+                            "input": {"q": 1},
+                        }
+                    },
+                }
+            },
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 1,
+                    "delta": {"toolUse": {"input": '{"more":'}},
+                }
+            },
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": {"text": "answer"}},
+                }
+            },
+            {
+                "contentBlockStop": {
+                    "contentBlockIndex": 1,
+                    "contentBlock": {
+                        "toolUse": {
+                            "toolUseId": "call-1",
+                            "name": "lookup",
+                            "input": '"yes"}',
+                        }
+                    },
+                }
+            },
+            {"messageStop": {"reason": "finished"}},
+            {
+                "metadata": {
+                    "usage": {
+                        "inputTokens": 2,
+                        "outputTokens": 3,
+                    }
+                }
+            },
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, "answer")
+        self.assertEqual(accumulator.reasoning_text, "think")
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"call-1": '{"q": 1}{"more":"yes"}'},
+        )
+        self.assertEqual(
+            accumulator.final_usage,
+            {"inputTokens": 2, "outputTokens": 3},
+        )
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "lookup"})
+
+    async def test_canonical_stream_maps_malformed_bedrock_tool_delta_to_error(
+        self,
+    ):
+        events = [
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 1,
+                    "delta": {"toolUse": {"input": '{"q":1}'}},
+                }
+            }
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertIn("missing start event", str(items[1].data))
+
+    async def test_canonical_stream_maps_duplicate_bedrock_tool_stop_to_error(
+        self,
+    ):
+        tool = {"toolUseId": "call-1", "name": "lookup"}
+        events = [
+            {
+                "contentBlockStart": {
+                    "contentBlockIndex": 1,
+                    "contentBlock": {"toolUse": tool},
+                }
+            },
+            {
+                "contentBlockStop": {
+                    "contentBlockIndex": 1,
+                    "contentBlock": {"toolUse": tool},
+                }
+            },
+            {
+                "contentBlockStop": {
+                    "contentBlockIndex": 1,
+                    "contentBlock": {"toolUse": tool},
+                }
+            },
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+
+    async def test_canonical_stream_skips_bedrock_content_after_message_stop(
+        self,
+    ):
+        events = [
+            {"messageStop": {"reason": "done"}},
+            {
+                "contentBlockDelta": {
+                    "contentBlockIndex": 0,
+                    "delta": {"text": {"text": "late"}},
+                }
+            },
+            {
+                "metadata": {
+                    "usage": {
+                        "inputTokens": 1,
+                        "outputTokens": 2,
+                    }
+                }
+            },
+        ]
+        stream = self.mod.BedrockStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+        self.assertNotIn(
+            StreamItemKind.ANSWER_DELTA,
+            [item.kind for item in items],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(
+            accumulator.final_usage,
+            {"inputTokens": 1, "outputTokens": 2},
+        )
+
+    async def test_canonical_stream_bedrock_mapping_edge_cases(self):
+        stream = self.mod.BedrockStream(AsyncIter([]))
+
+        self.assertEqual(stream._provider_events_from_event({}), ())
+        self.assertEqual(
+            stream._provider_events_from_event(
+                {
+                    "contentBlockStart": {
+                        "contentBlockIndex": 0,
+                        "contentBlock": {"text": "ignored"},
+                    }
+                }
+            ),
+            (),
+        )
+        self.assertEqual(
+            stream._provider_events_from_event(
+                {
+                    "contentBlockDelta": {
+                        "contentBlockIndex": 0,
+                        "delta": {"toolUse": {"input": ""}},
+                    }
+                }
+            ),
+            (),
+        )
+        self.assertEqual(
+            stream._provider_events_from_event(
+                {
+                    "contentBlockDelta": {
+                        "contentBlockIndex": 0,
+                        "delta": {},
+                    }
+                }
+            ),
+            (),
+        )
+        self.assertEqual(
+            stream._provider_events_from_event(
+                {"contentBlockStop": {"contentBlockIndex": 0}}
+            ),
+            (),
+        )
+
+        stream._canonical_tool_blocks[1] = {
+            "id": "call-1",
+            "name": "lookup",
+            "arguments_seen": False,
+        }
+        sparse_stop = stream._content_block_stop_events(
+            {"contentBlockIndex": 1},
+            None,
+        )
+        self.assertEqual(
+            [event.kind for event in sparse_stop],
+            [StreamItemKind.TOOL_CALL_READY, StreamItemKind.TOOL_CALL_DONE],
+        )
+        self.assertEqual(
+            stream._mark_tool_ready("call-2", "lookup", None)[0].kind,
+            StreamItemKind.TOOL_CALL_READY,
+        )
+        self.assertEqual(stream._mark_tool_ready("call-2", "lookup", None), ())
+
+        invalid_events = [
+            {"contentBlockStart": {"contentBlockIndex": "bad"}},
+            {
+                "contentBlockStart": {
+                    "contentBlockIndex": 0,
+                    "contentBlock": {
+                        "toolUse": {
+                            "toolUseId": "call-1",
+                            "name": 1,
+                        }
+                    },
+                }
+            },
+            {
+                "contentBlockStart": {
+                    "contentBlockIndex": 0,
+                    "contentBlock": {
+                        "toolUse": {
+                            "toolUseId": None,
+                            "name": "lookup",
+                        }
+                    },
+                }
+            },
+            {"contentBlockDelta": {"contentBlockIndex": "bad"}},
+            {"contentBlockStop": {"contentBlockIndex": "bad"}},
+            {
+                "contentBlockStop": {
+                    "contentBlockIndex": 0,
+                    "contentBlock": {
+                        "toolUse": {
+                            "toolUseId": "call-1",
+                            "name": 1,
+                        }
+                    },
+                }
+            },
+        ]
+        for event in invalid_events:
+            with self.assertRaises(ValueError):
+                stream._provider_events_from_event(event)
 
     async def test_stream_failure_after_metadata_keeps_usage_unavailable(
         self,
