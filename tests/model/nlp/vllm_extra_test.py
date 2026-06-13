@@ -211,6 +211,26 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, "stream")
         model._string_output.assert_not_called()
 
+    async def test_call_wraps_awaitable_async_generator_stream(self):
+        model = self._make_model()
+
+        async def agen():
+            yield "stream"
+
+        async def stream_gen(prompt, settings):
+            return agen()
+
+        model._stream_generator = AsyncMock(side_effect=stream_gen)
+        model._string_output = MagicMock()
+        model._prompt = MagicMock(return_value="p")
+        settings = GenerationSettings(use_async_generator=True)
+        result = await model("input", settings=settings)
+
+        self.assertIsInstance(result, VllmStream)
+        assert isinstance(result, VllmStream)
+        self.assertEqual(await result.__anext__(), "stream")
+        model._string_output.assert_not_called()
+
     async def test_call_use_async_generator_false(self):
         model = self._make_model()
         model._stream_generator = AsyncMock(return_value="stream")

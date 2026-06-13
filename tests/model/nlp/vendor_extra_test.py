@@ -23,6 +23,12 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.model.stream import (
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+    accumulate_canonical_stream_items,
+)
 from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
@@ -1116,6 +1122,503 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(await result.__anext__(), "s")
         with self.assertRaises(StopAsyncIteration):
             await result.__anext__()
+
+    async def test_canonical_stream_maps_chat_chunks(self):
+        usage = {"prompt_tokens": 2, "completion_tokens": 3}
+        stream = self.mod.LiteLLMStream(
+            AsyncIter(
+                [
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "reasoning_content": "think ",
+                                    "content": "hi ",
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": "call-1",
+                                            "function": {
+                                                "name": "pkg.lookup",
+                                                "arguments": '{"city"',
+                                            },
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "function": {
+                                                "arguments": ':"Paris"}'
+                                            },
+                                        }
+                                    ]
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ]
+                    },
+                    {"usage": usage},
+                ]
+            )
+        )
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="chat-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual([item.sequence for item in items], list(range(12)))
+        self.assertEqual(
+            {item.provider_family for item in items}, {"openai_compatible"}
+        )
+        self.assertEqual(
+            items[0].metadata["capabilities"]["backend"], "hosted"
+        )
+        self.assertEqual(
+            items[1].provider_event_type,
+            "chat.completion.reasoning.delta",
+        )
+        self.assertIs(items[1].channel, StreamChannel.REASONING)
+        self.assertEqual(
+            {
+                item.correlation.tool_call_id
+                for item in items
+                if item.channel is StreamChannel.TOOL_CALL
+            },
+            {"call-1"},
+        )
+        self.assertEqual(items[5].data, {"name": "pkg.lookup"})
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, "hi ")
+        self.assertEqual(accumulator.reasoning_text, "think ")
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"call-1": '{"city":"Paris"}'},
+        )
+        self.assertEqual(accumulator.final_usage, usage)
+        self.assertIs(
+            accumulator.terminal_outcome,
+            StreamTerminalOutcome.COMPLETED,
+        )
+
+    async def test_canonical_stream_preserves_chat_model_dump_payloads(self):
+        first_payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "reasoning_content": "think ",
+                        "content": "hi ",
+                    }
+                }
+            ]
+        }
+        tool_payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "pkg.lookup",
+                                    "arguments": '{"city"',
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        usage_payload = {"usage": {"prompt_tokens": 2, "completion_tokens": 3}}
+        modes: list[tuple[str, str]] = []
+
+        class ModelDumpChunk:
+            def __init__(self, payload: dict[str, object], label: str):
+                self.choices = payload.get("choices")
+                self.usage = payload.get("usage")
+                self._label = label
+                self._payload = payload
+
+            def model_dump(self, *, mode: str) -> dict[str, object]:
+                modes.append((self._label, mode))
+                return self._payload
+
+        stream = self.mod.LiteLLMStream(
+            AsyncIter(
+                [
+                    ModelDumpChunk(first_payload, "first"),
+                    ModelDumpChunk(tool_payload, "tool"),
+                    ModelDumpChunk(usage_payload, "usage"),
+                ]
+            )
+        )
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="chat-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+                close_after_terminal=False,
+            )
+        ]
+
+        self.assertEqual(
+            modes,
+            [("first", "json"), ("tool", "json"), ("usage", "json")],
+        )
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
+        )
+        self.assertEqual(items[1].provider_payload, first_payload)
+        self.assertEqual(items[2].provider_payload, first_payload)
+        self.assertEqual(items[3].provider_payload, tool_payload)
+        self.assertEqual(items[4].provider_payload, tool_payload)
+        self.assertEqual(items[5].provider_payload, tool_payload)
+        self.assertEqual(items[8].provider_payload, usage_payload)
+
+    async def test_canonical_stream_ignores_non_object_chat_provider_payload(
+        self,
+    ):
+        class ModelDumpChunk:
+            choices = [
+                {
+                    "delta": {
+                        "content": "hi",
+                    }
+                }
+            ]
+
+            def model_dump(self, *, mode: str) -> object:
+                return ["not", "an", "event", mode]
+
+        stream = self.mod.LiteLLMStream(AsyncIter([ModelDumpChunk()]))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="chat-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+                close_after_terminal=False,
+            )
+        ]
+
+        self.assertEqual(items[1].text_delta, "hi")
+        self.assertIsNone(items[1].provider_payload)
+
+    async def test_canonical_stream_preserves_same_chunk_usage_order(self):
+        usage = {"prompt_tokens": 2, "completion_tokens": 1}
+        stream = self.mod.LiteLLMStream(
+            AsyncIter(
+                [
+                    {
+                        "choices": [{"delta": {"content": "done"}}],
+                        "usage": usage,
+                    },
+                ]
+            )
+        )
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="chat-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, "done")
+        self.assertEqual(accumulator.final_usage, usage)
+        self.assertIs(
+            accumulator.terminal_outcome,
+            StreamTerminalOutcome.COMPLETED,
+        )
+
+    async def test_canonical_stream_rejects_content_after_usage_chunk(self):
+        stream = self.mod.LiteLLMStream(
+            AsyncIter(
+                [
+                    {"usage": {"prompt_tokens": 2}},
+                    {"choices": [{"delta": {"content": "late"}}]},
+                ]
+            )
+        )
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="chat-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        error_data = items[2].data
+        assert isinstance(error_data, dict)
+        self.assertEqual(error_data["error_type"], "StreamValidationError")
+        self.assertIn("final usage", error_data["message"])
+        self.assertIs(
+            accumulate_canonical_stream_items(items).terminal_outcome,
+            StreamTerminalOutcome.ERRORED,
+        )
+
+    async def test_canonical_stream_maps_chat_errors_to_terminal(self):
+        stream = self.mod.LiteLLMStream(
+            AsyncIter([{"error": {"message": "bad request"}}])
+        )
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="chat-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].data, {"error": {"message": "bad request"}})
+        self.assertIs(
+            items[1].terminal_outcome,
+            StreamTerminalOutcome.ERRORED,
+        )
+
+    async def test_provider_events_from_chunk_stops_after_error(self):
+        stream = self.mod.LiteLLMStream(AsyncIter([]))
+
+        events = [
+            event
+            async for event in stream._provider_events_from_chunk(
+                {
+                    "error": {"message": "bad request"},
+                    "usage": {"prompt_tokens": 1},
+                }
+            )
+        ]
+
+        self.assertEqual(
+            [event.kind for event in events],
+            [StreamItemKind.STREAM_ERRORED],
+        )
+
+    async def test_canonical_stream_maps_malformed_chat_chunks_to_error(
+        self,
+    ):
+        stream = self.mod.LiteLLMStream(
+            AsyncIter([{"choices": [{"delta": {"content": 3}}]}])
+        )
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="chat-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].data["error_type"], "ValueError")
+        self.assertIn("content", items[1].data["message"])
+
+    async def test_canonical_stream_ignores_empty_chat_control_chunks(self):
+        stream = self.mod.LiteLLMStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(),
+                    {"choices": [], "usage": {"prompt_tokens": 1}},
+                    {"choices": [{}]},
+                    {"choices": [{"delta": {}}]},
+                ]
+            )
+        )
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="chat-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].usage, {"prompt_tokens": 1})
+        self.assertIsNone(items[2].usage)
+
+    async def test_canonical_stream_maps_malformed_tool_chunks_to_error(
+        self,
+    ):
+        cases = (
+            ({"choices": "bad"}, "choices"),
+            ({"choices": [{"delta": {"reasoning": 3}}]}, "reasoning"),
+            ({"choices": [{"delta": {"tool_calls": {}}}]}, "tool_calls"),
+            (
+                {"choices": [{"delta": {"tool_calls": [{"index": "0"}]}}]},
+                "index",
+            ),
+            (
+                {"choices": [{"delta": {"tool_calls": [{"index": 0}]}}]},
+                "id is missing",
+            ),
+            (
+                {"choices": [{"delta": {"tool_calls": [{"id": ""}]}}]},
+                "id is invalid",
+            ),
+            (
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "id": "call-1",
+                                        "function": {"name": 3},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "name",
+            ),
+            (
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "id": "call-1",
+                                        "function": {"arguments": {}},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "arguments",
+            ),
+        )
+
+        for chunk, message in cases:
+            with self.subTest(message=message):
+                stream = self.mod.LiteLLMStream(AsyncIter([chunk]))
+
+                items = [
+                    item
+                    async for item in stream.canonical_stream(
+                        stream_session_id="chat-stream",
+                        run_id="run-1",
+                        turn_id="turn-1",
+                    )
+                ]
+
+                self.assertEqual(items[1].kind, StreamItemKind.STREAM_ERRORED)
+                self.assertIs(
+                    items[1].terminal_outcome,
+                    StreamTerminalOutcome.ERRORED,
+                )
+                error_data = items[1].data
+                assert isinstance(error_data, dict)
+                self.assertEqual(error_data["error_type"], "ValueError")
+                self.assertIn(message, error_data["message"])
 
     async def test_no_stream_object_response(self):
         client = self.mod.LiteLLMClient(api_key="k", base_url="b")

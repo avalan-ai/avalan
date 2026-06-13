@@ -560,7 +560,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self,
         item: Token | TokenDetail | str,
     ) -> None:
-        if not self._event_manager:
+        if not self._should_emit_token_generated_event():
             return
         token_str = item.token if hasattr(item, "token") else str(item)
         token_id = getattr(item, "id", None)
@@ -569,10 +569,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             if self._engine_agent.engine
             else None
         )
-        if token_id is None and tokenizer:
+        if token_id is None and tokenizer and self._should_enrich_token_ids():
             ids = tokenizer.encode(token_str, add_special_tokens=False)
             token_id = ids[0] if ids else None
 
+        assert self._event_manager
         await self._event_manager.trigger(
             Event(
                 type=EventType.TOKEN_GENERATED,
@@ -585,6 +586,21 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 },
             )
         )
+
+    def _should_emit_token_generated_event(self) -> bool:
+        if not self._event_manager:
+            return False
+        should_emit = getattr(self._event_manager, "should_emit", None)
+        if not callable(should_emit):
+            return True
+        result = should_emit(EventType.TOKEN_GENERATED)
+        return result if isinstance(result, bool) else False
+
+    def _should_enrich_token_ids(self) -> bool:
+        if not self._event_manager:
+            return False
+        value = getattr(self._event_manager, "enrich_token_ids", False)
+        return value if isinstance(value, bool) else False
 
     async def _execute_tool_call(
         self,

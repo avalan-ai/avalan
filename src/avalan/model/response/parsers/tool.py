@@ -320,7 +320,17 @@ class ToolCallResponseParser:
         )
 
     def _has_tool_marker(self, text: str) -> bool:
-        return any(True for _ in self._tool_marker_start_indexes(text))
+        markers = self._tool_marker_starts()
+        for index, character in enumerate(text):
+            if character != "<":
+                continue
+            suffix = text[index:]
+            if any(
+                marker.startswith(suffix) or suffix.startswith(marker)
+                for marker in markers
+            ):
+                return True
+        return False
 
     @staticmethod
     def _markdown_fence_is_open(text: str) -> bool:
@@ -381,7 +391,7 @@ class ToolCallResponseParser:
                 continue
             suffix = text[index:]
             if any(
-                marker.startswith(suffix) or suffix.startswith(marker)
+                self._tool_marker_can_start_at(text, index, suffix, marker)
                 for marker in markers
             ):
                 yield index
@@ -444,9 +454,7 @@ class ToolCallResponseParser:
                 index = close_index
                 continue
 
-            start_marker = self._tool_marker_at(
-                text, index, self._tool_marker_starts()
-            )
+            start_marker = self._tool_start_marker_at(text, index)
             if start_marker is not None and not self._markdown_fence_is_open(
                 text[:index]
             ):
@@ -527,9 +535,7 @@ class ToolCallResponseParser:
                 index = close_index
                 continue
 
-            start_marker = self._tool_marker_at(
-                text, index, self._tool_marker_starts()
-            )
+            start_marker = self._tool_start_marker_at(text, index)
             if start_marker is not None:
                 active = True
                 index += len(start_marker)
@@ -570,6 +576,11 @@ class ToolCallResponseParser:
         for marker in ("<tool_call", "<tool "):
             index = text.find(marker)
             while index != -1:
+                if not ToolCallParser._tool_start_marker_boundary_is_valid(
+                    text, index, marker
+                ):
+                    index = text.find(marker, index + 1)
+                    continue
                 tag_end = ToolCallParser._tag_end_index(
                     text, index + len(marker)
                 )
@@ -579,11 +590,13 @@ class ToolCallResponseParser:
                     yield index, tag_end + 1
                 index = text.find(marker, index + 1)
 
-    @staticmethod
     def _self_closing_tool_close_span_at(
-        text: str, index: int
+        self, text: str, index: int
     ) -> tuple[int, int] | None:
-        if not text.startswith(("<tool_call", "<tool "), index):
+        marker = self._tool_start_marker_at(
+            text, index, ("<tool_call", "<tool ")
+        )
+        if marker is None:
             return None
 
         tag_end = ToolCallParser._tag_end_index(text, index)
@@ -594,6 +607,37 @@ class ToolCallResponseParser:
             return None
 
         return index, tag_end + 1
+
+    @staticmethod
+    def _tool_marker_can_start_at(
+        text: str, index: int, suffix: str, marker: str
+    ) -> bool:
+        if marker.startswith(suffix):
+            return True
+        if not suffix.startswith(marker):
+            return False
+        return ToolCallParser._tool_start_marker_boundary_is_valid(
+            text, index, marker
+        )
+
+    def _tool_start_marker_at(
+        self,
+        text: str,
+        index: int,
+        markers: Iterable[str] | None = None,
+    ) -> str | None:
+        marker_candidates = markers or self._tool_marker_starts()
+        for marker in sorted(marker_candidates, key=len, reverse=True):
+            if not text.startswith(marker, index):
+                continue
+            boundary_index = index + len(marker)
+            if boundary_index == len(text):
+                return marker
+            if ToolCallParser._tool_start_marker_boundary_is_valid(
+                text, index, marker
+            ):
+                return marker
+        return None
 
     @staticmethod
     def _tool_marker_at(

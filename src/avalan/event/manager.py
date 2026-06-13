@@ -13,15 +13,27 @@ class EventManager:
     _listeners: dict[EventType, list[Listener]]
     _queue: Queue[Event]
     _history: deque[Event]
+    _enrich_token_ids: bool
 
-    def __init__(self, history_length: int | None = None) -> None:
+    def __init__(
+        self,
+        history_length: int | None = None,
+        *,
+        enrich_token_ids: bool = False,
+    ) -> None:
+        assert isinstance(enrich_token_ids, bool)
         self._listeners = defaultdict(list)
         self._queue = Queue()
         self._history = deque(maxlen=history_length)
+        self._enrich_token_ids = enrich_token_ids
 
     @property
     def history(self) -> list[Event]:
         return list(self._history)
+
+    @property
+    def enrich_token_ids(self) -> bool:
+        return self._enrich_token_ids
 
     def add_listener(
         self,
@@ -46,6 +58,12 @@ class EventManager:
                 listeners.remove(listener)
                 if not listeners:
                     self._listeners.pop(event_type)
+
+    def should_emit(self, event_type: EventType) -> bool:
+        assert isinstance(event_type, EventType)
+        if event_type is EventType.TOKEN_GENERATED:
+            return bool(self._listeners.get(event_type))
+        return True
 
     async def trigger(self, event: Event) -> None:
         self._history.append(event)

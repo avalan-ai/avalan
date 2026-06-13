@@ -10,13 +10,17 @@ from ..stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
     StreamTerminalOutcome,
     TextGenerationSingleStream,
     canonical_item_from_token,
+    normalize_local_stream,
 )
 from . import InvalidJsonResponseException
 from .parsers.reasoning import ReasoningParser, ReasoningTokenLimitExceeded
 
+from asyncio import CancelledError
 from collections.abc import Mapping
 from inspect import iscoroutine
 from io import StringIO
@@ -58,8 +62,11 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
     _reasoning_parser: ReasoningParser | None = None
     _parser_queue: Queue[Token | TokenDetail | str] | None = None
     _logger: Logger
+    _provider_family: str | None = None
     _prefetched_text: str | None = None
     _final_text: str | None = None
+    _output_closed: bool = False
+    _bos_token: str | None = None
 
     def __init__(
         self,
@@ -69,6 +76,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         use_async_generator: bool,
         generation_settings: GenerationSettings | None = None,
         bos_token: str | None = None,
+        provider_family: str | None = None,
         **kwargs: Any,
     ) -> None:
         self._args = args
@@ -77,25 +85,34 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         self._logger = logger
         self._use_async_generator = use_async_generator
         self._generation_settings = generation_settings
-        self._output_token_count = 0
-        self._buffer = StringIO()
+        self._bos_token = bos_token
+        self._provider_family = provider_family
         self._on_consumed_callbacks = []
         self._final_text = None
-        if generation_settings and generation_settings.reasoning.enabled:
-            self._parser_queue = Queue()
-            self._reasoning_parser = ReasoningParser(
-                reasoning_settings=generation_settings.reasoning,
-                logger=self._logger,
-                bos_token=bos_token,
-            )
-        else:
-            self._parser_queue = None
-            self._reasoning_parser = None
+        self._output_closed = False
+        self._reset_iteration_state()
 
         if "inputs" in kwargs:
             self._input_token_count = self._count_input_tokens(
                 kwargs["inputs"]
             )
+
+    def _reset_iteration_state(self) -> None:
+        self._output_token_count = 0
+        self._buffer = StringIO()
+        if (
+            self._generation_settings
+            and self._generation_settings.reasoning.enabled
+        ):
+            self._parser_queue = Queue()
+            self._reasoning_parser = ReasoningParser(
+                reasoning_settings=self._generation_settings.reasoning,
+                logger=self._logger,
+                bos_token=self._bos_token,
+            )
+        else:
+            self._parser_queue = None
+            self._reasoning_parser = None
 
     @staticmethod
     def _count_input_tokens(inputs: Any) -> int:
@@ -183,6 +200,8 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
     @property
     def provider_family(self) -> str | None:
+        if self._provider_family is not None:
+            return self._provider_family
         provider_family = getattr(self._output_fn, "provider_family", None)
         if provider_family is not None:
             return cast(str, provider_family)
@@ -206,6 +225,53 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
         if self._reasoning_parser:
             self._reasoning_parser.set_thinking(thinking)
 
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        provider_family = provider_family or self.provider_family or "local"
+        if not self._use_async_generator:
+            self._ensure_non_stream_prefetched()
+            return normalize_local_stream(
+                self._string_output_generator(self._prefetched_text or ""),
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                provider_family=provider_family,
+                capabilities=capabilities,
+                close_after_terminal=close_after_terminal,
+            )
+
+        async def tokens() -> OutputGenerator:
+            try:
+                async for token in self:
+                    yield token
+            finally:
+                await self.aclose()
+
+        return normalize_local_stream(
+            tokens(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family,
+            capabilities=capabilities
+            or StreamProviderCapabilities(
+                backend=StreamProducerBackend.LOCAL,
+                provider_family=provider_family,
+                supports_reasoning=self.can_think,
+                supports_tool_calls=True,
+                supports_cancellation=True,
+            ),
+            close_after_terminal=close_after_terminal,
+        )
+
     async def _trigger_consumed(self) -> None:
         if self._consumed:
             return
@@ -218,16 +284,30 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
 
     def __aiter__(self) -> AsyncIterator[Token | TokenDetail | str]:
         # Create a fresh async generator each time we start iterating
+        if self._output is not None:
+            self._reset_iteration_state()
         output = self._output_fn(*self._args, **self._kwargs)
         if isinstance(output, str):
             self._output = self._string_output_generator(output)
         else:
             self._output = output
+        self._output_closed = False
         return self
 
     @staticmethod
     async def _string_output_generator(text: str) -> OutputGenerator:
         yield text
+
+    async def aclose(self) -> None:
+        output = self._output
+        if output is None or self._output_closed:
+            return
+        aclose = getattr(output, "aclose", None)
+        self._output_closed = True
+        if aclose is None:
+            return
+        assert callable(aclose)
+        await cast(Callable[[], Awaitable[None]], aclose)()
 
     async def __anext__(self) -> Token | TokenDetail | str:
         assert self._output
@@ -248,6 +328,10 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                     if not parser_queue.empty():
                         continue
                 await self._trigger_consumed()
+                await self.aclose()
+                raise
+            except (Exception, CancelledError):
+                await self.aclose()
                 raise
 
             token_str = token if isinstance(token, str) else token.token
@@ -268,6 +352,7 @@ class TextGenerationResponse(AsyncIterator[Token | TokenDetail | str]):
                 items = await self._reasoning_parser.push(token_str)
             except ReasoningTokenLimitExceeded:
                 await self._trigger_consumed()
+                await self.aclose()
                 raise StopAsyncIteration
 
             for it in items:

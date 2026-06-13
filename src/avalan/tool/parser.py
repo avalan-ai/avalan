@@ -453,6 +453,9 @@ class ToolCallParser:
         max_len = max(len(s) for s in start)
         tail = status_buffer[-max_len:]
         for s in start:
+            if self._tool_start_marker_needs_boundary(s) and tail == s:
+                status = self.ToolCallBufferStatus.PREFIX
+                return self._final_tool_call_status(buffer, status, final)
             if s.startswith(tail) and tail != s:
                 status = self.ToolCallBufferStatus.PREFIX
                 return self._final_tool_call_status(buffer, status, final)
@@ -480,10 +483,18 @@ class ToolCallParser:
         for marker in start_markers:
             index = text.rfind(marker)
             while index != -1:
-                if not cls._index_is_inside_quoted_text(text, index) and (
-                    latest is None
-                    or index > latest[0]
-                    or (index == latest[0] and len(marker) > len(latest[1]))
+                if (
+                    not cls._index_is_inside_quoted_text(text, index)
+                    and cls._tool_start_marker_boundary_is_valid(
+                        text, index, marker
+                    )
+                    and (
+                        latest is None
+                        or index > latest[0]
+                        or (
+                            index == latest[0] and len(marker) > len(latest[1])
+                        )
+                    )
                 ):
                     latest = (index, marker)
                     break
@@ -582,7 +593,11 @@ class ToolCallParser:
         for marker in start_markers:
             start_index = buffer.find(marker, last_end + 1)
             while start_index != -1 and start_index < index:
-                if not self._index_is_inside_quoted_text(buffer, start_index):
+                if not self._index_is_inside_quoted_text(
+                    buffer, start_index
+                ) and self._tool_start_marker_boundary_is_valid(
+                    buffer, start_index, marker
+                ):
                     after_start = buffer[start_index + len(marker) :]
                     if not self._opening_tool_tag_is_self_closing(
                         marker, after_start
@@ -1058,7 +1073,7 @@ class ToolCallParser:
     def _tag_failure_diagnostics(self, text: str) -> list[ToolCallDiagnostic]:
         text = self._without_markdown_fenced_blocks(text)
         if (
-            self._find_unquoted_marker(text, "<tool_call", 0) == -1
+            self._find_unquoted_tool_start(text, "<tool_call", 0) == -1
             and self._find_unquoted_marker(text, "<tool ", 0) == -1
             and self._find_unquoted_marker(text, "<tool>", 0) == -1
         ):
@@ -1549,7 +1564,7 @@ class ToolCallParser:
             ("<tool ", "</tool>"),
             ("<tool>", "</tool>"),
         ):
-            index = self._find_unquoted_marker(text, start_marker, 0)
+            index = self._find_unquoted_tool_start(text, start_marker, 0)
             while index != -1:
                 tag_end = self._tag_end_index(text, index)
                 if tag_end == -1:
@@ -1559,7 +1574,9 @@ class ToolCallParser:
                     text, end_marker, tag_end + 1
                 )
                 if close_index == -1:
-                    index = text.find(start_marker, tag_end + 1)
+                    index = self._find_unquoted_tool_start(
+                        text, start_marker, tag_end + 1
+                    )
                     continue
                 if not opening.rstrip().endswith("/>"):
                     payloads.append(
@@ -1568,7 +1585,7 @@ class ToolCallParser:
                             text[tag_end + 1 : close_index],
                         )
                     )
-                index = self._find_unquoted_marker(
+                index = self._find_unquoted_tool_start(
                     text, start_marker, close_index + len(end_marker)
                 )
         return payloads
@@ -1586,7 +1603,7 @@ class ToolCallParser:
     def _self_closing_tag_payloads(self, text: str) -> list[Any]:
         payloads: list[Any] = []
         for start_marker in ("<tool_call", "<tool "):
-            index = self._find_unquoted_marker(text, start_marker, 0)
+            index = self._find_unquoted_tool_start(text, start_marker, 0)
             while index != -1:
                 tag_end = self._tag_end_index(text, index)
                 if tag_end == -1:
@@ -1604,7 +1621,7 @@ class ToolCallParser:
                             else None
                         )
                         payloads.append({"name": name, "arguments": arguments})
-                index = self._find_unquoted_marker(
+                index = self._find_unquoted_tool_start(
                     text, start_marker, tag_end + 1
                 )
         return payloads
@@ -1700,6 +1717,39 @@ class ToolCallParser:
                 return index
             index = text.find(marker, index + 1)
         return -1
+
+    @classmethod
+    def _find_unquoted_tool_start(
+        cls, text: str, marker: str, start: int
+    ) -> int:
+        index = text.find(marker, start)
+        while index != -1:
+            if not cls._index_is_inside_quoted_text(
+                text, index
+            ) and cls._tool_start_marker_boundary_is_valid(
+                text, index, marker
+            ):
+                return index
+            index = text.find(marker, index + 1)
+        return -1
+
+    @staticmethod
+    def _tool_start_marker_needs_boundary(marker: str) -> bool:
+        return marker == "<tool_call"
+
+    @classmethod
+    def _tool_start_marker_boundary_is_valid(
+        cls, text: str, index: int, marker: str
+    ) -> bool:
+        if not cls._tool_start_marker_needs_boundary(marker):
+            return True
+
+        boundary_index = index + len(marker)
+        if boundary_index >= len(text):
+            return False
+
+        boundary = text[boundary_index]
+        return boundary == ">" or boundary == "/" or boundary.isspace()
 
     def _tag_payload_from_element(self, element: ElementTree.Element) -> Any:
         name = element.attrib.get("name")

@@ -15,8 +15,19 @@ from .....entities import (
     ToolCallToken,
 )
 from .....model.provider import ProviderFamily
-from .....model.stream import TextGenerationSingleStream
+from .....model.stream import (
+    CanonicalStreamItem,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+    StreamVisibility,
+    TextGenerationSingleStream,
+    normalize_provider_stream,
+)
 from .....tool.manager import ToolManager
+from .....types import LooseJsonValue
 from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -31,7 +42,7 @@ from base64 import b64decode
 from contextlib import AsyncExitStack
 from json import dumps
 from re import sub
-from typing import Any, AsyncIterator, Mapping, NoReturn
+from typing import Any, AsyncIterator, Mapping, NoReturn, cast
 
 from aioboto3 import Session as Boto3Session
 
@@ -107,13 +118,23 @@ _BEDROCK_DOCUMENT_FORMATS = {
 
 
 class BedrockStream(TextGenerationVendorStream):
+    _events: AsyncIterator[Any]
+    _canonical_tool_blocks: dict[int, dict[str, Any]]
+    _canonical_ready_tool_call_ids: set[str]
+    _canonical_done_tool_call_ids: set[str]
+
     def __init__(self, events: AsyncIterator[Any]):
+        self._events = events
+        self._canonical_tool_blocks = {}
+        self._canonical_ready_tool_call_ids = set()
+        self._canonical_done_tool_call_ids = set()
+
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_blocks: dict[int, dict[str, Any]] = {}
             message_stopped = False
             terminal_usage: object | None = None
 
-            async for event in events:
+            async for event in self._events:
                 metadata = _get(event, "metadata")
                 usage = (
                     metadata.get("usage")
@@ -234,6 +255,280 @@ class BedrockStream(TextGenerationVendorStream):
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        self._canonical_tool_blocks = {}
+        self._canonical_ready_tool_call_ids = set()
+        self._canonical_done_tool_call_ids = set()
+        return normalize_provider_stream(
+            self._provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=self._provider_family,
+            capabilities=StreamProviderCapabilities(
+                backend=StreamProducerBackend.HOSTED,
+                provider_family=self._provider_family,
+                supports_reasoning=True,
+                supports_tool_calls=True,
+                supports_usage=True,
+                supports_terminal_events=True,
+                supports_cancellation=True,
+            ),
+            close_after_terminal=close_after_terminal,
+        )
+
+    async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
+        message_stopped = False
+        terminal_usage: LooseJsonValue | None = None
+
+        async for event in self._events:
+            metadata = _get(event, "metadata")
+            usage = (
+                metadata.get("usage") if isinstance(metadata, dict) else None
+            )
+            if usage is not None:
+                terminal_usage = cast(LooseJsonValue, usage)
+                continue
+
+            if _get(event, "messageStop"):
+                message_stopped = True
+                continue
+
+            if message_stopped:
+                continue
+
+            for provider_event in self._provider_events_from_event(event):
+                yield provider_event
+
+        if terminal_usage is not None:
+            yield StreamProviderEvent(
+                kind=StreamItemKind.USAGE_COMPLETED,
+                usage=terminal_usage,
+            )
+        yield StreamProviderEvent(kind=StreamItemKind.STREAM_COMPLETED)
+
+    def _provider_events_from_event(
+        self, event: object
+    ) -> tuple[StreamProviderEvent, ...]:
+        provider_payload = self._provider_payload(event)
+
+        content_start = _get(event, "contentBlockStart")
+        if content_start:
+            return self._content_block_start_events(
+                content_start,
+                provider_payload,
+            )
+
+        content_delta = _get(event, "contentBlockDelta")
+        if content_delta:
+            return self._content_block_delta_events(
+                content_delta,
+                provider_payload,
+            )
+
+        content_stop = _get(event, "contentBlockStop")
+        if content_stop:
+            return self._content_block_stop_events(
+                content_stop,
+                provider_payload,
+            )
+
+        return ()
+
+    def _content_block_start_events(
+        self,
+        content_start: Mapping[str, Any],
+        provider_payload: LooseJsonValue | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        block_index = content_start.get("contentBlockIndex")
+        if not isinstance(block_index, int):
+            raise ValueError("bedrock content block index must be an integer")
+        block = content_start.get("contentBlock") or {}
+        tool = block.get("toolUse") if isinstance(block, dict) else None
+        if not tool:
+            return ()
+        call_id = self._tool_call_id(tool.get("toolUseId"))
+        name = tool.get("name")
+        if name is not None and not isinstance(name, str):
+            raise ValueError("bedrock tool call name must be a string")
+        self._canonical_tool_blocks[block_index] = {
+            "id": call_id,
+            "name": name,
+            "arguments_seen": False,
+        }
+        initial = tool.get("input")
+        if initial in (None, ""):
+            return ()
+        return (
+            self._tool_argument_delta_event(
+                block_index,
+                initial,
+                provider_payload,
+            ),
+        )
+
+    def _content_block_delta_events(
+        self,
+        content_delta: Mapping[str, Any],
+        provider_payload: LooseJsonValue | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        block_index = content_delta.get("contentBlockIndex")
+        if not isinstance(block_index, int):
+            raise ValueError("bedrock content block index must be an integer")
+        delta = content_delta.get("delta") or {}
+        text_value = _string(delta.get("text"))
+        if text_value:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=text_value,
+                    provider_payload=provider_payload,
+                    provider_event_type="contentBlockDelta",
+                ),
+            )
+        reasoning_value = _string(delta.get("reasoning"))
+        if reasoning_value:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.REASONING_DELTA,
+                    text_delta=reasoning_value,
+                    visibility=StreamVisibility.PRIVATE,
+                    provider_payload=provider_payload,
+                    provider_event_type="contentBlockDelta",
+                ),
+            )
+        tool_delta = delta.get("toolUse")
+        if tool_delta:
+            fragment = tool_delta.get("input")
+            if fragment in (None, ""):
+                return ()
+            return (
+                self._tool_argument_delta_event(
+                    block_index,
+                    fragment,
+                    provider_payload,
+                ),
+            )
+        return ()
+
+    def _content_block_stop_events(
+        self,
+        content_stop: Mapping[str, Any],
+        provider_payload: LooseJsonValue | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        block_index = content_stop.get("contentBlockIndex")
+        if not isinstance(block_index, int):
+            raise ValueError("bedrock content block index must be an integer")
+        block = content_stop.get("contentBlock") or {}
+        tool = block.get("toolUse") if isinstance(block, dict) else None
+        cached = self._canonical_tool_blocks.pop(block_index, None)
+        if cached is None and not tool:
+            return ()
+        if cached is None:
+            assert tool is not None
+            cached = {
+                "id": self._tool_call_id(tool.get("toolUseId")),
+                "name": tool.get("name"),
+                "arguments_seen": False,
+            }
+        if tool:
+            name = tool.get("name")
+            if name is not None:
+                if not isinstance(name, str):
+                    raise ValueError("bedrock tool call name must be a string")
+                cached["name"] = name
+            final_input = tool.get("input")
+        else:
+            final_input = None
+        result: list[StreamProviderEvent] = []
+        if final_input not in (None, ""):
+            result.append(
+                self._tool_argument_delta_event(
+                    block_index,
+                    final_input,
+                    provider_payload,
+                    state=cached,
+                )
+            )
+        call_id = cast(str, cached["id"])
+        result.extend(
+            self._mark_tool_ready(
+                call_id,
+                cached.get("name"),
+                provider_payload,
+            )
+        )
+        result.append(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                provider_payload=provider_payload,
+                provider_event_type="contentBlockStop",
+            )
+        )
+        self._canonical_done_tool_call_ids.add(call_id)
+        return tuple(result)
+
+    def _tool_argument_delta_event(
+        self,
+        block_index: int,
+        value: object,
+        provider_payload: LooseJsonValue | None,
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> StreamProviderEvent:
+        tool_block = state or self._canonical_tool_blocks.get(block_index)
+        if tool_block is None:
+            raise ValueError("bedrock tool call is missing start event")
+        call_id = cast(str, tool_block["id"])
+        fragment = value if isinstance(value, str) else dumps(value)
+        tool_block["arguments_seen"] = True
+        return StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            correlation=StreamItemCorrelation(tool_call_id=call_id),
+            text_delta=fragment,
+            provider_payload=provider_payload,
+            provider_event_type="contentBlockDelta",
+        )
+
+    def _mark_tool_ready(
+        self,
+        call_id: str,
+        name: object | None,
+        provider_payload: LooseJsonValue | None,
+    ) -> tuple[StreamProviderEvent, ...]:
+        if call_id in self._canonical_done_tool_call_ids:
+            raise ValueError("bedrock tool call already completed")
+        if call_id in self._canonical_ready_tool_call_ids:
+            return ()
+        self._canonical_ready_tool_call_ids.add(call_id)
+        return (
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_READY,
+                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                data={"name": name} if isinstance(name, str) else {},
+                provider_payload=provider_payload,
+                provider_event_type="contentBlockStop",
+            ),
+        )
+
+    @staticmethod
+    def _tool_call_id(value: object) -> str:
+        if isinstance(value, str) and value.strip():
+            return value
+        raise ValueError("bedrock tool call id must be a non-empty string")
+
+    @staticmethod
+    def _provider_payload(event: object) -> LooseJsonValue | None:
+        return dict(event) if isinstance(event, dict) else None
 
 
 class BedrockClient(TextGenerationVendor):

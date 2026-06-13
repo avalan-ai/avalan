@@ -14,8 +14,19 @@ from .....entities import (
 )
 from .....model.provider import ProviderFamily, provider_string_option
 from .....model.response.text import TextGenerationResponse
-from .....model.stream import TextGenerationSingleStream
+from .....model.stream import (
+    CanonicalStreamItem,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+    StreamVisibility,
+    TextGenerationSingleStream,
+    normalize_provider_stream,
+)
 from .....tool.manager import ToolManager
+from .....types import LooseJsonValue
 from .....utils import to_json, tool_call_diagnostic_payload
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
@@ -25,9 +36,10 @@ from . import (
     TextGenerationVendorModel,
 )
 
+from collections.abc import AsyncIterator, Mapping
 from importlib import import_module
 from mimetypes import guess_type
-from typing import Any, AsyncIterator, cast
+from typing import Any, cast
 from urllib.parse import urlparse
 
 
@@ -40,7 +52,23 @@ Omit: type[Any] = _OmitPlaceholder
 
 class OpenAIStream(TextGenerationVendorStream):
     _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
+    _TEXT_DONE_EVENTS = {"response.text.done", "response.output_text.done"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
+    _REASONING_DONE_EVENTS = {"response.reasoning_text.done"}
+    _TOOL_ARGUMENT_DELTA_EVENTS = {
+        "response.custom_tool_call_input.delta",
+        "response.function_call_arguments.delta",
+    }
+    _TOOL_ARGUMENT_DONE_EVENTS = {
+        "response.custom_tool_call_input.done",
+        "response.function_call_arguments.done",
+    }
+    _ERROR_EVENTS = {"response.error", "response.failed", "error"}
+    _CANCELLED_EVENTS = {"response.cancelled", "response.canceled"}
+    _stream: AsyncIterator[Any]
+    _canonical_tool_calls: dict[str, dict[str, str | bool | None]]
+    _canonical_ready_tool_call_ids: set[str]
+    _canonical_done_tool_call_ids: set[str]
 
     def __init__(
         self,
@@ -48,11 +76,16 @@ class OpenAIStream(TextGenerationVendorStream):
         *,
         provider_family: ProviderFamily | str = ProviderFamily.OPENAI,
     ) -> None:
+        self._stream = stream
+        self._canonical_tool_calls = {}
+        self._canonical_ready_tool_call_ids = set()
+        self._canonical_done_tool_call_ids = set()
+
         async def generator() -> AsyncIterator[Token | TokenDetail | str]:
             tool_calls: dict[str, dict[str, str | list[str] | None]] = {}
             terminal_usage: object | None = None
 
-            async for event in stream:
+            async for event in self._stream:
                 etype = OpenAIClient._response_field(event, "type")
 
                 if etype == "response.completed":
@@ -82,7 +115,9 @@ class OpenAIStream(TextGenerationVendorStream):
                     etype == "response.custom_tool_call_input.delta"
                     or etype == "response.function_call_arguments.delta"
                 ):
-                    call_id = getattr(event, "id", None)
+                    call_id = self._tool_call_id_from_event(
+                        event, required=False
+                    )
                     delta = getattr(event, "delta", None)
                     if isinstance(call_id, str) and isinstance(delta, str):
                         tc = tool_calls.setdefault(
@@ -108,12 +143,11 @@ class OpenAIStream(TextGenerationVendorStream):
 
                 if etype == "response.output_item.done":
                     item = getattr(event, "item", None)
-                    call_id_value = getattr(item, "id", None) if item else None
-                    call_id = (
-                        call_id_value
-                        if isinstance(call_id_value, str)
-                        else None
-                    )
+                    call_id = self._tool_call_id_from_item(item)
+                    if call_id is None:
+                        call_id = self._tool_call_id_from_event(
+                            event, required=False
+                        )
                     cached = (
                         tool_calls.pop(call_id, None)
                         if isinstance(call_id, str)
@@ -151,6 +185,398 @@ class OpenAIStream(TextGenerationVendorStream):
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        self._canonical_tool_calls = {}
+        self._canonical_ready_tool_call_ids = set()
+        self._canonical_done_tool_call_ids = set()
+        return normalize_provider_stream(
+            self._provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=self._provider_family,
+            capabilities=StreamProviderCapabilities(
+                backend=StreamProducerBackend.HOSTED,
+                provider_family=self._provider_family,
+                supports_reasoning=True,
+                supports_tool_calls=True,
+                supports_usage=True,
+                supports_terminal_events=True,
+                supports_cancellation=True,
+            ),
+            close_after_terminal=close_after_terminal,
+        )
+
+    async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
+        async for event in self._stream:
+            for provider_event in self._provider_events_from_event(event):
+                yield provider_event
+
+    def _provider_events_from_event(
+        self, event: object
+    ) -> tuple[StreamProviderEvent, ...]:
+        event_type_value = OpenAIClient._response_field(event, "type")
+        if event_type_value is not None and not isinstance(
+            event_type_value, str
+        ):
+            raise ValueError("response event type must be a string")
+        event_type = event_type_value
+        provider_payload = self._provider_payload(event)
+        error = OpenAIClient._response_field(
+            event, "error"
+        ) or OpenAIClient._response_field(
+            OpenAIClient._response_field(event, "response"), "error"
+        )
+
+        if event_type in self._CANCELLED_EVENTS:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_CANCELLED,
+                    data=self._response_event_data(event),
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+        if event_type in self._ERROR_EVENTS or error is not None:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_ERRORED,
+                    data=self._response_error_data(error or event),
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+        if event_type == "response.completed":
+            return self._completion_events(event, provider_payload, event_type)
+        if event_type in self._TEXT_DELTA_EVENTS:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=self._response_string_field(
+                        event, "delta", event_type
+                    ),
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+        if event_type in self._TEXT_DONE_EVENTS:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DONE,
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+        if event_type in self._REASONING_DELTA_EVENTS:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.REASONING_DELTA,
+                    text_delta=self._response_string_field(
+                        event, "delta", event_type
+                    ),
+                    visibility=StreamVisibility.PRIVATE,
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+        if event_type in self._REASONING_DONE_EVENTS:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.REASONING_DONE,
+                    visibility=StreamVisibility.PRIVATE,
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                ),
+            )
+        if event_type == "response.output_item.added":
+            self._record_output_item(event)
+            return ()
+        if event_type in self._TOOL_ARGUMENT_DELTA_EVENTS:
+            return self._tool_argument_delta_events(
+                event, provider_payload, event_type
+            )
+        if event_type in self._TOOL_ARGUMENT_DONE_EVENTS:
+            return self._tool_ready_events(event, provider_payload, event_type)
+        if event_type == "response.output_item.done":
+            return self._tool_done_events(event, provider_payload, event_type)
+        return ()
+
+    def _completion_events(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        response = OpenAIClient._response_field(event, "response")
+        usage = OpenAIClient._response_field(response, "usage")
+        result: list[StreamProviderEvent] = []
+        if usage is not None:
+            result.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    usage=cast(LooseJsonValue, usage),
+                    provider_payload=provider_payload,
+                    provider_event_type=event_type,
+                )
+            )
+        result.append(
+            StreamProviderEvent(
+                kind=StreamItemKind.STREAM_COMPLETED,
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            )
+        )
+        return tuple(result)
+
+    def _record_output_item(self, event: object) -> None:
+        item = OpenAIClient._response_field(event, "item")
+        call_id = self._tool_call_id_from_item(item)
+        name = self._tool_call_name_from_item(item)
+        if call_id is None:
+            return
+        self._canonical_tool_calls[call_id] = {
+            "name": name,
+            "arguments_seen": False,
+        }
+
+    def _tool_argument_delta_events(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        call_id = self._tool_call_id_from_event(event)
+        assert call_id is not None
+        delta = self._response_string_field(event, "delta", event_type)
+        state = self._canonical_tool_calls.setdefault(
+            call_id,
+            {"name": None, "arguments_seen": False},
+        )
+        state["arguments_seen"] = True
+        return (
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                text_delta=delta,
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            ),
+        )
+
+    def _tool_ready_events(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        call_id = self._tool_call_id_from_event(event)
+        assert call_id is not None
+        return self._mark_tool_ready(call_id, provider_payload, event_type)
+
+    def _tool_done_events(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        item = OpenAIClient._response_field(event, "item")
+        call_id = self._tool_call_id_from_item(item)
+        if call_id is None:
+            call_id = self._tool_call_id_from_event(event, required=False)
+        if call_id is None:
+            return ()
+        if call_id in self._canonical_done_tool_call_ids:
+            raise ValueError("response tool call already completed")
+        state = self._canonical_tool_calls.setdefault(
+            call_id,
+            {
+                "name": self._tool_call_name_from_item(item),
+                "arguments_seen": False,
+            },
+        )
+        name = self._tool_call_name_from_item(item)
+        if name is not None:
+            state["name"] = name
+
+        result = list(
+            self._tool_argument_from_done_item(
+                item, call_id, provider_payload, event_type
+            )
+        )
+        result.extend(
+            self._mark_tool_ready(call_id, provider_payload, event_type)
+        )
+        result.append(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            )
+        )
+        self._canonical_done_tool_call_ids.add(call_id)
+        return tuple(result)
+
+    def _tool_argument_from_done_item(
+        self,
+        item: object,
+        call_id: str,
+        provider_payload: LooseJsonValue | None,
+        event_type: str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        state = self._canonical_tool_calls.setdefault(
+            call_id,
+            {"name": None, "arguments_seen": False},
+        )
+        if state["arguments_seen"]:
+            return ()
+        arguments = self._tool_call_arguments_from_item(item)
+        if arguments is None:
+            return ()
+        state["arguments_seen"] = True
+        return (
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                text_delta=arguments,
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            ),
+        )
+
+    def _mark_tool_ready(
+        self,
+        call_id: str,
+        provider_payload: LooseJsonValue | None,
+        event_type: str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        if call_id in self._canonical_ready_tool_call_ids:
+            return ()
+        self._canonical_ready_tool_call_ids.add(call_id)
+        state = self._canonical_tool_calls.setdefault(
+            call_id,
+            {"name": None, "arguments_seen": False},
+        )
+        return (
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_READY,
+                correlation=StreamItemCorrelation(tool_call_id=call_id),
+                data={"name": state.get("name")},
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            ),
+        )
+
+    def _tool_call_id_from_event(
+        self, event: object, *, required: bool = True
+    ) -> str | None:
+        for field_name in ("id", "call_id", "item_id"):
+            value = OpenAIClient._response_field(event, field_name)
+            if value is None:
+                continue
+            if isinstance(value, str) and value.strip():
+                return value
+            raise ValueError(
+                "response tool call id must be a non-empty string"
+            )
+        if required:
+            raise ValueError("response tool call id is missing")
+        return None
+
+    def _tool_call_id_from_item(self, item: object) -> str | None:
+        if item is None:
+            return None
+        custom = OpenAIClient._response_field(item, "custom_tool_call")
+        for value in (
+            OpenAIClient._response_field(custom, "id"),
+            OpenAIClient._response_field(item, "id"),
+            OpenAIClient._response_field(item, "call_id"),
+        ):
+            if value is None:
+                continue
+            if isinstance(value, str) and value.strip():
+                return value
+            raise ValueError(
+                "response tool call id must be a non-empty string"
+            )
+        return None
+
+    def _tool_call_name_from_item(self, item: object) -> str | None:
+        if item is None:
+            return None
+        custom = OpenAIClient._response_field(item, "custom_tool_call")
+        function = OpenAIClient._response_field(item, "function") or item
+        for value in (
+            OpenAIClient._response_field(custom, "name"),
+            OpenAIClient._response_field(function, "name"),
+        ):
+            if value is None:
+                continue
+            if isinstance(value, str):
+                return value
+            raise ValueError("response tool call name must be a string")
+        return None
+
+    def _tool_call_arguments_from_item(self, item: object) -> str | None:
+        if item is None:
+            return None
+        custom = OpenAIClient._response_field(item, "custom_tool_call")
+        for value in (
+            OpenAIClient._response_field(item, "arguments"),
+            OpenAIClient._response_field(custom, "input"),
+        ):
+            if value is None:
+                continue
+            if isinstance(value, str):
+                return value
+            if isinstance(value, Mapping):
+                return to_json(value)
+            raise ValueError("response tool call arguments must be a string")
+        return None
+
+    @staticmethod
+    def _response_string_field(
+        event: object, field_name: str, event_type: str
+    ) -> str:
+        value = OpenAIClient._response_field(event, field_name)
+        if isinstance(value, str):
+            return value
+        raise ValueError(f"{event_type} {field_name} must be a string")
+
+    @staticmethod
+    def _response_event_data(event: object) -> LooseJsonValue:
+        reason = OpenAIClient._response_field(event, "reason")
+        if isinstance(reason, str):
+            return {"reason": reason}
+        return {}
+
+    @staticmethod
+    def _response_error_data(error: object) -> LooseJsonValue:
+        if isinstance(error, Mapping):
+            return {"error": dict(error)}
+        message = OpenAIClient._response_field(error, "message")
+        if isinstance(message, str):
+            return {"error": {"message": message}}
+        return {"error": {"message": str(error)}}
+
+    @staticmethod
+    def _provider_payload(event: object) -> LooseJsonValue | None:
+        if isinstance(event, Mapping):
+            return dict(event)
+        model_dump = getattr(event, "model_dump", None)
+        if callable(model_dump):
+            payload = model_dump(mode="json")
+            if isinstance(payload, Mapping):
+                return dict(payload)
+        return None
 
 
 class OpenAIClient(TextGenerationVendor):

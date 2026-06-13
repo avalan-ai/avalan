@@ -352,6 +352,44 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(await string_response.to_str(), output)
 
+    async def test_canonical_stream_matches_to_str_for_local_response(
+        self,
+    ) -> None:
+        async def gen():
+            yield Token(token="Hel")
+            yield "lo"
+
+        stream_response = _response(lambda **_: gen())
+        items = tuple(
+            [
+                item
+                async for item in stream_response.canonical_stream(
+                    stream_session_id=_STREAM_SESSION_ID,
+                    run_id=_RUN_ID,
+                    turn_id=_TURN_ID,
+                    provider_family="transformers",
+                )
+            ]
+        )
+
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, "Hello")
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            {item.provider_family for item in items}, {"transformers"}
+        )
+        self.assertEqual(await _response(lambda **_: gen()).to_str(), "Hello")
+
     async def test_reasoning_trace_preserves_parsed_marker_whitespace(
         self,
     ) -> None:

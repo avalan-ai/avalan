@@ -117,6 +117,24 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         await manager.trigger(Event(type=EventType.END))
         self.assertEqual(called, [EventType.START])
 
+    def test_token_events_require_subscriber(self):
+        manager = EventManager()
+
+        self.assertFalse(manager.should_emit(EventType.TOKEN_GENERATED))
+        self.assertTrue(manager.should_emit(EventType.START))
+
+        def listener(event: Event):
+            _ = event
+
+        manager.add_listener(listener, [EventType.TOKEN_GENERATED])
+        self.assertTrue(manager.should_emit(EventType.TOKEN_GENERATED))
+        manager.remove_listener(listener, [EventType.TOKEN_GENERATED])
+        self.assertFalse(manager.should_emit(EventType.TOKEN_GENERATED))
+
+    def test_token_id_enrichment_is_explicit(self):
+        self.assertFalse(EventManager().enrich_token_ids)
+        self.assertTrue(EventManager(enrich_token_ids=True).enrich_token_ids)
+
     async def test_listen_without_stop_signal(self):
         manager = EventManager()
         events: list[Event] = []

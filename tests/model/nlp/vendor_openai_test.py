@@ -31,6 +31,12 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.model.stream import (
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+    accumulate_canonical_stream_items,
+)
 from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
@@ -641,6 +647,637 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
+    async def test_canonical_stream_maps_responses_events(self):
+        usage = {
+            "input_tokens": 2,
+            "output_tokens": 3,
+            "total_tokens": 5,
+        }
+        events = [
+            SimpleNamespace(
+                type="response.reasoning_text.delta", delta="plan "
+            ),
+            SimpleNamespace(type="response.reasoning_text.done"),
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    id="call-1",
+                    custom_tool_call=SimpleNamespace(
+                        id="call-1", name="pkg.lookup"
+                    ),
+                ),
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="call-1",
+                delta='{"city"',
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="call-1",
+                delta=':"Paris"}',
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.done",
+                item_id="call-1",
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(id="call-1"),
+            ),
+            SimpleNamespace(type="response.output_text.delta", delta="hi "),
+            SimpleNamespace(type="response.output_text.done"),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(usage=usage),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual([item.sequence for item in items], list(range(12)))
+        self.assertEqual({item.provider_family for item in items}, {"openai"})
+        self.assertEqual(
+            items[0].metadata["capabilities"]["provider_family"], "openai"
+        )
+        self.assertIs(items[1].channel, StreamChannel.REASONING)
+        self.assertEqual(
+            items[1].provider_event_type, "response.reasoning_text.delta"
+        )
+        self.assertEqual(
+            {
+                item.correlation.tool_call_id
+                for item in items
+                if item.channel is StreamChannel.TOOL_CALL
+            },
+            {"call-1"},
+        )
+        self.assertEqual(items[5].data, {"name": "pkg.lookup"})
+
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, "hi ")
+        self.assertEqual(accumulator.reasoning_text, "plan ")
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"call-1": '{"city":"Paris"}'},
+        )
+        self.assertEqual(accumulator.final_usage, usage)
+        self.assertIs(
+            accumulator.terminal_outcome,
+            StreamTerminalOutcome.COMPLETED,
+        )
+
+    async def test_canonical_stream_maps_done_function_call_arguments(self):
+        events = [
+            {
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "function_call",
+                    "id": "call-2",
+                    "name": "pkg.search",
+                    "arguments": '{"q": "avalan"}',
+                },
+            }
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+                close_after_terminal=False,
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"call-2": '{"q": "avalan"}'},
+        )
+        self.assertEqual(items[2].data, {"name": "pkg.search"})
+        self.assertEqual(items[1].provider_payload, events[0])
+
+    async def test_canonical_stream_preserves_done_item_provider_payload(self):
+        payload = {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "id": "call-2",
+                "name": "pkg.search",
+                "arguments": '{"q": "avalan"}',
+            },
+        }
+        modes: list[str] = []
+
+        class ModelDumpEvent:
+            type = "response.output_item.done"
+            item = SimpleNamespace(
+                type="function_call",
+                id="call-2",
+                name="pkg.search",
+                arguments='{"q": "avalan"}',
+            )
+
+            def model_dump(self, *, mode: str) -> dict[str, object]:
+                modes.append(mode)
+                return payload
+
+        stream = self.mod.OpenAIStream(AsyncIter([ModelDumpEvent()]))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+                close_after_terminal=False,
+            )
+        ]
+
+        self.assertEqual(modes, ["json"])
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
+        )
+        self.assertEqual(items[1].provider_payload, payload)
+        self.assertEqual(items[2].provider_payload, payload)
+        self.assertEqual(items[3].provider_payload, payload)
+
+    async def test_canonical_stream_ignores_non_object_provider_payload(self):
+        class ModelDumpEvent:
+            type = "response.output_text.delta"
+            delta = "hi"
+
+            def model_dump(self, *, mode: str) -> object:
+                return ["not", "an", "event", mode]
+
+        stream = self.mod.OpenAIStream(AsyncIter([ModelDumpEvent()]))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+                close_after_terminal=False,
+            )
+        ]
+
+        self.assertEqual(items[1].text_delta, "hi")
+        self.assertIsNone(items[1].provider_payload)
+
+    async def test_canonical_stream_uses_response_item_id_for_function_call(
+        self,
+    ):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="item-1",
+                    call_id="call-1",
+                    name="pkg.search",
+                ),
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="item-1",
+                delta='{"q"',
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="item-1",
+                delta=':"avalan"}',
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="item-1",
+                    call_id="call-1",
+                    name="pkg.search",
+                    arguments='{"q":"avalan"}',
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+                close_after_terminal=False,
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
+        )
+        self.assertEqual(
+            {
+                item.correlation.tool_call_id
+                for item in items
+                if item.channel is StreamChannel.TOOL_CALL
+            },
+            {"item-1"},
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {"item-1": '{"q":"avalan"}'},
+        )
+        self.assertEqual(items[3].data, {"name": "pkg.search"})
+
+    async def test_canonical_stream_rejects_mismatched_function_call_item_id(
+        self,
+    ):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="item-1",
+                    call_id="call-1",
+                    name="pkg.search",
+                ),
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="item-1",
+                delta='{"q":"avalan"}',
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="item-2",
+                    call_id="call-1",
+                    name="pkg.search",
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        error_data = items[4].data
+        assert isinstance(error_data, dict)
+        self.assertEqual(error_data["error_type"], "StreamValidationError")
+        self.assertIn("item-1", error_data["message"])
+
+    async def test_canonical_stream_handles_empty_responses_control_events(
+        self,
+    ):
+        events = [
+            SimpleNamespace(type="response.in_progress"),
+            SimpleNamespace(type="response.output_item.added"),
+            SimpleNamespace(type="response.output_item.added", item=None),
+            SimpleNamespace(
+                type="response.output_item.added", item=SimpleNamespace()
+            ),
+            SimpleNamespace(type="response.output_item.done"),
+            SimpleNamespace(type="response.output_item.done", id="call-1"),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(id="call-2"),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            {
+                item.correlation.tool_call_id
+                for item in items
+                if item.channel is StreamChannel.TOOL_CALL
+            },
+            {"call-1", "call-2"},
+        )
+        self.assertEqual(items[1].data, {"name": None})
+        self.assertEqual(items[3].data, {"name": None})
+
+    async def test_canonical_stream_maps_custom_done_mapping_input(self):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    custom_tool_call=SimpleNamespace(
+                        id="call-3",
+                        name="pkg.custom",
+                        input={"x": 1},
+                    )
+                ),
+            )
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+                close_after_terminal=False,
+            )
+        ]
+
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(
+            loads(accumulator.tool_call_arguments["call-3"]), {"x": 1}
+        )
+        self.assertEqual(items[2].data, {"name": "pkg.custom"})
+
+    async def test_canonical_stream_maps_responses_errors_and_cancellation(
+        self,
+    ):
+        class OpaqueError:
+            def __str__(self):
+                return "opaque response"
+
+        cases = (
+            (
+                [
+                    SimpleNamespace(
+                        type="response.failed", error={"code": "bad"}
+                    )
+                ],
+                StreamItemKind.STREAM_ERRORED,
+                StreamTerminalOutcome.ERRORED,
+                {"error": {"code": "bad"}},
+            ),
+            (
+                [
+                    SimpleNamespace(
+                        type="response.cancelled", reason="disconnect"
+                    )
+                ],
+                StreamItemKind.STREAM_CANCELLED,
+                StreamTerminalOutcome.CANCELLED,
+                {"reason": "disconnect"},
+            ),
+            (
+                [SimpleNamespace(type="response.cancelled")],
+                StreamItemKind.STREAM_CANCELLED,
+                StreamTerminalOutcome.CANCELLED,
+                {},
+            ),
+            (
+                [
+                    SimpleNamespace(
+                        type="response.failed",
+                        error=SimpleNamespace(message="bad response"),
+                    )
+                ],
+                StreamItemKind.STREAM_ERRORED,
+                StreamTerminalOutcome.ERRORED,
+                {"error": {"message": "bad response"}},
+            ),
+            (
+                [SimpleNamespace(type="response.failed", error=OpaqueError())],
+                StreamItemKind.STREAM_ERRORED,
+                StreamTerminalOutcome.ERRORED,
+                {"error": {"message": "opaque response"}},
+            ),
+        )
+
+        for events, kind, outcome, data in cases:
+            with self.subTest(kind=kind):
+                stream = self.mod.OpenAIStream(AsyncIter(events))
+
+                items = [
+                    item
+                    async for item in stream.canonical_stream(
+                        stream_session_id="responses-stream",
+                        run_id="run-1",
+                        turn_id="turn-1",
+                    )
+                ]
+
+                self.assertEqual(
+                    [item.kind for item in items],
+                    [
+                        StreamItemKind.STREAM_STARTED,
+                        kind,
+                        StreamItemKind.STREAM_CLOSED,
+                    ],
+                )
+                self.assertEqual(items[1].data, data)
+                self.assertIs(items[1].terminal_outcome, outcome)
+
+    async def test_canonical_stream_maps_malformed_responses_events_to_error(
+        self,
+    ):
+        cases = (
+            (SimpleNamespace(type=3), "type"),
+            (
+                SimpleNamespace(
+                    type="response.output_text.delta", delta=object()
+                ),
+                "delta",
+            ),
+            (
+                SimpleNamespace(
+                    type="response.function_call_arguments.delta",
+                    delta="{}",
+                ),
+                "id is missing",
+            ),
+            (
+                SimpleNamespace(
+                    type="response.function_call_arguments.delta",
+                    item_id="",
+                    delta="{}",
+                ),
+                "id",
+            ),
+            (
+                SimpleNamespace(
+                    type="response.output_item.added",
+                    item=SimpleNamespace(
+                        id=object(),
+                        custom_tool_call=SimpleNamespace(id=object()),
+                    ),
+                ),
+                "id",
+            ),
+            (
+                SimpleNamespace(
+                    type="response.output_item.added",
+                    item=SimpleNamespace(
+                        custom_tool_call=SimpleNamespace(
+                            id="call-1", name=object()
+                        )
+                    ),
+                ),
+                "name",
+            ),
+            (
+                SimpleNamespace(
+                    type="response.output_item.done",
+                    item=SimpleNamespace(
+                        type="function_call",
+                        id="call-1",
+                        arguments=object(),
+                    ),
+                ),
+                "arguments",
+            ),
+        )
+
+        for event, message in cases:
+            with self.subTest(message=message):
+                stream = self.mod.OpenAIStream(AsyncIter([event]))
+
+                items = [
+                    item
+                    async for item in stream.canonical_stream(
+                        stream_session_id="responses-stream",
+                        run_id="run-1",
+                        turn_id="turn-1",
+                    )
+                ]
+
+                self.assertEqual(
+                    [item.kind for item in items],
+                    [
+                        StreamItemKind.STREAM_STARTED,
+                        StreamItemKind.STREAM_ERRORED,
+                        StreamItemKind.STREAM_CLOSED,
+                    ],
+                )
+                error_data = items[1].data
+                assert isinstance(error_data, dict)
+                self.assertEqual(error_data["error_type"], "ValueError")
+                self.assertIn(message, error_data["message"])
+
+    async def test_canonical_stream_maps_duplicate_tool_done_to_error(self):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(id="call-1"),
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(id="call-1"),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        error_data = items[3].data
+        assert isinstance(error_data, dict)
+        self.assertEqual(error_data["error_type"], "ValueError")
+        self.assertIn("already completed", error_data["message"])
+
     async def test_function_call_events(self):
         events = [
             SimpleNamespace(
@@ -677,6 +1314,70 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(t4.call.name, "pkg__f")
         self.assertEqual(t4.call.arguments, {"p": 1})
         with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
+    async def test_function_call_events_accept_item_id_deltas(self):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    id="item-4",
+                    custom_tool_call=SimpleNamespace(
+                        id="item-4", name="pkg__search"
+                    ),
+                ),
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="item-4",
+                delta='{"q"',
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="item-4",
+                delta=':"avalan"}',
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="item-4",
+                    call_id="call-4",
+                    name="pkg__search",
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        first = await stream.__anext__()
+        second = await stream.__anext__()
+        final = await stream.__anext__()
+
+        self.assertIsInstance(first, ToolCallToken)
+        self.assertEqual(first.token, '{"q"')
+        self.assertIsInstance(second, ToolCallToken)
+        self.assertEqual(second.token, ':"avalan"}')
+        self.assertIsInstance(final, ToolCallToken)
+        self.assertEqual(final.call.id, "item-4")
+        self.assertEqual(final.call.name, "pkg__search")
+        self.assertEqual(final.call.arguments, {"q": "avalan"})
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
+    async def test_function_call_events_reject_invalid_delta_id(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.function_call_arguments.delta",
+                        item_id="",
+                        delta="{}",
+                    )
+                ]
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "id"):
             await stream.__anext__()
 
     async def test_provider_argument_deltas_match_serialized_call(self):
@@ -1064,6 +1765,7 @@ class VendorClientsTestCase(TestCase):
             base_url="https://openrouter.ai/api/v1", api_key="k"
         )
         self.assertIsInstance(client, mod.OpenRouterClient)
+        self.assertEqual(client._usage_provider_family, "openai_compatible")
         with patch.object(mod, "OpenRouterClient") as ClientMock:
             settings = TransformerEngineSettings(
                 auto_load_model=False,

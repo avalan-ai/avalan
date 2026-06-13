@@ -2,16 +2,19 @@ from ..entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCall,
     ToolCallToken,
 )
 from ..types import LooseJsonValue
 from .provider import ProviderFamily, provider_family_value
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from asyncio import CancelledError
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from json import JSONDecodeError, loads
 from typing import Any, AsyncIterator, cast
 
 
@@ -107,8 +110,64 @@ class StreamLegacySurfaceClassification(StrEnum):
     TEMPORARY_INGESTION_SHIM = "temporary_ingestion_shim"
 
 
+class StreamProducerBackend(StrEnum):
+    HOSTED = "hosted"
+    LOCAL = "local"
+
+
 class StreamValidationError(ValueError):
     pass
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamProviderCapabilities:
+    backend: StreamProducerBackend
+    provider_family: ProviderFamily | str | None = None
+    supports_reasoning: bool = False
+    supports_tool_calls: bool = False
+    supports_usage: bool = False
+    supports_terminal_events: bool = False
+    supports_cancellation: bool = False
+    max_queue_depth: int | None = None
+    max_item_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.backend, StreamProducerBackend)
+        for field_name, value in (
+            ("supports_reasoning", self.supports_reasoning),
+            ("supports_tool_calls", self.supports_tool_calls),
+            ("supports_usage", self.supports_usage),
+            ("supports_terminal_events", self.supports_terminal_events),
+            ("supports_cancellation", self.supports_cancellation),
+        ):
+            assert isinstance(value, bool), f"{field_name} must be a boolean"
+        if self.provider_family is not None:
+            provider_family_value(self.provider_family)
+        if self.max_queue_depth is not None:
+            _assert_positive_int(self.max_queue_depth, "max_queue_depth")
+        if self.max_item_bytes is not None:
+            _assert_positive_int(self.max_item_bytes, "max_item_bytes")
+
+    @property
+    def normalized_provider_family(self) -> str | None:
+        return provider_family_value(self.provider_family)
+
+    def to_metadata(self) -> dict[str, LooseJsonValue]:
+        result: dict[str, LooseJsonValue] = {
+            "backend": self.backend.value,
+            "supports_reasoning": self.supports_reasoning,
+            "supports_tool_calls": self.supports_tool_calls,
+            "supports_usage": self.supports_usage,
+            "supports_terminal_events": self.supports_terminal_events,
+            "supports_cancellation": self.supports_cancellation,
+        }
+        if self.normalized_provider_family is not None:
+            result["provider_family"] = self.normalized_provider_family
+        if self.max_queue_depth is not None:
+            result["max_queue_depth"] = self.max_queue_depth
+        if self.max_item_bytes is not None:
+            result["max_item_bytes"] = self.max_item_bytes
+        return result
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -204,6 +263,35 @@ class StreamItemCorrelation:
             if value is not None:
                 result[field_name] = value
         return result
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamProviderEvent:
+    kind: StreamItemKind
+    text_delta: str | None = None
+    data: LooseJsonValue | None = None
+    usage: LooseJsonValue | None = None
+    correlation: StreamItemCorrelation = field(
+        default_factory=StreamItemCorrelation
+    )
+    visibility: StreamVisibility = StreamVisibility.PUBLIC
+    metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
+    provider_payload: LooseJsonValue | None = None
+    provider_event_type: str | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.kind, StreamItemKind)
+        assert self.kind is not StreamItemKind.STREAM_STARTED
+        assert self.kind is not StreamItemKind.STREAM_CLOSED
+        assert isinstance(self.correlation, StreamItemCorrelation)
+        assert isinstance(self.visibility, StreamVisibility)
+        assert isinstance(self.metadata, dict), "metadata must be a dict"
+        if self.text_delta is not None:
+            assert isinstance(self.text_delta, str)
+        if self.provider_event_type is not None:
+            _assert_non_empty_string(
+                self.provider_event_type, "provider_event_type"
+            )
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -972,7 +1060,8 @@ def validate_canonical_stream_items(
     tool_call_done: set[str] = set()
     tool_execution_terminal: set[str] = set()
 
-    for item in result:
+    for index, item in enumerate(result):
+        _validate_stream_start(item, index == 0)
         _validate_sequence_identity(item, session_id, run_id, turn_id)
         last_sequence = _validate_sequence_order(item, last_sequence)
         _validate_parent_sequence(item)
@@ -1003,8 +1092,8 @@ def validate_canonical_stream_items(
             if usage_completed:
                 raise StreamValidationError("duplicate completed usage item")
             usage_completed = True
-        elif usage_completed and item.channel is StreamChannel.USAGE:
-            raise StreamValidationError("usage item emitted after final usage")
+        else:
+            _validate_post_final_usage_item(item, usage_completed)
 
         if outcome is not None:
             if (
@@ -1020,6 +1109,19 @@ def validate_canonical_stream_items(
     if terminal is None:
         raise StreamValidationError("stream missing terminal outcome")
     return result
+
+
+def _validate_stream_start(
+    item: CanonicalStreamItem,
+    is_first: bool,
+) -> None:
+    if is_first:
+        if item.kind is not StreamItemKind.STREAM_STARTED:
+            raise StreamValidationError(
+                "stream must start with stream.started"
+            )
+    elif item.kind is StreamItemKind.STREAM_STARTED:
+        raise StreamValidationError("stream started more than once")
 
 
 def _validate_sequence_identity(
@@ -1049,6 +1151,24 @@ def _validate_parent_sequence(item: CanonicalStreamItem) -> None:
     parent_sequence = item.correlation.parent_sequence
     if parent_sequence is not None and parent_sequence >= item.sequence:
         raise StreamValidationError("parent sequence must precede item")
+
+
+def _validate_post_final_usage_item(
+    item: CanonicalStreamItem,
+    usage_completed: bool,
+) -> None:
+    if not usage_completed:
+        return
+    if item.channel is StreamChannel.USAGE:
+        raise StreamValidationError("usage item emitted after final usage")
+    if (
+        item.kind is not StreamItemKind.STREAM_DIAGNOSTIC
+        and not item.is_stream_terminal
+        and item.kind is not StreamItemKind.STREAM_CLOSED
+    ):
+        raise StreamValidationError(
+            "semantic stream item emitted after final usage"
+        )
 
 
 def _validate_answer_boundary(
@@ -1199,11 +1319,15 @@ class CanonicalStreamAccumulator:
         return validate_canonical_stream_items(self._items)
 
     def _validate_next(self, item: CanonicalStreamItem) -> None:
-        if self._session_id is None:
+        is_first = self._session_id is None
+        _validate_stream_start(item, is_first)
+
+        if is_first:
             self._session_id = item.stream_session_id
             self._run_id = item.run_id
             self._turn_id = item.turn_id
         else:
+            assert self._session_id is not None
             assert self._run_id is not None
             assert self._turn_id is not None
             _validate_sequence_identity(
@@ -1213,9 +1337,7 @@ class CanonicalStreamAccumulator:
                 self._turn_id,
             )
 
-        self._last_sequence = _validate_sequence_order(
-            item, self._last_sequence
-        )
+        last_sequence = _validate_sequence_order(item, self._last_sequence)
         _validate_parent_sequence(item)
 
         if self._closed:
@@ -1224,6 +1346,7 @@ class CanonicalStreamAccumulator:
         outcome = stream_terminal_outcome_for_kind(item.kind)
         if self._terminal_outcome is not None:
             if item.kind is StreamItemKind.STREAM_CLOSED:
+                self._last_sequence = last_sequence
                 return
             if outcome is not None:
                 raise StreamValidationError("duplicate stream terminal item")
@@ -1252,14 +1375,15 @@ class CanonicalStreamAccumulator:
                     "completed stream missing final usage"
                 )
             self._terminal_outcome = outcome
+        self._last_sequence = last_sequence
 
     def _validate_usage(self, item: CanonicalStreamItem) -> None:
         if item.kind is StreamItemKind.USAGE_COMPLETED:
             if self._usage_completed:
                 raise StreamValidationError("duplicate completed usage item")
             self._usage_completed = True
-        elif self._usage_completed and item.channel is StreamChannel.USAGE:
-            raise StreamValidationError("usage item emitted after final usage")
+        else:
+            _validate_post_final_usage_item(item, self._usage_completed)
 
     def _accumulate(self, item: CanonicalStreamItem) -> None:
         if item.kind is StreamItemKind.ANSWER_DELTA:
@@ -1309,6 +1433,877 @@ def accumulate_canonical_stream_items(
     return accumulator
 
 
+async def normalize_provider_stream(
+    events: AsyncIterable[StreamProviderEvent],
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+    provider_family: ProviderFamily | str | None = None,
+    capabilities: StreamProviderCapabilities | None = None,
+    close_after_terminal: bool = True,
+) -> AsyncIterator[CanonicalStreamItem]:
+    assert isinstance(events, AsyncIterable)
+    _assert_non_empty_string(stream_session_id, "stream_session_id")
+    _assert_non_empty_string(run_id, "run_id")
+    _assert_non_empty_string(turn_id, "turn_id")
+    if provider_family is not None:
+        provider_family = provider_family_value(provider_family)
+    if capabilities is not None:
+        assert isinstance(capabilities, StreamProviderCapabilities)
+        provider_family = (
+            provider_family or capabilities.normalized_provider_family
+        )
+    assert isinstance(close_after_terminal, bool)
+
+    normalizer = _ProviderStreamNormalizer(
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+        provider_family=provider_family,
+        capabilities=capabilities,
+        close_after_terminal=close_after_terminal,
+    )
+    event_iterator = events.__aiter__()
+    provider_closed = False
+
+    async def close_provider_stream() -> None:
+        nonlocal provider_closed
+        if provider_closed:
+            return
+        provider_closed = True
+        await _close_async_iterable(event_iterator)
+
+    try:
+        yield normalizer.started()
+        while True:
+            try:
+                event = await event_iterator.__anext__()
+            except StopAsyncIteration:
+                break
+            items = normalizer.map_event(event)
+            should_stop = any(item.is_stream_terminal for item in items)
+            for item in items:
+                yield item
+            if should_stop:
+                return
+    except CancelledError:
+        await close_provider_stream()
+        for item in normalizer.cancelled():
+            yield item
+    except StreamValidationError as exc:
+        await close_provider_stream()
+        for item in normalizer.errored(exc):
+            yield item
+    except Exception as exc:
+        await close_provider_stream()
+        for item in normalizer.errored(exc):
+            yield item
+    else:
+        for item in normalizer.completed():
+            yield item
+    finally:
+        await close_provider_stream()
+
+
+async def normalize_local_stream(
+    tokens: AsyncIterable[Token | TokenDetail | str],
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+    provider_family: ProviderFamily | str | None = ProviderFamily.LOCAL,
+    capabilities: StreamProviderCapabilities | None = None,
+    close_after_terminal: bool = True,
+) -> AsyncIterator[CanonicalStreamItem]:
+    assert isinstance(tokens, AsyncIterable)
+    _assert_non_empty_string(stream_session_id, "stream_session_id")
+    _assert_non_empty_string(run_id, "run_id")
+    _assert_non_empty_string(turn_id, "turn_id")
+    if capabilities is None:
+        capabilities = StreamProviderCapabilities(
+            backend=StreamProducerBackend.LOCAL,
+            provider_family=provider_family,
+            supports_reasoning=True,
+            supports_tool_calls=True,
+            supports_cancellation=True,
+            max_queue_depth=StreamPerformanceBudget().max_queue_depth,
+        )
+    else:
+        assert isinstance(capabilities, StreamProviderCapabilities)
+        assert capabilities.backend is StreamProducerBackend.LOCAL
+
+    parser = _LocalTextStreamParser()
+    pending_tool_call: ToolCall | None = None
+    token_iterator = tokens.__aiter__()
+    tokens_exhausted = False
+    tokens_closed = False
+
+    async def close_tokens() -> None:
+        nonlocal tokens_closed
+        if tokens_closed or tokens_exhausted:
+            return
+        tokens_closed = True
+        await _close_async_iterable(token_iterator)
+
+    async def events() -> AsyncIterator[StreamProviderEvent]:
+        nonlocal pending_tool_call, tokens_exhausted
+        try:
+            while True:
+                try:
+                    token = await token_iterator.__anext__()
+                except StopAsyncIteration:
+                    tokens_exhausted = True
+                    break
+
+                if isinstance(token, str):
+                    for event in _legacy_tool_call_boundary_events(
+                        pending_tool_call
+                    ):
+                        yield event
+                    pending_tool_call = None
+                    for event in parser.push(token):
+                        yield event
+                else:
+                    if (
+                        isinstance(token, ToolCallToken)
+                        and pending_tool_call is not None
+                        and token.call is not None
+                        and _legacy_tool_call_id(token.call)
+                        != _legacy_tool_call_id(pending_tool_call)
+                    ):
+                        for event in _legacy_tool_call_boundary_events(
+                            pending_tool_call
+                        ):
+                            yield event
+                        pending_tool_call = None
+                    elif not isinstance(token, ToolCallToken):
+                        for event in _legacy_tool_call_boundary_events(
+                            pending_tool_call
+                        ):
+                            yield event
+                        pending_tool_call = None
+
+                    item = canonical_item_from_token(token, 0)
+                    yield StreamProviderEvent(
+                        kind=item.kind,
+                        text_delta=item.text_delta,
+                        correlation=item.correlation,
+                        visibility=item.visibility,
+                        metadata=item.metadata,
+                    )
+                    if (
+                        isinstance(token, ToolCallToken)
+                        and token.call is not None
+                    ):
+                        pending_tool_call = token.call
+            for event in parser.flush():
+                yield event
+            for event in _legacy_tool_call_boundary_events(pending_tool_call):
+                yield event
+        finally:
+            await close_tokens()
+
+    provider_stream = normalize_provider_stream(
+        events(),
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+        provider_family=provider_family,
+        capabilities=capabilities,
+        close_after_terminal=close_after_terminal,
+    )
+    try:
+        async for item in provider_stream:
+            yield item
+    except (CancelledError, GeneratorExit):
+        await close_tokens()
+        await cast(Any, provider_stream).aclose()
+        raise
+
+
+def _legacy_tool_call_boundary_events(
+    call: ToolCall | None,
+) -> tuple[StreamProviderEvent, ...]:
+    if call is None:
+        return ()
+    call_id = _legacy_tool_call_id(call)
+    correlation = StreamItemCorrelation(tool_call_id=call_id)
+    return (
+        StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_READY,
+            correlation=correlation,
+            data={
+                "name": call.name,
+                "arguments": call.arguments,
+            },
+        ),
+        StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_DONE,
+            correlation=correlation,
+        ),
+    )
+
+
+def _legacy_tool_call_id(call: ToolCall) -> str:
+    return str(call.id) if call.id is not None else "legacy-tool-call"
+
+
+@dataclass(slots=True)
+class _LocalTextStreamParser:
+    _reasoning_start_tag: str = "<think>"
+    _reasoning_end_tag: str = "</think>"
+    _tool_start_tag: str = "<tool_call"
+    _tool_end_tag: str = "</tool_call>"
+    _reasoning_buffer: str = ""
+    _reasoning_active: bool = False
+    _tool_buffer: str = ""
+    _tool_state: str = "outside"
+    _tool_call_id: str | None = None
+    _tool_call_index: int = 0
+    _tool_name: str | None = None
+    _tool_argument_deltas: list[str] = field(default_factory=list)
+
+    def push(self, token: str) -> tuple[StreamProviderEvent, ...]:
+        assert isinstance(token, str)
+        events: list[StreamProviderEvent] = []
+        for event in self._push_reasoning(token):
+            if event.kind is StreamItemKind.ANSWER_DELTA:
+                assert event.text_delta is not None
+                events.extend(self._push_tool(event.text_delta))
+            else:
+                events.append(event)
+        return tuple(events)
+
+    def flush(self) -> tuple[StreamProviderEvent, ...]:
+        events: list[StreamProviderEvent] = []
+        if self._reasoning_buffer:
+            text = self._reasoning_buffer
+            self._reasoning_buffer = ""
+            if self._reasoning_active:
+                events.append(self._reasoning_delta(text))
+            else:
+                events.extend(self._push_tool(text))
+        if self._reasoning_active:
+            self._reasoning_active = False
+            events.append(
+                StreamProviderEvent(kind=StreamItemKind.REASONING_DONE)
+            )
+        events.extend(self._flush_tool())
+        return tuple(events)
+
+    def _push_reasoning(self, token: str) -> tuple[StreamProviderEvent, ...]:
+        self._reasoning_buffer += token
+        events: list[StreamProviderEvent] = []
+        while self._reasoning_buffer:
+            if self._reasoning_active:
+                end_index = self._reasoning_buffer.find(
+                    self._reasoning_end_tag
+                )
+                if end_index != -1:
+                    self._append_reasoning_delta(
+                        events, self._reasoning_buffer[:end_index]
+                    )
+                    self._reasoning_buffer = self._reasoning_buffer[
+                        end_index + len(self._reasoning_end_tag) :
+                    ]
+                    self._reasoning_active = False
+                    events.append(
+                        StreamProviderEvent(kind=StreamItemKind.REASONING_DONE)
+                    )
+                    continue
+                flush_length = self._flushable_prefix_length(
+                    self._reasoning_buffer,
+                    self._reasoning_end_tag,
+                )
+                if not flush_length:
+                    break
+                self._append_reasoning_delta(
+                    events, self._reasoning_buffer[:flush_length]
+                )
+                self._reasoning_buffer = self._reasoning_buffer[flush_length:]
+                continue
+
+            start_index = self._reasoning_buffer.find(
+                self._reasoning_start_tag
+            )
+            if start_index != -1:
+                events.extend(
+                    self._push_tool(self._reasoning_buffer[:start_index])
+                )
+                self._reasoning_buffer = self._reasoning_buffer[
+                    start_index + len(self._reasoning_start_tag) :
+                ]
+                self._reasoning_active = True
+                continue
+            flush_length = self._flushable_prefix_length(
+                self._reasoning_buffer,
+                self._reasoning_start_tag,
+            )
+            if not flush_length:
+                break
+            events.extend(
+                self._push_tool(self._reasoning_buffer[:flush_length])
+            )
+            self._reasoning_buffer = self._reasoning_buffer[flush_length:]
+        return tuple(events)
+
+    def _push_tool(self, text: str) -> tuple[StreamProviderEvent, ...]:
+        if not text:
+            return ()
+        self._tool_buffer += text
+        events: list[StreamProviderEvent] = []
+        while self._tool_buffer:
+            if self._tool_state == "outside":
+                start_index = self._tool_start_index()
+                if start_index is not None:
+                    self._append_answer_delta(
+                        events, self._tool_buffer[:start_index]
+                    )
+                    self._tool_buffer = self._tool_buffer[start_index:]
+                    self._tool_state = "opening"
+                    self._tool_call_id = self._next_tool_call_id()
+                    continue
+                flush_length = self._tool_flushable_prefix_length()
+                if not flush_length:
+                    break
+                self._append_answer_delta(
+                    events, self._tool_buffer[:flush_length]
+                )
+                self._tool_buffer = self._tool_buffer[flush_length:]
+                continue
+
+            if self._tool_state == "opening":
+                tag_end = self._tool_buffer.find(">")
+                if tag_end == -1:
+                    break
+                opening_tag = self._tool_buffer[: tag_end + 1]
+                self._tool_name = self._tool_name_from_opening_tag(opening_tag)
+                self._tool_buffer = self._tool_buffer[tag_end + 1 :]
+                self._tool_state = "body"
+                continue
+
+            end_index = self._tool_buffer.find(self._tool_end_tag)
+            if end_index != -1:
+                self._append_tool_argument_delta(
+                    events, self._tool_buffer[:end_index]
+                )
+                self._tool_buffer = self._tool_buffer[
+                    end_index + len(self._tool_end_tag) :
+                ]
+                events.extend(self._tool_call_boundary_events())
+                self._clear_tool_call()
+                continue
+            flush_length = self._flushable_prefix_length(
+                self._tool_buffer,
+                self._tool_end_tag,
+            )
+            if not flush_length:
+                break
+            self._append_tool_argument_delta(
+                events, self._tool_buffer[:flush_length]
+            )
+            self._tool_buffer = self._tool_buffer[flush_length:]
+        return tuple(events)
+
+    def _flush_tool(self) -> tuple[StreamProviderEvent, ...]:
+        events: list[StreamProviderEvent] = []
+        if self._tool_state == "outside":
+            self._append_answer_delta(events, self._tool_buffer)
+            self._tool_buffer = ""
+            return tuple(events)
+
+        self._append_tool_argument_delta(events, self._tool_buffer)
+        self._tool_buffer = ""
+        assert self._tool_call_id is not None
+        events.append(
+            StreamProviderEvent(
+                kind=StreamItemKind.STREAM_DIAGNOSTIC,
+                data={
+                    "code": "tool_call.malformed",
+                    "message": "unterminated tool call",
+                    "tool_call_id": self._tool_call_id,
+                },
+                correlation=StreamItemCorrelation(
+                    tool_call_id=self._tool_call_id
+                ),
+                visibility=StreamVisibility.DIAGNOSTIC,
+            )
+        )
+        self._clear_tool_call()
+        return tuple(events)
+
+    def _tool_call_boundary_events(self) -> tuple[StreamProviderEvent, ...]:
+        assert self._tool_call_id is not None
+        arguments, valid_arguments = self._tool_buffer_arguments()
+        if not valid_arguments:
+            return (
+                StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_DIAGNOSTIC,
+                    data={
+                        "code": "tool_call.malformed",
+                        "message": "malformed tool call arguments",
+                        "tool_call_id": self._tool_call_id,
+                    },
+                    correlation=StreamItemCorrelation(
+                        tool_call_id=self._tool_call_id
+                    ),
+                    visibility=StreamVisibility.DIAGNOSTIC,
+                ),
+            )
+
+        data: dict[str, object] = {
+            "name": self._tool_name,
+            "arguments": arguments,
+        }
+        return (
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_READY,
+                data=data,
+                correlation=StreamItemCorrelation(
+                    tool_call_id=self._tool_call_id
+                ),
+            ),
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                correlation=StreamItemCorrelation(
+                    tool_call_id=self._tool_call_id
+                ),
+            ),
+        )
+
+    def _tool_buffer_arguments(self) -> tuple[object, bool]:
+        text = "".join(self._tool_argument_deltas)
+        if not text.strip():
+            return {}, True
+        try:
+            parsed = loads(text)
+        except JSONDecodeError:
+            return None, False
+        if not isinstance(parsed, dict):
+            return None, False
+        return parsed, True
+
+    def _append_answer_delta(
+        self,
+        events: list[StreamProviderEvent],
+        text: str,
+    ) -> None:
+        if text:
+            events.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=text,
+                )
+            )
+
+    def _append_reasoning_delta(
+        self,
+        events: list[StreamProviderEvent],
+        text: str,
+    ) -> None:
+        if text:
+            events.append(self._reasoning_delta(text))
+
+    def _reasoning_delta(self, text: str) -> StreamProviderEvent:
+        return StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta=text,
+            visibility=StreamVisibility.PRIVATE,
+        )
+
+    def _append_tool_argument_delta(
+        self,
+        events: list[StreamProviderEvent],
+        text: str,
+    ) -> None:
+        if not text:
+            return
+        assert self._tool_call_id is not None
+        self._tool_argument_deltas.append(text)
+        events.append(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                text_delta=text,
+                correlation=StreamItemCorrelation(
+                    tool_call_id=self._tool_call_id
+                ),
+            )
+        )
+
+    def _next_tool_call_id(self) -> str:
+        self._tool_call_index += 1
+        return f"local-tool-call-{self._tool_call_index}"
+
+    @staticmethod
+    def _tool_name_from_opening_tag(opening_tag: str) -> str | None:
+        for quote in ("'", '"'):
+            marker = f"name={quote}"
+            start = opening_tag.find(marker)
+            if start == -1:
+                continue
+            value_start = start + len(marker)
+            value_end = opening_tag.find(quote, value_start)
+            if value_end != -1:
+                return opening_tag[value_start:value_end]
+        return None
+
+    def _tool_start_index(self) -> int | None:
+        search_from = 0
+        while True:
+            start_index = self._tool_buffer.find(
+                self._tool_start_tag, search_from
+            )
+            if start_index == -1:
+                return None
+
+            boundary_index = start_index + len(self._tool_start_tag)
+            if boundary_index == len(self._tool_buffer):
+                return None
+
+            boundary = self._tool_buffer[boundary_index]
+            if boundary == ">" or boundary.isspace():
+                return start_index
+
+            search_from = start_index + 1
+
+    def _tool_flushable_prefix_length(self) -> int:
+        return self._flushable_prefix_length(
+            self._tool_buffer,
+            self._tool_start_tag,
+            keep_full_marker=True,
+        )
+
+    @staticmethod
+    def _flushable_prefix_length(
+        buffer: str,
+        marker: str,
+        *,
+        keep_full_marker: bool = False,
+    ) -> int:
+        keep = 0
+        marker_suffix_length = (
+            len(marker) if keep_full_marker else len(marker) - 1
+        )
+        max_suffix = min(len(buffer), marker_suffix_length)
+        for length in range(max_suffix, 0, -1):
+            if marker.startswith(buffer[-length:]):
+                keep = length
+                break
+        return len(buffer) - keep
+
+    def _clear_tool_call(self) -> None:
+        self._tool_state = "outside"
+        self._tool_call_id = None
+        self._tool_name = None
+        self._tool_argument_deltas.clear()
+
+
+async def _close_async_iterable(
+    events: AsyncIterable[Any],
+) -> None:
+    aclose = getattr(events, "aclose", None)
+    if aclose is None:
+        return
+    assert callable(aclose)
+    close = cast(Callable[[], Awaitable[None]], aclose)
+    await close()
+
+
+@dataclass(slots=True)
+class _ProviderToolCallState:
+    ready: bool = False
+    done: bool = False
+    malformed: bool = False
+
+
+@dataclass(slots=True)
+class _ProviderStreamNormalizer:
+    stream_session_id: str
+    run_id: str
+    turn_id: str
+    provider_family: str | None
+    capabilities: StreamProviderCapabilities | None
+    close_after_terminal: bool
+    _sequence: int = 0
+    _accumulator: CanonicalStreamAccumulator = field(
+        default_factory=CanonicalStreamAccumulator
+    )
+    _answer_started: bool = False
+    _answer_done: bool = False
+    _reasoning_started: bool = False
+    _reasoning_done: bool = False
+    _usage_completed: bool = False
+    _tool_call_states: dict[str, _ProviderToolCallState] = field(
+        default_factory=dict
+    )
+
+    def started(self) -> CanonicalStreamItem:
+        metadata: dict[str, LooseJsonValue] = {}
+        if self.capabilities is not None:
+            metadata["capabilities"] = cast(
+                LooseJsonValue, self.capabilities.to_metadata()
+            )
+        return self._item(
+            kind=StreamItemKind.STREAM_STARTED,
+            metadata=metadata,
+        )
+
+    def map_event(
+        self, event: StreamProviderEvent
+    ) -> tuple[CanonicalStreamItem, ...]:
+        assert isinstance(event, StreamProviderEvent)
+        if event.kind is StreamItemKind.STREAM_COMPLETED:
+            return self._complete(usage=event.usage, provider_event=event)
+        if event.kind is StreamItemKind.STREAM_ERRORED:
+            return self._terminal(
+                StreamItemKind.STREAM_ERRORED,
+                provider_event=event,
+            )
+        if event.kind is StreamItemKind.STREAM_CANCELLED:
+            return self._terminal(
+                StreamItemKind.STREAM_CANCELLED,
+                provider_event=event,
+            )
+        if event.kind is StreamItemKind.USAGE_COMPLETED:
+            return self._final_usage(event)
+
+        self._track_tool_call_state(event)
+        item = self._item(
+            kind=event.kind,
+            text_delta=event.text_delta,
+            data=event.data,
+            usage=event.usage,
+            correlation=event.correlation,
+            visibility=event.visibility,
+            metadata=event.metadata,
+            provider_payload=event.provider_payload,
+            provider_event_type=event.provider_event_type,
+        )
+        self._track_channel_boundary(item)
+        return (item,)
+
+    def completed(self) -> tuple[CanonicalStreamItem, ...]:
+        incomplete_tool_call_error = self._incomplete_tool_call_error()
+        if incomplete_tool_call_error is not None:
+            return self.errored(
+                StreamValidationError(incomplete_tool_call_error)
+            )
+        return self._complete(usage=None, provider_event=None)
+
+    def cancelled(self) -> tuple[CanonicalStreamItem, ...]:
+        return self._terminal(StreamItemKind.STREAM_CANCELLED)
+
+    def errored(self, exc: Exception) -> tuple[CanonicalStreamItem, ...]:
+        return self._terminal(
+            StreamItemKind.STREAM_ERRORED,
+            data={
+                "error_type": exc.__class__.__name__,
+                "message": str(exc),
+            },
+        )
+
+    def _final_usage(
+        self,
+        event: StreamProviderEvent,
+    ) -> tuple[CanonicalStreamItem, ...]:
+        items = list(self._open_channel_done_items())
+        item = self._item(
+            kind=event.kind,
+            usage=event.usage,
+            correlation=event.correlation,
+            visibility=event.visibility,
+            metadata=event.metadata,
+            provider_payload=event.provider_payload,
+            provider_event_type=event.provider_event_type,
+        )
+        self._track_channel_boundary(item)
+        items.append(item)
+        return tuple(items)
+
+    def _complete(
+        self,
+        *,
+        usage: LooseJsonValue | None,
+        provider_event: StreamProviderEvent | None,
+    ) -> tuple[CanonicalStreamItem, ...]:
+        incomplete_tool_call_error = self._incomplete_tool_call_error()
+        if incomplete_tool_call_error is not None:
+            raise StreamValidationError(incomplete_tool_call_error)
+        terminal_usage = usage if self._usage_completed else usage or {}
+        return self._terminal(
+            StreamItemKind.STREAM_COMPLETED,
+            usage=terminal_usage if not self._usage_completed else None,
+            provider_event=provider_event,
+        )
+
+    def _terminal(
+        self,
+        kind: StreamItemKind,
+        *,
+        data: LooseJsonValue | None = None,
+        usage: LooseJsonValue | None = None,
+        provider_event: StreamProviderEvent | None = None,
+    ) -> tuple[CanonicalStreamItem, ...]:
+        items = list(self._open_channel_done_items())
+
+        terminal = self._item(
+            kind=kind,
+            data=data if provider_event is None else provider_event.data,
+            usage=usage,
+            correlation=(
+                None if provider_event is None else provider_event.correlation
+            ),
+            visibility=(
+                StreamVisibility.PUBLIC
+                if provider_event is None
+                else provider_event.visibility
+            ),
+            metadata={} if provider_event is None else provider_event.metadata,
+            provider_payload=(
+                None
+                if provider_event is None
+                else provider_event.provider_payload
+            ),
+            provider_event_type=(
+                None
+                if provider_event is None
+                else provider_event.provider_event_type
+            ),
+            terminal_outcome=stream_terminal_outcome_for_kind(kind),
+        )
+        items.append(terminal)
+        items.extend(self._closed())
+        return tuple(items)
+
+    def _open_channel_done_items(self) -> tuple[CanonicalStreamItem, ...]:
+        items: list[CanonicalStreamItem] = []
+        if self._answer_started and not self._answer_done:
+            item = self._item(kind=StreamItemKind.ANSWER_DONE)
+            self._track_channel_boundary(item)
+            items.append(item)
+        if self._reasoning_started and not self._reasoning_done:
+            item = self._item(kind=StreamItemKind.REASONING_DONE)
+            self._track_channel_boundary(item)
+            items.append(item)
+        return tuple(items)
+
+    def _closed(self) -> tuple[CanonicalStreamItem, ...]:
+        if not self.close_after_terminal:
+            return ()
+        return (self._item(kind=StreamItemKind.STREAM_CLOSED),)
+
+    def _item(
+        self,
+        *,
+        kind: StreamItemKind,
+        text_delta: str | None = None,
+        data: LooseJsonValue | None = None,
+        usage: LooseJsonValue | None = None,
+        correlation: StreamItemCorrelation | None = None,
+        visibility: StreamVisibility = StreamVisibility.PUBLIC,
+        metadata: dict[str, LooseJsonValue] | None = None,
+        provider_payload: LooseJsonValue | None = None,
+        provider_event_type: str | None = None,
+        terminal_outcome: StreamTerminalOutcome | None = None,
+    ) -> CanonicalStreamItem:
+        item = CanonicalStreamItem(
+            stream_session_id=self.stream_session_id,
+            run_id=self.run_id,
+            turn_id=self.turn_id,
+            sequence=self._sequence,
+            kind=kind,
+            channel=stream_channel_for_kind(kind),
+            correlation=correlation or StreamItemCorrelation(),
+            text_delta=text_delta,
+            data=data,
+            usage=usage,
+            terminal_outcome=terminal_outcome,
+            visibility=visibility,
+            metadata={} if metadata is None else metadata,
+            provider_payload=provider_payload,
+            provider_family=self.provider_family,
+            provider_event_type=provider_event_type,
+        )
+        self._accumulator.add(item)
+        self._sequence += 1
+        return item
+
+    def _track_channel_boundary(self, item: CanonicalStreamItem) -> None:
+        if item.kind is StreamItemKind.ANSWER_DELTA:
+            self._answer_started = True
+        elif item.kind is StreamItemKind.ANSWER_DONE:
+            self._answer_done = True
+        elif item.kind is StreamItemKind.REASONING_DELTA:
+            self._reasoning_started = True
+        elif item.kind is StreamItemKind.REASONING_DONE:
+            self._reasoning_done = True
+        elif item.kind is StreamItemKind.USAGE_COMPLETED:
+            self._usage_completed = True
+
+    def _track_tool_call_state(self, event: StreamProviderEvent) -> None:
+        tool_call_id = event.correlation.tool_call_id
+        if (
+            event.kind is StreamItemKind.STREAM_DIAGNOSTIC
+            and tool_call_id is not None
+            and self._is_malformed_tool_call_diagnostic(event)
+        ):
+            self._tool_call_states.setdefault(
+                tool_call_id, _ProviderToolCallState()
+            ).malformed = True
+            return
+
+        if event.kind not in _TOOL_CALL_KINDS:
+            return
+        if tool_call_id is None:
+            raise StreamValidationError("tool-call item missing tool_call_id")
+
+        state = self._tool_call_states.setdefault(
+            tool_call_id, _ProviderToolCallState()
+        )
+        if state.done:
+            raise StreamValidationError(
+                "tool-call item emitted after tool-call done"
+            )
+        if state.malformed:
+            raise StreamValidationError(
+                "tool-call item emitted after malformed diagnostic"
+            )
+
+        if event.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            if state.ready:
+                raise StreamValidationError(
+                    "tool-call argument emitted after ready"
+                )
+        elif event.kind is StreamItemKind.TOOL_CALL_READY:
+            if state.ready:
+                raise StreamValidationError("duplicate tool-call ready item")
+            state.ready = True
+        elif event.kind is StreamItemKind.TOOL_CALL_DONE:
+            if not state.ready:
+                raise StreamValidationError("tool-call done before ready")
+            state.done = True
+
+    def _incomplete_tool_call_error(self) -> str | None:
+        for tool_call_id, state in self._tool_call_states.items():
+            if state.done or state.malformed:
+                continue
+            if not state.ready:
+                return f"tool call {tool_call_id} missing ready"
+            return f"tool call {tool_call_id} missing done"
+        return None
+
+    @staticmethod
+    def _is_malformed_tool_call_diagnostic(
+        event: StreamProviderEvent,
+    ) -> bool:
+        data = event.data
+        return (
+            isinstance(data, dict)
+            and data.get("code") == "tool_call.malformed"
+        )
+
+
 class TextGenerationStream(AsyncIterator[Token | TokenDetail | str], ABC):
     _generator: AsyncIterator[Token | TokenDetail | str] | None = None
 
@@ -1325,6 +2320,30 @@ class TextGenerationStream(AsyncIterator[Token | TokenDetail | str], ABC):
     def __aiter__(self) -> AsyncIterator[Token | TokenDetail | str]:
         assert self._generator
         return self
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: ProviderFamily | str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        return normalize_local_stream(
+            self.__aiter__(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=(
+                provider_family
+                or getattr(self, "provider_family", None)
+                or ProviderFamily.LOCAL
+            ),
+            capabilities=capabilities,
+            close_after_terminal=close_after_terminal,
+        )
 
 
 class TextGenerationSingleStream(TextGenerationStream):
@@ -1457,6 +2476,7 @@ def canonical_item_from_token(
     assert isinstance(sequence, int), "sequence must be an integer"
     assert sequence >= 0, "sequence must not be negative"
     text = token_text(token)
+    metadata = _token_metadata(token)
     if isinstance(token, ReasoningToken):
         return CanonicalStreamItem(
             stream_session_id=stream_session_id,
@@ -1467,6 +2487,7 @@ def canonical_item_from_token(
             channel=StreamChannel.REASONING,
             text_delta=text,
             visibility=StreamVisibility.PRIVATE,
+            metadata=metadata,
         )
     if isinstance(token, ToolCallToken):
         tool_call_id = str(token.call.id) if token.call else "legacy-tool-call"
@@ -1479,6 +2500,7 @@ def canonical_item_from_token(
             channel=StreamChannel.TOOL_CALL,
             correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
             text_delta=text,
+            metadata=metadata,
         )
     return CanonicalStreamItem(
         stream_session_id=stream_session_id,
@@ -1488,4 +2510,32 @@ def canonical_item_from_token(
         kind=StreamItemKind.ANSWER_DELTA,
         channel=StreamChannel.ANSWER,
         text_delta=text,
+        metadata=metadata,
     )
+
+
+def _token_metadata(
+    token: Token | TokenDetail | str,
+) -> dict[str, LooseJsonValue]:
+    if isinstance(token, str):
+        return {}
+    metadata: dict[str, LooseJsonValue] = {}
+    if isinstance(token.id, int) and token.id >= 0:
+        metadata["token_id"] = token.id
+    if token.probability is not None:
+        metadata["probability"] = token.probability
+    if isinstance(token, TokenDetail):
+        if token.step is not None:
+            metadata["step"] = token.step
+        if token.probability_distribution is not None:
+            metadata["probability_distribution"] = (
+                token.probability_distribution
+            )
+        if token.tokens is not None:
+            metadata["tokens"] = [
+                _token_metadata(candidate) | {"token": candidate.token}
+                for candidate in token.tokens
+            ]
+    if isinstance(token, ToolCallToken) and token.provider_name is not None:
+        metadata["provider_name"] = token.provider_name
+    return metadata

@@ -219,6 +219,8 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         tool.is_empty = True
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
+        event_manager.enrich_token_ids = True
         settings = TransformerEngineSettings()
 
         engine = MagicMock()

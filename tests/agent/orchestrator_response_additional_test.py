@@ -329,6 +329,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
@@ -520,6 +521,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
@@ -556,6 +558,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _dummy_response(),
@@ -572,6 +575,26 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(returned, process_event)
         other = Event(type=EventType.END)
         self.assertIs(await resp._emit(other), other)
+
+    async def test_token_event_policy_fallbacks(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=None,
+        )
+
+        self.assertFalse(resp._should_emit_token_generated_event())
+        self.assertFalse(resp._should_enrich_token_ids())
+
+        resp._event_manager = cast(EventManager, object())
+        self.assertTrue(resp._should_emit_token_generated_event())
 
     async def test_tool_call_error_message(self):
         engine = _DummyEngine()

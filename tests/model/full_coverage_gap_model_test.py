@@ -24,6 +24,10 @@ from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.nlp.text.vendor.ollama import OllamaStream
 from avalan.model.nlp.text.vllm import VllmModel, VllmStream
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import (
+    StreamItemKind,
+    accumulate_canonical_stream_items,
+)
 from avalan.model.transformer import TransformerModel
 from avalan.model.vendor import TextGenerationVendor
 
@@ -156,7 +160,9 @@ class VllmCoverageTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(chunks, ["chunk"])
 
-    async def test_call_returns_stream_generator_instance(self) -> None:
+    async def test_call_returns_stream_wrapper_with_canonical_items(
+        self,
+    ) -> None:
         model = VllmModel(
             "id",
             TransformerEngineSettings(
@@ -175,7 +181,32 @@ class VllmCoverageTestCase(IsolatedAsyncioTestCase):
             result = await model(
                 "input", settings=GenerationSettings(use_async_generator=True)
             )
-        self.assertIs(result, stream)
+        self.assertIsInstance(result, VllmStream)
+        assert isinstance(result, VllmStream)
+        items = tuple(
+            [
+                item
+                async for item in result.canonical_stream(
+                    stream_session_id="vllm-stream",
+                    run_id="vllm-run",
+                    turn_id="vllm-turn",
+                )
+            ]
+        )
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual({item.provider_family for item in items}, {"vllm"})
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text, "x"
+        )
 
 
 class OllamaCoverageTestCase(IsolatedAsyncioTestCase):

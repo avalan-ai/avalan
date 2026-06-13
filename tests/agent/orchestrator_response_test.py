@@ -185,6 +185,8 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
+        event_manager.enrich_token_ids = True
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -240,6 +242,8 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
+        event_manager.enrich_token_ids = False
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -265,6 +269,36 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             [event.payload["step"] for event in token_events],
             [0, 1],
         )
+        engine.tokenizer.encode.assert_not_called()
+
+    async def test_iteration_skips_token_events_without_subscriber(self):
+        engine = _DummyEngine()
+        engine.tokenizer.encode.return_value = [42]
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = False
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+        )
+
+        self.assertEqual(
+            [t async for t in resp],
+            ["a", Token(id=5, token="b")],
+        )
+        calls = event_manager.trigger.await_args_list
+        self.assertFalse(
+            any(c.args[0].type == EventType.TOKEN_GENERATED for c in calls)
+        )
+        engine.tokenizer.encode.assert_not_called()
 
     async def test_harmony_streaming_handles_split_prefix(self) -> None:
         engine = _DummyEngine()

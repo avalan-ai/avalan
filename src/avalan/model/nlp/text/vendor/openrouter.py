@@ -1,3 +1,4 @@
+from .....model.provider import ProviderFamily
 from ....vendor import TextGenerationVendor
 from . import DiffusionPipeline, PreTrainedModel
 from .openai import OpenAIClient, OpenAIModel
@@ -9,6 +10,10 @@ class OpenRouterClient(OpenAIClient):
             api_key=api_key,
             base_url=base_url or "https://openrouter.ai/api/v1",
         )
+
+    @property
+    def _usage_provider_family(self) -> ProviderFamily:
+        return ProviderFamily.OPENAI_COMPATIBLE
 
 
 class OpenRouterModel(OpenAIModel):

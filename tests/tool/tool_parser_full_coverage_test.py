@@ -380,9 +380,35 @@ class ToolCallParserFullCoverageTestCase(TestCase):
             parser.tool_call_status("plain text"),
             ToolCallParser.ToolCallBufferStatus.NONE,
         )
+        for text in (
+            "before <tool_callout> text",
+            "before <tool_callbacks are text",
+            "<tool_calls>not a standard tool tag</tool_calls>",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    parser.tool_call_status(text),
+                    ToolCallParser.ToolCallBufferStatus.NONE,
+                )
+                self.assertEqual(
+                    parser.tool_call_status(text, final=True),
+                    ToolCallParser.ToolCallBufferStatus.NONE,
+                )
+                outcome = parser.parse(text)
+                self.assertEqual(outcome.calls, [])
+                self.assertEqual(outcome.diagnostics, [])
+                self.assertEqual(parser.stream_buffer_diagnostics(text), [])
         self.assertEqual(
             parser.tool_call_status("<too"),
             ToolCallParser.ToolCallBufferStatus.PREFIX,
+        )
+        self.assertEqual(
+            parser.tool_call_status("<tool_call"),
+            ToolCallParser.ToolCallBufferStatus.PREFIX,
+        )
+        self.assertEqual(
+            parser.tool_call_status("<tool_call", final=True),
+            ToolCallParser.ToolCallBufferStatus.UNTERMINATED,
         )
         self.assertEqual(
             parser.tool_call_status('<tool_call name="calculator"'),
@@ -890,7 +916,12 @@ class ToolCallParserFullCoverageTestCase(TestCase):
         )
         self.assertEqual(parser._tag_payloads("<tool />"), [])
         self.assertEqual(parser._tag_body_payloads("<tool_call"), [])
+        self.assertEqual(parser._tag_body_payloads("<tool_call name"), [])
         self.assertEqual(parser._self_closing_tag_payloads("<tool_call"), [])
+        self.assertEqual(
+            parser._self_closing_tag_payloads("<tool_call name"),
+            [],
+        )
 
         named = ElementTree.fromstring(
             '<tool_call name="calculator">{"value": 2}</tool_call>'

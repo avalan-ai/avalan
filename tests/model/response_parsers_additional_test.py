@@ -177,6 +177,58 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         flushed = await parser.flush()
         self.assertEqual(flushed, ["rest"])
 
+    async def test_tool_like_closed_suffix_remains_visible(self) -> None:
+        base_parser = ToolCallParser()
+        tool_text = '<tool_call>{"name":"calc","arguments":{}}</tool_call>'
+
+        for visible_suffix in (
+            " after <tool_callout> text",
+            " after <tool_callout/> text",
+        ):
+            with self.subTest(visible_suffix=visible_suffix):
+                manager = MagicMock()
+                manager.tool_format = None
+                manager.is_potential_tool_call.return_value = True
+                manager.tool_call_status.side_effect = (
+                    base_parser.tool_call_status
+                )
+                manager.get_calls.return_value = [SimpleNamespace(name="call")]
+                parser = ToolCallResponseParser(manager, None)
+
+                output = await parser.push(tool_text + visible_suffix)
+
+                self.assertIsInstance(output[0], ToolCallToken)
+                self.assertEqual(output[0].token, tool_text)
+                event = next(
+                    item for item in output if isinstance(item, Event)
+                )
+                self.assertEqual(event.type, EventType.TOOL_PROCESS)
+                self.assertEqual(output[-1], visible_suffix)
+                self.assertEqual(await parser.flush(), [])
+
+    async def test_split_tool_like_prefix_remains_visible(self) -> None:
+        base_parser = ToolCallParser()
+        manager = MagicMock()
+        manager.tool_format = None
+        manager.is_potential_tool_call.return_value = True
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        manager.get_calls.return_value = []
+        parser = ToolCallResponseParser(manager, None)
+
+        output = []
+        for token in ("before ", "<tool_call", "out> text"):
+            output.extend(await parser.push(token))
+        output.extend(await parser.flush())
+
+        self.assertEqual(output, ["before ", "<tool_call", "out> text"])
+        self.assertFalse(
+            any(isinstance(item, ToolCallToken) for item in output)
+        )
+        self.assertEqual(
+            list(parser._self_closing_tool_close_spans("<tool_call name")),
+            [],
+        )
+
     async def test_handles_non_matching_tokens(self) -> None:
         manager = MagicMock()
         manager.is_potential_tool_call.return_value = False

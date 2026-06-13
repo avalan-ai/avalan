@@ -289,6 +289,7 @@ class MlxLmModel(TextGenerationModel):
             skip_special_tokens=skip_special_tokens,
             use_async_generator=settings.use_async_generator,
             bos_token=self._tokenizer.bos_token,
+            provider_family="mlx",
         )
 
     def _get_sampler_and_prompt(

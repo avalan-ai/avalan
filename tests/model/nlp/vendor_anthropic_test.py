@@ -31,6 +31,10 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.model.stream import (
+    StreamItemKind,
+    accumulate_canonical_stream_items,
+)
 from avalan.task.usage import (
     usage_observation_from_response,
     usage_totals_from_response,
@@ -231,6 +235,360 @@ def test_stream_records_mapping_usage_on_message_stop(anthropic_mod):
     assert totals.output_tokens == 0
     assert totals.reasoning_tokens is None
     assert totals.total_tokens is None
+
+
+def test_canonical_stream_maps_anthropic_events(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(
+                type="tool_use", id="call-1", name="lookup"
+            ),
+            index=0,
+        )
+        yield mod.RawContentBlockDeltaEvent(SimpleNamespace(thinking="think"))
+        yield mod.RawContentBlockDeltaEvent(
+            SimpleNamespace(partial_json='{"q":')
+        )
+        yield mod.RawContentBlockDeltaEvent(SimpleNamespace(text="answer"))
+        yield mod.RawContentBlockDeltaEvent(
+            SimpleNamespace(partial_json='"v"}')
+        )
+        yield SimpleNamespace(type="content_block_stop", index=0)
+        yield SimpleNamespace(
+            type="message_delta",
+            usage={"input_tokens": 2, "output_tokens": 3},
+        )
+        yield SimpleNamespace(type="message_stop")
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+    items = asyncio.run(collect())
+
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.REASONING_DELTA,
+        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        StreamItemKind.ANSWER_DELTA,
+        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        StreamItemKind.TOOL_CALL_READY,
+        StreamItemKind.TOOL_CALL_DONE,
+        StreamItemKind.ANSWER_DONE,
+        StreamItemKind.REASONING_DONE,
+        StreamItemKind.USAGE_COMPLETED,
+        StreamItemKind.STREAM_COMPLETED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+    accumulator = accumulate_canonical_stream_items(items)
+    assert accumulator.answer_text == "answer"
+    assert accumulator.reasoning_text == "think"
+    assert accumulator.tool_call_arguments == {"call-1": '{"q":"v"}'}
+    assert accumulator.final_usage == {
+        "input_tokens": 2,
+        "output_tokens": 3,
+    }
+    ready = next(
+        item for item in items if item.kind is StreamItemKind.TOOL_CALL_READY
+    )
+    assert ready.data == {"name": "lookup"}
+
+
+def test_canonical_stream_preserves_anthropic_model_dump_payloads(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+    delta_payload = {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {"partial_json": '{"q":'},
+    }
+    stop_payload = {
+        "type": "content_block_stop",
+        "index": 0,
+        "content_block": {"type": "tool_use", "id": "call-1"},
+    }
+    message_payload = {
+        "type": "message_stop",
+        "usage": {"input_tokens": 2, "output_tokens": 1},
+    }
+    modes: list[tuple[str, str]] = []
+
+    class ModelDumpDelta(mod.RawContentBlockDeltaEvent):
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            modes.append(("delta", mode))
+            return delta_payload
+
+    class ModelDumpStop:
+        type = "content_block_stop"
+        content_block = SimpleNamespace(type="tool_use", id="call-1")
+        index = 0
+
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            modes.append(("stop", mode))
+            return stop_payload
+
+    class ModelDumpMessageStop:
+        type = "message_stop"
+        usage = {"input_tokens": 2, "output_tokens": 1}
+
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            modes.append(("message_stop", mode))
+            return message_payload
+
+    async def agen():
+        yield SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(
+                type="tool_use", id="call-1", name="lookup"
+            ),
+            index=0,
+        )
+        yield ModelDumpDelta(SimpleNamespace(partial_json='{"q":'), index=0)
+        yield ModelDumpStop()
+        yield ModelDumpMessageStop()
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                close_after_terminal=False,
+            )
+        ]
+
+    items = asyncio.run(collect())
+
+    assert modes == [
+        ("delta", "json"),
+        ("stop", "json"),
+        ("message_stop", "json"),
+    ]
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        StreamItemKind.TOOL_CALL_READY,
+        StreamItemKind.TOOL_CALL_DONE,
+        StreamItemKind.USAGE_COMPLETED,
+        StreamItemKind.STREAM_COMPLETED,
+    ]
+    assert items[1].provider_payload == delta_payload
+    assert items[2].provider_payload == stop_payload
+    assert items[3].provider_payload == stop_payload
+    assert items[4].provider_payload == message_payload
+    assert items[5].provider_payload == message_payload
+    accumulator = accumulate_canonical_stream_items(items)
+    assert accumulator.final_usage == {"input_tokens": 2, "output_tokens": 1}
+
+
+def test_canonical_stream_ignores_anthropic_non_object_provider_payload(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+
+    class ModelDumpDelta(mod.RawContentBlockDeltaEvent):
+        def model_dump(self, *, mode: str) -> object:
+            return ["not", "an", "event", mode]
+
+    async def agen():
+        yield ModelDumpDelta(SimpleNamespace(text="answer"))
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                close_after_terminal=False,
+            )
+        ]
+
+    items = asyncio.run(collect())
+
+    assert items[1].text_delta == "answer"
+    assert items[1].provider_payload is None
+
+
+def test_canonical_stream_maps_malformed_anthropic_tool_delta_to_error(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield mod.RawContentBlockDeltaEvent(
+            SimpleNamespace(partial_json='{"q":1}')
+        )
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+    items = asyncio.run(collect())
+
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.STREAM_ERRORED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+    assert "missing start event" in str(items[1].data)
+
+
+def test_canonical_stream_maps_duplicate_anthropic_tool_stop_to_error(
+    anthropic_mod,
+):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        tool_block = SimpleNamespace(
+            type="tool_use", id="call-1", name="lookup"
+        )
+        yield SimpleNamespace(
+            type="content_block_start",
+            content_block=tool_block,
+            index=0,
+        )
+        yield SimpleNamespace(
+            type="content_block_stop",
+            content_block=tool_block,
+            index=0,
+        )
+        yield SimpleNamespace(
+            type="content_block_stop",
+            content_block=tool_block,
+            index=0,
+        )
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+    items = asyncio.run(collect())
+
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.TOOL_CALL_READY,
+        StreamItemKind.TOOL_CALL_DONE,
+        StreamItemKind.STREAM_ERRORED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+
+
+def test_canonical_stream_anthropic_mapping_edge_cases(anthropic_mod):
+    mod, _ = anthropic_mod
+    stream = mod.AnthropicStream(AsyncIter([]))
+
+    assert (
+        stream._provider_events_from_event(
+            SimpleNamespace(
+                type="content_block_start",
+                content_block=SimpleNamespace(type="text"),
+                index=0,
+            )
+        )
+        == ()
+    )
+    assert (
+        stream._provider_events_from_event(
+            mod.RawContentBlockDeltaEvent(SimpleNamespace())
+        )
+        == ()
+    )
+    assert (
+        stream._provider_events_from_event(
+            SimpleNamespace(type="content_block_stop", index=0)
+        )
+        == ()
+    )
+
+    assert stream._mark_tool_ready("call-1", "lookup", None)
+    assert stream._mark_tool_ready("call-1", "lookup", None) == ()
+
+    invalid_events = [
+        SimpleNamespace(type=1),
+        SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(
+                type="tool_use", id="call-1", name="lookup"
+            ),
+            index="bad",
+        ),
+        SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(
+                type="tool_use", id="call-1", name=1
+            ),
+            index=0,
+        ),
+        SimpleNamespace(
+            type="content_block_start",
+            content_block=SimpleNamespace(
+                type="tool_use", id=None, name="lookup"
+            ),
+            index=0,
+        ),
+        mod.RawContentBlockDeltaEvent(SimpleNamespace(partial_json=1)),
+        mod.RawContentBlockDeltaEvent(
+            SimpleNamespace(partial_json="{}"), index="bad"
+        ),
+        SimpleNamespace(type="content_block_stop", index="bad"),
+        SimpleNamespace(
+            type="content_block_stop",
+            content_block=SimpleNamespace(
+                type="tool_use", id="call-1", name=1
+            ),
+            index=0,
+        ),
+    ]
+    for event in invalid_events:
+        with pytest.raises(ValueError):
+            stream._provider_events_from_event(event)
+
+
+def test_anthropic_provider_events_stop_after_message_stop(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield {"type": "message_stop"}
+        yield mod.RawContentBlockDeltaEvent(SimpleNamespace(text="late"))
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return [event async for event in stream._provider_events()]
+
+    events = asyncio.run(collect())
+
+    assert [event.kind for event in events] == [
+        StreamItemKind.STREAM_COMPLETED
+    ]
 
 
 def test_stream_without_message_stop_drops_cumulative_usage(anthropic_mod):

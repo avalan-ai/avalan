@@ -1474,6 +1474,7 @@ class Ds4Model(TextGenerationModel):
             settings=generation_settings,
             use_async_generator=True,
             bos_token=None,
+            provider_family="ds4",
         )
 
     def input_token_count(
