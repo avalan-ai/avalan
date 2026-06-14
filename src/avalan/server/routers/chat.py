@@ -1,13 +1,19 @@
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     MessageRole,
-    ReasoningToken,
-    ToolCallDiagnostic,
-    ToolCallError,
-    ToolCallToken,
+    Token,
 )
-from ...event import Event, EventType
-from ...model.stream import CanonicalStreamItem, StreamItemKind
+from ...event import Event
+from ...model.stream import (
+    CanonicalStreamAccumulator,
+    CanonicalStreamItem,
+    StreamConsumerProjection,
+    StreamItemKind,
+    StreamTerminalOutcome,
+    StreamValidationError,
+    canonical_item_from_consumer_projection,
+    stream_consumer_projection_from_token,
+)
 from ...server.entities import (
     ChatCompletionChoice,
     ChatCompletionChunk,
@@ -18,17 +24,19 @@ from ...server.entities import (
     ChatCompletionUsage,
     ChatMessage,
 )
-from ...utils import (
-    to_json,
-    tool_call_diagnostic_payload,
-    tool_call_error_payload,
-)
+from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
+from .streaming import (
+    cleanup_stream_sources,
+    stream_consumer_iterator,
+    stream_terminal_succeeded,
+)
 
+from asyncio import CancelledError
 from logging import Logger
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -71,33 +79,113 @@ async def create_chat_completion(
     if request.stream:
 
         async def generate_chunks() -> AsyncIterator[str]:
-            async for token in response:
-                if isinstance(token, CanonicalStreamItem):
-                    token_text = _canonical_text(token)
-                    if not token_text:
+            sequence = 0
+            canonical_accumulator: CanonicalStreamAccumulator | None = None
+            legacy_stream_seen = False
+            iterator = stream_consumer_iterator(
+                response,
+                stream_session_id="chat-sse-stream",
+                run_id=response_id,
+                turn_id="chat-sse-turn",
+            )
+            cancelled = False
+            try:
+                sync_messages = True
+                while True:
+                    try:
+                        token = await anext(iterator)
+                    except StopAsyncIteration:
+                        break
+                    if isinstance(token, Event):
                         continue
-                elif isinstance(token, Event):
-                    token_text = _event_text(token)
-                    if not token_text:
+                    if isinstance(token, CanonicalStreamItem):
+                        if legacy_stream_seen:
+                            raise StreamValidationError(
+                                "canonical stream item after legacy stream"
+                                " item"
+                            )
+                        if canonical_accumulator is None:
+                            canonical_accumulator = (
+                                CanonicalStreamAccumulator()
+                            )
+                        canonical_accumulator.add(token)
+                    elif isinstance(token, StreamConsumerProjection):
+                        if legacy_stream_seen:
+                            raise StreamValidationError(
+                                "canonical stream item after legacy stream"
+                                " item"
+                            )
+                        if canonical_accumulator is None:
+                            canonical_accumulator = (
+                                CanonicalStreamAccumulator()
+                            )
+                        canonical_accumulator.add(
+                            canonical_item_from_consumer_projection(token)
+                        )
+                    elif canonical_accumulator is not None:
+                        raise StreamValidationError(
+                            "legacy stream item after canonical stream item"
+                        )
+                    else:
+                        legacy_stream_seen = True
+
+                    projected_text = _stream_text(
+                        _stream_projection(token, sequence)
+                    )
+                    sequence += 1
+                    if projected_text is None:
                         continue
-                elif isinstance(token, (ReasoningToken, ToolCallToken)):
-                    token_text = token.token
+
+                    choice = ChatCompletionChunkChoice(
+                        delta=ChatCompletionChunkChoiceDelta(
+                            content=projected_text
+                        )
+                    )
+                    chunk = ChatCompletionChunk(
+                        id=response_id,
+                        created=timestamp,
+                        model=model_id,
+                        choices=[choice],
+                    )
+                    yield sse_message(chunk.model_dump_json())
+
+                if canonical_accumulator is not None:
+                    canonical_accumulator.validate_complete()
+                    terminal = _chat_terminal_projection(canonical_accumulator)
+                    terminal_event = _chat_terminal_event(
+                        response_id,
+                        timestamp,
+                        model_id,
+                        terminal,
+                    )
+                    usage = _chat_usage(canonical_accumulator.final_usage)
+                    if usage is not None:
+                        yield _chat_usage_chunk(
+                            response_id,
+                            timestamp,
+                            model_id,
+                            usage,
+                        )
+                    if terminal_event is not None:
+                        yield terminal_event
+                    sync_messages = stream_terminal_succeeded(terminal)
                 else:
-                    token_text = str(token)
+                    terminal_event = None
 
-                choice = ChatCompletionChunkChoice(
-                    delta=ChatCompletionChunkChoiceDelta(content=token_text)
-                )
-                chunk = ChatCompletionChunk(
-                    id=response_id,
-                    created=timestamp,
-                    model=model_id,
-                    choices=[choice],
-                )
-                yield sse_message(chunk.model_dump_json())
-            yield sse_message("[DONE]")
+                if terminal_event is None:
+                    yield sse_message("[DONE]")
 
-            await orchestrator.sync_messages()
+                if sync_messages:
+                    await orchestrator.sync_messages()
+            except CancelledError:
+                cancelled = True
+                raise
+            finally:
+                await cleanup_stream_sources(
+                    response,
+                    iterator,
+                    cancelled=cancelled,
+                )
 
         logger.debug(
             "Generating event-stream stream for response %s", response_id
@@ -138,76 +226,115 @@ async def create_chat_completion(
     return final_response
 
 
-def _event_text(event: Event) -> str:
-    payload = event.payload if isinstance(event.payload, dict) else {}
-    if event.type is EventType.TOOL_DIAGNOSTIC:
-        diagnostic = _payload_diagnostic(payload)
-        if diagnostic is None:
-            return ""
-        return to_json(
-            {
-                "type": "tool_diagnostic",
-                "diagnostic": _diagnostic_payload(diagnostic),
-            }
-        )
-    if event.type is EventType.TOOL_RESULT:
-        result = payload.get("result")
-        if isinstance(result, ToolCallDiagnostic):
-            return to_json(
-                {
-                    "type": "tool_diagnostic",
-                    "diagnostic": _diagnostic_payload(result),
-                }
-            )
-        if isinstance(result, ToolCallError):
-            return to_json(
-                {
-                    "type": "tool_error",
-                    "toolCallId": str(result.call.id),
-                    "name": result.call.name,
-                    "error": tool_call_error_payload(result),
-                }
-            )
-    return ""
-
-
-def _canonical_text(item: CanonicalStreamItem) -> str:
-    if item.kind in (
-        StreamItemKind.ANSWER_DELTA,
-        StreamItemKind.REASONING_DELTA,
-        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-        StreamItemKind.TOOL_EXECUTION_OUTPUT,
+def _chat_terminal_event(
+    response_id: str,
+    timestamp: int,
+    model_id: str,
+    terminal: StreamConsumerProjection | StreamTerminalOutcome | None,
+) -> str | None:
+    assert terminal is None or isinstance(
+        terminal, (StreamConsumerProjection, StreamTerminalOutcome)
+    )
+    if isinstance(terminal, StreamConsumerProjection):
+        assert terminal.is_stream_terminal
+    terminal_outcome = (
+        terminal.terminal_outcome
+        if isinstance(terminal, StreamConsumerProjection)
+        else terminal
+    )
+    if (
+        terminal_outcome is None
+        or terminal_outcome is StreamTerminalOutcome.COMPLETED
     ):
-        return item.text_delta or ""
-    return ""
+        return None
+
+    event = (
+        "chat.completion.cancelled"
+        if terminal_outcome is StreamTerminalOutcome.CANCELLED
+        else "chat.completion.failed"
+    )
+    data = {
+        "id": response_id,
+        "object": "chat.completion.chunk",
+        "created": timestamp,
+        "model": model_id,
+        "type": event,
+        "choices": [],
+    }
+    if isinstance(terminal, StreamConsumerProjection):
+        data["sequence_number"] = terminal.sequence
+        if (
+            terminal_outcome is StreamTerminalOutcome.ERRORED
+            and terminal.data is not None
+        ):
+            data["error"] = terminal.data
+    return sse_message(to_json(data), event=event)
 
 
-def _payload_diagnostic(
-    payload: dict[str, Any],
-) -> ToolCallDiagnostic | None:
-    diagnostic = payload.get("diagnostic")
-    if isinstance(diagnostic, ToolCallDiagnostic):
-        return diagnostic
-    diagnostics = payload.get("diagnostics")
-    if isinstance(diagnostics, list):
-        return next(
-            (
-                item
-                for item in diagnostics
-                if isinstance(item, ToolCallDiagnostic)
-            ),
-            None,
-        )
+def _chat_terminal_projection(
+    accumulator: CanonicalStreamAccumulator,
+) -> StreamConsumerProjection | None:
+    assert isinstance(accumulator, CanonicalStreamAccumulator)
+    for item in reversed(accumulator.items):
+        if item.is_stream_terminal:
+            return _stream_projection(item, item.sequence)
     return None
 
 
-def _diagnostic_payload(
-    diagnostic: ToolCallDiagnostic,
-) -> dict[str, Any]:
-    payload = {
-        "id": str(diagnostic.id),
-        **tool_call_diagnostic_payload(diagnostic),
+def _stream_projection(
+    token: CanonicalStreamItem | StreamConsumerProjection | Token | str,
+    sequence: int,
+) -> StreamConsumerProjection:
+    return stream_consumer_projection_from_token(token, sequence)
+
+
+def _stream_text(
+    token: StreamConsumerProjection,
+) -> str | None:
+    assert isinstance(token, StreamConsumerProjection)
+    if token.kind is not StreamItemKind.ANSWER_DELTA:
+        return None
+    return token.text_delta or ""
+
+
+def _chat_usage(usage: object | None) -> ChatCompletionUsage | None:
+    if usage is None:
+        return None
+    if not isinstance(usage, dict):
+        return ChatCompletionUsage()
+
+    prompt_tokens = _usage_int(usage, "prompt_tokens", "input_tokens")
+    completion_tokens = _usage_int(usage, "completion_tokens", "output_tokens")
+    total_tokens = _usage_int(usage, "total_tokens")
+    if total_tokens == 0:
+        total_tokens = prompt_tokens + completion_tokens
+    return ChatCompletionUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def _usage_int(usage: dict[object, object], *keys: str) -> int:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return max(0, value)
+    return 0
+
+
+def _chat_usage_chunk(
+    response_id: str,
+    timestamp: int,
+    model_id: str,
+    usage: ChatCompletionUsage,
+) -> str:
+    data = {
+        "id": response_id,
+        "object": "chat.completion.chunk",
+        "created": timestamp,
+        "model": model_id,
+        "choices": [],
+        "usage": usage.model_dump(),
     }
-    if diagnostic.call_id is not None:
-        payload["call_id"] = str(diagnostic.call_id)
-    return payload
+    return sse_message(to_json(data))

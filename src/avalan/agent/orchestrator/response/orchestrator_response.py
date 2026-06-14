@@ -26,10 +26,12 @@ from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
     StreamValidationError,
+    canonical_item_from_consumer_projection,
     stream_channel_for_kind,
 )
 from ....task.usage import (
@@ -207,7 +209,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _MAXIMUM_STAGING_QUEUE_ITEMS = 4096
 
     _response: TextGenerationResponse
-    _response_iterator: AsyncIterator[Token | TokenDetail | str] | None
+    _response_iterator: AsyncIterator[Any] | None
     _engine_agent: EngineAgent
     _operation: AgentOperation
     _engine_args: dict[str, Any]
@@ -629,6 +631,21 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
 
         try:
             token = await self._response_iterator.__anext__()
+            if isinstance(
+                token, (CanonicalStreamItem, StreamConsumerProjection)
+            ):
+                canonical_item = (
+                    token
+                    if isinstance(token, CanonicalStreamItem)
+                    else canonical_item_from_consumer_projection(token)
+                )
+                if (
+                    canonical_item.kind is StreamItemKind.ANSWER_DELTA
+                    and canonical_item.text_delta is not None
+                ):
+                    token = Token(token=canonical_item.text_delta)
+                else:
+                    return None
             if isinstance(token, ToolCallToken):
                 self._record_streamed_tool_call_token(token)
         except StopAsyncIteration:
@@ -1223,6 +1240,20 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             async for item in response:
                 await self._raise_if_cancelled(finish_stream=False)
                 if isinstance(item, Event):
+                    continue
+                if isinstance(
+                    item, (CanonicalStreamItem, StreamConsumerProjection)
+                ):
+                    canonical_item = (
+                        item
+                        if isinstance(item, CanonicalStreamItem)
+                        else canonical_item_from_consumer_projection(item)
+                    )
+                    if (
+                        canonical_item.kind is StreamItemKind.ANSWER_DELTA
+                        and canonical_item.text_delta is not None
+                    ):
+                        text_parts.append(canonical_item.text_delta)
                     continue
                 await self._emit_token_generated_event(item)
                 self._step += 1

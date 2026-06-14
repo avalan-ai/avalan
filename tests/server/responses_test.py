@@ -140,10 +140,9 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
             for i, line in enumerate(lines)
             if line == "event: response.output_text.delta"
         ]
+        self.assertEqual(len(events), 1)
         first_data = loads(lines[events[0] + 1][6:])
-        self.assertEqual(first_data["delta"], "a")
-        second_data = loads(lines[events[1] + 1][6:])
-        self.assertEqual(second_data["delta"], "b")
+        self.assertEqual(first_data["delta"], "ab")
 
         self.assertIn("event: response.completed", lines)
         self.assertEqual(lines[-1], "")

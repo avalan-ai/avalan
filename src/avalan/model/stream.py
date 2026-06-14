@@ -11,10 +11,11 @@ from .provider import ProviderFamily, provider_family_value
 
 from abc import ABC, abstractmethod
 from asyncio import CancelledError
-from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterable, Awaitable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from inspect import isawaitable
 from json import JSONDecodeError, loads
 from typing import Any, AsyncIterator, cast
 
@@ -613,6 +614,225 @@ class CanonicalStreamItem:
             assert self.terminal_outcome is None
         else:
             assert self.terminal_outcome is expected_outcome
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamConsumerProjection:
+    stream_session_id: str
+    run_id: str
+    turn_id: str
+    sequence: int
+    kind: StreamItemKind
+    channel: StreamChannel
+    correlation: StreamItemCorrelation
+    text_delta: str | None = None
+    data: LooseJsonValue | None = None
+    usage: LooseJsonValue | None = None
+    terminal_outcome: StreamTerminalOutcome | None = None
+    visibility: StreamVisibility = StreamVisibility.PUBLIC
+    metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
+    provider_family: str | None = None
+    provider_event_type: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("stream_session_id", self.stream_session_id),
+            ("run_id", self.run_id),
+            ("turn_id", self.turn_id),
+        ):
+            _assert_non_empty_string(value, field_name)
+        assert isinstance(self.sequence, int), "sequence must be an integer"
+        assert self.sequence >= 0, "sequence must not be negative"
+        assert isinstance(self.kind, StreamItemKind)
+        assert isinstance(self.channel, StreamChannel)
+        assert self.channel is stream_channel_for_kind(self.kind)
+        assert isinstance(self.correlation, StreamItemCorrelation)
+        assert isinstance(self.visibility, StreamVisibility)
+        assert isinstance(self.metadata, dict), "metadata must be a dict"
+        if self.text_delta is not None:
+            assert isinstance(self.text_delta, str)
+        if self.terminal_outcome is not None:
+            assert isinstance(self.terminal_outcome, StreamTerminalOutcome)
+            assert self.terminal_outcome is stream_terminal_outcome_for_kind(
+                self.kind
+            )
+        if self.provider_family is not None:
+            _assert_non_empty_string(self.provider_family, "provider_family")
+        if self.provider_event_type is not None:
+            _assert_non_empty_string(
+                self.provider_event_type, "provider_event_type"
+            )
+        self._validate_kind_payload()
+
+    def _validate_kind_payload(self) -> None:
+        if self.kind in _TEXT_DELTA_KINDS:
+            assert self.text_delta is not None
+        elif self.text_delta is not None:
+            assert self.kind is StreamItemKind.STREAM_DIAGNOSTIC
+
+        if self.kind in _TOOL_CORRELATED_KINDS:
+            assert self.correlation.tool_call_id is not None
+
+        if self.usage is not None:
+            assert self.kind in _USAGE_KINDS or (
+                self.kind is StreamItemKind.STREAM_COMPLETED
+            )
+        elif self.kind in _USAGE_KINDS:
+            raise AssertionError("usage items must carry usage")
+
+        expected_outcome = stream_terminal_outcome_for_kind(self.kind)
+        if expected_outcome is None:
+            assert self.terminal_outcome is None
+        else:
+            assert self.terminal_outcome is expected_outcome
+
+    @classmethod
+    def from_item(
+        cls,
+        item: CanonicalStreamItem,
+    ) -> "StreamConsumerProjection":
+        assert isinstance(item, CanonicalStreamItem)
+        return cls(
+            stream_session_id=item.stream_session_id,
+            run_id=item.run_id,
+            turn_id=item.turn_id,
+            sequence=item.sequence,
+            kind=item.kind,
+            channel=item.channel,
+            correlation=item.correlation,
+            text_delta=item.text_delta,
+            data=item.data,
+            usage=item.usage,
+            terminal_outcome=item.terminal_outcome,
+            visibility=item.visibility,
+            metadata=dict(item.metadata),
+            provider_family=item.provider_family,
+            provider_event_type=item.provider_event_type,
+        )
+
+    @property
+    def tool_call_id(self) -> str | None:
+        return self.correlation.tool_call_id
+
+    @property
+    def is_stream_terminal(self) -> bool:
+        return is_stream_terminal_kind(self.kind)
+
+
+def project_canonical_stream_item(
+    item: CanonicalStreamItem,
+) -> StreamConsumerProjection:
+    return StreamConsumerProjection.from_item(item)
+
+
+def canonical_item_from_consumer_projection(
+    projection: StreamConsumerProjection,
+) -> CanonicalStreamItem:
+    assert isinstance(projection, StreamConsumerProjection)
+    return CanonicalStreamItem(
+        stream_session_id=projection.stream_session_id,
+        run_id=projection.run_id,
+        turn_id=projection.turn_id,
+        sequence=projection.sequence,
+        kind=projection.kind,
+        channel=projection.channel,
+        correlation=projection.correlation,
+        text_delta=projection.text_delta,
+        data=projection.data,
+        usage=projection.usage,
+        terminal_outcome=projection.terminal_outcome,
+        visibility=projection.visibility,
+        metadata=dict(projection.metadata),
+        provider_family=projection.provider_family,
+        provider_event_type=projection.provider_event_type,
+    )
+
+
+def stream_consumer_projection_from_token(
+    token: CanonicalStreamItem | StreamConsumerProjection | Token | str,
+    sequence: int,
+    *,
+    stream_session_id: str = "legacy-stream",
+    run_id: str = "legacy-run",
+    turn_id: str = "legacy-turn",
+) -> StreamConsumerProjection:
+    assert isinstance(
+        token, (CanonicalStreamItem, StreamConsumerProjection, Token, str)
+    )
+    if isinstance(token, StreamConsumerProjection):
+        return token
+    if isinstance(token, CanonicalStreamItem):
+        return project_canonical_stream_item(token)
+    return project_canonical_stream_item(
+        canonical_item_from_token(
+            token,
+            sequence,
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+        )
+    )
+
+
+def stream_projection_text_delta(
+    item: CanonicalStreamItem | StreamConsumerProjection,
+) -> str | None:
+    assert isinstance(item, (CanonicalStreamItem, StreamConsumerProjection))
+    projection = (
+        project_canonical_stream_item(item)
+        if isinstance(item, CanonicalStreamItem)
+        else item
+    )
+    if projection.kind in _TEXT_DELTA_KINDS:
+        return projection.text_delta or ""
+    return None
+
+
+def stream_projection_is_reasoning(
+    item: CanonicalStreamItem | StreamConsumerProjection,
+) -> bool:
+    assert isinstance(item, (CanonicalStreamItem, StreamConsumerProjection))
+    projection = (
+        project_canonical_stream_item(item)
+        if isinstance(item, CanonicalStreamItem)
+        else item
+    )
+    return projection.kind is StreamItemKind.REASONING_DELTA
+
+
+def stream_projection_is_tool_call(
+    item: CanonicalStreamItem | StreamConsumerProjection,
+) -> bool:
+    assert isinstance(item, (CanonicalStreamItem, StreamConsumerProjection))
+    projection = (
+        project_canonical_stream_item(item)
+        if isinstance(item, CanonicalStreamItem)
+        else item
+    )
+    return projection.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+
+
+async def iter_stream_consumer_projections(
+    items: AsyncIterable[CanonicalStreamItem],
+    *,
+    validate_order: bool = True,
+) -> AsyncIterator[StreamConsumerProjection]:
+    assert isinstance(items, AsyncIterable)
+    assert isinstance(validate_order, bool)
+    accumulator = CanonicalStreamAccumulator() if validate_order else None
+    iterator = items.__aiter__()
+    try:
+        async for item in iterator:
+            if accumulator is not None:
+                accumulator.add(item)
+            yield project_canonical_stream_item(item)
+        if accumulator is not None:
+            accumulator.validate_complete()
+    finally:
+        if iterator is not items:
+            await _close_async_iterables(iterator, items)
+        else:
+            await _close_async_iterable(iterator)
 
 
 def stream_observability_payload(
@@ -2064,8 +2284,28 @@ async def _close_async_iterable(
     if aclose is None:
         return
     assert callable(aclose)
-    close = cast(Callable[[], Awaitable[None]], aclose)
-    await close()
+    result = aclose()
+    if isawaitable(result):
+        awaited_result = await cast(Awaitable[object], result)
+        assert awaited_result is None
+    else:
+        assert result is None
+
+
+async def _close_async_iterables(
+    *iterables: AsyncIterable[Any],
+) -> None:
+    errors: list[BaseException] = []
+    for iterable in iterables:
+        try:
+            await _close_async_iterable(iterable)
+        except (Exception, CancelledError) as exc:
+            errors.append(exc)
+
+    if len(errors) == 1:
+        raise errors[0]
+    if errors:
+        raise BaseExceptionGroup("stream iterable close failed", errors)
 
 
 @dataclass(slots=True)
@@ -2549,6 +2789,15 @@ def canonical_item_from_token(
         )
     if isinstance(token, ToolCallToken):
         tool_call_id = str(token.call.id) if token.call else "legacy-tool-call"
+        data: LooseJsonValue | None = None
+        if token.call is not None:
+            data = cast(
+                LooseJsonValue,
+                {
+                    "name": token.call.name,
+                    "arguments": token.call.arguments,
+                },
+            )
         return CanonicalStreamItem(
             stream_session_id=stream_session_id,
             run_id=run_id,
@@ -2558,6 +2807,7 @@ def canonical_item_from_token(
             channel=StreamChannel.TOOL_CALL,
             correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
             text_delta=text,
+            data=data,
             metadata=metadata,
         )
     return CanonicalStreamItem(
