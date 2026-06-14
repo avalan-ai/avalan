@@ -343,22 +343,31 @@ class Orchestrator:
             exc_type, self._INTERRUPTED_EXIT_EXCEPTIONS
         )
 
-        if not interrupted_exit:
-            await self.sync_messages()
+        try:
+            if not interrupted_exit:
+                await self.sync_messages()
 
-        if self._exit_memory:
-            self._memory.__exit__(exc_type, exc_value, traceback)
+            if self._exit_memory:
+                self._memory.__exit__(exc_type, exc_value, traceback)
 
-        result = self._engines_stack.__exit__(exc_type, exc_value, traceback)
-        if not interrupted_exit:
-            for engine in self._engines:
-                wait_closed = getattr(engine, "wait_closed", None)
-                if wait_closed:
-                    close_result = wait_closed()
-                    if isawaitable(close_result):
-                        await close_result
-        self._engines.clear()
-        return result
+            result = self._engines_stack.__exit__(
+                exc_type, exc_value, traceback
+            )
+            if not interrupted_exit:
+                for engine in self._engines:
+                    wait_closed = getattr(engine, "wait_closed", None)
+                    if wait_closed:
+                        close_result = wait_closed()
+                        if isawaitable(close_result):
+                            await close_result
+            return result
+        finally:
+            event_manager_close = getattr(self._event_manager, "aclose", None)
+            if callable(event_manager_close):
+                close_result = event_manager_close()
+                if isawaitable(close_result):
+                    await close_result
+            self._engines.clear()
 
     async def sync_messages(self) -> None:
         if self._last_engine_agent:

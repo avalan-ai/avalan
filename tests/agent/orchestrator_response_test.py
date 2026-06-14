@@ -40,7 +40,7 @@ from avalan.entities import (
     ToolManagerSettings,
     TransformerEngineSettings,
 )
-from avalan.event import Event, EventType
+from avalan.event import Event, EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
@@ -291,6 +291,21 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
                 "step": 0,
             },
         )
+        self.assertIs(
+            token_events[0].observability.kind,
+            EventPayloadKind.TEMPORARY_LEGACY,
+        )
+        self.assertEqual(
+            token_events[0].observability.data,
+            {
+                "event_type": EventType.TOKEN_GENERATED.value,
+                "model_id": "m",
+                "step": 0,
+                "token_id": 42,
+                "token_length": 1,
+                "token_type": "str",
+            },
+        )
         self.assertEqual(
             token_events[1].payload,
             {
@@ -300,6 +315,10 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
                 "token": "b",
                 "step": 1,
             },
+        )
+        self.assertEqual(
+            token_events[1].observability.data["token_length"],
+            1,
         )
 
     async def test_to_str_emits_streamed_token_events(self):
@@ -336,6 +355,13 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             [event.payload["step"] for event in token_events],
             [0, 1],
+        )
+        self.assertEqual(
+            [
+                event.observability.data["token_length"]
+                for event in token_events
+            ],
+            [1, 1],
         )
         engine.tokenizer.encode.assert_not_called()
 

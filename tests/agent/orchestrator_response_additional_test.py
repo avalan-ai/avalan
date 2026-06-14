@@ -25,7 +25,7 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
-from avalan.event import TOOL_TYPES, Event, EventType
+from avalan.event import TOOL_TYPES, Event, EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
@@ -525,6 +525,20 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             [event.payload["token"] for event in token_events],
             ["a", "b"],
+        )
+        self.assertEqual(
+            [event.observability.kind for event in token_events],
+            [
+                EventPayloadKind.TEMPORARY_LEGACY,
+                EventPayloadKind.TEMPORARY_LEGACY,
+            ],
+        )
+        self.assertEqual(
+            [
+                event.observability.data["token_length"]
+                for event in token_events
+            ],
+            [1, 1],
         )
 
     async def test_tool_process_queue(self):

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from avalan.event.manager import EventManagerMode
 from avalan.server.entities import EngineRequest, OrchestratorContext
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
@@ -50,6 +51,7 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
             agent_id=original_agent_id,
             uri="new",
             tool_settings=None,
+            event_manager_mode=EventManagerMode.SERVER,
         )
         stack.enter_async_context.assert_called_once_with(orchestrator_cm)
         di_set.assert_called_once_with(
@@ -108,7 +110,9 @@ class EngineReloadTestCase(IsolatedAsyncioTestCase):
         stack.aclose.assert_called_once()
         repl.assert_called_once_with(settings, uri="new?max_new_tokens=1")
         loader.from_settings.assert_called_once_with(
-            new_settings, tool_settings=tool_settings
+            new_settings,
+            tool_settings=tool_settings,
+            event_manager_mode=EventManagerMode.SERVER,
         )
         stack.enter_async_context.assert_called_once_with(orchestrator_cm)
         di_set.assert_called_once_with(

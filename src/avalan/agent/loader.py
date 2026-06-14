@@ -11,7 +11,7 @@ from ..entities import (
     TransformerEngineSettings,
 )
 from ..event import Event, EventType
-from ..event.manager import EventManager
+from ..event.manager import EventManager, EventManagerMode
 from ..filesystem import read_text
 from ..memory.manager import MemoryManager
 from ..model.file_delivery import LocalFileDeliveryProfile
@@ -354,8 +354,10 @@ class OrchestratorLoader:
         disable_memory: bool = False,
         uri: str | None = None,
         tool_settings: ToolSettingsContext | None = None,
+        event_manager_mode: EventManagerMode = EventManagerMode.SDK,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
+        assert isinstance(event_manager_mode, EventManagerMode)
 
         if not exists(path):
             raise FileNotFoundError(path)
@@ -622,11 +624,26 @@ class OrchestratorLoader:
         _l("Loaded agent from %s", path, is_debug=False)
 
         if tool_recovery_formats:
+            if event_manager_mode is not EventManagerMode.SDK:
+                return await self.from_settings(
+                    settings,
+                    tool_settings=tool_settings,
+                    tool_format=tool_format,
+                    tool_recovery_formats=tool_recovery_formats,
+                    event_manager_mode=event_manager_mode,
+                )
             return await self.from_settings(
                 settings,
                 tool_settings=tool_settings,
                 tool_format=tool_format,
                 tool_recovery_formats=tool_recovery_formats,
+            )
+        if event_manager_mode is not EventManagerMode.SDK:
+            return await self.from_settings(
+                settings,
+                tool_settings=tool_settings,
+                tool_format=tool_format,
+                event_manager_mode=event_manager_mode,
             )
         return await self.from_settings(
             settings,
@@ -641,8 +658,10 @@ class OrchestratorLoader:
         tool_settings: ToolSettingsContext | None = None,
         tool_format: ToolFormat | None = None,
         tool_recovery_formats: list[ToolCallRecoveryFormat] | None = None,
+        event_manager_mode: EventManagerMode = EventManagerMode.SDK,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
+        assert isinstance(event_manager_mode, EventManagerMode)
 
         _l("Loading agent from settings", is_debug=False)
 
@@ -657,7 +676,7 @@ class OrchestratorLoader:
 
         _l("Loading event manager")
 
-        event_manager = EventManager()
+        event_manager = EventManager(mode=event_manager_mode)
         if settings.log_events:
 
             def _log_event(event: Event) -> None:

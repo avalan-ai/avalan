@@ -1,6 +1,7 @@
 from ..agent.loader import OrchestratorLoader
 from ..agent.orchestrator import Orchestrator
 from ..entities import OrchestratorSettings
+from ..event.manager import EventManagerMode
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..tool.context import ToolSettingsContext
 from ..utils import logger_replace
@@ -408,12 +409,14 @@ async def di_get_orchestrator(request: Request) -> Orchestrator:
                 ctx.specs_path,
                 agent_id=request.app.state.agent_id,
                 tool_settings=ctx.tool_settings,
+                event_manager_mode=EventManagerMode.SERVER,
             )
         else:
             assert ctx.settings
             orchestrator_cm = await loader.from_settings(
                 ctx.settings,
                 tool_settings=ctx.tool_settings,
+                event_manager_mode=EventManagerMode.SERVER,
             )
         orchestrator = await stack.enter_async_context(orchestrator_cm)
         request.app.state.orchestrator = orchestrator

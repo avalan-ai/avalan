@@ -8,6 +8,8 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import MessageContentFile, MessageContentText
+from avalan.event import Event, EventType
+from avalan.event.manager import EventManager, EventManagerMode
 from avalan.model import TextGenerationResponse
 
 
@@ -48,6 +50,40 @@ class SimpleOrchestrator(Orchestrator):
 
     async def sync_messages(self):  # type: ignore[override]
         self.synced = True
+
+
+class EventfulServerOrchestrator(Orchestrator):
+    def __init__(self, *, streaming: bool = False) -> None:
+        self._event_manager = EventManager(mode=EventManagerMode.SERVER)
+        self._streaming = streaming
+
+    async def __call__(self, messages, settings=None):  # type: ignore[no-untyped-def]
+        _ = messages, settings
+        for _ in range(10):
+            await self.event_manager.trigger(Event(type=EventType.START))
+
+        if self._streaming:
+
+            async def output_gen():
+                yield "bounded"
+
+            return TextGenerationResponse(
+                output_gen,
+                logger=getLogger(),
+                use_async_generator=True,
+            )
+
+        def output_fn(**_):
+            return "bounded"
+
+        return TextGenerationResponse(
+            output_fn,
+            logger=getLogger(),
+            use_async_generator=False,
+        )
+
+    async def sync_messages(self):  # type: ignore[override]
+        return None
 
 
 class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
@@ -137,6 +173,55 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
                 "total_tokens": 4,
             },
         )
+
+    async def test_repeated_requests_without_ui_listener_do_not_retain_events(
+        self,
+    ):
+        app = self.FastAPI()
+        orchestrator = EventfulServerOrchestrator()
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        payload = {
+            "input": [{"role": "user", "content": "hi"}],
+            "stream": False,
+        }
+        for _ in range(3):
+            resp = client.post("/responses", json=payload)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(
+                resp.json()["output"][0]["content"][0]["text"],
+                "bounded",
+            )
+
+        self.assertEqual(orchestrator.event_manager.history, [])
+        self.assertEqual(orchestrator.event_manager.stats.published, 30)
+        self.assertEqual(orchestrator.event_manager.stats.queue_depth, 0)
+        self.assertEqual(orchestrator.event_manager.stats.dropped, 0)
+
+    async def test_repeated_streaming_requests_do_not_retain_events(self):
+        app = self.FastAPI()
+        orchestrator = EventfulServerOrchestrator(streaming=True)
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        payload = {
+            "input": [{"role": "user", "content": "hi"}],
+            "stream": True,
+        }
+        for _ in range(3):
+            with client.stream("POST", "/responses", json=payload) as resp:
+                self.assertEqual(resp.status_code, 200)
+                lines = list(resp.iter_lines())
+            self.assertIn("event: response.output_text.delta", lines)
+            self.assertIn("event: response.completed", lines)
+
+        self.assertEqual(orchestrator.event_manager.history, [])
+        self.assertEqual(orchestrator.event_manager.stats.published, 30)
+        self.assertEqual(orchestrator.event_manager.stats.queue_depth, 0)
+        self.assertEqual(orchestrator.event_manager.stats.dropped, 0)
 
     async def test_non_streaming_response_accepts_string_input(self):
         app = self.FastAPI()

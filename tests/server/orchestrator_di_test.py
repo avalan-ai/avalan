@@ -4,6 +4,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from avalan.event.manager import EventManagerMode
 from avalan.server import di_get_logger, di_get_orchestrator, di_set
 from avalan.server.entities import OrchestratorContext
 
@@ -49,7 +50,12 @@ class OrchestratorDiTestCase(IsolatedAsyncioTestCase):
             result = await di_get_orchestrator(request)
         self.assertIs(result, orchestrator)
         self.assertIs(request.app.state.orchestrator, orchestrator)
-        loader.from_file.assert_called_once()
+        loader.from_file.assert_called_once_with(
+            "agent.yaml",
+            agent_id=None,
+            tool_settings=None,
+            event_manager_mode=EventManagerMode.SERVER,
+        )
 
     async def test_di_get_orchestrator_from_settings(self) -> None:
         orchestrator = DummyOrchestrator()
@@ -80,7 +86,11 @@ class OrchestratorDiTestCase(IsolatedAsyncioTestCase):
         with patch("avalan.server.Orchestrator", DummyOrchestrator):
             result = await di_get_orchestrator(request)
         self.assertIs(result, orchestrator)
-        loader.from_settings.assert_called_once()
+        loader.from_settings.assert_called_once_with(
+            ctx.settings,
+            tool_settings=None,
+            event_manager_mode=EventManagerMode.SERVER,
+        )
 
     async def test_di_get_orchestrator_returns_existing(self) -> None:
         orchestrator = DummyOrchestrator()

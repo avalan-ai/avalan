@@ -18,6 +18,7 @@ from ...entities import (
     ToolFormat,
 )
 from ...event import Event, EventStats
+from ...event.manager import EventManagerMode
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.nlp.text.vendor import TextGenerationVendorModel
@@ -530,6 +531,7 @@ async def agent_message_search(
                     specs_path,
                     agent_id=agent_id,
                     tool_settings=_agent_tool_settings(args),
+                    event_manager_mode=EventManagerMode.CLI,
                 )
             else:
                 assert (
@@ -549,7 +551,9 @@ async def agent_message_search(
                     tools=_agent_enabled_tools(args),
                 )
                 orchestrator = await loader.from_settings(
-                    settings, tool_settings=tool_settings
+                    settings,
+                    tool_settings=tool_settings,
+                    event_manager_mode=EventManagerMode.CLI,
                 )
             orchestrator = await stack.enter_async_context(orchestrator)
 
@@ -641,11 +645,7 @@ async def agent_run(
     async def _event_listener(event: object) -> None:
         assert isinstance(event, Event)
         nonlocal event_stats
-        event_stats.total_triggers += 1
-        if event.type not in event_stats.triggers:
-            event_stats.triggers[event.type] = 1
-        else:
-            event_stats.triggers[event.type] += 1
+        event_stats.record_trigger(event.type)
 
     async def _init_orchestrator() -> Orchestrator:
         loader = OrchestratorLoader(
@@ -666,6 +666,7 @@ async def agent_run(
                 agent_id=agent_id,
                 disable_memory=args.no_session,
                 tool_settings=_agent_tool_settings(args),
+                event_manager_mode=EventManagerMode.CLI,
             )
         else:
             assert (
@@ -704,14 +705,24 @@ async def agent_run(
                     tool_settings=tool_settings,
                     tool_format=tool_format,
                     tool_recovery_formats=tool_recovery_formats,
+                    event_manager_mode=EventManagerMode.CLI,
                 )
             else:
                 orchestrator = await loader.from_settings(
                     settings,
                     tool_settings=tool_settings,
                     tool_format=tool_format,
+                    event_manager_mode=EventManagerMode.CLI,
                 )
-        orchestrator.event_manager.add_listener(_event_listener)
+        event_manager = orchestrator.event_manager
+        add_ui_listener = getattr(event_manager, "add_ui_listener", None)
+        has_ui_listener = callable(
+            getattr(type(event_manager), "add_ui_listener", None)
+        ) or "add_ui_listener" in getattr(event_manager, "__dict__", {})
+        if has_ui_listener and callable(add_ui_listener):
+            add_ui_listener(_event_listener)
+        else:
+            event_manager.add_listener(_event_listener)
 
         orchestrator = await stack.enter_async_context(orchestrator)
 

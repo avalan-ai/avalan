@@ -35,7 +35,7 @@ from avalan.entities import (
     ToolFormat,
 )
 from avalan.event import Event, EventType
-from avalan.event.manager import EventManager
+from avalan.event.manager import EventManager, EventManagerMode
 from avalan.memory import RecentMessageMemory
 from avalan.memory.manager import MemoryManager
 from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
@@ -128,6 +128,10 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         lf.assert_awaited_once()
+        self.assertIs(
+            lf.call_args.kwargs["event_manager_mode"],
+            EventManagerMode.CLI,
+        )
         dummy_stack.enter_async_context.assert_awaited_once_with(orch)
         orch.memory.search_messages.assert_awaited_once_with(
             search="hi",
@@ -170,6 +174,10 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         lf.assert_awaited_once()
+        self.assertIs(
+            lf.call_args.kwargs["event_manager_mode"],
+            EventManagerMode.CLI,
+        )
         tool_settings = lf.call_args.kwargs["tool_settings"]
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_head_lines, 13)
@@ -230,6 +238,10 @@ class CliAgentMessageSearchTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         lfs.assert_awaited_once()
+        self.assertIs(
+            lfs.call_args.kwargs["event_manager_mode"],
+            EventManagerMode.CLI,
+        )
         settings = lfs.call_args.args[0]
         self.assertIsNone(settings.tools)
         lf.assert_not_called()
@@ -1327,6 +1339,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         lf.assert_awaited_once()
+        self.assertIs(
+            lf.call_args.kwargs["event_manager_mode"],
+            EventManagerMode.CLI,
+        )
         tool_settings = lf.call_args.kwargs["tool_settings"]
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
@@ -1719,6 +1735,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         settings = fs_patch.call_args.args[0]
         self.assertIsNone(settings.tools)
         self.assertTrue(settings.call_options["skip_special_tokens"])
+        self.assertIs(
+            fs_patch.call_args.kwargs["event_manager_mode"],
+            EventManagerMode.CLI,
+        )
         tool_settings = fs_patch.call_args.kwargs["tool_settings"]
         self.assertIsNone(tool_settings.browser)
         self.assertIsNone(tool_settings.database)
@@ -1766,6 +1786,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         fs_patch.assert_awaited_once()
         settings = fs_patch.call_args.args[0]
         self.assertIsNone(settings.tools)
+        self.assertIs(
+            fs_patch.call_args.kwargs["event_manager_mode"],
+            EventManagerMode.CLI,
+        )
         tool_settings = fs_patch.call_args.kwargs["tool_settings"]
         self.assertIsInstance(tool_settings.shell, ShellToolSettings)
         self.assertEqual(tool_settings.shell.max_stdout_bytes, 2048)
@@ -2206,6 +2230,39 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.total_triggers, 2)
         self.assertEqual(stats.triggers[EventType.START], 2)
 
+    async def test_event_listener_uses_bounded_ui_policy_when_available(
+        self,
+    ):
+        captured = {}
+
+        def add_ui_listener(fn):
+            captured["fn"] = fn
+
+        self.orch.event_manager.add_ui_listener = MagicMock(
+            side_effect=add_ui_listener
+        )
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.orch.event_manager.add_ui_listener.assert_called_once()
+        self.orch.event_manager.add_listener.assert_not_called()
+        self.assertIn("fn", captured)
+
     async def test_run_tools_confirm_calls_callback(self):
         self.args.tools_confirm = True
         self.args.tty = "/tmp/tty"
@@ -2500,7 +2557,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             tool_settings=None,
             tool_format=None,
             tool_recovery_formats=None,
+            event_manager_mode=None,
         ):
+            self.assertIs(event_manager_mode, EventManagerMode.CLI)
             self.orch.tool = ToolManager.create_instance(
                 available_toolsets=[],
                 enable_tools=None,
