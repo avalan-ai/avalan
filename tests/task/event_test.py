@@ -449,7 +449,6 @@ class SanitizedTaskEventTest(TestCase):
                 payload=[],
                 started=1.0,
                 finished=2.0,
-                elapsed=True,
             ),
             PrivacySanitizer(),
         )

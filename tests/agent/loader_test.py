@@ -3,7 +3,7 @@ from logging import DEBUG, INFO, Logger
 from os import chmod, geteuid
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
@@ -24,6 +24,7 @@ from avalan.entities import (
     ToolNameResolutionStatus,
 )
 from avalan.event import Event, EventType
+from avalan.event.manager import EventManagerMode
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.tool import ToolSet
 from avalan.tool.browser import BrowserToolSettings
@@ -465,6 +466,75 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
             tool_settings = from_settings.call_args.kwargs["tool_settings"]
             self.assertIsInstance(tool_settings.shell, ShellToolSettings)
             self.assertFalse(tool_settings.shell.allow_media_tools)
+            await stack.aclose()
+
+    async def test_from_file_forwards_server_event_manager_mode(self):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(_minimal_agent_toml())
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(
+                    tmp.name,
+                    agent_id=uuid4(),
+                    event_manager_mode=EventManagerMode.SERVER,
+                )
+
+            self.assertEqual(result, "orch")
+            self.assertIs(
+                from_settings.call_args.kwargs["event_manager_mode"],
+                EventManagerMode.SERVER,
+            )
+            await stack.aclose()
+
+    async def test_from_file_forwards_server_mode_with_recovery_formats(
+        self,
+    ):
+        with NamedTemporaryFile("w+", suffix=".toml") as tmp:
+            tmp.write(
+                _minimal_agent_toml()
+                + '\n[tool]\nrecovery_formats = ["fenced"]\n'
+            )
+            tmp.flush()
+            stack = AsyncExitStack()
+            loader = OrchestratorLoader(
+                hub=MagicMock(spec=HuggingfaceHub),
+                logger=MagicMock(spec=Logger),
+                participant_id=uuid4(),
+                stack=stack,
+            )
+
+            with patch.object(
+                loader,
+                "from_settings",
+                new=AsyncMock(return_value="orch"),
+            ) as from_settings:
+                result = await loader.from_file(
+                    tmp.name,
+                    agent_id=uuid4(),
+                    event_manager_mode=EventManagerMode.SERVER,
+                )
+
+            self.assertEqual(result, "orch")
+            self.assertIs(
+                from_settings.call_args.kwargs["event_manager_mode"],
+                EventManagerMode.SERVER,
+            )
+            self.assertEqual(
+                from_settings.call_args.kwargs["tool_recovery_formats"],
+                [ToolCallRecoveryFormat.FENCED],
+            )
             await stack.aclose()
 
     async def test_shell_section_builds_settings_from_toml(self):
@@ -2660,6 +2730,20 @@ schema_ref = \"../private/answer.json\"
 
 
 class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
+    async def test_from_settings_rejects_invalid_event_manager_mode(self):
+        loader = OrchestratorLoader(
+            hub=MagicMock(spec=HuggingfaceHub),
+            logger=MagicMock(spec=Logger),
+            participant_id=uuid4(),
+            stack=AsyncExitStack(),
+        )
+
+        with self.assertRaises(AssertionError):
+            await loader.from_settings(
+                MagicMock(),
+                event_manager_mode=cast(Any, "server"),
+            )
+
     async def test_shell_toolset_is_not_registered_without_shell_opt_in(self):
         kwargs = await _from_settings_tool_manager_kwargs(
             _orchestrator_settings(tools=None)
@@ -3278,7 +3362,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             ),
             patch(
                 "avalan.agent.loader.EventManager", return_value=event_manager
-            ),
+            ) as event_manager_patch,
         ):
             loader = OrchestratorLoader(
                 hub=hub,
@@ -3289,6 +3373,7 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
             result = await loader.from_settings(settings)
 
         self.assertEqual(result, "orch")
+        event_manager_patch.assert_called_once_with(mode=EventManagerMode.SDK)
         self.assertEqual(len(event_manager.listeners), 1)
 
         listener = event_manager.listeners[0]

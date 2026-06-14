@@ -18,7 +18,7 @@ from ....entities import (
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
 )
-from ....event import Event, EventType
+from ....event import Event, EventObservabilityPayload, EventType
 from ....event.manager import EventManager
 from ....model.call import ModelCallContext
 from ....model.response.parsers.tool import ToolCallResponseParser
@@ -1275,16 +1275,34 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             token_id = ids[0] if ids else None
 
         assert self._event_manager
+        payload = {
+            "token_id": token_id,
+            "model_id": self._engine_agent.engine.model_id,
+            "token": token_str,
+            "token_type": type(item).__qualname__,
+            "step": self._step,
+        }
         await self._event_manager.trigger(
             Event(
                 type=EventType.TOKEN_GENERATED,
-                payload={
-                    "token_id": token_id,
-                    "model_id": self._engine_agent.engine.model_id,
-                    "token": token_str,
-                    "token_type": type(item).__qualname__,
-                    "step": self._step,
-                },
+                payload=payload,
+                observability_payload=(
+                    EventObservabilityPayload.temporary_legacy(
+                        {
+                            "event_type": EventType.TOKEN_GENERATED.value,
+                            "model_id": self._engine_agent.engine.model_id,
+                            "step": self._step,
+                            "token_id": token_id,
+                            "token_length": len(token_str),
+                            "token_type": type(item).__qualname__,
+                        },
+                        owner="token-event-listener-facade",
+                        removal_condition=(
+                            "Remove after token consumers subscribe to "
+                            "canonical stream item projections."
+                        ),
+                    )
+                ),
             )
         )
 

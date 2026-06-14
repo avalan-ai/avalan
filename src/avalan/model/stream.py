@@ -5,6 +5,7 @@ from ..entities import (
     ToolCall,
     ToolCallToken,
 )
+from ..observability import observability_key_sample
 from ..types import LooseJsonValue
 from .provider import ProviderFamily, provider_family_value
 
@@ -612,6 +613,63 @@ class CanonicalStreamItem:
             assert self.terminal_outcome is None
         else:
             assert self.terminal_outcome is expected_outcome
+
+
+def stream_observability_payload(
+    item: CanonicalStreamItem,
+) -> dict[str, LooseJsonValue]:
+    assert isinstance(item, CanonicalStreamItem)
+    payload: dict[str, LooseJsonValue] = {
+        "stream_session_id": item.stream_session_id,
+        "run_id": item.run_id,
+        "turn_id": item.turn_id,
+        "sequence": item.sequence,
+        "kind": item.kind.value,
+        "channel": item.channel.value,
+        "visibility": item.visibility.value,
+    }
+    correlation = item.correlation.to_trace_dict()
+    if correlation:
+        payload["correlation"] = correlation
+    if item.terminal_outcome is not None:
+        payload["terminal_outcome"] = item.terminal_outcome.value
+    if item.usage is not None:
+        payload["usage"] = item.usage
+    summary = _stream_observability_summary(item)
+    if summary:
+        payload["summary"] = summary
+    if item.provider_family is not None:
+        payload["provider_family"] = item.provider_family
+    if item.provider_event_type is not None:
+        payload["provider_event_type"] = item.provider_event_type
+    return payload
+
+
+def _stream_observability_summary(
+    item: CanonicalStreamItem,
+) -> dict[str, object]:
+    summary: dict[str, object] = {}
+    if item.text_delta is not None:
+        summary["text_delta_length"] = len(item.text_delta)
+    if isinstance(item.data, dict):
+        data_keys, data_keys_truncated = observability_key_sample(item.data)
+        summary["data_keys"] = data_keys
+        if data_keys_truncated:
+            summary["data_key_count"] = len(item.data)
+            summary["data_keys_truncated"] = True
+    elif item.data is not None:
+        summary["data_type"] = type(item.data).__name__
+    if item.metadata:
+        metadata_keys, metadata_keys_truncated = observability_key_sample(
+            item.metadata
+        )
+        summary["metadata_keys"] = metadata_keys
+        if metadata_keys_truncated:
+            summary["metadata_key_count"] = len(item.metadata)
+            summary["metadata_keys_truncated"] = True
+    if item.provider_payload is not None:
+        summary["has_provider_payload"] = True
+    return summary
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

@@ -51,6 +51,7 @@ from avalan.model.stream import (
     normalize_local_stream,
     normalize_provider_stream,
     stream_channel_for_kind,
+    stream_observability_payload,
     stream_terminal_outcome_for_kind,
     validate_canonical_stream_items,
     validate_stream_runtime_contract,
@@ -272,6 +273,135 @@ class StreamContractTestCase(TestCase):
 
         with self.assertRaises(AssertionError):
             stream_channel_for_kind("answer.delta")  # type: ignore[arg-type]
+
+    def test_observability_payload_uses_lightweight_stream_summary(
+        self,
+    ) -> None:
+        item = _item(
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            3,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="large output",
+            data={"z": "body", "a": 1},
+            metadata={"debug": "full"},
+            provider_payload={"raw": "payload"},
+            provider_family="openai",
+            provider_event_type="response.output_text.delta",
+        )
+
+        payload = stream_observability_payload(item)
+
+        self.assertEqual(payload["stream_session_id"], "stream-1")
+        self.assertEqual(payload["run_id"], "run-1")
+        self.assertEqual(payload["turn_id"], "turn-1")
+        self.assertEqual(payload["sequence"], 3)
+        self.assertEqual(
+            payload["kind"], StreamItemKind.TOOL_EXECUTION_OUTPUT.value
+        )
+        self.assertEqual(
+            payload["channel"], StreamChannel.TOOL_EXECUTION.value
+        )
+        self.assertEqual(payload["correlation"], {"tool_call_id": "call-1"})
+        self.assertEqual(payload["provider_family"], "openai")
+        self.assertEqual(
+            payload["provider_event_type"], "response.output_text.delta"
+        )
+        self.assertEqual(
+            payload["summary"],
+            {
+                "text_delta_length": 12,
+                "data_keys": ["a", "z"],
+                "metadata_keys": ["debug"],
+                "has_provider_payload": True,
+            },
+        )
+        self.assertNotIn("text_delta", payload)
+        self.assertNotIn("data", payload)
+        self.assertNotIn("metadata", payload)
+        self.assertNotIn("provider_payload", payload)
+
+    def test_observability_payload_bounds_mapping_key_summaries(
+        self,
+    ) -> None:
+        item = _item(
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            4,
+            data={f"d{i:02d}": i for i in range(20)},
+            metadata={f"m{i:02d}": i for i in range(18)},
+        )
+
+        payload = stream_observability_payload(item)
+        summary = cast(dict[str, object], payload["summary"])
+
+        self.assertEqual(
+            summary["data_keys"],
+            [f"d{i:02d}" for i in range(16)],
+        )
+        self.assertEqual(summary["data_key_count"], 20)
+        self.assertIs(summary["data_keys_truncated"], True)
+        self.assertEqual(
+            summary["metadata_keys"],
+            [f"m{i:02d}" for i in range(16)],
+        )
+        self.assertEqual(summary["metadata_key_count"], 18)
+        self.assertIs(summary["metadata_keys_truncated"], True)
+        self.assertNotIn("d19", repr(summary["data_keys"]))
+        self.assertNotIn("m17", repr(summary["metadata_keys"]))
+
+    def test_observability_payload_bounds_mapping_key_lengths(
+        self,
+    ) -> None:
+        data_key = "d" * 200
+        metadata_key = "m" * 200
+        item = _item(
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            4,
+            data={data_key: 1},
+            metadata={metadata_key: 2},
+        )
+
+        payload = stream_observability_payload(item)
+        summary = cast(dict[str, object], payload["summary"])
+
+        self.assertEqual(summary["data_keys"], ["d" * 125 + "..."])
+        self.assertEqual(summary["data_key_count"], 1)
+        self.assertIs(summary["data_keys_truncated"], True)
+        self.assertEqual(summary["metadata_keys"], ["m" * 125 + "..."])
+        self.assertEqual(summary["metadata_key_count"], 1)
+        self.assertIs(summary["metadata_keys_truncated"], True)
+        self.assertNotIn(data_key, repr(summary["data_keys"]))
+        self.assertNotIn(metadata_key, repr(summary["metadata_keys"]))
+
+    def test_observability_payload_includes_usage_and_terminal_outcome(
+        self,
+    ) -> None:
+        usage_item = _item(
+            StreamItemKind.STREAM_COMPLETED,
+            2,
+            usage={"output_tokens": 4},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+
+        payload = stream_observability_payload(usage_item)
+
+        self.assertEqual(payload["usage"], {"output_tokens": 4})
+        self.assertEqual(payload["terminal_outcome"], "completed")
+        self.assertNotIn("summary", payload)
+
+    def test_observability_payload_summarizes_non_mapping_data(self) -> None:
+        item = _item(
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            4,
+            data=["diagnostic"],
+        )
+
+        payload = stream_observability_payload(item)
+
+        self.assertEqual(payload["summary"], {"data_type": "list"})
+
+    def test_observability_payload_rejects_non_stream_items(self) -> None:
+        with self.assertRaises(AssertionError):
+            stream_observability_payload(cast(Any, object()))
 
     def test_valid_trace_fixture_serializes_contract_fields(self) -> None:
         timestamp = datetime(2026, 1, 2, 3, 4, 5)

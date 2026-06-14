@@ -19,7 +19,7 @@ from avalan.entities import (
     Modality,
     TransformerEngineSettings,
 )
-from avalan.event import EventType
+from avalan.event import EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.model import TextGenerationResponse
@@ -323,6 +323,14 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
                 "step": 0,
             },
         )
+        self.assertIs(
+            token_events[0].observability.kind,
+            EventPayloadKind.TEMPORARY_LEGACY,
+        )
+        self.assertEqual(
+            token_events[0].observability.data["token_length"],
+            1,
+        )
         self.assertEqual(
             token_events[1].payload,
             {
@@ -332,6 +340,10 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
                 "token": "b",
                 "step": 1,
             },
+        )
+        self.assertEqual(
+            token_events[1].observability.data["token_length"],
+            1,
         )
 
         memory.__exit__.assert_called_once()

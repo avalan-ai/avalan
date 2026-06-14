@@ -1,5 +1,6 @@
 from ...agent.loader import OrchestratorLoader
 from ...agent.orchestrator import Orchestrator
+from ...event.manager import EventManagerMode
 from ...tool.context import ToolSettingsContext
 from ...tool.database.settings import DatabaseToolSettings
 from .. import di_get_logger, di_set
@@ -93,6 +94,7 @@ async def _load_orchestrator(
             agent_id=agent_id,
             uri=uri,
             tool_settings=tool_settings,
+            event_manager_mode=EventManagerMode.SERVER,
         )
         new_ctx = OrchestratorContext(
             participant_id=ctx.participant_id,
@@ -106,7 +108,9 @@ async def _load_orchestrator(
             replace(ctx.settings, uri=uri) if uri is not None else ctx.settings
         )
         orchestrator_cm = await loader.from_settings(
-            settings, tool_settings=tool_settings
+            settings,
+            tool_settings=tool_settings,
+            event_manager_mode=EventManagerMode.SERVER,
         )
         new_ctx = OrchestratorContext(
             participant_id=ctx.participant_id,

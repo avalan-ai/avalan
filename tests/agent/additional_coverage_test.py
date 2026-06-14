@@ -148,6 +148,15 @@ class OrchestratorCoverageTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(NotImplementedError):
             await self.orch.__aenter__()
 
+    async def test_aexit_closes_event_manager_after_teardown_error(self):
+        self.orch._engines_stack = MagicMock()
+        self.orch._engines_stack.__exit__.side_effect = RuntimeError("close")
+
+        with self.assertRaises(RuntimeError):
+            await self.orch.__aexit__(None, None, None)
+
+        self.event_manager.aclose.assert_awaited_once()
+
 
 class JsonSpecificationCoverageTestCase(unittest.TestCase):
     def test_list_properties(self):
