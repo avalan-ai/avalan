@@ -16,6 +16,7 @@ from avalan.entities import (
     ToolCallError,
     ToolCallRecoveryFormat,
     ToolCallResult,
+    ToolCapabilities,
     ToolFilter,
     ToolFilterResult,
     ToolFilterResultStatus,
@@ -58,6 +59,8 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertIsNone(settings.maximum_parser_input_size)
         self.assertIsNone(settings.maximum_parser_payload_depth)
         self.assertIsNone(settings.maximum_parser_payload_size)
+        self.assertFalse(settings.parallel_tool_calls)
+        self.assertEqual(settings.maximum_parallel_tool_calls, 4)
         self.assertEqual(settings.recovery_formats, [])
 
     def test_settings_accept_outcome_compatibility_modes(self):
@@ -73,6 +76,8 @@ class ToolManagerCreationTestCase(TestCase):
             maximum_parser_input_size=128,
             maximum_parser_payload_depth=4,
             maximum_parser_payload_size=96,
+            parallel_tool_calls=True,
+            maximum_parallel_tool_calls=2,
             recovery_formats=[ToolCallRecoveryFormat.FENCED],
         )
 
@@ -96,6 +101,8 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(settings.maximum_parser_input_size, 128)
         self.assertEqual(settings.maximum_parser_payload_depth, 4)
         self.assertEqual(settings.maximum_parser_payload_size, 96)
+        self.assertTrue(settings.parallel_tool_calls)
+        self.assertEqual(settings.maximum_parallel_tool_calls, 2)
         self.assertEqual(
             settings.recovery_formats, [ToolCallRecoveryFormat.FENCED]
         )
@@ -112,6 +119,8 @@ class ToolManagerCreationTestCase(TestCase):
             {"maximum_parser_input_size": True},
             {"maximum_parser_payload_depth": "1"},
             {"maximum_parser_payload_size": 0},
+            {"parallel_tool_calls": 1},
+            {"maximum_parallel_tool_calls": 0},
             {"recovery_formats": "fenced"},
             {"recovery_formats": ["fenced"]},
         )
@@ -343,6 +352,7 @@ class ToolManagerCreationTestCase(TestCase):
             descriptors[0].schema,
         )
         self.assertIsNone(descriptors[0].namespace)
+        self.assertEqual(descriptors[0].capabilities, ToolCapabilities())
         self.assertEqual(descriptors[0].policy, {})
         self.assertEqual(descriptors[0].metadata, {})
         self.assertEqual(manager.describe_tool("adder"), descriptors[0])
@@ -519,6 +529,123 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertEqual(descriptor.parameter_schema, {"type": "object"})
         self.assertIsNone(descriptor.return_schema)
 
+    def test_descriptors_expose_tool_capabilities_from_dataclass(self):
+        streaming = StreamingSafeTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["streaming_safe"],
+            available_toolsets=[ToolSet(tools=[streaming])],
+            settings=ToolManagerSettings(),
+        )
+
+        descriptor = manager.list_tools()[0]
+
+        self.assertEqual(
+            descriptor.capabilities,
+            ToolCapabilities(
+                supports_streaming=True,
+                side_effecting=False,
+                parallel_safe=True,
+            ),
+        )
+
+    def test_descriptors_expose_tool_capabilities_from_mapping(self):
+        mapped = MappedCapabilitiesTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["mapped_capabilities"],
+            available_toolsets=[ToolSet(tools=[mapped])],
+            settings=ToolManagerSettings(),
+        )
+
+        descriptor = manager.list_tools()[0]
+
+        self.assertEqual(
+            descriptor.capabilities,
+            ToolCapabilities(
+                supports_streaming=True,
+                side_effecting=True,
+                parallel_safe=False,
+            ),
+        )
+
+    def test_descriptors_expose_tool_capabilities_from_attributes(self):
+        parallel = AttributeCapabilitiesTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["attribute_capabilities"],
+            available_toolsets=[ToolSet(tools=[parallel])],
+            settings=ToolManagerSettings(),
+        )
+
+        descriptor = manager.list_tools()[0]
+
+        self.assertEqual(
+            descriptor.capabilities,
+            ToolCapabilities(
+                supports_streaming=False,
+                side_effecting=False,
+                parallel_safe=True,
+            ),
+        )
+
+    def test_parallel_settings_are_exposed(self):
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            settings=ToolManagerSettings(
+                parallel_tool_calls=True,
+                maximum_parallel_tool_calls=3,
+            ),
+        )
+
+        self.assertTrue(manager.parallel_tool_calls)
+        self.assertEqual(manager.maximum_parallel_tool_calls, 3)
+
+    def test_tool_call_parallel_safety_uses_descriptor_capabilities(self):
+        parallel = AttributeCapabilitiesTool()
+        manager = ToolManager.create_instance(
+            enable_tools=["attribute_capabilities"],
+            available_toolsets=[ToolSet(tools=[parallel])],
+            settings=ToolManagerSettings(),
+        )
+
+        self.assertTrue(
+            manager.is_tool_call_parallel_safe(
+                ToolCall(
+                    id="call-1",
+                    name="attribute_capabilities",
+                    arguments={},
+                )
+            )
+        )
+        self.assertFalse(
+            manager.is_tool_call_parallel_safe(
+                ToolCall(id="call-2", name="missing", arguments={})
+            )
+        )
+
+    def test_tool_capabilities_reject_malformed_mapping(self):
+        invalid_tools = (
+            InvalidCapabilityMappingTool(),
+            UnknownCapabilityMappingTool(),
+        )
+
+        for invalid in invalid_tools:
+            with self.subTest(tool=invalid.__name__):
+                with self.assertRaises(AssertionError):
+                    ToolManager.create_instance(
+                        enable_tools=[invalid.__name__],
+                        available_toolsets=[ToolSet(tools=[invalid])],
+                        settings=ToolManagerSettings(),
+                    )
+
+    def test_tool_capabilities_reject_malformed_attribute(self):
+        invalid = InvalidCapabilityAttributeTool()
+
+        with self.assertRaises(AssertionError):
+            ToolManager.create_instance(
+                enable_tools=["invalid_capability_attribute"],
+                available_toolsets=[ToolSet(tools=[invalid])],
+                settings=ToolManagerSettings(),
+            )
+
     def test_tool_descriptor_accepts_missing_schema(self):
         adder = DummyAdder()
 
@@ -536,6 +663,7 @@ class ToolManagerCreationTestCase(TestCase):
         self.assertIsNone(descriptor.parameter_schema)
         self.assertIsNone(descriptor.return_schema)
         self.assertIsNone(descriptor.provider_safe_schema)
+        self.assertEqual(descriptor.capabilities, ToolCapabilities())
 
     def test_resolve_tool_name_exact_alias_ambiguous_disabled_unknown(self):
         manager = ToolManager.create_instance(
@@ -1245,6 +1373,53 @@ class InvalidAliasesTool(DummyAdder):
     def __init__(self) -> None:
         self.__name__ = "invalid_aliases"
         self.aliases = "sum"
+
+
+class StreamingSafeTool(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "streaming_safe"
+        self.aliases = []
+        self.tool_capabilities = ToolCapabilities(
+            supports_streaming=True,
+            side_effecting=False,
+            parallel_safe=True,
+        )
+
+
+class MappedCapabilitiesTool(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "mapped_capabilities"
+        self.aliases = []
+        self.tool_capabilities = {"supports_streaming": True}
+
+
+class AttributeCapabilitiesTool(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "attribute_capabilities"
+        self.aliases = []
+        self.side_effecting = False
+        self.parallel_safe = True
+
+
+class InvalidCapabilityMappingTool(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "invalid_capability_mapping"
+        self.aliases = []
+        self.tool_capabilities = {"supports_streaming": "yes"}
+
+
+class UnknownCapabilityMappingTool(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "unknown_capability_mapping"
+        self.aliases = []
+        self.tool_capabilities = {"streaming": True}
+
+
+class InvalidCapabilityAttributeTool(DummyAdder):
+    def __init__(self) -> None:
+        self.__name__ = "invalid_capability_attribute"
+        self.aliases = []
+        self.parallel_safe = "yes"
 
 
 class RuntimePayload(TypedDict):

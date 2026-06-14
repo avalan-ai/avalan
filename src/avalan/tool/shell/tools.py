@@ -27,6 +27,7 @@ class _ShellCommandTool(Tool, ABC):
     _formatter: ShellResultFormatter
     _policy: ExecutionPolicy
     _settings: ShellToolSettings
+    supports_streaming = True
 
     def __init__(
         self,
@@ -44,12 +45,23 @@ class _ShellCommandTool(Tool, ABC):
         self._executor = executor
         self._formatter = formatter or self._format_result
 
-    async def _execute_request(self, request: ShellCommandRequest) -> str:
+    async def _execute_request(
+        self,
+        request: ShellCommandRequest,
+        *,
+        context: ToolCallContext,
+    ) -> str:
         try:
             spec = await self._policy.normalize(request)
         except ShellPolicyDenied as error:
             return self._formatter(_policy_denied_result(request, error))
-        result = await self._executor.execute(spec)
+        if context.stream_event is not None:
+            result = await self._executor.execute(
+                spec,
+                stream=context.stream_event,
+            )
+        else:
+            result = await self._executor.execute(spec)
         return self._formatter(result)
 
     def _format_result(self, result: ExecutionResult) -> str:
@@ -129,7 +141,8 @@ class RgTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -184,7 +197,8 @@ class HeadTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -239,7 +253,8 @@ class TailTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -294,7 +309,8 @@ class LsTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -348,7 +364,8 @@ class CatTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -412,7 +429,8 @@ class WcTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -490,7 +508,8 @@ class AwkTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -554,7 +573,8 @@ class SedTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -624,7 +644,8 @@ class JqTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -691,7 +712,8 @@ class PdfToTextTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -761,7 +783,8 @@ class PdfToPpmTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 
@@ -834,7 +857,8 @@ class TesseractTool(_ShellCommandTool):
                 timeout_seconds=timeout_seconds,
                 max_stdout_bytes=max_stdout_bytes,
                 max_stderr_bytes=max_stderr_bytes,
-            )
+            ),
+            context=context,
         )
 
 

@@ -672,6 +672,32 @@ class ToolCallError(ToolCall):
         return "ToolCallError"
 
 
+class ToolExecutionStreamKind(StrEnum):
+    STDOUT = "stdout"
+    STDERR = "stderr"
+    LOG = "log"
+    PROGRESS = "progress"
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolExecutionStreamEvent:
+    kind: ToolExecutionStreamKind
+    content: str | None = None
+    progress: int | float | None = None
+    metadata: dict[str, ToolValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.kind, ToolExecutionStreamKind)
+        if self.content is not None:
+            assert isinstance(self.content, str), "content must be a string"
+        if self.progress is not None:
+            assert isinstance(self.progress, int | float)
+            assert not isinstance(self.progress, bool)
+            assert 0 <= self.progress <= 1
+        assert isinstance(self.metadata, dict), "metadata must be a dictionary"
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolCallDiagnostic:
@@ -754,6 +780,19 @@ class PreparedToolCall:
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ToolCapabilities:
+    supports_streaming: bool = False
+    side_effecting: bool = True
+    parallel_safe: bool = False
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.supports_streaming, bool)
+        assert isinstance(self.side_effecting, bool)
+        assert isinstance(self.parallel_safe, bool)
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolDescriptor:
     name: str
     callable: Callable[..., Any] | None = None
@@ -763,6 +802,7 @@ class ToolDescriptor:
     return_schema: dict[str, Any] | None = None
     provider_safe_schema: dict[str, Any] | None = None
     namespace: str | None = None
+    capabilities: ToolCapabilities = field(default_factory=ToolCapabilities)
     policy: dict[str, ToolValue] = field(default_factory=dict)
     metadata: dict[str, ToolValue] = field(default_factory=dict)
 
@@ -782,6 +822,7 @@ class ToolDescriptor:
         if self.provider_safe_schema is not None:
             assert isinstance(self.provider_safe_schema, dict)
         _assert_optional_tool_name(self.namespace, "namespace")
+        assert isinstance(self.capabilities, ToolCapabilities)
         assert isinstance(self.policy, dict)
         assert isinstance(self.metadata, dict)
 
@@ -1130,6 +1171,9 @@ class ToolCallContext:
     session_id: UUID | None = None
     calls: list[ToolCall] | None = None
     cancellation_checker: Callable[[], Awaitable[None]] | None = None
+    stream_event: (
+        Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+    ) = None
     flow_tool_node: bool = False
 
 
@@ -1200,6 +1244,8 @@ class ToolManagerSettings:
     maximum_parser_input_size: int | None = None
     maximum_parser_payload_depth: int | None = None
     maximum_parser_payload_size: int | None = None
+    parallel_tool_calls: bool = False
+    maximum_parallel_tool_calls: int = 4
     execution_mode: ToolManagerExecutionMode = ToolManagerExecutionMode.LEGACY
     missing_call_mode: ToolManagerMissingCallMode = (
         ToolManagerMissingCallMode.LEGACY_NONE
@@ -1237,12 +1283,14 @@ class ToolManagerSettings:
             self.maximum_parser_input_size,
             self.maximum_parser_payload_depth,
             self.maximum_parser_payload_size,
+            self.maximum_parallel_tool_calls,
         ):
             assert limit is None or (
                 isinstance(limit, int)
                 and not isinstance(limit, bool)
                 and limit > 0
             )
+        assert isinstance(self.parallel_tool_calls, bool)
         assert isinstance(self.recovery_formats, list)
         for recovery_format in self.recovery_formats:
             assert isinstance(recovery_format, ToolCallRecoveryFormat)

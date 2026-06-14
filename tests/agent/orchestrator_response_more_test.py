@@ -1,4 +1,5 @@
 from logging import getLogger
+from queue import Queue
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 
@@ -178,3 +179,58 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
             enable_tool_parsing=False,
         )
         self.assertIsNone(resp._tool_parser)
+
+    async def test_iteration_uses_bounded_owned_staging_queues(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        resp.__aiter__()
+
+        self.assertEqual(
+            resp._parser_queue.maxsize,
+            OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
+        )
+        self.assertEqual(
+            resp._calls.maxsize,
+            OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
+        )
+        self.assertEqual(
+            resp._tool_call_events.maxsize,
+            OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
+        )
+        self.assertEqual(
+            resp._tool_process_events.maxsize,
+            OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
+        )
+        self.assertEqual(
+            resp._tool_result_events.maxsize,
+            OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
+        )
+
+    async def test_staging_queue_overflow_fails_without_blocking(self):
+        queue: Queue[object] = Queue(maxsize=1)
+        first = object()
+        second = object()
+
+        OrchestratorResponse._put_staging_item(queue, first, "parser item")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Orchestrator parser item queue is full.",
+        ):
+            OrchestratorResponse._put_staging_item(
+                queue,
+                second,
+                "parser item",
+            )
+
+        self.assertIs(queue.get_nowait(), first)

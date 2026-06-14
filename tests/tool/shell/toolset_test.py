@@ -2,13 +2,21 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
-from avalan.entities import ToolCallContext
+from avalan.entities import (
+    ToolCallContext,
+    ToolExecutionStreamEvent,
+    ToolExecutionStreamKind,
+)
 from avalan.tool import Tool
 from avalan.tool.shell import (
     SHELL_COMMAND_IDS,
+    CommandExecutor,
     ExecutionPolicy,
+    ExecutionResult,
+    ExecutionSpec,
     ShellCommandDefinition,
     ShellExecutionStatus,
+    ShellOutputKind,
     ShellToolSet,
     ShellToolSettings,
     TrustedExecutableResolver,
@@ -79,6 +87,14 @@ class ShellToolSetAssemblyTest(TestCase):
 
         self.assertEqual(_schema_names(toolset), _EXPECTED_SCHEMA_NAMES)
 
+    def test_shell_tools_advertise_streaming_capability(self) -> None:
+        toolset = ShellToolSet()
+
+        self.assertTrue(toolset.tools)
+        for tool in toolset.tools:
+            with self.subTest(tool=getattr(tool, "__name__", "")):
+                self.assertIs(getattr(tool, "supports_streaming"), True)
+
 
 class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
     async def test_each_tool_returns_command_unavailable_when_missing(
@@ -109,6 +125,36 @@ class ShellToolSetMissingBinaryTest(IsolatedAsyncioTestCase):
                 )
                 self.assertIn("error_code: command_unavailable", output)
                 self.assertIn("error_message: command is unavailable", output)
+
+    async def test_shell_tool_forwards_context_stream_callback(self) -> None:
+        fixture_root = Path(__file__).parent / "fixtures"
+        settings = ShellToolSettings(workspace_root=str(fixture_root))
+        executor = _StreamingExecutor()
+        toolset = ShellToolSet(
+            settings=settings,
+            policy=ExecutionPolicy(
+                settings=settings,
+                resolver=_OneMissing(),
+            ),
+            executor=executor,
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        tool = _tool_by_name(toolset, "cat")
+        output = await tool(
+            "filesystem/visible.txt",
+            context=ToolCallContext(stream_event=record),
+        )
+
+        self.assertIn(f"status: {ShellExecutionStatus.COMPLETED}", output)
+        self.assertEqual(executor.seen_tool_names, ["shell.cat"])
+        self.assertEqual(
+            [(event.kind, event.content) for event in events],
+            [(ToolExecutionStreamKind.STDOUT, "live")],
+        )
 
 
 def _schema_names(toolset: ShellToolSet) -> tuple[str, ...]:
@@ -235,6 +281,45 @@ class _UnexpectedResolve:
         command: ShellCommandDefinition,
     ) -> str | None:
         raise AssertionError("schema generation must not resolve binaries")
+
+
+class _StreamingExecutor(CommandExecutor):
+    def __init__(self) -> None:
+        self.seen_tool_names: list[str] = []
+
+    async def execute(
+        self,
+        spec: ExecutionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ExecutionResult:
+        self.seen_tool_names.append(spec.tool_name)
+        if stream is not None:
+            await stream(
+                ToolExecutionStreamEvent(
+                    kind=ToolExecutionStreamKind.STDOUT,
+                    content="live",
+                )
+            )
+        return ExecutionResult(
+            backend=spec.backend,
+            tool_name=spec.tool_name,
+            command=spec.command,
+            argv=spec.argv,
+            display_argv=spec.display_argv,
+            cwd=spec.cwd,
+            display_cwd=spec.display_cwd,
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout="live",
+            stderr="",
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.TEXT,
+            stdout_bytes=4,
+            stderr_bytes=0,
+        )
 
 
 if __name__ == "__main__":
