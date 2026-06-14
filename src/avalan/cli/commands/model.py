@@ -9,7 +9,6 @@ from ...entities import (
     Message,
     Modality,
     Model,
-    ReasoningToken,
     Token,
     ToolCallToken,
 )
@@ -20,7 +19,19 @@ from ...model.input import input_files
 from ...model.manager import ModelManager
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
-from ...model.stream import CanonicalStreamItem, StreamItemKind
+from ...model.stream import (
+    CanonicalStreamAccumulator,
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamConsumerProjection,
+    StreamValidationError,
+    canonical_item_from_consumer_projection,
+    project_canonical_stream_item,
+    stream_consumer_projection_from_token,
+    stream_projection_is_reasoning,
+    stream_projection_is_tool_call,
+    stream_projection_text_delta,
+)
 from ...secrets import KeyringSecrets
 from . import ModelSettings, get_model_settings, is_ds4_backend_selected
 
@@ -36,7 +47,7 @@ from asyncio import (
 from asyncio import (
     Event as EventSignal,
 )
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import partial
 from logging import Logger
@@ -45,6 +56,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncGenerator,
+    AsyncIterator,
     Awaitable,
     TypeAlias,
     cast,
@@ -62,6 +74,79 @@ from rich.prompt import Prompt
 from rich.spinner import Spinner
 
 _HAS_INPUT = has_input
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamRenderItem:
+    projection: StreamConsumerProjection | None = None
+    event: Event | None = None
+    source_token: Token | None = None
+
+
+class _FrameRateRenderer:
+    def __init__(
+        self,
+        args: Namespace,
+        console: Console,
+        live: Live,
+        group: Group | None,
+        group_index: int | None,
+        *,
+        refresh_per_second: int,
+    ) -> None:
+        assert refresh_per_second > 0
+        self._args = args
+        self._console = console
+        self._live = live
+        self._group = group
+        self._group_index = group_index
+        self._interval = 1 / refresh_per_second
+        self._dirty = EventSignal()
+        self._latest_frame: RenderableType | None = None
+        self._latest_version = 0
+        self._rendered_version = 0
+        self._stopped = False
+        self._task = create_task(self._run())
+
+    def mark_dirty(self, frame: RenderableType) -> None:
+        self._latest_frame = frame
+        self._latest_version += 1
+        self._dirty.set()
+
+    async def close(self) -> None:
+        self._stopped = True
+        self._dirty.set()
+        await self._task
+
+    async def _run(self) -> None:
+        while True:
+            await self._dirty.wait()
+            self._dirty.clear()
+            if self._latest_version == self._rendered_version:
+                if self._stopped:
+                    return
+                continue
+
+            frame = self._latest_frame
+            assert frame is not None
+            version = self._latest_version
+            await to_thread(
+                _render_frame,
+                self._args,
+                self._console,
+                self._live,
+                frame,
+                self._group,
+                self._group_index,
+            )
+            self._rendered_version = version
+
+            if (
+                self._stopped
+                and self._rendered_version == self._latest_version
+            ):
+                return
+            await sleep(self._interval)
 
 
 def _supports_optional_stdin(modality: Modality) -> bool:
@@ -469,10 +554,10 @@ async def token_generation(
 ) -> None:
     # If no statistics needed, return as early as possible
     if not with_stats:
-        async for token in response:
-            if isinstance(token, Event):
+        async for token in _plain_stdout_projections(response):
+            if token.channel != StreamChannel.ANSWER:
                 continue
-            text_token = _stream_text(token)
+            text_token = stream_projection_text_delta(token)
             if text_token is None:
                 continue
             console.print(text_token, end="")
@@ -718,10 +803,29 @@ async def _token_stream(
     start = perf_counter()
     started_reasoning = perf_counter() if response.is_thinking else None
     reasoning_time = None
+    frame_renderer = _FrameRateRenderer(
+        args,
+        console,
+        live,
+        group,
+        tokens_group_index,
+        refresh_per_second=refresh_per_second,
+    )
 
     try:
-        async for token in response:
+        async for render_item in _stream_render_items(
+            response,
+            stream_session_id="cli-render-stream",
+            run_id="cli-render-run",
+            turn_id="cli-render-turn",
+        ):
             is_event = False
+            source_token = render_item.source_token
+            if render_item.event is not None:
+                token: Event | StreamConsumerProjection = render_item.event
+            else:
+                assert render_item.projection is not None
+                token = render_item.projection
             is_reasoning_token = _is_reasoning_stream_item(token)
 
             if isinstance(token, Event):
@@ -828,10 +932,10 @@ async def _token_stream(
 
             if (
                 display_tokens
-                and isinstance(token, Token)
-                and not isinstance(token, ToolCallToken)
+                and source_token is not None
+                and not isinstance(source_token, ToolCallToken)
             ):
-                tokens.append(token)
+                tokens.append(source_token)
             limit_answer_height = not getattr(
                 args, "display_answer_height_expand", False
             )
@@ -922,9 +1026,7 @@ async def _token_stream(
             token_frames = [token_frame_list[0]]
 
             for current_dtoken, frame in token_frames:
-                _render_frame(
-                    args, console, live, frame, group, tokens_group_index
-                )
+                frame_renderer.mark_dirty(frame)
 
                 if current_dtoken and current_dtoken != last_current_dtoken:
                     last_current_dtoken = current_dtoken
@@ -948,9 +1050,7 @@ async def _token_stream(
                 and len(token_frame_list) > 0
             ):
                 for current_dtoken, frame in token_frame_list[1:]:
-                    _render_frame(
-                        args, console, live, frame, group, tokens_group_index
-                    )
+                    frame_renderer.mark_dirty(frame)
 
                     if current_dtoken and display_pause > 0:
                         await sleep(display_pause / 1000)
@@ -960,39 +1060,132 @@ async def _token_stream(
     except (CancelledError, KeyboardInterrupt):
         raise
     finally:
+        await frame_renderer.close()
         if stop_signal:
             stop_signal.set()
 
 
-def _stream_text(
-    token: CanonicalStreamItem | ReasoningToken | ToolCallToken | Token | str,
-) -> str | None:
-    if isinstance(token, CanonicalStreamItem):
-        if token.kind in (
-            StreamItemKind.ANSWER_DELTA,
-            StreamItemKind.REASONING_DELTA,
-            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+async def _plain_stdout_projections(
+    response: TextGenerationResponse | AsyncIterator[Any],
+) -> AsyncIterator[StreamConsumerProjection]:
+    consumer_projections = getattr(response, "consumer_projections", None)
+    if callable(consumer_projections):
+        accumulator = CanonicalStreamAccumulator()
+        async for projection in consumer_projections(
+            stream_session_id="cli-stdout-stream",
+            run_id="cli-stdout-run",
+            turn_id="cli-stdout-turn",
         ):
-            return token.text_delta or ""
-        return None
-    if isinstance(token, Token):
-        return token.token
-    return str(token)
+            if not isinstance(projection, StreamConsumerProjection):
+                raise StreamValidationError(
+                    "consumer projection stream item must be "
+                    "StreamConsumerProjection"
+                )
+            accumulator.add(
+                canonical_item_from_consumer_projection(projection)
+            )
+            yield projection
+        accumulator.validate_complete()
+        return
+
+    async for item in _stream_render_items(
+        response,
+        stream_session_id="cli-stdout-stream",
+        run_id="cli-stdout-run",
+        turn_id="cli-stdout-turn",
+    ):
+        if item.event is not None:
+            continue
+        assert item.projection is not None
+        yield item.projection
+
+
+async def _stream_render_items(
+    response: TextGenerationResponse | AsyncIterator[Any],
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+) -> AsyncIterator[_StreamRenderItem]:
+    accumulator: CanonicalStreamAccumulator | None = None
+    sequence = 0
+    legacy_stream_seen = False
+
+    async for token in response:
+        if isinstance(token, Event):
+            yield _StreamRenderItem(event=token)
+            continue
+
+        if isinstance(token, CanonicalStreamItem):
+            if legacy_stream_seen:
+                raise StreamValidationError(
+                    "canonical stream item after legacy stream item"
+                )
+            if accumulator is None:
+                accumulator = CanonicalStreamAccumulator()
+            accumulator.add(token)
+            yield _StreamRenderItem(
+                projection=project_canonical_stream_item(token)
+            )
+            continue
+
+        if isinstance(token, StreamConsumerProjection):
+            if legacy_stream_seen:
+                raise StreamValidationError(
+                    "canonical stream item after legacy stream item"
+                )
+            if accumulator is None:
+                accumulator = CanonicalStreamAccumulator()
+            accumulator.add(canonical_item_from_consumer_projection(token))
+            yield _StreamRenderItem(projection=token)
+            continue
+
+        if accumulator is not None:
+            raise StreamValidationError(
+                "legacy stream item after canonical stream item"
+            )
+
+        source_token = token if isinstance(token, Token) else None
+        yield _StreamRenderItem(
+            projection=stream_consumer_projection_from_token(
+                token,
+                sequence,
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+            ),
+            source_token=source_token,
+        )
+        legacy_stream_seen = True
+        sequence += 1
+
+    if accumulator is not None:
+        accumulator.validate_complete()
+
+
+def _stream_text(
+    token: StreamConsumerProjection,
+) -> str | None:
+    assert isinstance(token, StreamConsumerProjection)
+    return stream_projection_text_delta(token)
 
 
 def _is_reasoning_stream_item(token: object) -> bool:
-    return isinstance(token, ReasoningToken) or (
-        isinstance(token, CanonicalStreamItem)
-        and token.kind is StreamItemKind.REASONING_DELTA
-    )
+    if not isinstance(token, StreamConsumerProjection):
+        return False
+    return stream_projection_is_reasoning(token)
 
 
 def _is_tool_call_stream_item(token: object) -> bool:
-    return isinstance(token, ToolCallToken) or (
-        isinstance(token, CanonicalStreamItem)
-        and token.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
-    )
+    if not isinstance(token, StreamConsumerProjection):
+        return False
+    return stream_projection_is_tool_call(token)
+
+
+def _stream_projection(
+    token: CanonicalStreamItem | StreamConsumerProjection | Token | str,
+) -> StreamConsumerProjection:
+    return stream_consumer_projection_from_token(token, 0)
 
 
 def _render_frame(

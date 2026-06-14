@@ -1,6 +1,7 @@
 from asyncio import CancelledError, run, sleep
 from collections.abc import AsyncIterable, AsyncIterator
 from datetime import datetime
+from time import perf_counter
 from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
@@ -21,6 +22,7 @@ from avalan.model.stream import (
     StreamCancellationPropagation,
     StreamCancellationPropagationTarget,
     StreamChannel,
+    StreamConsumerProjection,
     StreamGoldenTrace,
     StreamItemCorrelation,
     StreamItemKind,
@@ -43,15 +45,22 @@ from avalan.model.stream import (
     TextGenerationStream,
     accumulate_canonical_stream_items,
     assemble_tool_observations,
+    canonical_item_from_consumer_projection,
     canonical_item_from_token,
     classify_legacy_stream_surface,
     is_stream_terminal_kind,
     is_tool_execution_terminal_kind,
+    iter_stream_consumer_projections,
     legacy_stream_surface_inventory,
     normalize_local_stream,
     normalize_provider_stream,
+    project_canonical_stream_item,
     stream_channel_for_kind,
+    stream_consumer_projection_from_token,
     stream_observability_payload,
+    stream_projection_is_reasoning,
+    stream_projection_is_tool_call,
+    stream_projection_text_delta,
     stream_terminal_outcome_for_kind,
     validate_canonical_stream_items,
     validate_stream_runtime_contract,
@@ -213,6 +222,22 @@ async def _collect_stream_items(
     items: AsyncIterable[CanonicalStreamItem],
 ) -> tuple[CanonicalStreamItem, ...]:
     return tuple([item async for item in items])
+
+
+async def _collect_projection_items(
+    items: AsyncIterable[CanonicalStreamItem],
+    *,
+    validate_order: bool = True,
+) -> tuple[StreamConsumerProjection, ...]:
+    return tuple(
+        [
+            item
+            async for item in iter_stream_consumer_projections(
+                items,
+                validate_order=validate_order,
+            )
+        ]
+    )
 
 
 class StreamContractTestCase(TestCase):
@@ -402,6 +427,68 @@ class StreamContractTestCase(TestCase):
     def test_observability_payload_rejects_non_stream_items(self) -> None:
         with self.assertRaises(AssertionError):
             stream_observability_payload(cast(Any, object()))
+
+    def test_consumer_projection_from_token_preserves_canonical_fields(
+        self,
+    ) -> None:
+        item = _item(
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            3,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="stdout",
+            data={"kind": "stdout"},
+            usage=None,
+            provider_family="openai",
+            provider_event_type="tool.output",
+        )
+
+        projection = stream_consumer_projection_from_token(item, 99)
+
+        self.assertEqual(projection.stream_session_id, item.stream_session_id)
+        self.assertEqual(projection.sequence, item.sequence)
+        self.assertIs(projection.kind, StreamItemKind.TOOL_EXECUTION_OUTPUT)
+        self.assertEqual(projection.text_delta, "stdout")
+        self.assertEqual(projection.data, {"kind": "stdout"})
+        self.assertEqual(projection.tool_call_id, "call-1")
+        self.assertEqual(projection.provider_family, "openai")
+        self.assertEqual(projection.provider_event_type, "tool.output")
+        self.assertIs(
+            stream_consumer_projection_from_token(projection, 100),
+            projection,
+        )
+
+    def test_consumer_projection_from_legacy_tool_call_token_preserves_call(
+        self,
+    ) -> None:
+        call = ToolCall(id="call-1", name="math.add", arguments={"x": 1})
+
+        projection = stream_consumer_projection_from_token(
+            ToolCallToken(token='{"x":1}', call=call),
+            7,
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+
+        self.assertEqual(projection.stream_session_id, "stream")
+        self.assertEqual(projection.run_id, "run")
+        self.assertEqual(projection.turn_id, "turn")
+        self.assertEqual(projection.sequence, 7)
+        self.assertIs(projection.kind, StreamItemKind.TOOL_CALL_ARGUMENT_DELTA)
+        self.assertEqual(projection.tool_call_id, "call-1")
+        self.assertEqual(projection.text_delta, '{"x":1}')
+        self.assertEqual(
+            projection.data,
+            {"name": "math.add", "arguments": {"x": 1}},
+        )
+
+    def test_consumer_projection_from_token_rejects_invalid_values(
+        self,
+    ) -> None:
+        with self.assertRaises(AssertionError):
+            stream_consumer_projection_from_token(cast(Any, object()), 0)
+        with self.assertRaises(AssertionError):
+            stream_consumer_projection_from_token("a", -1)
 
     def test_valid_trace_fixture_serializes_contract_fields(self) -> None:
         timestamp = datetime(2026, 1, 2, 3, 4, 5)
@@ -1502,6 +1589,643 @@ class StreamContractTestCase(TestCase):
         accumulator.add(_item(StreamItemKind.STREAM_STARTED, 0))
         with self.assertRaises(StreamValidationError):
             accumulator.validate_complete()
+
+    def test_consumer_projection_preserves_canonical_fields(self) -> None:
+        correlation = StreamItemCorrelation(
+            provider_request_id="provider-1",
+            tool_call_id="tool-1",
+            parent_sequence=1,
+            protocol_item_id="protocol-1",
+        )
+        item = _item(
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            2,
+            stream_session_id="session",
+            run_id="run",
+            turn_id="turn",
+            correlation=correlation,
+            text_delta="chunk",
+            data={"structured": True},
+            metadata={"source": "tool"},
+            provider_family="openai",
+            provider_event_type="tool.output",
+        )
+
+        projection = project_canonical_stream_item(item)
+
+        self.assertEqual(projection.stream_session_id, "session")
+        self.assertEqual(projection.run_id, "run")
+        self.assertEqual(projection.turn_id, "turn")
+        self.assertEqual(projection.sequence, 2)
+        self.assertIs(projection.kind, StreamItemKind.TOOL_EXECUTION_OUTPUT)
+        self.assertIs(projection.channel, StreamChannel.TOOL_EXECUTION)
+        self.assertIs(projection.correlation, correlation)
+        self.assertEqual(projection.tool_call_id, "tool-1")
+        self.assertEqual(projection.text_delta, "chunk")
+        self.assertEqual(projection.data, {"structured": True})
+        self.assertEqual(projection.metadata, {"source": "tool"})
+        self.assertEqual(projection.provider_family, "openai")
+        self.assertEqual(projection.provider_event_type, "tool.output")
+        self.assertFalse(projection.is_stream_terminal)
+
+        item.metadata["source"] = "mutated"
+        self.assertEqual(projection.metadata, {"source": "tool"})
+
+    def test_canonical_item_from_projection_preserves_projected_fields(
+        self,
+    ) -> None:
+        correlation = StreamItemCorrelation(tool_call_id="tool-1")
+        projection = project_canonical_stream_item(
+            _item(
+                StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                2,
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                correlation=correlation,
+                text_delta="chunk",
+                data={"structured": True},
+                metadata={"source": "tool"},
+                provider_family="openai",
+                provider_event_type="tool.output",
+            )
+        )
+
+        item = canonical_item_from_consumer_projection(projection)
+
+        self.assertEqual(item.stream_session_id, "session")
+        self.assertEqual(item.run_id, "run")
+        self.assertEqual(item.turn_id, "turn")
+        self.assertEqual(item.sequence, 2)
+        self.assertIs(item.kind, StreamItemKind.TOOL_EXECUTION_OUTPUT)
+        self.assertIs(item.channel, StreamChannel.TOOL_EXECUTION)
+        self.assertIs(item.correlation, correlation)
+        self.assertEqual(item.text_delta, "chunk")
+        self.assertEqual(item.data, {"structured": True})
+        self.assertEqual(item.metadata, {"source": "tool"})
+        self.assertEqual(item.provider_family, "openai")
+        self.assertEqual(item.provider_event_type, "tool.output")
+
+        projection.metadata["source"] = "mutated"
+        self.assertEqual(item.metadata, {"source": "tool"})
+
+    def test_consumer_projection_preserves_usage_and_terminal_state(
+        self,
+    ) -> None:
+        item = _item(
+            StreamItemKind.STREAM_COMPLETED,
+            1,
+            usage={"output_tokens": 3},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+
+        projection = project_canonical_stream_item(item)
+
+        self.assertEqual(projection.usage, {"output_tokens": 3})
+        self.assertIs(
+            projection.terminal_outcome, StreamTerminalOutcome.COMPLETED
+        )
+        self.assertTrue(projection.is_stream_terminal)
+
+    def test_consumer_projection_helpers_classify_display_items(self) -> None:
+        answer = _item(
+            StreamItemKind.ANSWER_DELTA,
+            1,
+            text_delta="answer",
+        )
+        reasoning = project_canonical_stream_item(
+            _item(
+                StreamItemKind.REASONING_DELTA,
+                2,
+                text_delta="reason",
+            )
+        )
+        tool_call = project_canonical_stream_item(
+            _tool_item(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                3,
+                text_delta='{"city"',
+            )
+        )
+        done = _item(StreamItemKind.ANSWER_DONE, 4)
+
+        self.assertEqual(stream_projection_text_delta(answer), "answer")
+        self.assertEqual(stream_projection_text_delta(reasoning), "reason")
+        self.assertEqual(stream_projection_text_delta(tool_call), '{"city"')
+        self.assertIsNone(stream_projection_text_delta(done))
+        self.assertFalse(stream_projection_is_reasoning(answer))
+        self.assertTrue(stream_projection_is_reasoning(reasoning))
+        self.assertFalse(stream_projection_is_tool_call(reasoning))
+        self.assertTrue(stream_projection_is_tool_call(tool_call))
+
+    def test_consumer_projection_helpers_reject_invalid_items(self) -> None:
+        for helper in (
+            stream_projection_text_delta,
+            stream_projection_is_reasoning,
+            stream_projection_is_tool_call,
+        ):
+            with self.assertRaises(AssertionError):
+                helper("bad")  # type: ignore[arg-type]
+
+    def test_consumer_projection_validates_invalid_arguments(self) -> None:
+        item = _item(StreamItemKind.STREAM_STARTED, 0)
+
+        with self.assertRaises(AssertionError):
+            project_canonical_stream_item("bad")  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            StreamConsumerProjection(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.REASONING,
+                correlation=StreamItemCorrelation(),
+            )
+        with self.assertRaises(AssertionError):
+            StreamConsumerProjection(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+                correlation=StreamItemCorrelation(),
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+        invalid_payloads = (
+            lambda: StreamConsumerProjection(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                correlation=StreamItemCorrelation(),
+            ),
+            lambda: StreamConsumerProjection(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+                correlation=StreamItemCorrelation(),
+                text_delta="late",
+            ),
+            lambda: StreamConsumerProjection(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(),
+                text_delta="{}",
+            ),
+            lambda: StreamConsumerProjection(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                correlation=StreamItemCorrelation(),
+            ),
+            lambda: StreamConsumerProjection(
+                stream_session_id="session",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                correlation=StreamItemCorrelation(),
+            ),
+        )
+        for build_projection in invalid_payloads:
+            with self.subTest(build_projection=build_projection):
+                with self.assertRaises(AssertionError):
+                    build_projection()
+        self.assertEqual(
+            project_canonical_stream_item(item).stream_session_id,
+            "stream-1",
+        )
+
+    def test_consumer_projection_iterator_preserves_order_losslessly(
+        self,
+    ) -> None:
+        items = (
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="a"),
+            _item(StreamItemKind.REASONING_DELTA, 2, text_delta="r"),
+            _item(StreamItemKind.REASONING_DONE, 3),
+            _item(
+                StreamItemKind.USAGE_COMPLETED,
+                4,
+                usage={"output_tokens": 1},
+            ),
+            _stream_completed(5),
+            _item(StreamItemKind.STREAM_CLOSED, 6),
+        )
+
+        async def stream() -> AsyncIterator[CanonicalStreamItem]:
+            for item in items:
+                yield item
+
+        projections = run(_collect_projection_items(stream()))
+
+        self.assertEqual(
+            [item.sequence for item in projections], list(range(7))
+        )
+        self.assertEqual(
+            [item.kind for item in projections],
+            [item.kind for item in items],
+        )
+        self.assertEqual(
+            [item.text_delta for item in projections],
+            [None, "a", "r", None, None, None, None],
+        )
+        self.assertEqual(projections[4].usage, {"output_tokens": 1})
+        self.assertIs(
+            projections[5].terminal_outcome,
+            StreamTerminalOutcome.COMPLETED,
+        )
+
+    def test_consumer_projection_per_item_overhead_within_budget(self) -> None:
+        count = 1000
+        items = (
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            *(
+                _item(
+                    StreamItemKind.ANSWER_DELTA,
+                    sequence,
+                    text_delta="x",
+                )
+                for sequence in range(1, count + 1)
+            ),
+            _item(StreamItemKind.ANSWER_DONE, count + 1),
+            _item(
+                StreamItemKind.STREAM_COMPLETED,
+                count + 2,
+                usage={"output_tokens": count},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        )
+        budget = StreamPerformanceBudget()
+
+        async def stream() -> AsyncIterator[CanonicalStreamItem]:
+            for item in items:
+                yield item
+
+        started = perf_counter()
+        projections = run(_collect_projection_items(stream()))
+        elapsed_us = (perf_counter() - started) * 1_000_000
+
+        self.assertEqual(len(projections), count + 3)
+        self.assertLessEqual(
+            elapsed_us / len(projections),
+            budget.per_item_overhead_us,
+        )
+
+    def test_consumer_projection_iterator_rejects_invalid_streams(
+        self,
+    ) -> None:
+        cases = (
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _stream_completed(1),
+                _item(StreamItemKind.ANSWER_DELTA, 2, text_delta="late"),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _stream_completed(1),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.ANSWER_DELTA, 0, text_delta="repeat"),
+            ),
+            (_item(StreamItemKind.STREAM_STARTED, 0),),
+            (),
+        )
+
+        for items in cases:
+            with self.subTest(items=items):
+
+                async def stream() -> AsyncIterator[CanonicalStreamItem]:
+                    for item in items:
+                        yield item
+
+                with self.assertRaises(StreamValidationError):
+                    run(_collect_projection_items(stream()))
+
+    def test_consumer_projection_iterator_can_skip_order_validation(
+        self,
+    ) -> None:
+        async def stream() -> AsyncIterator[CanonicalStreamItem]:
+            yield _item(StreamItemKind.ANSWER_DELTA, 0, text_delta="early")
+
+        projections = run(
+            _collect_projection_items(stream(), validate_order=False)
+        )
+
+        self.assertEqual(projections[0].text_delta, "early")
+
+    def test_consumer_projection_iterator_closes_wrapped_stream(self) -> None:
+        class CloseableStream:
+            def __init__(self) -> None:
+                self.closed = False
+                self._sequence = 0
+
+            def __aiter__(self) -> "CloseableStream":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                if self._sequence > 1:
+                    raise StopAsyncIteration
+                sequence = self._sequence
+                self._sequence += 1
+                if sequence == 0:
+                    return _item(StreamItemKind.STREAM_STARTED, sequence)
+                return _item(
+                    StreamItemKind.ANSWER_DELTA,
+                    sequence,
+                    text_delta="late",
+                )
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        stream = CloseableStream()
+        projections = iter_stream_consumer_projections(stream)
+
+        self.assertIs(
+            run(projections.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        run(projections.aclose())
+
+        self.assertTrue(stream.closed)
+
+    def test_consumer_projection_iterator_closes_active_iterator(
+        self,
+    ) -> None:
+        class StreamIterator:
+            def __init__(self) -> None:
+                self.closed = False
+                self._sequence = 0
+
+            def __aiter__(self) -> "StreamIterator":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                if self._sequence > 1:
+                    raise StopAsyncIteration
+                sequence = self._sequence
+                self._sequence += 1
+                if sequence == 0:
+                    return _item(StreamItemKind.STREAM_STARTED, sequence)
+                return _item(
+                    StreamItemKind.ANSWER_DELTA,
+                    sequence,
+                    text_delta="late",
+                )
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        class StreamIterable:
+            def __init__(self) -> None:
+                self.iterator = StreamIterator()
+
+            def __aiter__(self) -> StreamIterator:
+                return self.iterator
+
+        stream = StreamIterable()
+        projections = iter_stream_consumer_projections(stream)
+
+        self.assertIs(
+            run(projections.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        run(projections.aclose())
+
+        self.assertTrue(stream.iterator.closed)
+
+    def test_consumer_projection_iterator_closes_outer_after_iterator_error(
+        self,
+    ) -> None:
+        class StreamIterator:
+            def __init__(self) -> None:
+                self._sequence = 0
+
+            def __aiter__(self) -> "StreamIterator":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                if self._sequence > 0:
+                    raise StopAsyncIteration
+                self._sequence += 1
+                return _item(StreamItemKind.STREAM_STARTED, 0)
+
+            async def aclose(self) -> None:
+                raise RuntimeError("iterator close failed")
+
+        class StreamIterable:
+            def __init__(self) -> None:
+                self.close_count = 0
+                self.iterator = StreamIterator()
+
+            def __aiter__(self) -> StreamIterator:
+                return self.iterator
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        stream = StreamIterable()
+        projections = iter_stream_consumer_projections(stream)
+
+        self.assertIs(
+            run(projections.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        with self.assertRaisesRegex(RuntimeError, "iterator close failed"):
+            run(projections.aclose())
+
+        self.assertEqual(stream.close_count, 1)
+
+    def test_consumer_projection_iterator_preserves_close_cancellation(
+        self,
+    ) -> None:
+        class StreamIterator:
+            def __init__(self) -> None:
+                self._sequence = 0
+
+            def __aiter__(self) -> "StreamIterator":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                if self._sequence > 0:
+                    raise StopAsyncIteration
+                self._sequence += 1
+                return _item(StreamItemKind.STREAM_STARTED, 0)
+
+            async def aclose(self) -> None:
+                raise CancelledError()
+
+        class StreamIterable:
+            def __init__(self) -> None:
+                self.close_count = 0
+                self.iterator = StreamIterator()
+
+            def __aiter__(self) -> StreamIterator:
+                return self.iterator
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        stream = StreamIterable()
+        projections = iter_stream_consumer_projections(stream)
+
+        self.assertIs(
+            run(projections.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        with self.assertRaises(CancelledError):
+            run(projections.aclose())
+
+        self.assertEqual(stream.close_count, 1)
+
+    def test_consumer_projection_iterator_reports_multiple_close_errors(
+        self,
+    ) -> None:
+        class StreamIterator:
+            def __init__(self) -> None:
+                self._sequence = 0
+
+            def __aiter__(self) -> "StreamIterator":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                if self._sequence > 0:
+                    raise StopAsyncIteration
+                self._sequence += 1
+                return _item(StreamItemKind.STREAM_STARTED, 0)
+
+            async def aclose(self) -> None:
+                raise RuntimeError("iterator close failed")
+
+        class StreamIterable:
+            def __init__(self) -> None:
+                self.iterator = StreamIterator()
+
+            def __aiter__(self) -> StreamIterator:
+                return self.iterator
+
+            async def aclose(self) -> None:
+                raise RuntimeError("iterable close failed")
+
+        stream = StreamIterable()
+        projections = iter_stream_consumer_projections(stream)
+
+        self.assertIs(
+            run(projections.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        with self.assertRaises(BaseExceptionGroup) as context:
+            run(projections.aclose())
+
+        self.assertEqual(
+            [str(error) for error in context.exception.exceptions],
+            ["iterator close failed", "iterable close failed"],
+        )
+
+    def test_consumer_projection_iterator_accepts_sync_close(self) -> None:
+        class CloseableStream:
+            def __init__(self) -> None:
+                self.close_count = 0
+                self._sequence = 0
+
+            def __aiter__(self) -> "CloseableStream":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                if self._sequence > 0:
+                    raise StopAsyncIteration
+                self._sequence += 1
+                return _item(StreamItemKind.STREAM_STARTED, 0)
+
+            def aclose(self) -> None:
+                self.close_count += 1
+
+        stream = CloseableStream()
+        projections = iter_stream_consumer_projections(stream)
+
+        self.assertIs(
+            run(projections.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        run(projections.aclose())
+
+        self.assertEqual(stream.close_count, 1)
+
+    def test_consumer_projection_iterator_rejects_bad_sync_close_result(
+        self,
+    ) -> None:
+        class CloseableStream:
+            def __init__(self) -> None:
+                self._sequence = 0
+
+            def __aiter__(self) -> "CloseableStream":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                if self._sequence > 0:
+                    raise StopAsyncIteration
+                self._sequence += 1
+                return _item(StreamItemKind.STREAM_STARTED, 0)
+
+            def aclose(self) -> object:
+                return object()
+
+        stream = CloseableStream()
+        projections = iter_stream_consumer_projections(stream)
+
+        self.assertIs(
+            run(projections.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        with self.assertRaises(AssertionError):
+            run(projections.aclose())
+
+    def test_consumer_projection_iterator_rejects_bad_async_close_result(
+        self,
+    ) -> None:
+        class CloseableStream:
+            def __init__(self) -> None:
+                self._sequence = 0
+
+            def __aiter__(self) -> "CloseableStream":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                if self._sequence > 0:
+                    raise StopAsyncIteration
+                self._sequence += 1
+                return _item(StreamItemKind.STREAM_STARTED, 0)
+
+            async def aclose(self) -> object:
+                return object()
+
+        stream = CloseableStream()
+        projections = iter_stream_consumer_projections(stream)
+
+        self.assertIs(
+            run(projections.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        with self.assertRaises(AssertionError):
+            run(projections.aclose())
 
     def test_text_generation_stream_base_contract(self) -> None:
         probe = _StreamProbe()

@@ -30,8 +30,10 @@ from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
 from avalan.model.stream import (
+    CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamTerminalOutcome,
     StreamValidationError,
     TextGenerationSingleStream,
     stream_channel_for_kind,
@@ -540,6 +542,121 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             ],
             [1, 1],
         )
+
+    async def test_response_text_and_calls_reads_semantic_answer_items(self):
+        async def output_gen():
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="semantic",
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+
+        semantic_response = TextGenerationResponse(
+            output_gen,
+            logger=getLogger(),
+            use_async_generator=True,
+        )
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        text, calls = await response._response_text_and_calls(
+            semantic_response
+        )
+
+        self.assertEqual(text, "semantic")
+        self.assertEqual(calls, [])
+
+    async def test_streaming_iteration_projects_semantic_answer_items(self):
+        async def output_gen():
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="semantic",
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=2,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+
+        semantic_response = TextGenerationResponse(
+            output_gen,
+            logger=getLogger(),
+            use_async_generator=True,
+        )
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            semantic_response,
+            agent,
+            operation,
+            {},
+        )
+        response.__aiter__()
+
+        item = await response.__anext__()
+
+        self.assertIsInstance(item, Token)
+        self.assertEqual(item.token, "semantic")
 
     async def test_tool_process_queue(self):
         engine = _DummyEngine()

@@ -291,6 +291,10 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "visibility": "public",
                         "correlation": {"tool_call_id": "call-1"},
                         "text_delta": '{"expression":"2+2"}',
+                        "data": {
+                            "name": "math.calculator",
+                            "arguments": {"expression": "2+2"},
+                        },
                     },
                     {
                         "stream_session_id": _STREAM_SESSION_ID,
