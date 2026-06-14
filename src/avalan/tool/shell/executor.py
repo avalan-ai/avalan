@@ -1,3 +1,7 @@
+from ...entities import (
+    ToolExecutionStreamEvent,
+    ToolExecutionStreamKind,
+)
 from .entities import (
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     SHELL_STATUS_ERROR_CODES,
@@ -21,6 +25,7 @@ from .filesystem import (
 from .settings import ShellToolSettings
 
 from asyncio import (
+    FIRST_COMPLETED,
     CancelledError,
     Semaphore,
     create_subprocess_exec,
@@ -31,6 +36,7 @@ from asyncio import (
 )
 from asyncio.streams import StreamReader
 from asyncio.subprocess import DEVNULL, PIPE
+from collections.abc import Awaitable, Callable
 from os import kill as os_kill
 from os import name as os_name
 from pathlib import Path
@@ -43,7 +49,14 @@ _PROCESS_CLEANUP_GRACE_SECONDS = 0.2
 
 
 class CommandExecutor(Protocol):
-    async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
+    async def execute(
+        self,
+        spec: ExecutionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ExecutionResult:
         raise NotImplementedError
 
 
@@ -62,7 +75,14 @@ class LocalCommandExecutor:
             settings.max_concurrent_heavy_processes,
         )
 
-    async def execute(self, spec: ExecutionSpec) -> ExecutionResult:
+    async def execute(
+        self,
+        spec: ExecutionSpec,
+        *,
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ExecutionResult:
         if not isinstance(spec, ExecutionSpec):
             raise NotImplementedError(
                 "local shell execution is not implemented"
@@ -96,11 +116,16 @@ class LocalCommandExecutor:
         if spec.resource_class == "heavy":
             async with self._heavy_semaphore:
                 async with self._process_semaphore:
-                    return await self._execute_spawn(spec)
+                    return await self._execute_spawn(spec, stream=stream)
         async with self._process_semaphore:
-            return await self._execute_spawn(spec)
+            return await self._execute_spawn(spec, stream=stream)
 
-    async def _execute_spawn(self, spec: ExecutionSpec) -> ExecutionResult:
+    async def _execute_spawn(
+        self,
+        spec: ExecutionSpec,
+        *,
+        stream: Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None,
+    ) -> ExecutionResult:
         start_time = perf_counter()
         if spec.output_plan is None:
             return await self._execute_prepared_spawn(
@@ -108,6 +133,7 @@ class LocalCommandExecutor:
                 start_time=start_time,
                 runtime_output_prefix=None,
                 generated_output_replacements=(),
+                stream=stream,
             )
         try:
             async with private_temp_directory() as output_directory:
@@ -132,6 +158,7 @@ class LocalCommandExecutor:
                     generated_output_replacements=(
                         generated_output_replacements
                     ),
+                    stream=stream,
                 )
         except (OSError, _GeneratedOutputError):
             return _result(
@@ -156,6 +183,9 @@ class LocalCommandExecutor:
         start_time: float,
         runtime_output_prefix: Path | None,
         generated_output_replacements: tuple[tuple[str, str], ...],
+        stream: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
     ) -> ExecutionResult:
         try:
             try:
@@ -189,15 +219,31 @@ class LocalCommandExecutor:
 
             stdout_reader = None
             stderr_reader = None
+            process_waiter = None
             stdout_capture = _StreamCapture()
             stderr_capture = _StreamCapture()
             try:
+                await _emit_stream_event(
+                    stream,
+                    kind=ToolExecutionStreamKind.LOG,
+                    content="process started",
+                    metadata={"command": spec.command},
+                )
+                await _emit_stream_event(
+                    stream,
+                    kind=ToolExecutionStreamKind.PROGRESS,
+                    content="started",
+                    progress=0.0,
+                    metadata={"command": spec.command},
+                )
                 stdout_reader = create_task(
                     _collect_stream(
                         process.stdout,
                         spec.max_stdout_bytes,
                         self._settings.stream_read_chunk_bytes,
                         stdout_capture,
+                        stream_event=stream,
+                        stream_kind=ToolExecutionStreamKind.STDOUT,
                     )
                 )
                 stderr_reader = create_task(
@@ -206,14 +252,30 @@ class LocalCommandExecutor:
                         spec.max_stderr_bytes,
                         self._settings.stream_read_chunk_bytes,
                         stderr_capture,
+                        stream_event=stream,
+                        stream_kind=ToolExecutionStreamKind.STDERR,
                     )
                 )
-                await wait_for(
-                    _write_stdin_and_wait(process, spec.stdin),
+                process_waiter = create_task(
+                    _write_stdin_and_wait(process, spec.stdin)
+                )
+                reader_failed = await wait_for(
+                    _wait_for_process_or_reader_failure(
+                        process_waiter,
+                        stdout_reader,
+                        stderr_reader,
+                    ),
                     timeout=spec.timeout_seconds,
                 )
+                if reader_failed:
+                    await _kill_process_group(process)
+                    process_waiter.cancel()
+                    await gather(process_waiter, return_exceptions=True)
             except TimeoutError:
                 await _terminate_process_group(process)
+                if process_waiter is not None:
+                    process_waiter.cancel()
+                    await gather(process_waiter, return_exceptions=True)
                 stdout, stderr = await _reader_results(
                     stdout_reader,
                     stderr_reader,
@@ -222,6 +284,17 @@ class LocalCommandExecutor:
                 )
                 stdout_bytes, stdout_truncated = stdout
                 stderr_bytes, stderr_truncated = stderr
+                await _emit_stream_event(
+                    stream,
+                    kind=ToolExecutionStreamKind.PROGRESS,
+                    content=ShellExecutionStatus.TIMEOUT.value,
+                    progress=1.0,
+                    metadata={
+                        "exit_code": getattr(process, "returncode", None),
+                        "status": ShellExecutionStatus.TIMEOUT.value,
+                        "timed_out": True,
+                    },
+                )
                 return _result(
                     spec,
                     status=ShellExecutionStatus.TIMEOUT,
@@ -239,6 +312,16 @@ class LocalCommandExecutor:
                 )
             except CancelledError:
                 await _kill_process_group(process)
+                if process_waiter is not None:
+                    process_waiter.cancel()
+                    await gather(process_waiter, return_exceptions=True)
+                await _cancel_reader_tasks(stdout_reader, stderr_reader)
+                raise
+            except Exception:
+                await _kill_process_group(process)
+                if process_waiter is not None:
+                    process_waiter.cancel()
+                    await gather(process_waiter, return_exceptions=True)
                 await _cancel_reader_tasks(stdout_reader, stderr_reader)
                 raise
 
@@ -281,6 +364,16 @@ class LocalCommandExecutor:
                         ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED
                     )
                     error_message = "generated output capture failed"
+            await _emit_stream_event(
+                stream,
+                kind=ToolExecutionStreamKind.PROGRESS,
+                content=status.value,
+                progress=1.0,
+                metadata={
+                    "exit_code": exit_code,
+                    "status": status.value,
+                },
+            )
             return _result(
                 spec,
                 status=status,
@@ -390,6 +483,26 @@ async def _reader_results(
         _reader_result(stdout_reader, stdout_capture),
         _reader_result(stderr_reader, stderr_capture),
     )
+
+
+async def _wait_for_process_or_reader_failure(
+    process_waiter: Any,
+    stdout_reader: Any,
+    stderr_reader: Any,
+) -> bool:
+    tasks = {
+        task
+        for task in (process_waiter, stdout_reader, stderr_reader)
+        if task is not None
+    }
+    while True:
+        done, tasks = await wait(tasks, return_when=FIRST_COMPLETED)
+        for task in done:
+            if task is process_waiter:
+                await process_waiter
+                return False
+            if _reader_task_failed(task):
+                return True
 
 
 def _reader_result(
@@ -524,9 +637,17 @@ async def _collect_stream(
     byte_cap: int,
     chunk_size: int,
     capture: "_StreamCapture | None" = None,
+    *,
+    stream_event: (
+        Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+    ) = None,
+    stream_kind: ToolExecutionStreamKind | None = None,
 ) -> tuple[bytes, bool]:
     assert byte_cap >= 0, "byte_cap must be non-negative"
     assert chunk_size > 0, "chunk_size must be positive"
+    assert (
+        stream_event is None or stream_kind is not None
+    ), "stream kind is required when callback is provided"
     capture = _StreamCapture() if capture is None else capture
     if stream is None:
         return capture.snapshot()
@@ -535,8 +656,40 @@ async def _collect_stream(
         chunk = await stream.read(chunk_size)
         if not chunk:
             break
-        capture.append(chunk, byte_cap)
+        captured = capture.append(chunk, byte_cap)
+        if stream_event is not None and captured:
+            assert stream_kind is not None
+            await stream_event(
+                ToolExecutionStreamEvent(
+                    kind=stream_kind,
+                    content=captured.decode(errors="replace"),
+                    metadata={
+                        "bytes": len(captured),
+                        "truncated": len(captured) < len(chunk),
+                    },
+                )
+            )
     return capture.snapshot()
+
+
+async def _emit_stream_event(
+    stream_event: Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None,
+    *,
+    kind: ToolExecutionStreamKind,
+    content: str | None = None,
+    progress: float | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    if stream_event is None:
+        return
+    await stream_event(
+        ToolExecutionStreamEvent(
+            kind=kind,
+            content=content,
+            progress=progress,
+            metadata=metadata or {},
+        )
+    )
 
 
 class _StreamCapture:
@@ -545,18 +698,20 @@ class _StreamCapture:
         self._captured_bytes = 0
         self._truncated = False
 
-    def append(self, chunk: bytes, byte_cap: int) -> None:
+    def append(self, chunk: bytes, byte_cap: int) -> bytes:
         remaining = byte_cap - self._captured_bytes
         if remaining <= 0:
             self._truncated = True
-            return
+            return b""
         if len(chunk) > remaining:
-            self._chunks.append(chunk[:remaining])
+            captured = chunk[:remaining]
+            self._chunks.append(captured)
             self._captured_bytes += remaining
             self._truncated = True
-            return
+            return captured
         self._chunks.append(chunk)
         self._captured_bytes += len(chunk)
+        return chunk
 
     def snapshot(self) -> tuple[bytes, bool]:
         return b"".join(self._chunks), self._truncated

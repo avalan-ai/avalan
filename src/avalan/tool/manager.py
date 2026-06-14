@@ -9,6 +9,7 @@ from ..entities import (
     ToolCallOutcome,
     ToolCallParseOutcome,
     ToolCallResult,
+    ToolCapabilities,
     ToolDescriptor,
     ToolFilter,
     ToolFilterResult,
@@ -97,6 +98,16 @@ class ToolManager:
         """Return the tool format configured for this manager."""
         return self._parser.tool_format
 
+    @property
+    def parallel_tool_calls(self) -> bool:
+        """Return whether parallel tool execution is enabled."""
+        return self._settings.parallel_tool_calls
+
+    @property
+    def maximum_parallel_tool_calls(self) -> int:
+        """Return the configured parallel tool execution limit."""
+        return self._settings.maximum_parallel_tool_calls
+
     def json_schemas(self) -> list[dict[str, Any]] | None:
         schemas: list[dict[str, Any]] = []
         for toolset in self._toolsets or []:
@@ -115,6 +126,21 @@ class ToolManager:
         if resolution.canonical_name is None:
             return None
         return self._descriptors.get(resolution.canonical_name)
+
+    def describe_tool_call(self, call: ToolCall) -> ToolDescriptor | None:
+        """Return the descriptor for an executable tool call."""
+        assert isinstance(call, ToolCall)
+        resolution = self._resolve_call_name(call)
+        if resolution.canonical_name is None:
+            return None
+        return self._descriptors.get(resolution.canonical_name)
+
+    def is_tool_call_parallel_safe(self, call: ToolCall) -> bool:
+        """Return whether ``call`` may execute in a parallel fanout."""
+        descriptor = self.describe_tool_call(call)
+        if descriptor is None:
+            return False
+        return descriptor.capabilities.parallel_safe
 
     def resolve_tool_name(
         self, name: str, *, provider_originated: bool = False
@@ -401,7 +427,62 @@ class ToolManager:
             ),
             provider_safe_schema=cls._provider_safe_schema(schema),
             namespace=namespace,
+            capabilities=cls._tool_capabilities(tool),
         )
+
+    @classmethod
+    def _tool_capabilities(
+        cls, tool: Callable[..., Any] | Tool
+    ) -> ToolCapabilities:
+        configured = getattr(tool, "tool_capabilities", None)
+        if configured is not None:
+            return cls._coerce_tool_capabilities(configured)
+        return ToolCapabilities(
+            supports_streaming=cls._tool_capability_flag(
+                tool,
+                "supports_streaming",
+                default=False,
+            ),
+            side_effecting=cls._tool_capability_flag(
+                tool,
+                "side_effecting",
+                default=True,
+            ),
+            parallel_safe=cls._tool_capability_flag(
+                tool,
+                "parallel_safe",
+                default=False,
+            ),
+        )
+
+    @staticmethod
+    def _coerce_tool_capabilities(value: object) -> ToolCapabilities:
+        if isinstance(value, ToolCapabilities):
+            return value
+        assert isinstance(value, dict), "tool_capabilities must be a mapping"
+        supported_keys = {
+            "supports_streaming",
+            "side_effecting",
+            "parallel_safe",
+        }
+        unknown_keys = sorted(set(value) - supported_keys)
+        assert not unknown_keys, "tool_capabilities has unknown keys"
+        return ToolCapabilities(
+            supports_streaming=value.get("supports_streaming", False),
+            side_effecting=value.get("side_effecting", True),
+            parallel_safe=value.get("parallel_safe", False),
+        )
+
+    @staticmethod
+    def _tool_capability_flag(
+        tool: Callable[..., Any] | Tool,
+        name: str,
+        *,
+        default: bool,
+    ) -> bool:
+        value = getattr(tool, name, default)
+        assert isinstance(value, bool), f"{name} must be a boolean"
+        return value
 
     @classmethod
     def _provider_safe_schema(

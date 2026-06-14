@@ -7,7 +7,10 @@ from uuid import uuid4
 from avalan.agent import AgentOperation, EngineEnvironment, Specification
 from avalan.agent.engine import EngineAgent
 from avalan.agent.orchestrator.response.orchestrator_response import (
+    LegacyToolEventShim,
     OrchestratorResponse,
+    classify_legacy_tool_event_shim,
+    legacy_tool_event_shim_inventory,
 )
 from avalan.cli import CommandAbortException
 from avalan.entities import (
@@ -22,11 +25,19 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
-from avalan.event import Event, EventType
+from avalan.event import TOOL_TYPES, Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
-from avalan.model.stream import TextGenerationSingleStream
+from avalan.model.stream import (
+    StreamChannel,
+    StreamItemKind,
+    StreamValidationError,
+    TextGenerationSingleStream,
+    stream_channel_for_kind,
+    validate_canonical_stream_items,
+    validate_tool_lifecycle_items,
+)
 from avalan.task.usage import (
     UsageSource,
     usage_observation_from_response,
@@ -104,6 +115,71 @@ def _make_response(
 
 
 class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
+    async def test_legacy_tool_event_shim_inventory_covers_tool_events(self):
+        inventory = legacy_tool_event_shim_inventory()
+
+        self.assertEqual(
+            {shim.event_type for shim in inventory},
+            TOOL_TYPES,
+        )
+        self.assertEqual(
+            len(inventory), len({shim.event_type for shim in inventory})
+        )
+        for shim in inventory:
+            with self.subTest(event_type=shim.event_type):
+                self.assertIs(
+                    classify_legacy_tool_event_shim(shim.event_type),
+                    shim,
+                )
+                self.assertIs(
+                    shim.canonical_channel,
+                    stream_channel_for_kind(shim.canonical_kind),
+                )
+                self.assertTrue(shim.owner)
+                self.assertTrue(shim.removal_condition)
+
+        with self.assertRaises(StreamValidationError):
+            classify_legacy_tool_event_shim(EventType.END)
+        with self.assertRaises(AssertionError):
+            classify_legacy_tool_event_shim("tool_result")  # type: ignore[arg-type]
+
+    async def test_legacy_tool_event_shim_rejects_malformed_entries(self):
+        invalid_entries = (
+            lambda: LegacyToolEventShim(
+                event_type=EventType.END,
+                canonical_kind=StreamItemKind.STREAM_DIAGNOSTIC,
+                canonical_channel=StreamChannel.CONTROL,
+                owner="agent.orchestrator.response",
+                removal_condition="done",
+            ),
+            lambda: LegacyToolEventShim(
+                event_type=EventType.TOOL_RESULT,
+                canonical_kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                canonical_channel=StreamChannel.CONTROL,
+                owner="agent.orchestrator.response",
+                removal_condition="done",
+            ),
+            lambda: LegacyToolEventShim(
+                event_type=EventType.TOOL_RESULT,
+                canonical_kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                canonical_channel=StreamChannel.TOOL_EXECUTION,
+                owner="",
+                removal_condition="done",
+            ),
+            lambda: LegacyToolEventShim(
+                event_type=EventType.TOOL_RESULT,
+                canonical_kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                canonical_channel=StreamChannel.TOOL_EXECUTION,
+                owner="agent.orchestrator.response",
+                removal_condition="",
+            ),
+        )
+
+        for build_entry in invalid_entries:
+            with self.subTest(build_entry=build_entry):
+                with self.assertRaises(AssertionError):
+                    build_entry()
+
     async def test_usage_returns_none_without_provider_usage(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
@@ -118,6 +194,13 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(response.usage)
+        response._model_responses = []
+        response._response = MagicMock(
+            input_token_count=None,
+            output_token_count=None,
+            usage=None,
+        )
+        self.assertEqual(response._canonical_usage(), {})
 
     async def test_usage_returns_single_provider_usage(self):
         engine = _DummyEngine()
@@ -214,6 +297,14 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(aggregate.totals.output_tokens, 8)
         self.assertEqual(aggregate.totals.reasoning_tokens, 1)
         self.assertEqual(aggregate.totals.total_tokens, 15)
+        validate_canonical_stream_items(response.canonical_items)
+        terminal_usage = response.canonical_items[-2].usage
+        self.assertIsNotNone(terminal_usage)
+        assert terminal_usage is not None
+        self.assertEqual(terminal_usage["source"], UsageSource.EXACT.value)
+        self.assertEqual(terminal_usage["totals"]["input_tokens"], 7)
+        self.assertEqual(terminal_usage["totals"]["output_tokens"], 8)
+        self.assertEqual(terminal_usage["totals"]["total_tokens"], 15)
 
     async def test_malformed_wrapper_usage_does_not_hide_valid_child_usage(
         self,
@@ -291,6 +382,87 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         rendered = str(observations) + str(aggregate)
         self.assertNotIn("private prompt", rendered)
         self.assertNotIn("private-provider", rendered)
+
+    async def test_canonical_completion_usage_uses_sanitized_estimate(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        outer_response = _usage_response(
+            "call",
+            {
+                "input_tokens": "private prompt",
+                "provider_family": "private-provider",
+            },
+        )
+        inner_response = _usage_response(
+            "answer",
+            {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+        )
+        agent.return_value = inner_response
+        call = ToolCall(id=uuid4(), name="calc", arguments=None)
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.get_calls.side_effect = lambda text: (
+            [call] if text == "call" else None
+        )
+        tool.return_value = ToolCallResult(
+            id=uuid4(),
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=MagicMock(trigger=AsyncMock()),
+            tool=tool,
+        )
+
+        await response.to_str()
+
+        terminal_usage = response.canonical_items[-2].usage
+        self.assertIsNotNone(terminal_usage)
+        assert terminal_usage is not None
+        self.assertEqual(terminal_usage["source"], UsageSource.ESTIMATED.value)
+        self.assertEqual(terminal_usage["totals"]["input_tokens"], 1)
+        self.assertEqual(terminal_usage["totals"]["output_tokens"], 6)
+        rendered = str(terminal_usage)
+        self.assertNotIn("private prompt", rendered)
+        self.assertNotIn("private-provider", rendered)
+
+    async def test_canonical_items_carry_agent_correlation(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        agent_id = uuid4()
+        participant_id = uuid4()
+        session_id = uuid4()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(async_gen=False),
+            agent,
+            operation,
+            {},
+            agent_id=agent_id,
+            participant_id=participant_id,
+            session_id=session_id,
+        )
+
+        await response.to_str()
+
+        validate_canonical_stream_items(response.canonical_items)
+        self.assertTrue(response.canonical_items)
+        for item in response.canonical_items:
+            self.assertEqual(item.stream_session_id, str(session_id))
+            self.assertEqual(item.run_id, str(agent_id))
+            self.assertEqual(item.turn_id, str(participant_id))
+            self.assertEqual(item.correlation.task_id, str(agent_id))
 
     async def test_react_uses_explicit_output(self):
         engine = _DummyEngine()
@@ -409,9 +581,39 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         third = await iterator.__anext__()
         self.assertEqual(third.type, EventType.TOOL_RESULT)
+        tool_items = tuple(
+            item
+            for item in resp.canonical_items
+            if item.kind
+            in {
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            }
+        )
+        validated_items = validate_tool_lifecycle_items(
+            tool_items,
+            planned_tool_call_ids=[str(call.id)],
+        )
 
         calls = [c.args[0] for c in event_manager.trigger.await_args_list]
         self.assertTrue(any(c.type == EventType.TOOL_PROCESS for c in calls))
+        self.assertEqual(
+            [item.kind for item in validated_items],
+            [
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            ],
+        )
+        self.assertEqual(
+            {item.correlation.tool_call_id for item in validated_items},
+            {str(call.id)},
+        )
 
     async def test_tool_call_confirm_all(self):
         engine = _DummyEngine()
@@ -572,7 +774,8 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger.assert_awaited()
         process_event = Event(type=EventType.TOOL_PROCESS, payload=None)
         returned = await resp._emit(process_event)
-        self.assertEqual(returned, process_event)
+        self.assertIsNone(returned)
+        self.assertIs(await resp.__anext__(), process_event)
         other = Event(type=EventType.END)
         self.assertIs(await resp._emit(other), other)
 

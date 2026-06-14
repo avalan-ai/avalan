@@ -12,6 +12,10 @@ from typing import Any
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
+from avalan.entities import (
+    ToolExecutionStreamEvent,
+    ToolExecutionStreamKind,
+)
 from avalan.tool.shell.entities import (
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     ExecutionResult,
@@ -28,6 +32,7 @@ from avalan.tool.shell.executor import (
     LocalCommandExecutor,
     _cleanup_output_directory,
     _collect_generated_files,
+    _collect_stream,
     _generated_output_path_replacements,
     _GeneratedOutputError,
     _matches_generated_output_prefix,
@@ -148,6 +153,155 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.stderr, "warn\n")
         self.assertEqual(result.stdout_bytes, len(result.stdout.encode()))
         self.assertEqual(result.stderr_bytes, len(result.stderr.encode()))
+
+    async def test_execute_emits_stdout_and_stderr_stream_events(
+        self,
+    ) -> None:
+        process = _FakeProcess(stdout=b"abcdef", stderr=b"warn")
+        spec = _direct_spec(
+            executable="/trusted/bin/tool",
+            argv=("tool",),
+            max_stdout_bytes=3,
+            max_stderr_bytes=10,
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        with patch(
+            "avalan.tool.shell.executor.create_subprocess_exec",
+            new=_fake_process_factory(process),
+        ):
+            result = await LocalCommandExecutor().execute(
+                spec,
+                stream=record,
+            )
+
+        self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertEqual(result.stdout, "abc")
+        self.assertTrue(result.stdout_truncated)
+        self.assertEqual(result.stderr, "warn")
+        self.assertFalse(result.stderr_truncated)
+        self.assertEqual(
+            [
+                (event.kind, event.content, event.progress)
+                for event in events[:2]
+            ],
+            [
+                (ToolExecutionStreamKind.LOG, "process started", None),
+                (ToolExecutionStreamKind.PROGRESS, "started", 0.0),
+            ],
+        )
+        self.assertEqual(
+            (events[-1].kind, events[-1].content, events[-1].progress),
+            (ToolExecutionStreamKind.PROGRESS, "completed", 1.0),
+        )
+        output_events = [
+            event
+            for event in events
+            if event.kind
+            in {
+                ToolExecutionStreamKind.STDOUT,
+                ToolExecutionStreamKind.STDERR,
+            }
+        ]
+        self.assertCountEqual(
+            [(event.kind, event.content) for event in output_events],
+            [
+                (ToolExecutionStreamKind.STDOUT, "abc"),
+                (ToolExecutionStreamKind.STDERR, "warn"),
+            ],
+        )
+        metadata_by_kind = {
+            event.kind: event.metadata for event in output_events
+        }
+        self.assertEqual(
+            metadata_by_kind[ToolExecutionStreamKind.STDOUT],
+            {"bytes": 3, "truncated": True},
+        )
+        self.assertEqual(
+            metadata_by_kind[ToolExecutionStreamKind.STDERR],
+            {"bytes": 4, "truncated": False},
+        )
+
+    async def test_stream_callback_failure_kills_process_and_propagates(
+        self,
+    ) -> None:
+        process = _TerminableProcess(stdout=b"partial", stderr=b"warning")
+        spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
+
+        async def fail(_: ToolExecutionStreamEvent) -> None:
+            raise RuntimeError("stream failed")
+
+        with patch(
+            "avalan.tool.shell.executor.create_subprocess_exec",
+            new=_fake_process_factory(process),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stream failed"):
+                await LocalCommandExecutor().execute(spec, stream=fail)
+
+        self.assertEqual(process.kill_count, 1)
+        self.assertEqual(process.terminate_count, 0)
+
+    async def test_output_stream_failure_kills_running_process(self) -> None:
+        process = _TerminableProcess(stdout=b"partial", stderr=b"")
+        spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+            if event.kind is ToolExecutionStreamKind.STDOUT:
+                raise RuntimeError("stream failed")
+
+        with patch(
+            "avalan.tool.shell.executor.create_subprocess_exec",
+            new=_fake_process_factory(process),
+        ):
+            result = await wait_for(
+                LocalCommandExecutor().execute(spec, stream=record),
+                timeout=1,
+            )
+
+        self.assertEqual(result.status, ShellExecutionStatus.TOOL_ERROR)
+        self.assertEqual(result.error_message, "stream collection failed")
+        self.assertEqual(result.stdout, "partial")
+        self.assertEqual(process.kill_count, 1)
+        self.assertEqual(process.terminate_count, 0)
+        self.assertEqual(
+            (events[-1].kind, events[-1].content, events[-1].progress),
+            (ToolExecutionStreamKind.PROGRESS, "tool_error", 1.0),
+        )
+
+    async def test_process_wait_failure_kills_process_and_propagates(
+        self,
+    ) -> None:
+        process = _FailingWaitExecutionProcess(stdout=b"", stderr=b"")
+        spec = _direct_spec(executable="/trusted/bin/tool", argv=("tool",))
+
+        with patch(
+            "avalan.tool.shell.executor.create_subprocess_exec",
+            new=_fake_process_factory(process),
+        ):
+            with self.assertRaisesRegex(OSError, "wait failed"):
+                await LocalCommandExecutor().execute(spec)
+
+        self.assertEqual(process.kill_count, 1)
+        self.assertEqual(process.terminate_count, 0)
+
+    async def test_collect_stream_requires_matching_callback_and_kind(
+        self,
+    ) -> None:
+        async def record(_: ToolExecutionStreamEvent) -> None:
+            pass
+
+        with self.assertRaises(AssertionError):
+            await _collect_stream(
+                _FakeStream(b"abc"),
+                3,
+                3,
+                stream_event=record,
+            )
 
     async def test_real_subprocess_timeout_returns_partial_output(
         self,
@@ -1085,6 +1239,53 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.stderr_bytes, 7)
         self.assertEqual(process.terminate_count, 1)
         self.assertEqual(process.kill_count, 0)
+
+    async def test_timeout_emits_terminal_stream_progress(self) -> None:
+        process = _TerminableProcess(stdout=b"partial", stderr=b"warning")
+        spec = _direct_spec(
+            executable="/trusted/bin/tool",
+            argv=("tool",),
+            timeout_seconds=0.001,
+        )
+        events: list[ToolExecutionStreamEvent] = []
+
+        async def record(event: ToolExecutionStreamEvent) -> None:
+            events.append(event)
+
+        with patch(
+            "avalan.tool.shell.executor.create_subprocess_exec",
+            new=_fake_process_factory(process),
+        ):
+            result = await LocalCommandExecutor().execute(
+                spec,
+                stream=record,
+            )
+
+        self.assertEqual(result.status, ShellExecutionStatus.TIMEOUT)
+        self.assertEqual(
+            (events[-1].kind, events[-1].content, events[-1].progress),
+            (ToolExecutionStreamKind.PROGRESS, "timeout", 1.0),
+        )
+        self.assertEqual(
+            events[-1].metadata,
+            {"exit_code": -15, "status": "timeout", "timed_out": True},
+        )
+        self.assertEqual(
+            [
+                event.content
+                for event in events
+                if event.kind is ToolExecutionStreamKind.STDOUT
+            ],
+            ["partial"],
+        )
+        self.assertEqual(
+            [
+                event.content
+                for event in events
+                if event.kind is ToolExecutionStreamKind.STDERR
+            ],
+            ["warning"],
+        )
 
     async def test_timeout_drains_large_stdout_and_stderr(
         self,
@@ -2626,6 +2827,12 @@ class _ReaderPendingTimeoutProcess(_TerminableProcess):
         self.wait_started.set()
         await self._stdout_ready.wait()
         await self._release.wait()
+
+
+class _FailingWaitExecutionProcess(_TerminableProcess):
+    async def wait(self) -> None:
+        self.wait_started.set()
+        raise OSError("wait failed")
 
 
 class _CleanupErrorProcess(_TerminableProcess):

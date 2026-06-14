@@ -22,7 +22,10 @@ from avalan.entities import (
     ToolCallOutcome,
     ToolCallParseOutcome,
     ToolCallResult,
+    ToolCapabilities,
     ToolDescriptor,
+    ToolExecutionStreamEvent,
+    ToolExecutionStreamKind,
     ToolFilterResult,
     ToolFilterResultStatus,
     ToolNameResolution,
@@ -508,6 +511,67 @@ class EntityHelperTestCase(TestCase):
 
 
 class ToolDescriptorTestCase(TestCase):
+    def test_tool_execution_stream_event_fields_are_stable(self):
+        self.assertEqual(
+            [field.name for field in fields(ToolExecutionStreamEvent)],
+            ["kind", "content", "progress", "metadata"],
+        )
+
+    def test_tool_execution_stream_event_accepts_output_and_progress(self):
+        output = ToolExecutionStreamEvent(
+            kind=ToolExecutionStreamKind.STDOUT,
+            content="chunk",
+            metadata={"bytes": 5},
+        )
+        progress = ToolExecutionStreamEvent(
+            kind=ToolExecutionStreamKind.PROGRESS,
+            content="half",
+            progress=0.5,
+        )
+
+        self.assertEqual(output.kind, ToolExecutionStreamKind.STDOUT)
+        self.assertEqual(output.content, "chunk")
+        self.assertEqual(output.metadata, {"bytes": 5})
+        self.assertEqual(progress.progress, 0.5)
+
+    def test_tool_execution_stream_event_rejects_invalid_values(self):
+        invalid_cases = (
+            {"kind": "stdout"},
+            {"kind": ToolExecutionStreamKind.STDOUT, "content": b"chunk"},
+            {"kind": ToolExecutionStreamKind.PROGRESS, "progress": True},
+            {"kind": ToolExecutionStreamKind.PROGRESS, "progress": -0.1},
+            {"kind": ToolExecutionStreamKind.PROGRESS, "progress": 1.1},
+            {"kind": ToolExecutionStreamKind.LOG, "metadata": []},
+        )
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ToolExecutionStreamEvent(**kwargs)
+
+    def test_tool_capabilities_fields_are_stable(self):
+        self.assertEqual(
+            [field.name for field in fields(ToolCapabilities)],
+            ["supports_streaming", "side_effecting", "parallel_safe"],
+        )
+
+    def test_tool_capabilities_default_to_serial_non_streaming(self):
+        capabilities = ToolCapabilities()
+
+        self.assertFalse(capabilities.supports_streaming)
+        self.assertTrue(capabilities.side_effecting)
+        self.assertFalse(capabilities.parallel_safe)
+
+    def test_tool_capabilities_reject_invalid_values(self):
+        invalid_cases = (
+            {"supports_streaming": "yes"},
+            {"side_effecting": 1},
+            {"parallel_safe": None},
+        )
+        for kwargs in invalid_cases:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ToolCapabilities(**kwargs)
+
     def test_fields_are_stable(self):
         self.assertEqual(
             [field.name for field in fields(ToolDescriptor)],
@@ -520,6 +584,7 @@ class ToolDescriptorTestCase(TestCase):
                 "return_schema",
                 "provider_safe_schema",
                 "namespace",
+                "capabilities",
                 "policy",
                 "metadata",
             ],
@@ -538,6 +603,11 @@ class ToolDescriptorTestCase(TestCase):
             return_schema={"type": "integer"},
             provider_safe_schema={"type": "function"},
             namespace="math",
+            capabilities=ToolCapabilities(
+                supports_streaming=True,
+                side_effecting=False,
+                parallel_safe=True,
+            ),
             policy={"confirmation": False},
             metadata={"source": "test"},
         )
@@ -550,6 +620,14 @@ class ToolDescriptorTestCase(TestCase):
         self.assertEqual(descriptor.return_schema, {"type": "integer"})
         self.assertEqual(descriptor.provider_safe_schema, {"type": "function"})
         self.assertEqual(descriptor.namespace, "math")
+        self.assertEqual(
+            descriptor.capabilities,
+            ToolCapabilities(
+                supports_streaming=True,
+                side_effecting=False,
+                parallel_safe=True,
+            ),
+        )
         self.assertEqual(descriptor.policy, {"confirmation": False})
         self.assertEqual(descriptor.metadata, {"source": "test"})
 
@@ -564,6 +642,7 @@ class ToolDescriptorTestCase(TestCase):
             {"return_schema": []},
             {"provider_safe_schema": []},
             {"namespace": " "},
+            {"capabilities": {"supports_streaming": True}},
             {"policy": []},
             {"metadata": []},
         )
