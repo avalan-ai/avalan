@@ -5504,6 +5504,91 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertIs(diagnostic_payload["result"], diagnostic)
         self.assertIs(result_payload["result"], diagnostic)
 
+    async def test_to_str_returns_empty_tool_name_diagnostic_to_model(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        async def known(value: str) -> str:
+            """Return the provided value.
+
+            Args:
+                value: Value to return.
+
+            Returns:
+                Provided value.
+            """
+            return value
+
+        tool = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[known])]
+        )
+        call = ToolCall(
+            id="call1",
+            name="",
+            arguments={"value": "x"},
+        )
+
+        async def outer_gen():
+            yield ToolCallToken(token="", call=call)
+
+        outer_response = TextGenerationResponse(
+            lambda **_: outer_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=GenerationSettings(),
+            settings=GenerationSettings(),
+        )
+        agent.return_value = _string_response("recovered", async_gen=False)
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+
+        result = await resp.to_str()
+
+        self.assertEqual(result, "recovered")
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        assistant_message = context.input[-2]
+        diagnostic_message = context.input[-1]
+        self.assertEqual(assistant_message.tool_calls[0].id, "call1")
+        self.assertEqual(assistant_message.tool_calls[0].name, "tool")
+        self.assertEqual(diagnostic_message.role, MessageRole.TOOL)
+        self.assertEqual(diagnostic_message.name, "tool")
+        self.assertIsNone(diagnostic_message.tool_call_result)
+        self.assertIsNone(diagnostic_message.tool_call_error)
+        self.assertIsNotNone(diagnostic_message.tool_call_diagnostic)
+        diagnostic = diagnostic_message.tool_call_diagnostic
+        assert diagnostic is not None
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(
+            diagnostic.stage,
+            ToolCallDiagnosticStage.RESOLVE,
+        )
+        self.assertEqual(diagnostic.call_id, "call1")
+        self.assertIsNone(diagnostic.requested_name)
+        payload = loads(str(diagnostic_message.content))
+        self.assertEqual(payload["code"], "tool_call.malformed")
+        self.assertNotIn("requested_name", payload)
+        validate_tool_lifecycle_items(resp.canonical_items)
+        self.assertIn(
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            [item.kind for item in resp.canonical_items],
+        )
+
     async def test_to_str_stops_after_consecutive_non_executed_cycles(self):
         engine = _DummyEngine()
         agent = AsyncMock(spec=EngineAgent)
@@ -5656,6 +5741,45 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         assert isinstance(second, ToolCallDiagnostic)
         self.assertEqual(second.code, ToolCallDiagnosticCode.REPEATED_CALL)
         self.assertEqual(second.stage, ToolCallDiagnosticStage.GUARD)
+        tool.assert_awaited_once()
+
+    async def test_repeated_empty_tool_attempt_returns_guard_diagnostic(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id="call1", name="", arguments={})
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.return_value = None
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("call", async_gen=False),
+            agent,
+            operation,
+            {},
+            tool=tool,
+        )
+        context = ToolCallContext(input=resp._input, calls=[])
+
+        first = await resp._execute_tool_call(
+            call,
+            context,
+            confirm=False,
+        )
+        second = await resp._execute_tool_call(
+            call,
+            context,
+            confirm=False,
+        )
+
+        self.assertIsNone(first)
+        self.assertIsInstance(second, ToolCallDiagnostic)
+        assert isinstance(second, ToolCallDiagnostic)
+        self.assertEqual(second.code, ToolCallDiagnosticCode.REPEATED_CALL)
+        self.assertEqual(second.stage, ToolCallDiagnosticStage.GUARD)
+        self.assertIsNone(second.requested_name)
         tool.assert_awaited_once()
 
     async def test_iteration_stops_without_tool_observation(self):

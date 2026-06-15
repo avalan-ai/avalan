@@ -620,6 +620,11 @@ class ToolManagerCreationTestCase(TestCase):
                 ToolCall(id="call-2", name="missing", arguments={})
             )
         )
+        self.assertFalse(
+            manager.is_tool_call_parallel_safe(
+                ToolCall(id="call-3", name="", arguments={})
+            )
+        )
 
     def test_tool_capabilities_reject_malformed_mapping(self):
         invalid_tools = (
@@ -1612,6 +1617,35 @@ class ToolManagerPrepareCallTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(outcome.canonical_name)
         self.assertIs(outcome.code, ToolCallDiagnosticCode.MALFORMED_CALL)
         self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
+
+    async def test_execute_call_reports_empty_name_diagnostic(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="",
+            arguments={"a": 2, "b": 3},
+        )
+        diagnostic_id = _uuid4()
+
+        with patch("avalan.tool.manager.uuid4", return_value=diagnostic_id):
+            outcome = await manager.execute_call(
+                call,
+                context=ToolCallContext(),
+            )
+
+        self.assertIsInstance(outcome, ToolCallDiagnostic)
+        assert isinstance(outcome, ToolCallDiagnostic)
+        self.assertEqual(outcome.id, diagnostic_id)
+        self.assertEqual(outcome.call_id, "call-1")
+        self.assertIsNone(outcome.requested_name)
+        self.assertIsNone(outcome.canonical_name)
+        self.assertIs(outcome.code, ToolCallDiagnosticCode.MALFORMED_CALL)
+        self.assertIs(outcome.stage, ToolCallDiagnosticStage.RESOLVE)
+        self.assertEqual(outcome.message, "Tool call name must not be empty.")
 
     async def test_prepare_call_returns_resolution_diagnostic(self):
         manager = ToolManager.create_instance(

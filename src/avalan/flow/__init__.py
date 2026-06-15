@@ -245,6 +245,18 @@ from .store import (
 )
 from .store import flow_trace_from_snapshot as flow_trace_from_snapshot
 from .store import flow_trace_to_snapshot as flow_trace_to_snapshot
+from .stream import (
+    FlowCanonicalEventListener as FlowCanonicalEventListener,
+)
+from .stream import FlowStreamSession as FlowStreamSession
+from .stream import (
+    canonical_flow_event_listener as canonical_flow_event_listener,
+)
+from .stream import (
+    canonical_flow_item_from_event as canonical_flow_item_from_event,
+)
+from .stream import flow_event_is_projectable as flow_event_is_projectable
+from .stream import flow_stream_session as flow_stream_session
 from .subflow import FLOW_SUBFLOW_NODE_TYPE as FLOW_SUBFLOW_NODE_TYPE
 from .subflow import LocalFlowSubflowResolver as LocalFlowSubflowResolver
 from .subflow import subflow_node_registry as subflow_node_registry

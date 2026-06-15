@@ -1,5 +1,6 @@
 from asyncio import (
     CancelledError,
+    create_task,
     run,
 )
 from asyncio import (
@@ -140,6 +141,60 @@ class MCPResourceStoreTestCase(TestCase):
         self.assertTrue(closed.closed)
         fetched = run(store.get(resource.id))
         self.assertEqual(fetched.text, "chunk")
+
+    def test_close_resource_notifications_closes_all(self) -> None:
+        store = mcp_router.MCPResourceStore()
+        first = run(store.create(base_path="/m", initial_text="one"))
+        second = run(store.create(base_path="/m", initial_text="two"))
+
+        notifications = run(
+            mcp_router._close_mcp_resource_notifications(
+                store, {"first": first, "second": second}
+            )
+        )
+
+        self.assertEqual(
+            run(mcp_router._close_mcp_resource_notifications(store, {})),
+            (),
+        )
+        self.assertEqual(len(notifications), 2)
+        self.assertTrue(run(store.get(first.id)).closed)
+        self.assertTrue(run(store.get(second.id)).closed)
+        self.assertTrue(notifications[0]["params"]["resources"][0]["closed"])
+        self.assertTrue(notifications[1]["params"]["resources"][0]["closed"])
+
+    def test_retains_only_configured_resource_history(self) -> None:
+        store = mcp_router.MCPResourceStore(resource_item_limit=2)
+        resource = run(store.create(base_path="/m", initial_text="one"))
+        second = run(store.append(resource.id, "two"))
+        third = run(store.append(resource.id, "three"))
+
+        self.assertEqual(second.text, "onetwo")
+        self.assertEqual(third.text, "twothree")
+        self.assertEqual(run(store.history(resource.id)), ("two", "three"))
+        self.assertEqual(third.revision, 3)
+
+    def test_zero_resource_history_discards_text_but_keeps_resource(
+        self,
+    ) -> None:
+        store = mcp_router.MCPResourceStore(resource_item_limit=0)
+        resource = run(store.create(base_path="/m", initial_text="one"))
+        updated = run(store.append(resource.id, "two"))
+        fetched = run(store.get(resource.id))
+
+        self.assertEqual(resource.text, "")
+        self.assertEqual(updated.text, "")
+        self.assertEqual(fetched.text, "")
+        self.assertEqual(run(store.history(resource.id)), ())
+        self.assertEqual(updated.revision, 2)
+
+    def test_rejects_invalid_resource_item_limit(self) -> None:
+        with self.assertRaises(AssertionError):
+            mcp_router.MCPResourceStore(resource_item_limit=-1)
+        with self.assertRaises(AssertionError):
+            mcp_router.MCPResourceStore(  # type: ignore[arg-type]
+                resource_item_limit=True
+            )
 
     def test_extract_append_streams(self) -> None:
         streams = mcp_router._extract_append_streams(
@@ -324,6 +379,52 @@ class MCPUtilityTestCase(TestCase):
             {"id": "t", "name": "run", "arguments": {}},
         )
 
+    def test_canonical_progress_notification_empty_answer_delta(
+        self,
+    ) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="",
+        )
+
+        self.assertIsNone(
+            mcp_router._canonical_progress_notification(item, "progress")
+        )
+
+    def test_canonical_error_message_defaults_without_message(self) -> None:
+        accumulator = mcp_router.ProtocolStreamAccumulator()
+        accumulator.add(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+        )
+        accumulator.add(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            )
+        )
+
+        self.assertEqual(
+            mcp_router._canonical_error_message(accumulator.snapshot()),
+            "Stream errored.",
+        )
+
     def test_resource_notification_variants(self) -> None:
         resource = mcp_router.MCPResource(
             id="1",
@@ -342,6 +443,25 @@ class MCPUtilityTestCase(TestCase):
         resource.closed = True
         closed_payload = mcp_router._resource_notification(resource)
         self.assertTrue(closed_payload["params"]["resources"][0]["closed"])
+
+    def test_append_tool_summary_resource_skips_malformed_entries(
+        self,
+    ) -> None:
+        resources: list[Any] = ["malformed"]
+        mcp_router._append_tool_summary_resource(
+            resources, uri="mcp://resources/1", name="stdout"
+        )
+        mcp_router._append_tool_summary_resource(
+            resources, uri="mcp://resources/1", name="stdout"
+        )
+
+        self.assertEqual(
+            resources,
+            [
+                "malformed",
+                {"uri": "mcp://resources/1", "name": "stdout"},
+            ],
+        )
 
     def test_tool_call_event_item_variants(self) -> None:
         call = ToolCall(id="c1", name="run", arguments={})
@@ -593,6 +713,87 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 return route.endpoint
         raise AssertionError(f"Route {path} not found")
 
+    async def test_stream_item_notifications_emit_canonical_answer_delta(
+        self,
+    ) -> None:
+        state = mcp_router._MCPStreamProjectionState(
+            accumulator=mcp_router.ProtocolStreamAccumulator(),
+            legacy_answer_chunks=[],
+            legacy_reasoning_chunks=[],
+            tool_summaries={},
+            resources={},
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/mcp",
+        )
+        start = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        empty = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="",
+        )
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
+        done = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.ANSWER_DONE,
+            channel=StreamChannel.ANSWER,
+        )
+
+        start_notifications = await mcp_router._mcp_stream_item_notifications(
+            start, state, "progress"
+        )
+        empty_notifications = await mcp_router._mcp_stream_item_notifications(
+            empty, state, "progress"
+        )
+        notifications = await mcp_router._mcp_stream_item_notifications(
+            item, state, "progress"
+        )
+        done_notifications = await mcp_router._mcp_stream_item_notifications(
+            done, state, "progress"
+        )
+
+        self.assertEqual(start_notifications, [])
+        self.assertEqual(empty_notifications, [])
+        self.assertEqual(done_notifications, [])
+        self.assertEqual(
+            notifications,
+            [
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {
+                        "progressToken": "progress",
+                        "progress": {
+                            "type": "answer.delta",
+                            "delta": "answer",
+                        },
+                    },
+                }
+            ],
+        )
+        self.assertEqual(state.accumulator.snapshot().answer_text, "answer")
+
     async def test_consume_call_request(self) -> None:
         message = {
             "jsonrpc": "2.0",
@@ -795,14 +996,1425 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertIn('"delta": "plan"', notification_text)
         self.assertIn('"type": "tool.input_delta"', notification_text)
         self.assertIn('"toolCallId": "call-1"', notification_text)
-        self.assertIn('"type":"answer.delta"', "".join(chunks))
+        stream_text = "".join(chunks)
+        self.assertIn('"type":"answer.delta"', stream_text)
+        self.assertEqual(stream_text.count('"type":"answer.completed"'), 1)
         result_messages = [msg for msg in messages if msg.get("result")]
         summary = result_messages[-1]["result"]["structuredContent"]
         self.assertEqual(summary["reasoning"], "plan")
         self.assertEqual(
+            summary["toolCalls"],
+            [{"id": "call-1", "name": None, "arguments": '{"x"'}],
+        )
+        self.assertEqual(
             result_messages[-1]["result"]["content"],
             [{"type": "text", "text": "answer"}],
         )
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_maps_canonical_error_terminal_to_error(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="partial",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data={"message": "provider failed"},
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        chunks = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        self.assertTrue(
+            any(
+                item.get("method") == "notifications/progress"
+                and item["params"]["progress"]["type"] == "stream.errored"
+                for item in messages
+            )
+        )
+        errors = [item for item in messages if "error" in item]
+        self.assertEqual(errors[-1]["error"]["code"], -32603)
+        self.assertEqual(errors[-1]["error"]["message"], "provider failed")
+        self.assertFalse(any("result" in item for item in messages))
+        self.assertNotIn('"type":"answer.completed"', "".join(chunks))
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_closes_resources_on_canonical_error(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="partial",
+                data={"category": "stdout", "content": "partial"},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data={"message": "provider failed"},
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        store = mcp_router.MCPResourceStore()
+
+        messages = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=store,
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            messages.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        resource_updates = [
+            item
+            for item in messages
+            if item.get("method") == "notifications/resources/updated"
+        ]
+        self.assertEqual(len(resource_updates), 2)
+        resource_id = resource_updates[0]["params"]["resources"][0][
+            "uri"
+        ].rsplit("/", 1)[-1]
+        stored_resource = await store.get(resource_id)
+        errors = [item for item in messages if "error" in item]
+
+        self.assertTrue(response._closed)
+        self.assertTrue(stored_resource.closed)
+        self.assertTrue(
+            resource_updates[-1]["params"]["resources"][0]["closed"]
+        )
+        self.assertEqual(errors[-1]["error"]["message"], "provider failed")
+        self.assertFalse(any("result" in item for item in messages))
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_maps_canonical_cancel_terminal_to_error(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.STREAM_CANCELLED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.CANCELLED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        chunks = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        self.assertTrue(
+            any(
+                item.get("method") == "notifications/progress"
+                and item["params"]["progress"]["type"] == "stream.cancelled"
+                for item in messages
+            )
+        )
+        errors = [item for item in messages if "error" in item]
+        self.assertEqual(errors[-1]["error"]["code"], -32000)
+        self.assertFalse(any("result" in item for item in messages))
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_closes_resources_on_canonical_cancel(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="partial",
+                data={"category": "stdout", "content": "partial"},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_EXECUTION_CANCELLED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.STREAM_CANCELLED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.CANCELLED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        messages = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            messages.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        resource_updates = [
+            item
+            for item in messages
+            if item.get("method") == "notifications/resources/updated"
+        ]
+        self.assertEqual(len(resource_updates), 2)
+        self.assertEqual(
+            resource_updates[0]["params"]["resources"][0]["delta"]["set"][
+                "text"
+            ],
+            "partial",
+        )
+        self.assertTrue(
+            resource_updates[-1]["params"]["resources"][0]["closed"]
+        )
+
+    async def test_stream_response_rejects_missing_canonical_terminal(
+        self,
+    ) -> None:
+        response = DummyResponse(
+            [
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                )
+            ]
+        )
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        logger = MagicMock()
+
+        messages = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=logger,
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            messages.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        errors = [item for item in messages if "error" in item]
+        self.assertEqual(errors[-1]["error"]["code"], -32603)
+        self.assertFalse(any("result" in item for item in messages))
+        logger.exception.assert_called_once()
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_closes_resources_on_validation_error(
+        self,
+    ) -> None:
+        response = DummyResponse(
+            [
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                    channel=StreamChannel.TOOL_EXECUTION,
+                    correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=2,
+                    kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                    channel=StreamChannel.TOOL_EXECUTION,
+                    correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                    text_delta="partial",
+                    data={"category": "stdout", "content": "partial"},
+                ),
+            ]
+        )
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        store = mcp_router.MCPResourceStore()
+
+        messages = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=store,
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            messages.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        resource_updates = [
+            item
+            for item in messages
+            if item.get("method") == "notifications/resources/updated"
+        ]
+        self.assertEqual(len(resource_updates), 2)
+        resource_id = resource_updates[0]["params"]["resources"][0][
+            "uri"
+        ].rsplit("/", 1)[-1]
+        stored_resource = await store.get(resource_id)
+
+        self.assertTrue(response._closed)
+        self.assertTrue(stored_resource.closed)
+        self.assertTrue(
+            resource_updates[-1]["params"]["resources"][0]["closed"]
+        )
+        self.assertEqual(messages[-1]["error"]["code"], -32603)
+        self.assertFalse(any("result" in item for item in messages))
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_final_result_uses_canonical_accumulator(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="canonical plan",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="canonical answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={
+                    "input_text_tokens": 1,
+                    "output_text_tokens": 2,
+                    "total_tokens": 3,
+                },
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        chunks = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        result = [msg for msg in messages if msg.get("result")][-1]["result"]
+
+        self.assertEqual(
+            result["content"],
+            [{"type": "text", "text": "canonical answer"}],
+        )
+        self.assertEqual(
+            result["structuredContent"]["reasoning"], "canonical plan"
+        )
+        self.assertEqual(
+            result["structuredContent"]["usage"],
+            {
+                "input_text_tokens": 1,
+                "output_text_tokens": 2,
+                "total_tokens": 3,
+            },
+        )
+
+    async def test_stream_response_preserves_canonical_tool_ready_payload(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-ready"),
+                data={
+                    "name": "lookup",
+                    "arguments": {"query": "docs"},
+                },
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-ready"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={
+                    "input_text_tokens": 1,
+                    "output_text_tokens": 0,
+                    "total_tokens": 1,
+                },
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        chunks = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        result = [msg for msg in messages if msg.get("result")][-1]["result"]
+
+        self.assertEqual(
+            result["structuredContent"]["toolCalls"],
+            [
+                {
+                    "id": "call-ready",
+                    "name": "lookup",
+                    "arguments": {"query": "docs"},
+                }
+            ],
+        )
+
+    async def test_canonical_tool_ready_ignores_malformed_payload(
+        self,
+    ) -> None:
+        state = mcp_router._MCPStreamProjectionState(
+            accumulator=mcp_router.ProtocolStreamAccumulator(),
+            legacy_answer_chunks=[],
+            legacy_reasoning_chunks=[],
+            tool_summaries={},
+            resources={},
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/mcp",
+        )
+
+        await mcp_router._mcp_stream_item_notifications(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            state,
+            "progress",
+        )
+        notifications = await mcp_router._mcp_stream_item_notifications(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-ready"),
+                data="bad",
+            ),
+            state,
+            "progress",
+        )
+
+        self.assertEqual(notifications, [])
+        self.assertEqual(
+            state.tool_summaries,
+            {
+                "call-ready": {
+                    "id": "call-ready",
+                    "name": None,
+                    "arguments": None,
+                }
+            },
+        )
+
+    async def test_stream_response_updates_resource_from_canonical_tool_output(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="{}",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                metadata={"tool_name": "shell"},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="live\n",
+                data={"category": "stdout", "content": "live\n"},
+                metadata={"tool_name": "shell"},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="done",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=8,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=9,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={
+                    "input_text_tokens": 11,
+                    "output_text_tokens": 22,
+                    "total_tokens": 33,
+                },
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=10,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        store = mcp_router.MCPResourceStore()
+
+        chunks = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="1",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=store,
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        resource_messages = [
+            item
+            for item in messages
+            if item.get("method") == "notifications/resources/updated"
+        ]
+        self.assertEqual(len(resource_messages), 1)
+        resource = resource_messages[0]["params"]["resources"][0]
+        self.assertEqual(resource["delta"]["set"]["text"], "live\n")
+        result_messages = [msg for msg in messages if msg.get("result")]
+        result = result_messages[-1]["result"]
+        self.assertEqual(result["content"], [{"type": "text", "text": "done"}])
+        self.assertEqual(
+            result["structuredContent"]["usage"],
+            {
+                "input_text_tokens": 11,
+                "output_text_tokens": 22,
+                "total_tokens": 33,
+            },
+        )
+        self.assertEqual(
+            result["structuredContent"]["toolCalls"][0]["resources"][0][
+                "name"
+            ],
+            "stdout",
+        )
+        self.assertEqual(
+            result["structuredContent"]["toolCalls"][0]["arguments"], "{}"
+        )
+
+    async def test_canonical_tool_resource_notifications_edge_cases(
+        self,
+    ) -> None:
+        async def collect(
+            item: CanonicalStreamItem,
+            *,
+            summaries: dict[str, dict[str, Any]] | None = None,
+            resources: dict[str, mcp_router.MCPResource] | None = None,
+        ) -> list[dict[str, Any]]:
+            collected: list[dict[str, Any]] = []
+            async for (
+                notification
+            ) in mcp_router._canonical_tool_resource_notifications(
+                item=item,
+                tool_summaries=summaries if summaries is not None else {},
+                resources=resources if resources is not None else {},
+                resource_store=store,
+                base_path="/m",
+            ):
+                collected.append(notification)
+            return collected
+
+        store = mcp_router.MCPResourceStore()
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="one",
+            data={"category": "stdout", "content": "one"},
+        )
+        malformed_correlation = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="ignored",
+            data={"category": "stdout", "content": "ignored"},
+        )
+        object.__setattr__(
+            malformed_correlation, "correlation", StreamItemCorrelation()
+        )
+        no_data = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="ignored",
+        )
+        unsupported_category = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="ignored",
+            data={"category": "progress", "content": "ignored"},
+        )
+        empty_content = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=4,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="",
+            data={"category": "stdout", "content": ""},
+        )
+        unsupported_progress_category = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=5,
+            kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            data={"category": "stdout", "progress": 0.5},
+        )
+        empty_progress_content = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=6,
+            kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            data={"category": "progress"},
+        )
+        answer = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=7,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="ignored",
+        )
+
+        self.assertEqual(await collect(malformed_correlation), [])
+        self.assertEqual(await collect(no_data), [])
+        self.assertEqual(await collect(unsupported_category), [])
+        self.assertEqual(await collect(empty_content), [])
+        self.assertEqual(await collect(unsupported_progress_category), [])
+        self.assertEqual(await collect(empty_progress_content), [])
+        self.assertEqual(
+            mcp_router._canonical_tool_resource_content(answer), ""
+        )
+
+        summaries: dict[str, dict[str, Any]] = {}
+        resources: dict[str, mcp_router.MCPResource] = {}
+        first = await collect(item, summaries=summaries, resources=resources)
+        second_item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=5,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="two",
+            data={"category": "stdout", "content": "two"},
+        )
+        second = await collect(
+            second_item, summaries=summaries, resources=resources
+        )
+
+        self.assertEqual(
+            first[0]["params"]["resources"][0]["delta"]["set"]["text"],
+            "one",
+        )
+        self.assertEqual(
+            second[0]["params"]["resources"][0]["delta"]["set"]["text"],
+            "onetwo",
+        )
+        self.assertEqual(summaries["call-1"]["resources"][0]["name"], "stdout")
+        self.assertEqual(len(summaries["call-1"]["resources"]), 1)
+
+    async def test_canonical_tool_progress_updates_resource(self) -> None:
+        store = mcp_router.MCPResourceStore(resource_item_limit=2)
+        summaries: dict[str, dict[str, Any]] = {}
+        resources: dict[str, mcp_router.MCPResource] = {}
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            data={"category": "progress", "progress": 0.5},
+        )
+        content_item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            data={"category": "progress", "content": "half"},
+        )
+
+        notifications: list[dict[str, Any]] = []
+        async for (
+            notification
+        ) in mcp_router._canonical_tool_resource_notifications(
+            item=item,
+            tool_summaries=summaries,
+            resources=resources,
+            resource_store=store,
+            base_path="/m",
+        ):
+            notifications.append(notification)
+        async for (
+            notification
+        ) in mcp_router._canonical_tool_resource_notifications(
+            item=content_item,
+            tool_summaries=summaries,
+            resources=resources,
+            resource_store=store,
+            base_path="/m",
+        ):
+            notifications.append(notification)
+
+        self.assertEqual(len(notifications), 2)
+        self.assertEqual(
+            notifications[0]["params"]["resources"][0]["delta"]["set"]["text"],
+            '{"progress": 0.5}',
+        )
+        self.assertEqual(
+            notifications[1]["params"]["resources"][0]["delta"]["set"]["text"],
+            '{"progress": 0.5}half',
+        )
+        self.assertEqual(
+            summaries["call-1"]["resources"][-1]["name"], "progress"
+        )
+        self.assertEqual(len(summaries["call-1"]["resources"]), 1)
+
+    async def test_stream_response_rejects_duplicate_canonical_terminal(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+
+        payloads: list[dict[str, Any]] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/base",
+            cancel_event=cancel_event,
+        ):
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(payloads[-1]["error"]["code"], -32603)
+        self.assertFalse(any("result" in item for item in payloads))
+
+    async def test_stream_response_rejects_legacy_after_terminal(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+            Token(token="late"),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+
+        payloads: list[dict[str, Any]] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/base",
+            cancel_event=cancel_event,
+        ):
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(payloads[-1]["error"]["code"], -32603)
+        self.assertNotIn("late", dumps(payloads))
+        self.assertFalse(any("result" in item for item in payloads))
+
+    async def test_stream_response_rejects_mixed_surfaces(
+        self,
+    ) -> None:
+        canonical_item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        cases = (
+            (
+                "legacy-first",
+                [Token(token="legacy"), canonical_item],
+            ),
+            (
+                "canonical-first",
+                [canonical_item, Token(token="legacy")],
+            ),
+        )
+
+        for label, items in cases:
+            with self.subTest(label=label):
+                response = DummyResponse(items)
+                request_model = ChatCompletionRequest(
+                    model="gpt",
+                    messages=[ChatMessage(role="user", content="hi")],
+                    stream=True,
+                )
+                orchestrator = MagicMock()
+                orchestrator.sync_messages = AsyncMock()
+                cancel_event = AsyncEvent()
+
+                payloads: list[dict[str, Any]] = []
+                async for chunk in mcp_router._stream_mcp_response(
+                    request_id="id",
+                    request_model=request_model,
+                    response=response,
+                    response_id=uuid4(),
+                    timestamp=1,
+                    progress_token="tok",
+                    orchestrator=orchestrator,
+                    logger=MagicMock(),
+                    resource_store=mcp_router.MCPResourceStore(),
+                    base_path="/base",
+                    cancel_event=cancel_event,
+                ):
+                    payloads.extend(
+                        loads(part)
+                        for part in chunk.decode("utf-8").splitlines()
+                        if part
+                    )
+
+                self.assertTrue(cancel_event.is_set())
+                self.assertEqual(payloads[-1]["error"]["code"], -32603)
+                self.assertFalse(any("result" in item for item in payloads))
+
+    async def test_stream_response_closes_resources_after_projection_error(
+        self,
+    ) -> None:
+        call = ToolCall(id="cleanup", name="shell", arguments={})
+        tool_result = ToolCallResult(
+            id="result-cleanup",
+            call=call,
+            name="shell",
+            arguments={},
+            result={"stdout": "live"},
+        )
+        response = DummyResponse(
+            [
+                Event(
+                    type=EventType.TOOL_RESULT,
+                    payload={"result": tool_result},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+            ]
+        )
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+        store = mcp_router.MCPResourceStore()
+
+        payloads: list[dict[str, Any]] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=store,
+            base_path="/base",
+            cancel_event=cancel_event,
+        ):
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        resource_updates = [
+            item
+            for item in payloads
+            if item.get("method") == "notifications/resources/updated"
+        ]
+        first_resource = resource_updates[0]["params"]["resources"][0]
+        resource_id = first_resource["uri"].rsplit("/", 1)[-1]
+        stored_resource = await store.get(resource_id)
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertTrue(response._closed)
+        self.assertTrue(stored_resource.closed)
+        self.assertTrue(
+            resource_updates[-1]["params"]["resources"][0]["closed"]
+        )
+        self.assertEqual(payloads[-1]["error"]["code"], -32603)
+        self.assertFalse(any("result" in item for item in payloads))
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_handles_iterator_creation_error(
+        self,
+    ) -> None:
+        class BrokenResponse(DummyResponse):
+            def __aiter__(self) -> AsyncIterator[Any]:
+                raise RuntimeError("iterator failed")
+
+        response = BrokenResponse([])
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+
+        payloads: list[dict[str, Any]] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/base",
+            cancel_event=cancel_event,
+        ):
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertTrue(response._closed)
+        self.assertEqual(payloads[-1]["error"]["code"], -32603)
         orchestrator.sync_messages.assert_awaited()
 
     async def test_stream_response_handles_cancellation(self) -> None:
@@ -841,6 +2453,453 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         errors = [msg["error"] for msg in dict_messages if "error" in msg]
         self.assertTrue(errors)
         self.assertEqual(errors[-1]["code"], -32000)
+
+    async def test_stream_response_handles_source_cancellation(self) -> None:
+        class SourceCancelledResponse(DummyResponse):
+            def __init__(self, items: list[Any]) -> None:
+                super().__init__(items)
+                self.cancel_count = 0
+                self.close_count = 0
+
+            async def cancel(self) -> None:
+                self.cancel_count += 1
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+                await super().aclose()
+
+        def cancel_source() -> object:
+            raise CancelledError()
+
+        call = ToolCall(id="call-1", name="run", arguments={})
+        result = ToolCallResult(
+            id="res-1",
+            call=call,
+            name="run",
+            arguments={},
+            result={"stdout": "partial"},
+        )
+        response = SourceCancelledResponse(
+            [
+                Event(
+                    type=EventType.TOOL_RESULT,
+                    payload={"result": result},
+                    started=1.0,
+                    finished=2.0,
+                    elapsed=1.0,
+                ),
+                cancel_source,
+            ]
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+        store = mcp_router.MCPResourceStore()
+
+        payloads: list[dict[str, Any]] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=ChatCompletionRequest(
+                model="gpt",
+                messages=[ChatMessage(role="user", content="hi")],
+                stream=True,
+            ),
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=store,
+            base_path="/base",
+            cancel_event=cancel_event,
+        ):
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        resource_updates = [
+            item
+            for item in payloads
+            if item.get("method") == "notifications/resources/updated"
+        ]
+        resource_id = resource_updates[0]["params"]["resources"][0][
+            "uri"
+        ].rsplit("/", 1)[-1]
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(response.cancel_count, 1)
+        self.assertEqual(response.close_count, 1)
+        self.assertTrue(response._closed)
+        self.assertTrue((await store.get(resource_id)).closed)
+        self.assertTrue(
+            resource_updates[-1]["params"]["resources"][0]["closed"]
+        )
+        self.assertEqual(payloads[-1]["error"]["code"], -32000)
+        self.assertEqual(payloads[-1]["error"]["message"], "Request cancelled")
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_interrupts_pending_pull_on_cancellation(
+        self,
+    ) -> None:
+        class PendingResponse:
+            def __init__(self) -> None:
+                self.input_token_count = 0
+                self.output_token_count = 0
+                self._response_iterator = None
+                self.started = AsyncEvent()
+                self.pull_cancelled = False
+                self.cancel_count = 0
+                self.close_count = 0
+
+            def __aiter__(self) -> "PendingResponse":
+                self._response_iterator = self
+                return self
+
+            async def __anext__(self) -> object:
+                self.started.set()
+                try:
+                    await AsyncEvent().wait()
+                except CancelledError:
+                    self.pull_cancelled = True
+                    raise
+                return Token(token="late")
+
+            async def cancel(self) -> None:
+                self.cancel_count += 1
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+            async def to_str(self) -> str:
+                return ""
+
+        response = PendingResponse()
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+
+        async def collect() -> list[dict[str, Any]]:
+            payloads: list[dict[str, Any]] = []
+            async for chunk in mcp_router._stream_mcp_response(
+                request_id="id",
+                request_model=request_model,
+                response=response,
+                response_id=uuid4(),
+                timestamp=1,
+                progress_token="tok",
+                orchestrator=orchestrator,
+                logger=MagicMock(),
+                resource_store=mcp_router.MCPResourceStore(),
+                base_path="/base",
+                cancel_event=cancel_event,
+            ):
+                payloads.extend(
+                    loads(part)
+                    for part in chunk.decode("utf-8").splitlines()
+                    if part
+                )
+            return payloads
+
+        task = create_task(collect())
+        await response.started.wait()
+        cancel_event.set()
+        payloads = await task
+
+        self.assertTrue(response.pull_cancelled)
+        self.assertEqual(response.cancel_count, 1)
+        self.assertEqual(response.close_count, 1)
+        self.assertEqual(payloads[-1]["error"]["code"], -32000)
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_closes_resources_after_cancellation(
+        self,
+    ) -> None:
+        call = ToolCall(id="call-1", name="run", arguments={})
+        result = ToolCallResult(
+            id="res-1",
+            call=call,
+            name="run",
+            arguments={},
+            result={"stdout": "partial"},
+        )
+        response = DummyResponse(
+            [
+                Event(
+                    type=EventType.TOOL_RESULT,
+                    payload={"result": result},
+                    started=1.0,
+                    finished=2.0,
+                    elapsed=1.0,
+                ),
+                Token(token="late"),
+            ]
+        )
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+        stream = mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/base",
+            cancel_event=cancel_event,
+        )
+
+        first = await anext(stream)
+        first_payload = loads(first.decode("utf-8"))
+        self.assertEqual(
+            first_payload["method"], "notifications/resources/updated"
+        )
+        self.assertEqual(
+            first_payload["params"]["resources"][0]["delta"]["set"]["text"],
+            "partial",
+        )
+
+        cancel_event.set()
+        payloads = [first_payload]
+        async for chunk in stream:
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        closed_resources = [
+            item
+            for item in payloads
+            if item.get("method") == "notifications/resources/updated"
+            and item["params"]["resources"][0].get("closed") is True
+        ]
+        self.assertEqual(len(closed_resources), 1)
+        self.assertEqual(payloads[-1]["error"]["code"], -32000)
+        self.assertTrue(response._closed)
+
+    async def test_stream_response_cleans_up_when_consumer_closes(
+        self,
+    ) -> None:
+        class CleanupTrackingResponse(DummyResponse):
+            def __init__(self, items: list[Any]) -> None:
+                super().__init__(items)
+                self.cancel_count = 0
+                self.close_count = 0
+
+            async def cancel(self) -> None:
+                self.cancel_count += 1
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+                await super().aclose()
+
+        call = ToolCall(id="call-1", name="run", arguments={})
+        result = ToolCallResult(
+            id="res-1",
+            call=call,
+            name="run",
+            arguments={},
+            result={"stdout": "partial"},
+        )
+        response = CleanupTrackingResponse(
+            [
+                Event(
+                    type=EventType.TOOL_RESULT,
+                    payload={"result": result},
+                    started=1.0,
+                    finished=2.0,
+                    elapsed=1.0,
+                ),
+                Token(token="late"),
+            ]
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+        resource_store = mcp_router.MCPResourceStore()
+        stream = mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=ChatCompletionRequest(
+                model="gpt",
+                messages=[ChatMessage(role="user", content="hi")],
+                stream=True,
+            ),
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=resource_store,
+            base_path="/base",
+            cancel_event=cancel_event,
+        )
+
+        first = await anext(stream)
+        first_payload = loads(first.decode("utf-8"))
+        resource_id = first_payload["params"]["resources"][0]["uri"].rsplit(
+            "/", 1
+        )[-1]
+        await stream.aclose()
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(response.cancel_count, 1)
+        self.assertEqual(response.close_count, 1)
+        self.assertTrue(response._closed)
+        self.assertTrue((await resource_store.get(resource_id)).closed)
+        orchestrator.sync_messages.assert_awaited()
+
+    async def test_stream_response_honors_cancellation_after_pull(
+        self,
+    ) -> None:
+        class CancellingResponse:
+            def __init__(self, cancel_event: AsyncEvent) -> None:
+                self.input_token_count = 0
+                self.output_token_count = 0
+                self._response_iterator = None
+                self._cancel_event = cancel_event
+                self._pulled = False
+                self.cancel_count = 0
+                self.close_count = 0
+
+            def __aiter__(self) -> "CancellingResponse":
+                self._response_iterator = self
+                return self
+
+            async def __anext__(self) -> object:
+                if self._pulled:
+                    raise StopAsyncIteration
+                self._pulled = True
+                self._cancel_event.set()
+                return Token(token="late")
+
+            async def cancel(self) -> None:
+                self.cancel_count += 1
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+            async def to_str(self) -> str:
+                return ""
+
+        cancel_event = AsyncEvent()
+        response = CancellingResponse(cancel_event)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        payloads: list[dict[str, Any]] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/base",
+            cancel_event=cancel_event,
+        ):
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        self.assertEqual(response.cancel_count, 1)
+        self.assertEqual(response.close_count, 1)
+        self.assertEqual(payloads[-1]["error"]["code"], -32000)
+        self.assertNotIn("late", dumps(payloads))
+
+    async def test_stream_response_handles_cancel_racing_exhaustion(
+        self,
+    ) -> None:
+        class ExhaustingResponse:
+            def __init__(self, cancel_event: AsyncEvent) -> None:
+                self.input_token_count = 0
+                self.output_token_count = 0
+                self._response_iterator = None
+                self._cancel_event = cancel_event
+                self._pulled = False
+                self.cancel_count = 0
+                self.close_count = 0
+
+            def __aiter__(self) -> "ExhaustingResponse":
+                self._response_iterator = self
+                return self
+
+            async def __anext__(self) -> object:
+                if self._pulled:
+                    raise StopAsyncIteration
+                self._pulled = True
+                self._cancel_event.set()
+                raise StopAsyncIteration
+
+            async def cancel(self) -> None:
+                self.cancel_count += 1
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+            async def to_str(self) -> str:
+                return ""
+
+        cancel_event = AsyncEvent()
+        response = ExhaustingResponse(cancel_event)
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        payloads: list[dict[str, Any]] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=ChatCompletionRequest(
+                model="gpt",
+                messages=[ChatMessage(role="user", content="hi")],
+                stream=True,
+            ),
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/base",
+            cancel_event=cancel_event,
+        ):
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        self.assertEqual(response.cancel_count, 1)
+        self.assertEqual(response.close_count, 1)
+        self.assertEqual(payloads[-1]["error"]["code"], -32000)
+        self.assertEqual(payloads[-1]["error"]["message"], "Request cancelled")
+        orchestrator.sync_messages.assert_awaited()
 
     async def test_stream_response_handles_exception(self) -> None:
         def boom() -> None:
@@ -1402,6 +3461,53 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             stream=stream,
         )
 
+    async def test_cleanup_mcp_stream_sources_logs_single_failure(
+        self,
+    ) -> None:
+        class ClosingSource:
+            async def aclose(self) -> None:
+                raise RuntimeError("close failed")
+
+        logger = MagicMock()
+
+        await mcp_router._cleanup_mcp_stream_sources(
+            logger, ClosingSource(), cancelled=False
+        )
+
+        logger.exception.assert_called_once()
+        self.assertEqual(
+            logger.exception.call_args.args[0],
+            "MCP stream source cleanup failed",
+        )
+        self.assertIsInstance(
+            logger.exception.call_args.kwargs["exc_info"], RuntimeError
+        )
+
+    async def test_cleanup_mcp_stream_sources_logs_group_failure(
+        self,
+    ) -> None:
+        class CancellingSource:
+            async def cancel(self) -> None:
+                raise CancelledError()
+
+            async def aclose(self) -> None:
+                raise RuntimeError("close failed")
+
+        logger = MagicMock()
+
+        await mcp_router._cleanup_mcp_stream_sources(
+            logger, CancellingSource(), cancelled=True
+        )
+
+        logger.exception.assert_called_once()
+        self.assertEqual(
+            logger.exception.call_args.args[0],
+            "MCP stream source cleanup failed",
+        )
+        self.assertIsInstance(
+            logger.exception.call_args.kwargs["exc_info"], BaseExceptionGroup
+        )
+
     async def test_expect_jsonrpc_message_invalid_payload(self) -> None:
         body = b"[1]"
         request = DummyRequest(body)
@@ -1790,6 +3896,22 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
         holder = Holder()
         await mcp_router._close_response_iterator(holder)
 
+    async def test_close_response_iterator_closes_iterator(self) -> None:
+        class Iterator:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        class Holder:
+            def __init__(self) -> None:
+                self._response_iterator = Iterator()
+
+        holder = Holder()
+        await mcp_router._close_response_iterator(holder)
+        self.assertTrue(holder._response_iterator.closed)
+
     async def test_start_tool_streaming_response_non_stream(self) -> None:
         request = DummyRequest(b"")
         tool_request = MCPToolRequest(input_string="hi")
@@ -2114,6 +4236,78 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             if isinstance(item, dict) and "error" in item
         ]
         self.assertEqual(errors[-1]["error"]["code"], -32000)
+
+    async def test_stream_mcp_response_logs_cleanup_failure(
+        self,
+    ) -> None:
+        class FailingCleanupResponse(DummyResponse):
+            async def cancel(self) -> None:
+                raise CancelledError()
+
+            async def aclose(self) -> None:
+                raise RuntimeError("close failed")
+
+        cancel_event = AsyncEvent()
+        store = mcp_router.MCPResourceStore()
+        tool_call = ToolCall(id="c", name="run", arguments={})
+        tool_result = ToolCallResult(
+            id="res",
+            call=tool_call,
+            name="run",
+            arguments={},
+            result={"stdout": "partial"},
+        )
+        response = FailingCleanupResponse(
+            [
+                Event(
+                    type=EventType.TOOL_RESULT,
+                    payload={"result": tool_result},
+                ),
+                Token(token="ignored"),
+            ]
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        logger = MagicMock()
+        stream = mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=self._chat_request(stream=True),
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=logger,
+            resource_store=store,
+            base_path="/base",
+            cancel_event=cancel_event,
+        )
+
+        first = await anext(stream)
+        payloads: list[dict[str, Any]] = [loads(first.decode("utf-8"))]
+        cancel_event.set()
+        async for chunk in stream:
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        orchestrator.sync_messages.assert_awaited()
+        self.assertTrue(
+            any(
+                item.get("method") == "notifications/resources/updated"
+                and item["params"]["resources"][0].get("closed") is True
+                for item in payloads
+            )
+        )
+        self.assertEqual(payloads[-1]["error"]["code"], -32000)
+        self.assertTrue(
+            any(
+                logged_call.args[0] == "MCP stream source cleanup failed"
+                for logged_call in logger.exception.call_args_list
+            )
+        )
 
     async def test_create_router_mcp_rpc_tools_call(self) -> None:
         router = mcp_router.create_router()

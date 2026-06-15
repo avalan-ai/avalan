@@ -647,6 +647,50 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
+    async def test_stream_ignores_message_output_item_done_as_tool_call(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="done"
+                    ),
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item=SimpleNamespace(type="message", id="msg_1"),
+                    ),
+                ]
+            )
+        )
+
+        token = await stream.__anext__()
+
+        self.assertIsInstance(token, Token)
+        self.assertEqual(token.token, "done")
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
+    async def test_stream_ignores_tool_added_without_id(self):
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_item.added",
+                        item=SimpleNamespace(type="function_call"),
+                    ),
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="done"
+                    ),
+                ]
+            )
+        )
+
+        token = await stream.__anext__()
+
+        self.assertIsInstance(token, Token)
+        self.assertEqual(token.token, "done")
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
     async def test_canonical_stream_maps_responses_events(self):
         usage = {
             "input_tokens": 2,
@@ -1047,6 +1091,43 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(items[1].data, {"name": None})
         self.assertEqual(items[3].data, {"name": None})
 
+    async def test_canonical_stream_ignores_message_done_as_tool_call(self):
+        events = [
+            SimpleNamespace(type="response.output_text.delta", delta="done"),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(type="message", id="msg_1"),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+                close_after_terminal=False,
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
+        )
+        self.assertFalse(
+            any(item.channel is StreamChannel.TOOL_CALL for item in items)
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "done",
+        )
+
     async def test_canonical_stream_maps_custom_done_mapping_input(self):
         events = [
             SimpleNamespace(
@@ -1361,6 +1442,56 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(final.call.id, "item-4")
         self.assertEqual(final.call.name, "pkg__search")
         self.assertEqual(final.call.arguments, {"q": "avalan"})
+        with self.assertRaises(StopAsyncIteration):
+            await stream.__anext__()
+
+    async def test_function_call_added_item_preserves_legacy_call_name(self):
+        provider_name = self.mod.TextGenerationVendor.encode_tool_name(
+            "math.calculator"
+        )
+        events = [
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="fc_1",
+                    name=provider_name,
+                ),
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="fc_1",
+                delta='{"expression"',
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="fc_1",
+                delta=':"4 + 6"}',
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(type="function_call", id="fc_1"),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        first = await stream.__anext__()
+        second = await stream.__anext__()
+        final = await stream.__anext__()
+
+        self.assertIsInstance(first, ToolCallToken)
+        self.assertEqual(first.token, '{"expression"')
+        self.assertIsInstance(second, ToolCallToken)
+        self.assertEqual(second.token, ':"4 + 6"}')
+        self.assertIsInstance(final, ToolCallToken)
+        self.assertIsNotNone(final.call)
+        assert final.call is not None
+        self.assertEqual(final.call.id, "fc_1")
+        self.assertEqual(final.call.name, "math.calculator")
+        self.assertEqual(final.call.provider_name, provider_name)
+        self.assertTrue(final.call.provider_name_encoded)
+        self.assertEqual(final.call.arguments, {"expression": "4 + 6"})
+        self.assertNotIn('"name": ""', final.token)
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 

@@ -30,6 +30,11 @@ from .registry import (
 )
 from .selector import FlowSelector, resolve_flow_selector_value
 from .state import FlowEdgeState, FlowExecutionTrace, FlowNodeState
+from .stream import (
+    FlowStreamSession,
+    canonical_flow_event_listener,
+    flow_stream_session,
+)
 
 from asyncio import CancelledError, gather, sleep, wait_for
 from collections import deque
@@ -56,6 +61,7 @@ FlowEventListener: TypeAlias = Callable[[Event], Awaitable[None] | None]
 class _FlowExecutionOptions:
     cancellation_checker: CancellationChecker | None = None
     event_listener: FlowEventListener | None = None
+    stream_session: FlowStreamSession | None = None
 
 
 _FLOW_EXECUTION_OPTIONS: ContextVar[_FlowExecutionOptions | None] = ContextVar(
@@ -201,6 +207,9 @@ class FlowNodeRegistryRunner:
             ),
             event_listener=(
                 options.event_listener if options is not None else None
+            ),
+            stream_session=(
+                options.stream_session if options is not None else None
             ),
         )
         if not result.ok:
@@ -357,6 +366,7 @@ async def execute_flow_plan(
     inputs: Mapping[str, object] | None = None,
     cancellation_checker: CancellationChecker | None = None,
     event_listener: FlowEventListener | None = None,
+    stream_session: FlowStreamSession | None = None,
     concurrency_limit: int = 1,
     resume_trace: FlowExecutionTrace | None = None,
     resume_node_outputs: Mapping[str, Mapping[str, object]] | None = None,
@@ -366,6 +376,8 @@ async def execute_flow_plan(
     assert callable(runner)
     if event_listener is not None:
         assert callable(event_listener)
+    if stream_session is not None:
+        assert isinstance(stream_session, FlowStreamSession)
     if inputs is not None:
         assert isinstance(inputs, Mapping)
     if resume_trace is not None:
@@ -379,6 +391,25 @@ async def execute_flow_plan(
         bool,
     )
     assert concurrency_limit > 0
+    flow_run_id = _flow_event_id(plan)
+    if stream_session is None:
+        stream_session = flow_stream_session(
+            stream_session_id=str(uuid4()),
+            run_id=flow_run_id,
+            turn_id=flow_run_id,
+            cancellation_checker=cancellation_checker,
+        )
+    cancellation_checker = _stream_session_cancellation_checker(
+        stream_session,
+        cancellation_checker,
+    )
+    if event_listener is not None:
+        event_listener = canonical_flow_event_listener(
+            event_listener,
+            stream_session_id=stream_session.stream_session_id,
+            run_id=stream_session.run_id,
+            turn_id=stream_session.turn_id,
+        )
     input_values = _freeze_mapping(inputs or {})
     node_outputs: dict[str, Mapping[str, object]] = {
         node: _freeze_mapping(outputs)
@@ -499,6 +530,7 @@ async def execute_flow_plan(
                                 cancellation_checker,
                                 plan=plan,
                                 event_listener=event_listener,
+                                stream_session=stream_session,
                             )
                             for node, mapped_inputs in batch
                         )
@@ -980,6 +1012,7 @@ async def _run_plan_node(
     *,
     plan: FlowExecutionPlan,
     event_listener: FlowEventListener | None,
+    stream_session: FlowStreamSession,
 ) -> _NodeRunOutcome:
     if node.loop is not None:
         return await _run_loop_plan_node(
@@ -990,6 +1023,7 @@ async def _run_plan_node(
             cancellation_checker,
             plan=plan,
             event_listener=event_listener,
+            stream_session=stream_session,
         )
     return await _run_plan_node_attempts(
         node,
@@ -998,6 +1032,7 @@ async def _run_plan_node(
         cancellation_checker,
         plan=plan,
         event_listener=event_listener,
+        stream_session=stream_session,
     )
 
 
@@ -1009,6 +1044,7 @@ async def _run_plan_node_attempts(
     *,
     plan: FlowExecutionPlan,
     event_listener: FlowEventListener | None,
+    stream_session: FlowStreamSession,
 ) -> _NodeRunOutcome:
     started_at = monotonic()
     attempts = 0
@@ -1021,6 +1057,7 @@ async def _run_plan_node_attempts(
             runner,
             cancellation_checker,
             event_listener=event_listener,
+            stream_session=stream_session,
         )
         if outcome.route_kind == FlowEdgeKind.SUCCESS:
             return _NodeRunOutcome(
@@ -1084,6 +1121,7 @@ async def _run_loop_plan_node(
     *,
     plan: FlowExecutionPlan,
     event_listener: FlowEventListener | None,
+    stream_session: FlowStreamSession,
 ) -> _NodeRunOutcome:
     assert node.loop is not None
     started_at = monotonic()
@@ -1096,6 +1134,7 @@ async def _run_loop_plan_node(
             cancellation_checker,
             plan=plan,
             event_listener=event_listener,
+            stream_session=stream_session,
         )
         attempts += outcome.attempts
         if outcome.route_kind != FlowEdgeKind.SUCCESS:
@@ -1528,6 +1567,7 @@ async def _run_plan_node_once(
     cancellation_checker: CancellationChecker | None,
     *,
     event_listener: FlowEventListener | None,
+    stream_session: FlowStreamSession,
 ) -> _NodeRunOutcome:
     node_event_listener = _node_scoped_event_listener(
         node.name,
@@ -1537,6 +1577,7 @@ async def _run_plan_node_once(
         _FlowExecutionOptions(
             cancellation_checker=cancellation_checker,
             event_listener=node_event_listener,
+            stream_session=stream_session,
         )
     )
     try:
@@ -2185,6 +2226,31 @@ def _execution_diagnostic(
         message=message,
         hint=hint,
     )
+
+
+def _stream_session_cancellation_checker(
+    stream_session: FlowStreamSession,
+    cancellation_checker: CancellationChecker | None,
+) -> CancellationChecker:
+    assert isinstance(stream_session, FlowStreamSession)
+    if cancellation_checker is not None:
+        assert callable(cancellation_checker)
+    if (
+        cancellation_checker is None
+        or cancellation_checker is stream_session.cancellation_checker
+    ):
+        return stream_session.check_cancelled
+
+    async def check_cancelled() -> None:
+        await stream_session.check_cancelled()
+        try:
+            await cancellation_checker()
+        except CancelledError:
+            stream_session.cancel()
+            raise
+        await stream_session.check_cancelled()
+
+    return check_cancelled
 
 
 async def _check_cancelled(

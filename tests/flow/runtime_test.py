@@ -1,7 +1,8 @@
 from ast import Attribute, Call, ImportFrom, Name, parse, walk
-from asyncio import CancelledError, sleep
+from asyncio import CancelledError, gather, sleep
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, replace
+from json import dumps
 from pathlib import Path
 from types import ModuleType
 from typing import cast
@@ -15,7 +16,7 @@ import avalan.flow.inspection as flow_inspection_module
 import avalan.flow.plan as flow_plan_module
 import avalan.flow.runtime as flow_runtime_module
 from avalan.entities import ToolManagerSettings
-from avalan.event import Event, EventType
+from avalan.event import Event, EventPayloadKind, EventType
 from avalan.flow import (
     FlowConditionOperator,
     FlowConditionPlan,
@@ -53,14 +54,19 @@ from avalan.flow import (
     FlowRouteMatchPolicy,
     FlowRuntimeContext,
     FlowRuntimeEvaluationError,
+    FlowStreamSession,
     FlowTimeoutPlan,
+    canonical_flow_event_listener,
+    canonical_flow_item_from_event,
     compile_flow_definition,
     evaluate_flow_condition_plan,
     evaluate_flow_mappings,
     evaluate_flow_node_mappings,
     evaluate_flow_selector,
     execute_flow_plan,
+    flow_event_is_projectable,
     flow_node_registry_runner,
+    flow_stream_session,
     loads_flow_definition_result,
     parse_flow_selector,
     resolve_flow_selector_value,
@@ -83,6 +89,7 @@ from avalan.flow.runtime import (
     _retry_delay_seconds,
     _route_from_node,
 )
+from avalan.model.stream import StreamChannel, StreamItemKind
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
 
@@ -625,14 +632,20 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         async def check_cancelled() -> None:
             nonlocal cancellation_checks
             cancellation_checks += 1
-            if cancellation_checks >= 3:
+            if cancellation_checks >= 5:
                 raise CancelledError("stop inside child")
 
+        session = flow_stream_session(
+            stream_session_id="parent-flow-session",
+            run_id="parent-flow-run",
+            turn_id="parent-flow-turn",
+            cancellation_checker=check_cancelled,
+        )
         result = await execute_flow_plan(
             plan,
             FlowNodeRegistryRunner(),
-            cancellation_checker=check_cancelled,
             event_listener=events.append,
+            stream_session=session,
         )
         child_events = [
             event
@@ -659,6 +672,14 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         self.assertIn(
             EventType.FLOW_CANCELLED,
             [event.type for event in child_events],
+        )
+        self.assertTrue(session.cancelled)
+        self.assertTrue(
+            all(
+                event.observability.data["stream_session_id"]
+                == "parent-flow-session"
+                for event in child_events
+            )
         )
         self.assertGreaterEqual(cancellation_checks, 3)
 
@@ -783,6 +804,315 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
         )
         self.assertNotIn("private prompt", str(events))
         self.assertNotIn("private node output", str(events))
+
+    async def test_execute_flow_plan_projects_flow_events_to_canonical_items(
+        self,
+    ) -> None:
+        events: list[Event] = []
+
+        result = await execute_flow_plan(
+            self._plan(
+                entry_node="start",
+                outputs={"answer": "start.value"},
+                nodes=(self._node("start"),),
+            ),
+            lambda _node, _inputs: "ok",
+            event_listener=events.append,
+        )
+
+        self.assertTrue(result.ok, result.public_diagnostics)
+        observability = [event.observability for event in events]
+        self.assertTrue(
+            all(
+                payload.kind is EventPayloadKind.CANONICAL_STREAM
+                for payload in observability
+            )
+        )
+        self.assertEqual(
+            [payload.data["sequence"] for payload in observability],
+            list(range(len(events))),
+        )
+        self.assertTrue(
+            all(
+                payload.data["kind"] == StreamItemKind.FLOW_EVENT.value
+                for payload in observability
+            )
+        )
+        self.assertTrue(
+            all(
+                payload.data["channel"] == StreamChannel.FLOW.value
+                for payload in observability
+            )
+        )
+        node_started = next(
+            event
+            for event in events
+            if event.type is EventType.FLOW_NODE_STARTED
+        )
+        self.assertEqual(
+            node_started.observability.data["correlation"],
+            {"flow_run_id": "runtime", "node_id": "start"},
+        )
+        self.assertEqual(
+            cast(Mapping[str, object], node_started.payload)["status"],
+            "started",
+        )
+
+    async def test_flow_canonical_listener_keeps_exact_and_coalesced_items(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        listener = canonical_flow_event_listener(
+            events.append,
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+        )
+
+        for event_type, status in (
+            (EventType.FLOW_NODE_STARTED, "started"),
+            (EventType.FLOW_NODE_RETRYING, "retrying"),
+            (EventType.FLOW_NODE_COMPLETED, "succeeded"),
+        ):
+            result = listener(
+                Event(
+                    type=event_type,
+                    payload={
+                        "flow_id": "flow",
+                        "node": "worker",
+                        "status": status,
+                    },
+                )
+            )
+            if result is not None:
+                await result
+
+        self.assertEqual(
+            [item.sequence for item in listener.items],
+            [0, 1, 2],
+        )
+        self.assertEqual(len(events), 3)
+        self.assertEqual(len(listener.ui_items), 1)
+        self.assertEqual(listener.ui_items[0].data["status"], "succeeded")
+        self.assertEqual(
+            listener.ui_items[0].correlation.node_id,
+            "worker",
+        )
+        self.assertEqual(
+            cast(Mapping[str, object], events[-1].payload)["status"],
+            "succeeded",
+        )
+
+    async def test_flow_canonical_listener_bounds_exact_history(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        listener = canonical_flow_event_listener(
+            events.append,
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+            history_item_limit=2,
+        )
+
+        for index in range(4):
+            result = listener(
+                Event(
+                    type=EventType.FLOW_NODE_STARTED,
+                    payload={
+                        "flow_id": "flow",
+                        "node": f"node-{index}",
+                        "status": "started",
+                    },
+                )
+            )
+            if result is not None:
+                await result
+
+        self.assertEqual(
+            [item.sequence for item in listener.items],
+            [2, 3],
+        )
+        self.assertEqual(
+            [item.sequence for item in listener.ui_items],
+            [2, 3],
+        )
+        self.assertEqual(
+            [event.observability.data["sequence"] for event in events],
+            [0, 1, 2, 3],
+        )
+
+    async def test_flow_canonical_listener_allows_zero_history(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        listener = canonical_flow_event_listener(
+            events.append,
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+            history_item_limit=0,
+        )
+
+        result = listener(
+            Event(
+                type=EventType.FLOW_NODE_STARTED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "worker",
+                    "status": "started",
+                },
+            )
+        )
+        if result is not None:
+            await result
+
+        self.assertEqual(listener.items, ())
+        self.assertEqual(listener.ui_items, ())
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].observability.data["sequence"], 0)
+
+    async def test_flow_canonical_listener_records_after_delivery(
+        self,
+    ) -> None:
+        delivered: list[Event] = []
+
+        async def failing_listener(event: Event) -> None:
+            delivered.append(event)
+            await sleep(0)
+            raise RuntimeError("listener failed")
+
+        listener = canonical_flow_event_listener(
+            failing_listener,
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+        )
+
+        result = listener(
+            Event(
+                type=EventType.FLOW_NODE_STARTED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "worker",
+                    "status": "started",
+                },
+            )
+        )
+        assert result is not None
+        with self.assertRaisesRegex(RuntimeError, "listener failed"):
+            await result
+
+        self.assertEqual(listener.items, ())
+        self.assertEqual(listener.ui_items, ())
+        self.assertEqual(delivered[0].observability.data["sequence"], 0)
+
+        async def accepting_listener(event: Event) -> None:
+            delivered.append(event)
+            await sleep(0)
+
+        listener.downstream = accepting_listener
+        result = listener(
+            Event(
+                type=EventType.FLOW_NODE_COMPLETED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "worker",
+                    "status": "succeeded",
+                },
+            )
+        )
+        assert result is not None
+        await result
+
+        self.assertEqual(
+            [item.sequence for item in listener.items],
+            [1],
+        )
+        self.assertEqual(
+            [event.observability.data["sequence"] for event in delivered],
+            [0, 1],
+        )
+        self.assertEqual(listener.ui_items[0].data["status"], "succeeded")
+
+    async def test_flow_canonical_listener_reserves_concurrent_sequences(
+        self,
+    ) -> None:
+        delivered: list[Event] = []
+
+        async def accepting_listener(event: Event) -> None:
+            delivered.append(event)
+            await sleep(0)
+
+        listener = canonical_flow_event_listener(
+            accepting_listener,
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+        )
+
+        first = listener(
+            Event(
+                type=EventType.FLOW_NODE_STARTED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "worker",
+                    "status": "started",
+                },
+            )
+        )
+        second = listener(
+            Event(
+                type=EventType.FLOW_NODE_COMPLETED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "worker",
+                    "status": "succeeded",
+                },
+            )
+        )
+
+        assert first is not None
+        assert second is not None
+        await gather(first, second)
+
+        self.assertEqual(
+            [event.observability.data["sequence"] for event in delivered],
+            [0, 1],
+        )
+        self.assertEqual(
+            [item.sequence for item in listener.items],
+            [0, 1],
+        )
+        self.assertEqual(listener.ui_items[0].data["status"], "succeeded")
+
+    async def test_flow_canonical_listener_skips_sync_failure_record(
+        self,
+    ) -> None:
+        def failing_listener(_event: Event) -> None:
+            raise RuntimeError("listener failed")
+
+        listener = canonical_flow_event_listener(
+            failing_listener,
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "listener failed"):
+            listener(
+                Event(
+                    type=EventType.FLOW_NODE_STARTED,
+                    payload={
+                        "flow_id": "flow",
+                        "node": "worker",
+                        "status": "started",
+                    },
+                )
+            )
+
+        self.assertEqual(listener.items, ())
+        self.assertEqual(listener.ui_items, ())
 
     async def test_execute_flow_plan_emits_join_events(self) -> None:
         events: list[Event] = []
@@ -1009,7 +1339,328 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             cast(Mapping[str, object], events[-1].payload)["status"],
             "cancelled",
         )
+        self.assertEqual(
+            events[-2].observability.data["kind"],
+            StreamItemKind.FLOW_EVENT.value,
+        )
+        self.assertEqual(
+            events[-1].observability.data["kind"],
+            StreamItemKind.FLOW_EVENT.value,
+        )
         self.assertNotIn("private output", str(events))
+
+    async def test_execute_flow_plan_uses_stream_session_cancellation(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        session = flow_stream_session(
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+        )
+        session.cancel()
+
+        with self.assertRaises(CancelledError):
+            await execute_flow_plan(
+                self._plan(
+                    entry_node="start",
+                    outputs={"answer": "start.value"},
+                    nodes=(self._node("start"),),
+                ),
+                lambda _node, _inputs: "private output",
+                event_listener=events.append,
+                stream_session=session,
+            )
+
+        self.assertEqual(
+            [event.type for event in events],
+            [
+                EventType.FLOW_VALIDATION,
+                EventType.FLOW_STARTED,
+                EventType.FLOW_CANCELLED,
+                EventType.FLOW_COMPLETED,
+            ],
+        )
+        self.assertTrue(session.cancelled)
+        self.assertTrue(
+            all(
+                event.observability.data["stream_session_id"] == "flow-session"
+                for event in events
+            )
+        )
+        self.assertNotIn(EventType.FLOW_NODE_STARTED, [e.type for e in events])
+        self.assertNotIn("private output", str(events))
+
+    async def test_flow_stream_session_marks_legacy_checker_cancellation(
+        self,
+    ) -> None:
+        events: list[Event] = []
+
+        async def cancel() -> None:
+            raise CancelledError()
+
+        session = flow_stream_session(
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+            cancellation_checker=cancel,
+        )
+
+        with self.assertRaises(CancelledError):
+            await execute_flow_plan(
+                self._plan(
+                    entry_node="start",
+                    outputs={"answer": "start.value"},
+                    nodes=(self._node("start"),),
+                ),
+                lambda _node, _inputs: "private output",
+                event_listener=events.append,
+                stream_session=session,
+            )
+
+        self.assertTrue(session.cancelled)
+        self.assertEqual(
+            cast(Mapping[str, object], events[-1].payload)["status"],
+            "cancelled",
+        )
+
+    async def test_flow_stream_session_honors_checker_requested_cancel(
+        self,
+    ) -> None:
+        sessions: dict[str, FlowStreamSession] = {}
+
+        async def cancel() -> None:
+            sessions["session"].cancel()
+
+        session = flow_stream_session(
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+            cancellation_checker=cancel,
+        )
+        sessions["session"] = session
+
+        with self.assertRaises(CancelledError):
+            await session.check_cancelled()
+        self.assertTrue(session.cancelled)
+
+    async def test_execute_flow_plan_marks_separate_checker_cancellation(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        session = flow_stream_session(
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+        )
+
+        async def cancel() -> None:
+            raise CancelledError()
+
+        with self.assertRaises(CancelledError):
+            await execute_flow_plan(
+                self._plan(
+                    entry_node="start",
+                    outputs={"answer": "start.value"},
+                    nodes=(self._node("start"),),
+                ),
+                lambda _node, _inputs: "private output",
+                cancellation_checker=cancel,
+                event_listener=events.append,
+                stream_session=session,
+            )
+
+        self.assertTrue(session.cancelled)
+        self.assertEqual(
+            cast(Mapping[str, object], events[-1].payload)["status"],
+            "cancelled",
+        )
+
+    def test_flow_stream_session_validates_identity_and_checker(self) -> None:
+        session = flow_stream_session(
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+        )
+
+        self.assertIsInstance(session, FlowStreamSession)
+        with self.assertRaises(AssertionError):
+            flow_stream_session(
+                stream_session_id="",
+                run_id="flow-run",
+                turn_id="flow-turn",
+            )
+        with self.assertRaises(AssertionError):
+            flow_stream_session(
+                stream_session_id="flow-session",
+                run_id="flow-run",
+                turn_id="flow-turn",
+                cancellation_checker=object(),  # type: ignore[arg-type]
+            )
+
+    async def test_execute_flow_plan_rejects_bad_stream_session(self) -> None:
+        with self.assertRaises(AssertionError):
+            await execute_flow_plan(
+                self._plan(
+                    entry_node="start",
+                    outputs={"answer": "start.value"},
+                    nodes=(self._node("start"),),
+                ),
+                lambda _node, _inputs: "private output",
+                stream_session=object(),  # type: ignore[arg-type]
+            )
+
+    async def test_flow_canonical_listener_leaves_non_flow_events_unchanged(
+        self,
+    ) -> None:
+        events: list[Event] = []
+        listener = canonical_flow_event_listener(
+            events.append,
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+        )
+
+        result = listener(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                payload={"flow_node": "worker", "count": 1},
+            )
+        )
+        if result is not None:
+            await result
+
+        self.assertEqual(listener.items, ())
+        self.assertEqual(
+            events[0].observability.kind,
+            EventPayloadKind.TEMPORARY_LEGACY,
+        )
+
+    def test_canonical_flow_item_from_event_validates_payload(self) -> None:
+        with self.assertRaises(AssertionError):
+            canonical_flow_item_from_event(
+                Event(type=EventType.FLOW_STARTED, payload="bad"),
+                stream_session_id="flow-session",
+                run_id="flow-run",
+                turn_id="flow-turn",
+                sequence=0,
+            )
+        with self.assertRaises(AssertionError):
+            canonical_flow_item_from_event(
+                Event(type=EventType.TOKEN_GENERATED, payload={}),
+                stream_session_id="flow-session",
+                run_id="flow-run",
+                turn_id="flow-turn",
+                sequence=0,
+            )
+        with self.assertRaises(AssertionError):
+            canonical_flow_event_listener(
+                lambda _event: None,
+                stream_session_id="flow-session",
+                run_id="flow-run",
+                turn_id="flow-turn",
+                history_item_limit=-1,
+            )
+
+    def test_canonical_flow_item_from_event_normalizes_payloads(self) -> None:
+        self.assertTrue(
+            flow_event_is_projectable(Event(type="flow_custom", payload=None))
+        )
+        self.assertFalse(
+            flow_event_is_projectable(
+                Event(type="token_generated", payload={})
+            )
+        )
+        empty = canonical_flow_item_from_event(
+            Event(
+                type="flow_custom",
+                payload=None,
+                started=1.0,
+                finished=2.0,
+                elapsed=1.0,
+            ),
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+            sequence=0,
+        )
+        nested = canonical_flow_item_from_event(
+            Event(
+                type=EventType.FLOW_NODE_STARTED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "worker",
+                    "nested": {
+                        "object": object(),
+                        "values": (1, object()),
+                        1: "ignored",
+                    },
+                },
+            ),
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+            sequence=1,
+        )
+
+        self.assertEqual(empty.data, {})
+        self.assertEqual(empty.metadata["event_type"], "flow_custom")
+        self.assertEqual(empty.metadata["elapsed"], 1.0)
+        self.assertEqual(
+            nested.data["nested"],
+            {
+                "object": {"type": "object"},
+                "values": [1, {"type": "object"}],
+            },
+        )
+
+    def test_canonical_flow_item_from_event_normalizes_nonfinite_numbers(
+        self,
+    ) -> None:
+        item = canonical_flow_item_from_event(
+            Event(
+                type=EventType.FLOW_NODE_STARTED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "worker",
+                    "score": float("nan"),
+                    "values": (float("inf"), float("-inf"), 1.5),
+                },
+                started=float("inf"),
+                finished=float("inf"),
+                elapsed=float("inf"),
+            ),
+            stream_session_id="flow-session",
+            run_id="flow-run",
+            turn_id="flow-turn",
+            sequence=0,
+        )
+
+        self.assertEqual(item.data["score"], {"type": "float", "value": "nan"})
+        self.assertEqual(
+            item.data["values"],
+            [
+                {"type": "float", "value": "inf"},
+                {"type": "float", "value": "-inf"},
+                1.5,
+            ],
+        )
+        self.assertEqual(
+            item.metadata["started"],
+            {"type": "float", "value": "inf"},
+        )
+        self.assertEqual(
+            item.metadata["finished"],
+            {"type": "float", "value": "inf"},
+        )
+        self.assertEqual(
+            item.metadata["elapsed"],
+            {"type": "float", "value": "inf"},
+        )
+        dumps(
+            {"data": item.data, "metadata": item.metadata},
+            allow_nan=False,
+        )
 
     async def test_flow_event_helpers_cover_defensive_paths(self) -> None:
         events: list[Event] = []

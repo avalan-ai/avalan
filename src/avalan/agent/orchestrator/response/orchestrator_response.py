@@ -1586,39 +1586,47 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         return ToolCallDiagnostic(
             id=uuid4(),
             call_id=call.id,
-            requested_name=call.name,
+            requested_name=self._diagnostic_tool_name(call),
             code=ToolCallDiagnosticCode.REPEATED_CALL,
             stage=ToolCallDiagnosticStage.GUARD,
             message="Tool call repeats a previous attempt.",
         )
 
-    @staticmethod
+    @classmethod
     def _tool_confirmation_rejected_diagnostic(
+        cls,
         call: ToolCall,
     ) -> ToolCallDiagnostic:
+        name = cls._diagnostic_tool_name(call)
         return ToolCallDiagnostic(
             id=uuid4(),
             call_id=call.id,
-            requested_name=call.name,
-            canonical_name=call.name,
+            requested_name=name,
+            canonical_name=name,
             code=ToolCallDiagnosticCode.USER_REJECTED,
             stage=ToolCallDiagnosticStage.CONFIRM,
             message="Tool call was rejected before execution.",
         )
 
-    @staticmethod
+    @classmethod
     def _tool_confirmation_cancelled_diagnostic(
+        cls,
         call: ToolCall,
     ) -> ToolCallDiagnostic:
+        name = cls._diagnostic_tool_name(call)
         return ToolCallDiagnostic(
             id=uuid4(),
             call_id=call.id,
-            requested_name=call.name,
-            canonical_name=call.name,
+            requested_name=name,
+            canonical_name=name,
             code=ToolCallDiagnosticCode.CANCELLED,
             stage=ToolCallDiagnosticStage.CONFIRM,
             message="Tool call was cancelled before execution.",
         )
+
+    @staticmethod
+    def _diagnostic_tool_name(call: ToolCall) -> str | None:
+        return call.name if call.name.strip() else None
 
     @staticmethod
     def _call_signature(call: ToolCall) -> str:
