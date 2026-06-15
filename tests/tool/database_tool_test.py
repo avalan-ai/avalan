@@ -1,7 +1,9 @@
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, patch
+from warnings import catch_warnings, simplefilter
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import NoSuchTableError, OperationalError
@@ -461,6 +463,34 @@ class DatabaseToolSetTestCase(IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await kill_tool("1", context=ToolCallContext())
         self.assertTrue(toolset._engine.disposed)
+
+    async def test_toolset_exit_does_not_swallow_dispose_error(self) -> None:
+        class DisposeFailingEngine:
+            async def dispose(self) -> None:
+                raise RuntimeError("dispose failed")
+
+        with patch.object(
+            DatabaseTool, "_create_engine", return_value=DisposeFailingEngine()
+        ):
+            toolset = DatabaseToolSet(self.settings)
+
+        with self.assertRaisesRegex(RuntimeError, "dispose failed"):
+            await toolset.__aexit__(None, None, None)
+
+    def test_toolset_source_compiles_without_syntax_warning(self) -> None:
+        source_path = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "avalan"
+            / "tool"
+            / "database"
+            / "toolset.py"
+        )
+        source = source_path.read_text()
+
+        with catch_warnings():
+            simplefilter("error", SyntaxWarning)
+            compile(source, str(source_path), "exec")
 
     async def test_toolset_read_only_blocks_writes(self):
         settings = DatabaseToolSettings(

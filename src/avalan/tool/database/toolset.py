@@ -131,8 +131,10 @@ class DatabaseToolSet(ToolSet):
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> bool | None:
+        exit_result: bool | None = None
         try:
             if self._engine is not None:
                 await self._engine.dispose()
         finally:
-            return await super().__aexit__(exc_type, exc, tb)
+            exit_result = await super().__aexit__(exc_type, exc, tb)
+        return exit_result
