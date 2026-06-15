@@ -31,7 +31,10 @@ class TransformerTokenizerFullTestCase(TestCase):
             tokens=["tok1", "tok2"],
             special_tokens=["<S1>", "<S2>"],
         )
-        self.model = DummyTransformerModel("m", settings, logger=MagicMock())
+        with patch("avalan.model.engine.find_spec", return_value=None):
+            self.model = DummyTransformerModel(
+                "m", settings, logger=MagicMock()
+            )
         self.tokenizer = MagicMock()
         self.tokenizer.name_or_path = "tok-name"
         self.tokenizer.save_pretrained.return_value = ("f1", "f2")
@@ -54,7 +57,14 @@ class TransformerTokenizerFullTestCase(TestCase):
         self.assertEqual(len(tokens), 2)
         self.assertEqual(tokens[0].token, "t10")
 
-        count = self.model.input_token_count("ignored")
+        with (
+            patch(
+                "avalan.model.transformer._batch_encoding_type",
+                return_value=dict,
+            ),
+            patch("avalan.model.transformer._tensor_type", return_value=tuple),
+        ):
+            count = self.model.input_token_count("ignored")
         self.assertEqual(count, 3)
 
     @patch("avalan.model.transformer.AutoTokenizer")
