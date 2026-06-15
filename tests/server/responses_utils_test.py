@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-from datetime import datetime
 from json import loads
 from unittest import TestCase
 
@@ -8,36 +6,34 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
-    ToolCallDiagnostic,
-    ToolCallDiagnosticCode,
-    ToolCallDiagnosticStage,
-    ToolCallError,
-    ToolCallResult,
     ToolCallToken,
 )
 from avalan.event import Event, EventType
 from avalan.model.stream import (
-    CanonicalStreamAccumulator,
     CanonicalStreamItem,
     StreamChannel,
     StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
+    StreamValidationError,
 )
 from avalan.server.routers.responses import (
-    ResponseState,
+    _RESPONSE_SSE_CONTENT_INDEX_FIELDS,
     _canonical_item_to_sse,
     _function_call_arguments_done,
-    _is_tool_response_state,
-    _new_state,
+    _response_projection_state,
+    _response_sse_delta_data,
+    _response_sse_indexed_data,
     _ResponsesSSEEvent,
+    _ResponsesSSEItemState,
+    _ResponsesSSEProjectionAdapter,
+    _ResponsesSSEStreamEnvelope,
     _stream_projection,
+    _stream_tool_call_protocol_id,
     _switch_state,
-    _terminal_projection,
     _terminal_response_events,
     _token_to_sse,
     _token_to_sse_events,
-    _tool_call_event_item,
 )
 from avalan.server.sse import sse_message
 from avalan.utils import to_json
@@ -68,6 +64,30 @@ class ResponsesUtilsTestCase(TestCase):
     def test_token_to_sse_rejects_unprojected_tokens(self) -> None:
         with self.assertRaises(AssertionError):
             _token_to_sse(Token(token="raw"), 0)  # type: ignore[arg-type]
+
+    def test_stream_projection_rejects_unsupported_items(self) -> None:
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item for Responses SSE projection",
+        ):
+            _stream_projection(object(), 0)  # type: ignore[arg-type]
+
+    def test_stream_tool_call_protocol_id_ignores_non_tool_projection(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            _stream_tool_call_protocol_id(_stream_projection("a", 0))
+        )
+
+    def test_token_to_sse_rejects_legacy_tool_events(self) -> None:
+        event = Event(type=EventType.TOOL_RESULT, payload={})
+
+        with self.assertRaises(AssertionError):
+            _token_to_sse(event, 0)  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            _token_to_sse_events(event, 0)  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            _response_projection_state(event)  # type: ignore[arg-type]
 
     def test_sse_event_coalesces_only_compatible_deltas(self) -> None:
         first = _ResponsesSSEEvent(
@@ -118,6 +138,135 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(merged.data["sequence_number"], 2)
         self.assertFalse(first.can_coalesce(different_event))
         self.assertFalse(first.can_coalesce(different_key))
+
+    def test_sse_event_does_not_coalesce_structured_tool_output(self) -> None:
+        first = _ResponsesSSEEvent(
+            event="response.tool_execution.output",
+            data={
+                "type": "response.tool_execution.output",
+                "id": "call-1",
+                "delta": "out",
+                "data": {"category": "stdout"},
+                "sequence_number": 1,
+            },
+            correlation_key="call-1",
+        )
+        second = _ResponsesSSEEvent(
+            event="response.tool_execution.output",
+            data={
+                "type": "response.tool_execution.output",
+                "id": "call-1",
+                "delta": "err",
+                "data": {"category": "stderr"},
+                "sequence_number": 2,
+            },
+            correlation_key="call-1",
+        )
+
+        self.assertFalse(first.can_coalesce(second))
+        with self.assertRaises(AssertionError):
+            first.coalesce(second)
+
+    def test_response_stream_envelope_reuses_stable_provider_state(
+        self,
+    ) -> None:
+        envelope = _ResponsesSSEStreamEnvelope(
+            response_id="response-id",
+            timestamp=7,
+            model_id="model-id",
+        )
+
+        first = envelope.created_event()
+        second = envelope.created_event()
+        first.data["response"]["id"] = "changed"
+
+        self.assertEqual(first.event, "response.created")
+        self.assertEqual(second.data["response"]["id"], "response-id")
+        self.assertEqual(second.data["response"]["created_at"], 7)
+        self.assertEqual(second.data["response"]["model"], "model-id")
+
+    def test_response_stream_envelope_rejects_invalid_state(self) -> None:
+        with self.assertRaises(AssertionError):
+            _ResponsesSSEStreamEnvelope(
+                response_id=object(),
+                timestamp=7,
+                model_id="model-id",
+            )
+        with self.assertRaises(AssertionError):
+            _ResponsesSSEStreamEnvelope(
+                response_id="response-id",
+                timestamp=True,
+                model_id="model-id",
+            )
+
+    def test_response_sse_static_indexes_are_immutable(self) -> None:
+        with self.assertRaises(TypeError):
+            _RESPONSE_SSE_CONTENT_INDEX_FIELDS["output_index"] = 1  # type: ignore[index]
+
+    def test_response_sse_delta_data_copies_static_indexes(self) -> None:
+        first = _response_sse_delta_data(
+            "response.output_text.delta",
+            "a",
+            1,
+        )
+        second = _response_sse_delta_data(
+            "response.output_text.delta",
+            "b",
+            2,
+        )
+
+        first["output_index"] = 9
+        first["delta"] = "changed"
+
+        self.assertEqual(second["output_index"], 0)
+        self.assertEqual(second["content_index"], 0)
+        self.assertEqual(second["delta"], "b")
+        self.assertEqual(
+            list(second),
+            [
+                "type",
+                "delta",
+                "output_index",
+                "content_index",
+                "sequence_number",
+            ],
+        )
+
+    def test_response_sse_delta_data_rejects_invalid_state(self) -> None:
+        with self.assertRaises(AssertionError):
+            _response_sse_delta_data("", "a", 0)
+        with self.assertRaises(AssertionError):
+            _response_sse_delta_data(
+                "response.output_text.delta",
+                object(),  # type: ignore[arg-type]
+                0,
+            )
+        with self.assertRaises(AssertionError):
+            _response_sse_delta_data(
+                "response.output_text.delta",
+                "a",
+                True,
+            )
+
+    def test_response_sse_indexed_data_copies_static_indexes(self) -> None:
+        output = _response_sse_indexed_data("response.output_item.done")
+        content = _response_sse_indexed_data(
+            "response.content_part.done",
+            content_index=True,
+        )
+
+        output["output_index"] = 9
+
+        self.assertEqual(content["output_index"], 0)
+        self.assertEqual(content["content_index"], 0)
+        self.assertEqual(
+            list(content),
+            ["type", "output_index", "content_index"],
+        )
+
+    def test_response_sse_indexed_data_rejects_invalid_state(self) -> None:
+        with self.assertRaises(AssertionError):
+            _response_sse_indexed_data("")
 
     def test_terminal_response_events_preserve_outcome(self) -> None:
         self.assertEqual(
@@ -177,9 +326,6 @@ class ResponsesUtilsTestCase(TestCase):
 
         with self.assertRaises(AssertionError):
             _terminal_response_events(_stream_projection(item, 0))
-
-    def test_terminal_projection_returns_none_without_terminal(self) -> None:
-        self.assertIsNone(_terminal_projection(CanonicalStreamAccumulator()))
 
     def test_token_to_sse_maps_usage_items(self) -> None:
         update = CanonicalStreamItem(
@@ -288,208 +434,6 @@ class ResponsesUtilsTestCase(TestCase):
         with self.assertRaises(TypeError):
             _token_to_sse(_stream_projection(item, 0), 0)
 
-    def test_token_to_sse_handles_tool_result(self) -> None:
-        call = ToolCall(id="c1", name="t", arguments={"p": 1})
-        result = ToolCallResult(
-            id="c1", call=call, name="t", arguments={"p": 1}, result={"v": 2}
-        )
-        event = Event(type=EventType.TOOL_RESULT, payload={"result": result})
-
-        events = _token_to_sse(event, 0)
-        self.assertEqual(len(events), 1)
-        self.assertIn("response.function_call_arguments.delta", events[0])
-        data = loads(events[0].split("data: ")[1])
-        self.assertEqual(data["id"], "c1")
-        self.assertEqual(data["result"], '{"v": 2}')
-
-    def test_token_to_sse_preserves_falsy_tool_results(self) -> None:
-        cases: tuple[tuple[object, str | None], ...] = (
-            (0, "0"),
-            (False, "false"),
-            ("", '""'),
-            (None, None),
-        )
-
-        for value, expected in cases:
-            with self.subTest(value=value):
-                call = ToolCall(id="c1", name="t", arguments={})
-                result = ToolCallResult(
-                    id="c1",
-                    call=call,
-                    name="t",
-                    arguments={},
-                    result=value,
-                )
-                event = Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": result},
-                )
-
-                events = _token_to_sse(event, 0)
-                data = loads(events[0].split("data: ")[1])
-
-                self.assertEqual(data["result"], expected)
-                self.assertEqual(loads(data["delta"])["result"], expected)
-
-    def test_token_to_sse_handles_tool_result_error(self) -> None:
-        call = ToolCall(id="c2", name="t", arguments={})
-        error = ToolCallError(
-            id="c2",
-            name="t",
-            arguments={},
-            call=call,
-            error=RuntimeError("boom"),
-            message="boom",
-        )
-        event = Event(type=EventType.TOOL_RESULT, payload={"result": error})
-
-        events = _token_to_sse(event, 1)
-        self.assertEqual(len(events), 1)
-        data = loads(events[0].split("data: ")[1])
-        self.assertEqual(data["id"], "c2")
-        self.assertEqual(
-            data["error"],
-            {"type": "RuntimeError", "message": "Tool call failed."},
-        )
-        delta = loads(data["delta"])
-        self.assertEqual(
-            delta["error"],
-            {"type": "RuntimeError", "message": "Tool call failed."},
-        )
-        self.assertNotIn("boom", events[0])
-
-    def test_token_to_sse_handles_tool_diagnostic(self) -> None:
-        call = ToolCall(id="c-diagnostic", name="missing", arguments={})
-        diagnostic = ToolCallDiagnostic(
-            id="diag-1",
-            call_id=call.id,
-            requested_name="missing",
-            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
-            stage=ToolCallDiagnosticStage.RESOLVE,
-            message="Unknown tool.",
-        )
-        event = Event(
-            type=EventType.TOOL_DIAGNOSTIC,
-            payload={"call": call, "diagnostic": diagnostic},
-        )
-
-        events = _token_to_sse(event, 3)
-
-        self.assertEqual(len(events), 1)
-        self.assertIn("response.tool_call_diagnostic.delta", events[0])
-        data = loads(events[0].split("data: ")[1])
-        self.assertEqual(data["id"], "c-diagnostic")
-        self.assertEqual(data["diagnostic"]["code"], "tool.unknown")
-        delta = loads(data["delta"])
-        self.assertEqual(delta["diagnostic"]["call_id"], "c-diagnostic")
-
-    def test_tool_call_event_item_handles_tool_result_diagnostic(
-        self,
-    ) -> None:
-        call = ToolCall(id="c-result-diagnostic", name="missing", arguments={})
-        diagnostic = ToolCallDiagnostic(
-            id="diag-result",
-            call_id=call.id,
-            requested_name="missing",
-            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
-            stage=ToolCallDiagnosticStage.RESOLVE,
-            message="Unknown tool.",
-        )
-        event = Event(
-            type=EventType.TOOL_RESULT,
-            payload={"call": call, "result": diagnostic},
-        )
-
-        item = _tool_call_event_item(event)
-
-        self.assertEqual(item["id"], "c-result-diagnostic")
-        self.assertEqual(item["diagnostic"]["code"], "tool.unknown")
-
-    def test_tool_call_event_item_handles_diagnostic_timing_fields(
-        self,
-    ) -> None:
-        diagnostic = ToolCallDiagnostic(
-            id="diag-timing",
-            requested_name="missing",
-            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
-            stage=ToolCallDiagnosticStage.RESOLVE,
-            message="Unknown tool.",
-            started_at=datetime(2026, 1, 1, 12, 0, 0),
-            finished_at=datetime(2026, 1, 1, 12, 0, 1),
-            duration_ms=1000.0,
-        )
-        event = Event(
-            type=EventType.TOOL_DIAGNOSTIC,
-            payload={"diagnostics": [diagnostic]},
-        )
-
-        item = _tool_call_event_item(event)
-
-        self.assertEqual(item["id"], "diag-timing")
-        self.assertEqual(item["name"], "missing")
-        self.assertEqual(
-            item["diagnostic"]["started_at"], "2026-01-01T12:00:00"
-        )
-        self.assertEqual(
-            item["diagnostic"]["finished_at"], "2026-01-01T12:00:01"
-        )
-        self.assertEqual(item["diagnostic"]["duration_ms"], 1000.0)
-
-    def test_token_to_sse_ignores_malformed_tool_diagnostic(self) -> None:
-        event = Event(
-            type=EventType.TOOL_DIAGNOSTIC,
-            payload={"diagnostics": ["bad"]},
-        )
-
-        self.assertEqual(_token_to_sse(event, 4), [])
-
-    def test_token_to_sse_handles_tool_result_without_payload(self) -> None:
-        call = ToolCall(id="c3", name="tool", arguments={})
-        result = ToolCallResult(
-            id="c3",
-            name="tool",
-            arguments={},
-            call=call,
-            result=None,
-        )
-        event = Event(type=EventType.TOOL_RESULT, payload={"result": result})
-
-        events = _token_to_sse(event, 2)
-        self.assertEqual(len(events), 1)
-        data = loads(events[0].split("data: ")[1])
-        self.assertIsNone(data["result"])
-
-    def test_token_to_sse_handles_current_none_tool_result(self) -> None:
-        call = ToolCall(id="c-none", name="tool", arguments={"x": 1})
-        event = Event(
-            type=EventType.TOOL_RESULT,
-            payload={0: call, "result": None},
-        )
-
-        events = _token_to_sse(event, 5)
-
-        self.assertEqual(len(events), 1)
-        data = loads(events[0].split("data: ")[1])
-        self.assertEqual(data["id"], "c-none")
-        self.assertEqual(data["name"], "tool")
-        self.assertEqual(data["arguments"], {"x": 1})
-        self.assertIsNone(data["result"])
-
-    def test_tool_call_event_item_ignores_missing_tool_call(self) -> None:
-        event = Event(
-            type=EventType.TOOL_PROCESS,
-            payload={"call": None},
-        )
-
-        self.assertIsNone(_tool_call_event_item(event))
-
-    def test_tool_call_event_item_ignores_unexpected_payload(
-        self,
-    ) -> None:
-        event = Event(type=EventType.TOOL_PROCESS, payload="bad")
-
-        self.assertIsNone(_tool_call_event_item(event))
-
     def test_token_to_sse_handles_tool_call_token_with_call(self) -> None:
         call = ToolCall(id="c4", name="adder", arguments={"x": 1})
         token = ToolCallToken(token="ignored", call=call)
@@ -542,9 +486,13 @@ class ResponsesUtilsTestCase(TestCase):
         events = _token_to_sse(_stream_projection(item, 8), 8)
 
         self.assertEqual(len(events), 1)
+        state = _response_projection_state(_stream_projection(item, 8))
         self.assertEqual(
-            _new_state(_stream_projection(item, 8)),
-            ResponseState.FUNCTION_CALLING,
+            state,
+            _ResponsesSSEItemState(
+                output_item_type="function_call",
+                tool_call_id="call-canonical",
+            ),
         )
         data = loads(events[0].split("data: ")[1])
         self.assertEqual(
@@ -579,9 +527,14 @@ class ResponsesUtilsTestCase(TestCase):
         events = _token_to_sse(_stream_projection(item, 9), 9)
 
         self.assertEqual(len(events), 1)
+        state = _response_projection_state(_stream_projection(item, 9))
         self.assertEqual(
-            _new_state(_stream_projection(item, 9)),
-            ResponseState.CUSTOM_TOOL_CALLING,
+            state,
+            _ResponsesSSEItemState(
+                output_item_type="custom_tool_call_input",
+                content_part_type="input_text",
+                tool_call_id="call-raw",
+            ),
         )
         data = loads(events[0].split("data: ")[1])
         self.assertEqual(data["type"], "response.custom_tool_call_input.delta")
@@ -600,23 +553,39 @@ class ResponsesUtilsTestCase(TestCase):
 
         projection = _stream_projection(item, 0)
         self.assertEqual(_token_to_sse(projection, 0), [])
-        self.assertIsNone(_new_state(projection))
+        self.assertIsNone(_response_projection_state(projection))
         with self.assertRaises(AssertionError):
-            _new_state(object())  # type: ignore[arg-type]
+            _response_projection_state(object())  # type: ignore[arg-type]
 
     def test_switch_state_generates_events(self) -> None:
-        state = _new_state(_stream_projection(ReasoningToken(token="r"), 0))
-        events = _switch_state(None, state, None, None)
-        self.assertEqual(state, ResponseState.REASONING)
+        state = _response_projection_state(
+            _stream_projection(ReasoningToken(token="r"), 0)
+        )
+        events = _switch_state(None, state)
+        self.assertEqual(
+            state,
+            _ResponsesSSEItemState(
+                output_item_type="reasoning_text",
+                content_part_type="reasoning_text",
+            ),
+        )
         names = [e.split("\n")[0].split(": ")[1] for e in events]
         self.assertEqual(
             names,
             ["response.output_item.added", "response.content_part.added"],
         )
 
-        new_state = _new_state(_stream_projection(ToolCallToken(token="t"), 1))
-        events = _switch_state(state, new_state, None, None)
-        self.assertEqual(new_state, ResponseState.CUSTOM_TOOL_CALLING)
+        new_state = _response_projection_state(
+            _stream_projection(ToolCallToken(token="t"), 1)
+        )
+        events = _switch_state(state, new_state)
+        self.assertEqual(
+            new_state,
+            _ResponsesSSEItemState(
+                output_item_type="custom_tool_call_input",
+                content_part_type="input_text",
+            ),
+        )
         names = [e.split("\n")[0].split(": ")[1] for e in events]
         self.assertEqual(
             names,
@@ -630,9 +599,15 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
         state = new_state
-        new_state = _new_state(_stream_projection("answer", 2))
-        events = _switch_state(state, new_state, None, None)
-        self.assertEqual(new_state, ResponseState.ANSWERING)
+        new_state = _response_projection_state(_stream_projection("answer", 2))
+        events = _switch_state(state, new_state)
+        self.assertEqual(
+            new_state,
+            _ResponsesSSEItemState(
+                output_item_type="output_text",
+                content_part_type="output_text",
+            ),
+        )
         names = [e.split("\n")[0].split(": ")[1] for e in events]
         self.assertEqual(
             names,
@@ -646,8 +621,8 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
         state = new_state
-        new_state = _new_state(None)
-        events = _switch_state(state, new_state, None, None)
+        new_state = _response_projection_state(None)
+        events = _switch_state(state, new_state)
         self.assertIsNone(new_state)
         names = [e.split("\n")[0].split(": ")[1] for e in events]
         self.assertEqual(
@@ -661,10 +636,16 @@ class ResponsesUtilsTestCase(TestCase):
 
     def test_switch_state_handles_new_tool_call_id(self) -> None:
         events = _switch_state(
-            ResponseState.CUSTOM_TOOL_CALLING,
-            ResponseState.CUSTOM_TOOL_CALLING,
-            "old",
-            "new",
+            _ResponsesSSEItemState(
+                output_item_type="custom_tool_call_input",
+                content_part_type="input_text",
+                tool_call_id="old",
+            ),
+            _ResponsesSSEItemState(
+                output_item_type="custom_tool_call_input",
+                content_part_type="input_text",
+                tool_call_id="new",
+            ),
         )
 
         names = [e.split("\n")[0].split(": ")[1] for e in events]
@@ -687,21 +668,63 @@ class ResponsesUtilsTestCase(TestCase):
         self.assertEqual(data_items[4]["part"]["id"], "new")
 
     def test_switch_state_keeps_same_tool_call_id_open(self) -> None:
+        state = _ResponsesSSEItemState(
+            output_item_type="custom_tool_call_input",
+            content_part_type="input_text",
+            tool_call_id="same",
+        )
         events = _switch_state(
-            ResponseState.CUSTOM_TOOL_CALLING,
-            ResponseState.CUSTOM_TOOL_CALLING,
-            "same",
-            "same",
+            state,
+            state,
         )
 
         self.assertEqual(events, [])
 
+    def test_projection_adapter_carries_tool_call_id_to_legacy_delta(
+        self,
+    ) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            text_delta="a",
+        )
+        adapter = _ResponsesSSEProjectionAdapter()
+
+        open_events = adapter.switch(_stream_projection(item, 1))
+        carried_events = adapter.switch(
+            _stream_projection(ToolCallToken(token="b"), 2)
+        )
+
+        self.assertEqual(
+            [event.split("\n")[0].split(": ")[1] for event in open_events],
+            ["response.output_item.added", "response.content_part.added"],
+        )
+        self.assertEqual(carried_events, [])
+        self.assertEqual(adapter.active_tool_call_id, "call-1")
+        self.assertEqual(
+            adapter.state,
+            _ResponsesSSEItemState(
+                output_item_type="custom_tool_call_input",
+                content_part_type="input_text",
+                tool_call_id="call-1",
+            ),
+        )
+
     def test_switch_state_uses_function_call_framing(self) -> None:
         events = _switch_state(
-            ResponseState.ANSWERING,
-            ResponseState.FUNCTION_CALLING,
-            None,
-            "call-1",
+            _ResponsesSSEItemState(
+                output_item_type="output_text",
+                content_part_type="output_text",
+            ),
+            _ResponsesSSEItemState(
+                output_item_type="function_call",
+                tool_call_id="call-1",
+            ),
         )
         names = [event.split("\n")[0].split(": ")[1] for event in events]
         self.assertEqual(
@@ -719,9 +742,10 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
         done_events = _switch_state(
-            ResponseState.FUNCTION_CALLING,
-            None,
-            "call-1",
+            _ResponsesSSEItemState(
+                output_item_type="function_call",
+                tool_call_id="call-1",
+            ),
             None,
         )
         done_names = [
@@ -758,53 +782,37 @@ class ResponsesUtilsTestCase(TestCase):
             },
         )
 
-    def test_is_tool_response_state_classifies_tool_states(self) -> None:
+    def test_response_sse_item_state_identifies_tool_items(self) -> None:
         self.assertTrue(
-            _is_tool_response_state(ResponseState.FUNCTION_CALLING)
+            _ResponsesSSEItemState(
+                output_item_type="function_call"
+            ).is_tool_call
         )
         self.assertTrue(
-            _is_tool_response_state(ResponseState.CUSTOM_TOOL_CALLING)
+            _ResponsesSSEItemState(
+                output_item_type="custom_tool_call_input"
+            ).is_tool_call
         )
-        self.assertFalse(_is_tool_response_state(ResponseState.ANSWERING))
-        self.assertFalse(_is_tool_response_state(None))
-
-    def test_tool_call_event_item_handles_custom_result(self) -> None:
-        call = ToolCall(id="c5", name="calc", arguments={"a": 2})
-
-        @dataclass(frozen=True, slots=True)
-        class DummyResult:
-            call: ToolCall
-            payload: dict[str, str]
-
-        result = DummyResult(call=call, payload={"status": "ok"})
-        event = Event(type=EventType.TOOL_RESULT, payload={"result": result})
-
-        item = _tool_call_event_item(event)
-        self.assertEqual(item["id"], "c5")
-        self.assertIs(item["result"], result)
-
-        events = _token_to_sse(event, 4)
-        data = loads(events[0].split("data: ")[1])
-        delta = loads(data["delta"])
-        result_payload = loads(delta["result"])
-        self.assertEqual(result_payload["payload"], {"status": "ok"})
-
-    def test_tool_call_event_item_supports_indexed_mapping_payload(
-        self,
-    ) -> None:
-        call = ToolCall(id="c6", name="calc", arguments={"n": 1})
-
-        class IndexedPayload(dict[int, ToolCall]):
-            pass
-
-        event = Event(
-            type=EventType.TOOL_PROCESS,
-            payload=IndexedPayload({0: call}),
+        self.assertFalse(
+            _ResponsesSSEItemState(
+                output_item_type="output_text",
+                content_part_type="output_text",
+            ).is_tool_call
         )
 
-        item = _tool_call_event_item(event)
-        self.assertEqual(item["id"], "c6")
-        self.assertEqual(item["name"], "calc")
+    def test_response_sse_item_state_rejects_invalid_values(self) -> None:
+        with self.assertRaises(AssertionError):
+            _ResponsesSSEItemState(output_item_type="bad")
+        with self.assertRaises(AssertionError):
+            _ResponsesSSEItemState(
+                output_item_type="output_text",
+                content_part_type="bad",
+            )
+        with self.assertRaises(AssertionError):
+            _ResponsesSSEItemState(
+                output_item_type="function_call",
+                tool_call_id="",
+            )
 
     def test_sse_formats_event_and_data(self) -> None:
         result = sse_message(to_json({"a": 1}), event="test.event")

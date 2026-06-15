@@ -1,8 +1,10 @@
 import asyncio
 import importlib
 import logging
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from a2a import types as a2a_types
@@ -10,17 +12,30 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pytest import raises
 
+from avalan.agent import AgentOperation, EngineEnvironment, Specification
+from avalan.agent.engine import EngineAgent
+from avalan.agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
+)
 from avalan.entities import (
+    EngineUri,
+    GenerationSettings,
+    Message,
+    MessageRole,
     ReasoningToken,
     Token,
     ToolCall,
-    ToolCallResult,
     ToolCallToken,
+    TransformerEngineSettings,
 )
 from avalan.event import Event, EventType
+from avalan.event.manager import EventManager, EventManagerMode
+from avalan.model import TextGenerationResponse
+from avalan.model.call import ModelCallContext
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
@@ -35,7 +50,8 @@ from avalan.server.a2a.router import (
 from avalan.server.a2a.router import (
     router as a2a_router,
 )
-from avalan.server.a2a.store import TaskStore
+from avalan.server.a2a.store import TaskStore, TaskStoreRetention
+from avalan.server.routers.streaming import ProtocolStreamAccumulator
 
 a2a_router_module = importlib.import_module("avalan.server.a2a.router")
 
@@ -67,8 +83,441 @@ class CleanupTrackingResponse:
         self.close_count += 1
 
 
+def _a2a_dummy_operation() -> AgentOperation:
+    environment = EngineEnvironment(
+        engine_uri=EngineUri(
+            host=None,
+            port=None,
+            user=None,
+            password=None,
+            vendor=None,
+            model_id="model",
+            params={},
+        ),
+        settings=TransformerEngineSettings(),
+    )
+    return AgentOperation(
+        specification=Specification(role="assistant", goal=None),
+        environment=environment,
+    )
+
+
+def _legacy_tool_event_orchestrator_response() -> OrchestratorResponse:
+    operation = _a2a_dummy_operation()
+    call = ToolCall(
+        id="legacy-call",
+        name="legacy_tool",
+        arguments={"value": 1},
+    )
+
+    async def gen() -> AsyncIterator[ToolCallToken]:
+        yield ToolCallToken(token="", call=call)
+
+    settings = GenerationSettings()
+    response = TextGenerationResponse(
+        lambda **_: gen(),
+        logger=logging.getLogger(),
+        use_async_generator=True,
+        generation_settings=settings,
+        settings=settings,
+    )
+    agent = AsyncMock(spec=EngineAgent)
+    agent.engine = SimpleNamespace(model_id="model", tokenizer=None)
+    tool = AsyncMock()
+    tool.is_empty = False
+    tool.return_value = None
+    input_message = Message(role=MessageRole.USER, content="run tool")
+    context = ModelCallContext(
+        specification=operation.specification,
+        input=input_message,
+        engine_args={},
+    )
+    return OrchestratorResponse(
+        input_message,
+        response,
+        agent,
+        operation,
+        {},
+        context,
+        tool=tool,
+        enable_tool_parsing=False,
+    )
+
+
+def _failing_orchestrator_response() -> OrchestratorResponse:
+    operation = _a2a_dummy_operation()
+
+    async def gen() -> AsyncIterator[str]:
+        empty: tuple[str, ...] = ()
+        for item in empty:
+            yield item
+        raise RuntimeError("projection boom")
+
+    settings = GenerationSettings()
+    response = TextGenerationResponse(
+        lambda **_: gen(),
+        logger=logging.getLogger(),
+        use_async_generator=True,
+        generation_settings=settings,
+        settings=settings,
+    )
+    agent = AsyncMock(spec=EngineAgent)
+    agent.engine = SimpleNamespace(model_id="model", tokenizer=None)
+    input_message = Message(role=MessageRole.USER, content="fail")
+    context = ModelCallContext(
+        specification=operation.specification,
+        input=input_message,
+        engine_args={},
+    )
+    return OrchestratorResponse(
+        input_message,
+        response,
+        agent,
+        operation,
+        {},
+        context,
+        enable_tool_parsing=False,
+    )
+
+
+def _canonical_reasoning_usage_orchestrator_response() -> OrchestratorResponse:
+    operation = _a2a_dummy_operation()
+
+    async def gen() -> (
+        AsyncIterator[CanonicalStreamItem | StreamConsumerProjection]
+    ):
+        items = (
+            CanonicalStreamItem(
+                stream_session_id="inner-stream",
+                run_id="inner-run",
+                turn_id="inner-turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            StreamConsumerProjection.from_item(
+                CanonicalStreamItem(
+                    stream_session_id="inner-stream",
+                    run_id="inner-run",
+                    turn_id="inner-turn",
+                    sequence=1,
+                    kind=StreamItemKind.STREAM_DIAGNOSTIC,
+                    channel=StreamChannel.CONTROL,
+                    text_delta="diagnostic",
+                )
+            ),
+            CanonicalStreamItem(
+                stream_session_id="inner-stream",
+                run_id="inner-run",
+                turn_id="inner-turn",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="plan",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="inner-stream",
+                run_id="inner-run",
+                turn_id="inner-turn",
+                sequence=3,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="inner-stream",
+                run_id="inner-run",
+                turn_id="inner-turn",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="inner-stream",
+                run_id="inner-run",
+                turn_id="inner-turn",
+                sequence=5,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="inner-stream",
+                run_id="inner-run",
+                turn_id="inner-turn",
+                sequence=6,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={"output_tokens": 1},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="inner-stream",
+                run_id="inner-run",
+                turn_id="inner-turn",
+                sequence=7,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        )
+        for item in items:
+            yield item
+
+    settings = GenerationSettings()
+    response = TextGenerationResponse(
+        lambda **_: gen(),
+        logger=logging.getLogger(),
+        use_async_generator=True,
+        generation_settings=settings,
+        settings=settings,
+    )
+    agent = AsyncMock(spec=EngineAgent)
+    agent.engine = SimpleNamespace(model_id="model", tokenizer=None)
+    input_message = Message(role=MessageRole.USER, content="reason")
+    context = ModelCallContext(
+        specification=operation.specification,
+        input=input_message,
+        engine_args={},
+    )
+    return OrchestratorResponse(
+        input_message,
+        response,
+        agent,
+        operation,
+        {},
+        context,
+        enable_tool_parsing=False,
+    )
+
+
+def _canonical_tool_flow_items(
+    *,
+    answer: str,
+    output: str,
+    tool_call_id: str = "call-1",
+    tool_name: str = "echo",
+    arguments: dict[str, Any] | None = None,
+    reasoning: str | None = None,
+) -> tuple[CanonicalStreamItem, ...]:
+    if arguments is None:
+        arguments = {"text": "hi"}
+    items: list[CanonicalStreamItem] = [
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+    ]
+    sequence = 1
+    if reasoning is not None:
+        items.extend(
+            [
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=sequence,
+                    kind=StreamItemKind.REASONING_DELTA,
+                    channel=StreamChannel.REASONING,
+                    text_delta=reasoning,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=sequence + 1,
+                    kind=StreamItemKind.REASONING_DONE,
+                    channel=StreamChannel.REASONING,
+                ),
+            ]
+        )
+        sequence += 2
+    correlation = StreamItemCorrelation(tool_call_id=tool_call_id)
+    items.extend(
+        [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=correlation,
+                text_delta=str(arguments),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 1,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=correlation,
+                data={"name": tool_name, "arguments": arguments},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 2,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=correlation,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 3,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=correlation,
+                metadata={"tool_name": tool_name},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 4,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=correlation,
+                text_delta=output,
+                data={"category": "stdout", "content": output},
+                metadata={"tool_name": tool_name},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 5,
+                kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=correlation,
+                metadata={"tool_name": tool_name},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 6,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=answer,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 7,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 8,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 9,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+    )
+    return tuple(items)
+
+
 def test_translator_updates_task_store() -> None:
     asyncio.run(_run_translator_flow())
+
+
+def test_translator_reconstructs_final_text_under_retention_pressure() -> None:
+    asyncio.run(_run_translator_retention_pressure_flow())
+
+
+async def _run_translator_retention_pressure_flow() -> None:
+    store = TaskStore(
+        retention=TaskStoreRetention(
+            max_events_per_task=2,
+            max_artifact_items=1,
+        )
+    )
+    task_id = "retention-pressure"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    async def stream():
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        for index in range(4):
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=index + 1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=f"chunk-{index}",
+            )
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=5,
+            kind=StreamItemKind.ANSWER_DONE,
+            channel=StreamChannel.ANSWER,
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=6,
+            kind=StreamItemKind.USAGE_COMPLETED,
+            channel=StreamChannel.USAGE,
+            usage={},
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=7,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+
+    text = await translator.consume(stream())
+
+    assert text == "chunk-0chunk-1chunk-2chunk-3"
+    task = await store.get_task(task_id)
+    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
+    assert artifacts["answer"]["content"] == [
+        {"type": "text", "text": "chunk-3"}
+    ]
+    assert len(await store.get_events(task_id)) == 2
 
 
 async def _run_translator_flow() -> None:
@@ -84,22 +533,14 @@ async def _run_translator_flow() -> None:
 
     translator = A2AResponseTranslator(task_id, store)
 
-    base_call = ToolCall(id="call-1", name="echo", arguments={"text": "hi"})
-    tool_result = ToolCallResult(
-        id="result-1",
-        call=base_call,
-        result="ok",
-        name=base_call.name,
-        arguments=base_call.arguments,
-    )
-
     async def stream():
-        yield ReasoningToken("thinking")
-        yield ToolCallToken(token="", call=base_call)
-        yield Event(
-            type=EventType.TOOL_RESULT, payload={"result": tool_result}
-        )
-        yield Token(token="hello")
+        for item in _canonical_tool_flow_items(
+            answer="hello",
+            output="ok",
+            reasoning="thinking",
+            arguments={"text": "hi"},
+        ):
+            yield item
 
     await translator.consume(stream())
 
@@ -112,9 +553,15 @@ async def _run_translator_flow() -> None:
     assert artifacts["answer"]["content"][0]["text"] == "hello"
     assert artifacts["answer"]["state"] == "completed"
     tool_artifact = artifacts["call-1"]
-    assert tool_artifact["metadata"]["status"] == "success"
+    assert tool_artifact["kind"] == "tool_execution"
+    assert tool_artifact["metadata"]["tool_name"] == "echo"
     assert any(
-        part.get("type") == "data" and part.get("data") == "ok"
+        part.get("type") == "tool_output" and part.get("text") == "ok"
+        for part in tool_artifact["content"]
+    )
+    assert any(
+        part.get("type") == "tool_terminal"
+        and part.get("status") == "completed"
         for part in tool_artifact["content"]
     )
 
@@ -123,7 +570,8 @@ async def _run_translator_flow() -> None:
     assert "artifact.delta" in event_names
     assert "artifact.completed" in event_names
     assert any(
-        event["data"].get("metadata", {}).get("phase") == "tool_processing"
+        event["data"].get("metadata", {}).get("phase")
+        == "tool_execution.started"
         for event in events
         if event["event"] == "task.status.changed"
     )
@@ -156,6 +604,183 @@ def test_token_text_ignores_canonical_control_item() -> None:
     )
 
     assert a2a_router_module._token_text(item) == ""
+
+
+def test_translator_rejects_unsupported_legacy_item() -> None:
+    asyncio.run(_run_unsupported_legacy_item_flow())
+
+
+def test_translator_consumes_orchestrator_tool_events_as_projections() -> None:
+    asyncio.run(_run_orchestrator_tool_event_projection_flow())
+
+
+def test_translator_fails_orchestrator_projection_stream() -> None:
+    asyncio.run(_run_orchestrator_projection_failure_flow())
+
+
+def test_translator_preserves_orchestrator_canonical_non_answer_items() -> (
+    None
+):
+    asyncio.run(_run_orchestrator_canonical_non_answer_projection_flow())
+
+
+async def _run_unsupported_legacy_item_flow() -> None:
+    store = TaskStore()
+    task_id = "task-unsupported-legacy"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    async def stream():
+        yield object()
+
+    with raises(
+        StreamValidationError,
+        match="unsupported legacy A2A stream item",
+    ):
+        async for _ in translator.run_stream(stream()):
+            continue
+
+    task = await store.get_task(task_id)
+    assert task["status"] == "failed"
+    assert task["error"] == "unsupported legacy A2A stream item"
+
+
+async def _run_orchestrator_tool_event_projection_flow() -> None:
+    raw_response = _legacy_tool_event_orchestrator_response()
+    raw_types: list[EventType] = []
+    raw_iterator = raw_response.__aiter__()
+    while True:
+        try:
+            item = await asyncio.wait_for(raw_iterator.__anext__(), 1)
+        except StopAsyncIteration:
+            break
+        if isinstance(item, Event):
+            raw_types.append(item.type)
+
+    assert EventType.TOOL_PROCESS in raw_types
+    assert EventType.TOOL_RESULT in raw_types
+
+    store = TaskStore()
+    task_id = "task-orchestrator-events"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    text = await translator.consume(_legacy_tool_event_orchestrator_response())
+
+    assert text == ""
+    task = await store.get_task(task_id)
+    assert task["status"] == "completed"
+    assert task["error"] is None
+    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
+    tool_artifact = artifacts["legacy-call"]
+    assert tool_artifact["kind"] == "tool_execution"
+    assert tool_artifact["state"] == "completed"
+    assert any(
+        part.get("type") == "tool_terminal"
+        and part.get("status") == "completed"
+        for part in tool_artifact["content"]
+    )
+
+
+async def _run_orchestrator_projection_failure_flow() -> None:
+    store = TaskStore()
+    task_id = "task-orchestrator-error"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    with raises(RuntimeError, match="projection boom"):
+        async for _ in translator.run_stream(_failing_orchestrator_response()):
+            continue
+
+    task = await store.get_task(task_id)
+    assert task["status"] == "failed"
+    assert task["error"] == "projection boom"
+
+
+async def _run_orchestrator_canonical_non_answer_projection_flow() -> None:
+    projections = [
+        projection
+        async for projection in (
+            _canonical_reasoning_usage_orchestrator_response()
+        ).consumer_projections(
+            stream_session_id="a2a-stream",
+            run_id="task-canonical-wrapper",
+            turn_id="turn",
+        )
+    ]
+    kinds = [projection.kind for projection in projections]
+
+    assert StreamItemKind.STREAM_DIAGNOSTIC in kinds
+    assert StreamItemKind.REASONING_DELTA in kinds
+    assert StreamItemKind.REASONING_DONE in kinds
+    assert StreamItemKind.USAGE_COMPLETED in kinds
+    assert StreamItemKind.STREAM_COMPLETED in kinds
+    assert StreamItemKind.STREAM_CLOSED in kinds
+    usage_projection = next(
+        projection
+        for projection in projections
+        if projection.kind is StreamItemKind.USAGE_COMPLETED
+    )
+    completed_projection = next(
+        projection
+        for projection in projections
+        if projection.kind is StreamItemKind.STREAM_COMPLETED
+    )
+    assert usage_projection.usage == {"output_tokens": 1}
+    assert completed_projection.usage is None
+
+    projection_accumulator = ProtocolStreamAccumulator()
+    for projection in projections:
+        projection_accumulator.add(projection)
+    assert projection_accumulator.snapshot().usage == {"output_tokens": 1}
+    assert all(
+        projection.stream_session_id == projections[0].stream_session_id
+        for projection in projections
+    )
+
+    store = TaskStore()
+    task_id = "task-orchestrator-canonical"
+    await store.create_task(
+        task_id,
+        model="test",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    text = await translator.consume(
+        _canonical_reasoning_usage_orchestrator_response()
+    )
+
+    assert text == "answer"
+    task = await store.get_task(task_id)
+    assert task["status"] == "completed"
+    assert task["error"] is None
+    assert translator._accumulator.snapshot().usage == {"output_tokens": 1}
+    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
+    assert artifacts["reasoning"]["content"][0]["text"] == "plan"
+    assert artifacts["reasoning"]["state"] == "completed"
+    assert artifacts["answer"]["content"][0]["text"] == "answer"
+    assert artifacts["answer"]["state"] == "completed"
 
 
 async def _run_canonical_translator_flow() -> None:
@@ -194,6 +819,14 @@ async def _run_canonical_translator_flow() -> None:
             run_id="r",
             turn_id="t",
             sequence=2,
+            kind=StreamItemKind.REASONING_DONE,
+            channel=StreamChannel.REASONING,
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
             kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
             channel=StreamChannel.TOOL_CALL,
             correlation=StreamItemCorrelation(tool_call_id="call-1"),
@@ -203,7 +836,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=3,
+            sequence=4,
             kind=StreamItemKind.TOOL_CALL_READY,
             channel=StreamChannel.TOOL_CALL,
             correlation=StreamItemCorrelation(tool_call_id="call-1"),
@@ -212,7 +845,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=4,
+            sequence=5,
             kind=StreamItemKind.TOOL_CALL_DONE,
             channel=StreamChannel.TOOL_CALL,
             correlation=StreamItemCorrelation(tool_call_id="call-1"),
@@ -221,7 +854,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=5,
+            sequence=6,
             kind=StreamItemKind.TOOL_EXECUTION_STARTED,
             channel=StreamChannel.TOOL_EXECUTION,
             correlation=StreamItemCorrelation(tool_call_id="call-1"),
@@ -231,7 +864,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=6,
+            sequence=7,
             kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
             channel=StreamChannel.TOOL_EXECUTION,
             correlation=StreamItemCorrelation(tool_call_id="call-1"),
@@ -242,7 +875,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=7,
+            sequence=8,
             kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
             channel=StreamChannel.TOOL_EXECUTION,
             correlation=StreamItemCorrelation(tool_call_id="call-1"),
@@ -251,7 +884,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=8,
+            sequence=9,
             kind=StreamItemKind.ANSWER_DELTA,
             channel=StreamChannel.ANSWER,
             text_delta="answer",
@@ -260,7 +893,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=9,
+            sequence=10,
             kind=StreamItemKind.ANSWER_DONE,
             channel=StreamChannel.ANSWER,
         )
@@ -268,7 +901,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=10,
+            sequence=11,
             kind=StreamItemKind.USAGE_COMPLETED,
             channel=StreamChannel.USAGE,
             usage={},
@@ -277,7 +910,7 @@ async def _run_canonical_translator_flow() -> None:
             stream_session_id="s",
             run_id="r",
             turn_id="t",
-            sequence=11,
+            sequence=12,
             kind=StreamItemKind.STREAM_COMPLETED,
             channel=StreamChannel.CONTROL,
             terminal_outcome=StreamTerminalOutcome.COMPLETED,
@@ -525,23 +1158,14 @@ async def _run_tool_status_flow() -> None:
     translator = A2AResponseTranslator(task_id, store)
     converter = A2AStreamEventConverter(task_id, store)
 
-    base_call = ToolCall(
-        id="call-status", name="echo", arguments={"text": "hi"}
-    )
-    tool_result = ToolCallResult(
-        id="result-status",
-        call=base_call,
-        result="ok",
-        name=base_call.name,
-        arguments=base_call.arguments,
-    )
-
     async def stream():
-        yield ToolCallToken(token="", call=base_call)
-        yield Event(
-            type=EventType.TOOL_RESULT, payload={"result": tool_result}
-        )
-        yield Token(token="done")
+        for item in _canonical_tool_flow_items(
+            answer="done",
+            output="ok",
+            tool_call_id="call-status",
+            arguments={"text": "hi"},
+        ):
+            yield item
 
     status_updates: list[a2a_types.TaskStatusUpdateEvent] = []
     async for raw_event in translator.run_stream(stream()):
@@ -558,27 +1182,28 @@ async def _run_tool_status_flow() -> None:
             status_updates.append(result)
 
     assert status_updates
-    tool_processing = [
+    tool_started = [
         update
         for update in status_updates
         if update.metadata
-        and update.metadata.get("phase") == "tool_processing"
+        and update.metadata.get("phase") == "tool_execution.started"
     ]
     assert any(
         update.status.state is a2a_types.TaskState.working
-        for update in tool_processing
+        for update in tool_started
     )
     tool_completed = [
         update
         for update in status_updates
-        if update.metadata and update.metadata.get("phase") == "tool_completed"
+        if update.metadata
+        and update.metadata.get("phase") == "tool_execution.completed"
     ]
     assert tool_completed
     for update in tool_completed:
         assert update.status.state is a2a_types.TaskState.working
         assert update.final is False
         assert update.metadata
-        assert update.metadata["tool_status"] == "success"
+        assert update.metadata["tool_execution_status"] == "completed"
 
     final_update = status_updates[-1]
     assert final_update.status.state is a2a_types.TaskState.completed
@@ -1521,3 +2146,111 @@ def test_create_task_streams_jsonrpc_request(monkeypatch) -> None:
     )
 
     assert orchestrator.synced is True
+
+
+def test_repeated_create_task_stream_requests_bound_state_without_ui_listener(
+    monkeypatch,
+) -> None:
+    class EventfulOrchestrator:
+        def __init__(self) -> None:
+            self.id = uuid4()
+            self.name = "Test Agent"
+            self.model_ids = {"test-model"}
+            self.operations: list[object] = []
+            self.event_manager = EventManager(mode=EventManagerMode.SERVER)
+            self.response_count = 0
+            self.sync_count = 0
+
+        async def sync_messages(self) -> None:
+            self.sync_count += 1
+
+    closed: list[int] = []
+    cancelled: list[int] = []
+
+    class RouteResponse:
+        def __init__(self, index: int) -> None:
+            self.index = index
+            self._items = iter(
+                (
+                    f"answer-{index}-a",
+                    f"answer-{index}-b",
+                    f"answer-{index}-c",
+                )
+            )
+
+        def __aiter__(self) -> "RouteResponse":
+            return self
+
+        async def __anext__(self) -> str:
+            try:
+                return next(self._items)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+        async def cancel(self) -> None:
+            cancelled.append(self.index)
+
+        async def aclose(self) -> None:
+            closed.append(self.index)
+
+    async def orchestrate_stub(*args: object):
+        orchestrator = args[2]
+        assert isinstance(orchestrator, EventfulOrchestrator)
+        for _ in range(10):
+            await orchestrator.event_manager.trigger(
+                Event(type=EventType.START)
+            )
+        index = orchestrator.response_count
+        orchestrator.response_count += 1
+        return RouteResponse(index), uuid4(), 0
+
+    app = FastAPI()
+    app.include_router(a2a_router)
+    app.state.logger = logging.getLogger("test")
+    retention = TaskStoreRetention(
+        max_tasks=2,
+        max_events_per_task=4,
+        max_artifacts_per_task=1,
+        max_artifact_items=1,
+        max_artifact_bytes=64,
+    )
+    store = TaskStore(retention=retention)
+    app.state.a2a_store = store
+    orchestrator = EventfulOrchestrator()
+    app.state.orchestrator = orchestrator
+
+    monkeypatch.setattr(a2a_router_module, "orchestrate", orchestrate_stub)
+
+    client = TestClient(app)
+    payload = {
+        "model": "model",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+
+    for index in range(4):
+        with client.stream("POST", "/tasks", json=payload) as response:
+            assert response.status_code == 200
+            text = b"".join(response.iter_bytes()).decode("utf-8")
+        assert f"answer-{index}-c" in text
+        assert "task.stream.completed" in text
+        assert len(store._tasks) <= retention.max_tasks
+        for record in store._tasks.values():
+            assert len(record.events) <= retention.max_events_per_task
+            assert len(record.artifacts) <= retention.max_artifacts_per_task
+            for artifact in record.artifacts.values():
+                assert len(artifact.content) <= retention.max_artifact_items
+
+    assert len(store._tasks) == 2
+    assert all(
+        record.status == "completed" for record in store._tasks.values()
+    )
+    assert closed == list(range(4))
+    assert cancelled == []
+    assert orchestrator.sync_count == 4
+    assert orchestrator.event_manager.history == []
+    assert orchestrator.event_manager._history_bytes == 0
+    assert orchestrator.event_manager._delivery_queue.qsize() == 0
+    assert orchestrator.event_manager.stats.published == 0
+    assert orchestrator.event_manager.stats.queue_depth == 0
+    assert orchestrator.event_manager.stats.dropped == 0

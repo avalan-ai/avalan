@@ -4,29 +4,27 @@ from ...entities import (
     ReasoningToken,
     Token,
     TokenDetail,
-    ToolCall,
-    ToolCallDiagnostic,
-    ToolCallError,
-    ToolCallResult,
     ToolCallToken,
 )
-from ...event import Event, EventType
 from ...model.stream import (
     CanonicalStreamItem,
+    StreamChannel,
+    StreamConsumerProjection,
     StreamItemKind,
     StreamTerminalOutcome,
-    StreamValidationError,
+    canonical_item_from_consumer_projection,
+    canonical_item_from_token,
 )
 from ...utils import (
     to_json,
-    tool_call_diagnostic_payload,
-    tool_call_error_payload,
 )
 from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
 from ..routers.streaming import (
     ProtocolStreamAccumulator,
+    ProtocolStreamProjectionState,
     cleanup_stream_sources,
+    stream_consumer_iterator,
 )
 from ..sse import sse_message
 from .store import TaskStore
@@ -34,7 +32,6 @@ from .store import TaskStore
 from asyncio import CancelledError
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from datetime import datetime, timezone
-from enum import Enum, auto
 from json import JSONDecodeError
 from logging import Logger
 from re import compile
@@ -101,6 +98,12 @@ _REASONING_ARTIFACT_ID: Final[str] = "reasoning"
 _ANSWER_ARTIFACT_ID: Final[str] = "answer"
 _REASONING_ARTIFACT_KIND: Final[str] = "reasoning"
 _ANSWER_ARTIFACT_KIND: Final[str] = "answer"
+_TOOL_ARTIFACT_CHANNELS: Final[frozenset[StreamChannel]] = frozenset(
+    {
+        StreamChannel.TOOL_CALL,
+        StreamChannel.TOOL_EXECUTION,
+    }
+)
 _STATUS_TO_STATE: Final[dict[str, a2a_types.TaskState]] = {
     "accepted": a2a_types.TaskState.submitted,
     "in_progress": a2a_types.TaskState.working,
@@ -220,14 +223,6 @@ def _task_metadata_from_overview(overview: dict[str, Any]) -> dict[str, Any]:
     if instructions:
         metadata.setdefault("instructions", instructions)
     return metadata
-
-
-class StreamState(Enum):
-    """High level states produced while translating orchestrator tokens."""
-
-    REASONING = auto()
-    TOOL = auto()
-    ANSWER = auto()
 
 
 class A2ATaskCreateRequest(ChatCompletionRequest):
@@ -460,47 +455,108 @@ def _extract_jsonrpc_metadata(
     return metadata
 
 
+class _A2ALegacyStreamAdapter:
+    stream_session_id = "a2a-legacy-stream"
+    turn_id = "a2a-legacy-turn"
+
+    def __init__(self, run_id: str) -> None:
+        assert isinstance(run_id, str)
+        assert run_id.strip()
+        self.run_id = run_id
+        self.sequence = 0
+
+    def map(self, item: object) -> tuple[CanonicalStreamItem, ...] | None:
+        if not isinstance(
+            item,
+            (
+                ReasoningToken,
+                TokenDetail,
+                ToolCallToken,
+                Token,
+                str,
+            ),
+        ):
+            return None
+
+        result: list[CanonicalStreamItem] = []
+        self._append_stream_start(result)
+        result.append(
+            canonical_item_from_token(
+                item,
+                self._next_sequence(),
+                stream_session_id=self.stream_session_id,
+                run_id=self.run_id,
+                turn_id=self.turn_id,
+            )
+        )
+        return tuple(result)
+
+    def _append_stream_start(
+        self,
+        items: list[CanonicalStreamItem],
+    ) -> None:
+        if self.sequence != 0:
+            return
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id=self.stream_session_id,
+                run_id=self.run_id,
+                turn_id=self.turn_id,
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+        )
+        self.sequence = 1
+
+    def _next_sequence(self) -> int:
+        sequence = self.sequence
+        self.sequence += 1
+        return sequence
+
+
 class A2AResponseTranslator:
     """Convert orchestrator streaming output into A2A task artifacts."""
 
     def __init__(self, task_id: str, store: TaskStore) -> None:
         self._task_id = task_id
         self._store = store
-        self._state: StreamState | None = None
+        self._state: StreamChannel | None = None
         self._accumulator = ProtocolStreamAccumulator()
-        self._has_canonical_items = False
         self._reasoning_artifact_id: str | None = None
         self._answer_artifact_id: str | None = None
         self._tool_artifact_id: str | None = None
-        self._answer: list[str] = []
         self._terminal_outcome: StreamTerminalOutcome | None = None
         self._terminal_error: str | None = None
-        self._legacy_stream_seen = False
+        self._legacy_adapter = _A2ALegacyStreamAdapter(task_id)
+        self._projection_state = ProtocolStreamProjectionState(
+            stream_session_id=self._legacy_adapter.stream_session_id,
+            run_id=self._legacy_adapter.run_id,
+            turn_id=self._legacy_adapter.turn_id,
+            accumulate=False,
+            legacy_item_mapper=self._legacy_adapter.map,
+        )
 
     @property
     def text(self) -> str:
-        if self._has_canonical_items:
-            return self._accumulator.snapshot().answer_text
-        return "".join(self._answer)
+        return self._accumulator.snapshot().answer_text
 
     async def run_stream(
         self,
-        response: AsyncIterable[
-            CanonicalStreamItem | Token | TokenDetail | Event | str
-        ],
+        response: AsyncIterable[object],
     ) -> AsyncGenerator[dict[str, Any], None]:
         for event in await self._store.set_status(
             self._task_id, "in_progress"
         ):
             yield event
-        response_iterator: (
-            AsyncIterator[
-                CanonicalStreamItem | Token | TokenDetail | Event | str
-            ]
-            | None
-        ) = None
+        response_iterator: AsyncIterator[object] | None = None
         try:
-            response_iterator = response.__aiter__()
+            response_iterator = stream_consumer_iterator(
+                response,
+                stream_session_id="a2a-stream",
+                run_id=self._task_id,
+                turn_id="a2a-turn",
+            )
             async for item in response_iterator:
                 for event in await self._process_item(item):
                     yield event
@@ -544,119 +600,92 @@ class A2AResponseTranslator:
 
     async def consume(
         self,
-        response: AsyncIterable[
-            CanonicalStreamItem | Token | TokenDetail | Event | str
-        ],
+        response: AsyncIterable[object],
     ) -> str:
         async for _ in self.run_stream(response):
             continue
         return self.text
 
-    async def _process_item(
-        self, item: CanonicalStreamItem | Token | TokenDetail | Event | str
-    ) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
+    async def _process_item(self, item: object) -> list[dict[str, Any]]:
+        sequence = (
+            item.sequence
+            if isinstance(item, CanonicalStreamItem)
+            else self._legacy_adapter.sequence
+        )
+        projections = self._projection_state.project_many(
+            item,
+            sequence,
+            unsupported_message="unsupported legacy A2A stream item",
+        )
         if isinstance(item, CanonicalStreamItem):
-            if self._legacy_stream_seen:
-                raise StreamValidationError(
-                    "canonical stream item after legacy stream item"
+            assert len(projections) == 1
+            return await self._process_canonical_item(item)
+
+        events: list[dict[str, Any]] = []
+        for projection in projections:
+            events.extend(
+                await self._process_canonical_item(
+                    canonical_item_from_consumer_projection(projection)
                 )
-            self._has_canonical_items = True
-            self._accumulator.add(item)
-            events.extend(self._record_terminal(item))
-            call_id = _call_identifier(item)
-            state = _state_for_item(item)
-            events.extend(await self._switch_state(state, call_id))
-            if item.kind is StreamItemKind.REASONING_DELTA:
-                events.extend(await self._ensure_reasoning_artifact())
-                assert self._reasoning_artifact_id
-                events.extend(
-                    await self._append_artifact_delta(
-                        self._reasoning_artifact_id,
-                        {"type": "text", "text": item.text_delta or ""},
-                    )
-                )
-                return events
-            if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
-                events.extend(await self._handle_canonical_tool_delta(item))
-                return events
-            if item.kind is StreamItemKind.TOOL_CALL_READY:
-                events.extend(await self._handle_canonical_tool_ready(item))
-                return events
-            if item.kind in (
-                StreamItemKind.TOOL_EXECUTION_STARTED,
-                StreamItemKind.TOOL_EXECUTION_OUTPUT,
-                StreamItemKind.TOOL_EXECUTION_PROGRESS,
-                StreamItemKind.TOOL_EXECUTION_COMPLETED,
-                StreamItemKind.TOOL_EXECUTION_ERROR,
-                StreamItemKind.TOOL_EXECUTION_CANCELLED,
-            ):
-                events.extend(
-                    await self._handle_canonical_tool_execution(item)
-                )
-                return events
-            if item.kind is not StreamItemKind.ANSWER_DELTA:
-                return events
-            text = _token_text(item)
-            if text:
-                events.extend(await self._ensure_answer_artifact())
-                assert self._answer_artifact_id
-                events.extend(
-                    await self._append_artifact_delta(
-                        self._answer_artifact_id,
-                        {"type": "text", "text": text},
-                    )
-                )
-            return events
-        elif self._has_canonical_items:
-            raise StreamValidationError(
-                "legacy stream item after canonical stream item"
             )
-        else:
-            self._legacy_stream_seen = True
+        return events
 
-        return await self._process_legacy_item(item)
-
-    async def _process_legacy_item(
-        self, item: Token | TokenDetail | Event | str
+    async def _process_canonical_item(
+        self,
+        item: CanonicalStreamItem,
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
-        call_id = _legacy_call_identifier(item)
-        state = _legacy_state_for_item(item)
-        events.extend(await self._switch_state(state, call_id))
+        self._accumulator.add(item)
+        events.extend(self._record_terminal(item))
+        call_id = item.correlation.tool_call_id
+        projection = StreamConsumerProjection.from_item(item)
 
-        if isinstance(item, ReasoningToken):
+        if item.kind is StreamItemKind.REASONING_DELTA:
+            events.extend(await self._switch_channel(projection.channel, None))
             events.extend(await self._ensure_reasoning_artifact())
             assert self._reasoning_artifact_id
             events.extend(
                 await self._append_artifact_delta(
                     self._reasoning_artifact_id,
-                    {"type": "text", "text": item.token},
+                    {"type": "text", "text": item.text_delta or ""},
                 )
             )
             return events
-
-        if isinstance(item, Event):
-            if item.type is EventType.TOOL_PROCESS:
-                events.extend(await self._handle_tool_process(item))
-                return events
-            if item.type in (
-                EventType.TOOL_DIAGNOSTIC,
-                EventType.TOOL_RESULT,
-            ):
-                events.extend(await self._handle_tool_result(item))
-                return events
+        if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            events.extend(
+                await self._switch_channel(projection.channel, call_id)
+            )
+            events.extend(await self._handle_canonical_tool_delta(item))
             return events
-
-        if isinstance(item, ToolCallToken):
-            events.extend(await self._handle_tool_token(item))
+        if item.kind is StreamItemKind.TOOL_CALL_READY:
+            events.extend(
+                await self._switch_channel(projection.channel, call_id)
+            )
+            events.extend(await self._handle_canonical_tool_ready(item))
             return events
-
-        text = _legacy_token_text(item)
+        if item.kind in (
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            StreamItemKind.TOOL_EXECUTION_CANCELLED,
+        ):
+            events.extend(
+                await self._switch_channel(projection.channel, call_id)
+            )
+            events.extend(await self._handle_canonical_tool_execution(item))
+            return events
+        if item.kind is StreamItemKind.TOOL_CALL_DONE:
+            return events
+        if item.kind is not StreamItemKind.ANSWER_DELTA:
+            events.extend(await self._switch_channel(None, None))
+            return events
+        events.extend(await self._switch_channel(projection.channel, None))
+        text = _token_text(item)
         if text:
             events.extend(await self._ensure_answer_artifact())
             assert self._answer_artifact_id
-            self._answer.append(text)
             events.extend(
                 await self._append_artifact_delta(
                     self._answer_artifact_id,
@@ -667,7 +696,7 @@ class A2AResponseTranslator:
 
     async def _finish(self) -> list[dict[str, Any]]:
         events = await self._close_open_artifacts()
-        if self._has_canonical_items:
+        if self._projection_state.has_canonical_items:
             self._accumulator.validate_complete()
         if self._terminal_outcome is StreamTerminalOutcome.CANCELLED:
             events.extend(await self._store.cancel_task(self._task_id))
@@ -682,7 +711,7 @@ class A2AResponseTranslator:
         return events
 
     async def _close_open_artifacts(self) -> list[dict[str, Any]]:
-        events = await self._switch_state(None, None)
+        events = await self._switch_channel(None, None)
         if self._reasoning_artifact_id:
             events.extend(
                 await self._store.complete_artifact(
@@ -713,21 +742,34 @@ class A2AResponseTranslator:
             self._terminal_error = _stream_terminal_error(item)
         return []
 
-    async def _switch_state(
-        self, state: StreamState | None, call_id: str | None
+    async def _switch_channel(
+        self, channel: StreamChannel | None, call_id: str | None
     ) -> list[dict[str, Any]]:
-        changed = self._state is not state or (
-            self._state is StreamState.TOOL
-            and state is StreamState.TOOL
+        assert channel is None or isinstance(channel, StreamChannel)
+        assert call_id is None or isinstance(call_id, str)
+        same_tool_artifact = (
+            self._state in _TOOL_ARTIFACT_CHANNELS
+            and channel in _TOOL_ARTIFACT_CHANNELS
+            and call_id is not None
+            and call_id == self._tool_artifact_id
+        )
+        different_tool_artifact = (
+            self._state in _TOOL_ARTIFACT_CHANNELS
+            and channel in _TOOL_ARTIFACT_CHANNELS
             and call_id is not None
             and call_id != self._tool_artifact_id
         )
+        if self._state is not channel and same_tool_artifact:
+            self._state = channel
+            return []
+
+        changed = self._state is not channel or different_tool_artifact
         if not changed:
             return []
 
         events: list[dict[str, Any]] = []
 
-        if self._state is StreamState.TOOL and self._tool_artifact_id:
+        if self._state in _TOOL_ARTIFACT_CHANNELS and self._tool_artifact_id:
             events.extend(
                 await self._store.complete_artifact(
                     self._task_id, self._tool_artifact_id
@@ -735,8 +777,8 @@ class A2AResponseTranslator:
             )
             self._tool_artifact_id = None
         elif (
-            self._state is StreamState.REASONING
-            and state is not StreamState.REASONING
+            self._state is StreamChannel.REASONING
+            and channel is not StreamChannel.REASONING
             and self._reasoning_artifact_id
         ):
             events.extend(
@@ -746,8 +788,8 @@ class A2AResponseTranslator:
             )
             self._reasoning_artifact_id = None
         elif (
-            self._state is StreamState.ANSWER
-            and state is not StreamState.ANSWER
+            self._state is StreamChannel.ANSWER
+            and channel is not StreamChannel.ANSWER
             and self._answer_artifact_id
         ):
             events.extend(
@@ -757,11 +799,11 @@ class A2AResponseTranslator:
             )
             self._answer_artifact_id = None
 
-        self._state = state
+        self._state = channel
 
-        if state is StreamState.REASONING:
+        if channel is StreamChannel.REASONING:
             events.extend(await self._ensure_reasoning_artifact())
-        elif state is StreamState.TOOL:
+        elif channel in _TOOL_ARTIFACT_CHANNELS:
             artifact = call_id or str(uuid4())
             (
                 self._tool_artifact_id,
@@ -774,7 +816,7 @@ class A2AResponseTranslator:
                 role=str(MessageRole.ASSISTANT),
             )
             events.extend(created)
-        elif state is StreamState.ANSWER:
+        elif channel is StreamChannel.ANSWER:
             events.extend(await self._ensure_answer_artifact())
 
         return events
@@ -816,201 +858,6 @@ class A2AResponseTranslator:
             artifact_id,
             payload,
         )
-
-    async def _handle_tool_process(self, event: Event) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        payload: dict[str, Any] | list[Any] = event.payload or []
-        if isinstance(payload, dict):
-            raw_calls = payload.get("calls", [])
-            calls = raw_calls if isinstance(raw_calls, list) else []
-        else:
-            calls = payload
-        for call in calls:
-            if not isinstance(call, ToolCall):
-                continue
-            artifact_id = str(call.id)
-            (
-                self._tool_artifact_id,
-                created,
-            ) = await self._store.ensure_artifact(
-                self._task_id,
-                artifact_id=artifact_id,
-                name=call.name,
-                kind="tool_call",
-                role=str(MessageRole.ASSISTANT),
-                metadata={"arguments": call.arguments or {}},
-            )
-            events.extend(created)
-            events.extend(
-                await self._append_artifact_delta(
-                    self._tool_artifact_id,
-                    {
-                        "type": "arguments",
-                        "arguments": call.arguments or {},
-                    },
-                )
-            )
-            events.extend(
-                await self._store.add_status_event(
-                    self._task_id,
-                    status="in_progress",
-                    metadata={
-                        "phase": "tool_processing",
-                        "tool_call_id": artifact_id,
-                        "tool_name": call.name,
-                    },
-                )
-            )
-        return events
-
-    async def _handle_tool_result(self, event: Event) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        payload = event.payload or {}
-        result = payload.get("result") if isinstance(payload, dict) else None
-        if event.type is EventType.TOOL_DIAGNOSTIC:
-            result = result or _payload_diagnostic(payload)
-        call = payload.get("call") if isinstance(payload, dict) else None
-        artifact_id: str | None = None
-        artifact_name: str | None = None
-        content: Any = None
-        metadata: dict[str, Any] = {}
-
-        if isinstance(result, ToolCallResult):
-            artifact_id = str(result.call.id)
-            artifact_name = result.call.name
-            content = {"type": "data", "data": result.result}
-            metadata["status"] = "success"
-        elif isinstance(result, ToolCallError):
-            artifact_id = str(result.call.id)
-            artifact_name = result.call.name
-            content = {
-                "type": "data",
-                "data": {"error": tool_call_error_payload(result)},
-            }
-            metadata["status"] = "error"
-        elif isinstance(result, ToolCallDiagnostic):
-            artifact_id = str(result.call_id or result.id)
-            artifact_name = (
-                result.canonical_name or result.requested_name or "tool"
-            )
-            content = {
-                "type": "data",
-                "data": {"diagnostic": _diagnostic_payload(result)},
-            }
-            metadata["status"] = "diagnostic"
-            metadata["diagnostic_code"] = result.code.value
-            metadata["diagnostic_stage"] = result.stage.value
-        elif isinstance(payload, ToolCall):
-            artifact_id = str(payload.id)
-            artifact_name = payload.name
-            content = {"type": "data", "data": None}
-        else:
-            artifact_id = self._tool_artifact_id
-            content = {"type": "data", "data": result}
-
-        if call and isinstance(call, ToolCall):
-            artifact_id = str(call.id)
-            artifact_name = call.name
-
-        if artifact_id is None:
-            artifact_id = str(uuid4())
-
-        self._tool_artifact_id, created = await self._store.ensure_artifact(
-            self._task_id,
-            artifact_id=artifact_id,
-            name=artifact_name,
-            kind="tool_call",
-            role=str(MessageRole.ASSISTANT),
-            metadata=metadata,
-        )
-        events.extend(created)
-        events.extend(
-            await self._append_artifact_delta(
-                self._tool_artifact_id,
-                content,
-            )
-        )
-        events.extend(
-            await self._store.complete_artifact(
-                self._task_id, self._tool_artifact_id
-            )
-        )
-        status_metadata: dict[str, Any] = {
-            "phase": "tool_completed",
-            "tool_call_id": artifact_id,
-            "tool_name": artifact_name,
-        }
-        outcome = metadata.get("status")
-        if outcome:
-            status_metadata["tool_status"] = outcome
-        events.extend(
-            await self._store.add_status_event(
-                self._task_id,
-                status="in_progress",
-                metadata=status_metadata,
-            )
-        )
-        self._tool_artifact_id = None
-        return events
-
-    async def _handle_tool_token(
-        self, token: ToolCallToken
-    ) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        if token.call is not None:
-            artifact_id = str(token.call.id)
-            (
-                self._tool_artifact_id,
-                created,
-            ) = await self._store.ensure_artifact(
-                self._task_id,
-                artifact_id=artifact_id,
-                name=token.call.name,
-                kind="tool_call",
-                role=str(MessageRole.ASSISTANT),
-                metadata={"arguments": token.call.arguments or {}},
-            )
-            events.extend(created)
-            events.extend(
-                await self._append_artifact_delta(
-                    self._tool_artifact_id,
-                    {
-                        "type": "arguments",
-                        "arguments": token.call.arguments or {},
-                    },
-                )
-            )
-            events.extend(
-                await self._store.add_status_event(
-                    self._task_id,
-                    status="in_progress",
-                    metadata={
-                        "phase": "tool_processing",
-                        "tool_call_id": artifact_id,
-                        "tool_name": token.call.name,
-                    },
-                )
-            )
-        else:
-            if not self._tool_artifact_id:
-                (
-                    self._tool_artifact_id,
-                    created,
-                ) = await self._store.ensure_artifact(
-                    self._task_id,
-                    artifact_id=str(uuid4()),
-                    name=None,
-                    kind="tool_call",
-                    role=str(MessageRole.ASSISTANT),
-                )
-                events.extend(created)
-            events.extend(
-                await self._append_artifact_delta(
-                    self._tool_artifact_id,
-                    {"type": "text", "text": token.token},
-                )
-            )
-        return events
 
     async def _handle_canonical_tool_execution(
         self, item: CanonicalStreamItem
@@ -1137,31 +984,55 @@ class A2AResponseTranslator:
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         artifact_id = item.correlation.tool_call_id or str(uuid4())
+        data = item.data if isinstance(item.data, dict) else {}
+        tool_name = data.get("name")
+        tool_name_text = tool_name if isinstance(tool_name, str) else None
+        metadata: dict[str, Any] = {
+            "channel": "tool_call",
+            "tool_call_id": artifact_id,
+        }
+        if tool_name_text:
+            metadata["tool_name"] = tool_name_text
+        if "arguments" in data:
+            metadata["arguments"] = data["arguments"]
         (
             self._tool_artifact_id,
             created,
         ) = await self._store.ensure_artifact(
             self._task_id,
             artifact_id=artifact_id,
-            name=None,
+            name=tool_name_text,
             kind="tool_call",
             role=str(MessageRole.ASSISTANT),
+            metadata=metadata,
         )
         events.extend(created)
-        events.extend(
-            await self._append_artifact_delta(
-                self._tool_artifact_id,
-                {"type": "text", "text": item.text_delta or ""},
+
+        if "arguments" in data:
+            events.extend(
+                await self._append_artifact_delta(
+                    self._tool_artifact_id,
+                    {"type": "arguments", "arguments": data["arguments"]},
+                )
             )
-        )
+        elif item.text_delta:
+            events.extend(
+                await self._append_artifact_delta(
+                    self._tool_artifact_id,
+                    {"type": "text", "text": item.text_delta},
+                )
+            )
+        status_metadata: dict[str, Any] = {
+            "phase": "tool_processing",
+            "tool_call_id": artifact_id,
+        }
+        if tool_name_text:
+            status_metadata["tool_name"] = tool_name_text
         events.extend(
             await self._store.add_status_event(
                 self._task_id,
                 status="in_progress",
-                metadata={
-                    "phase": "tool_processing",
-                    "tool_call_id": artifact_id,
-                },
+                metadata=status_metadata,
             )
         )
         return events
@@ -1665,112 +1536,11 @@ async def well_known_agent_card(
     return _coerce("AgentCard", card)
 
 
-def _state_for_item(
-    item: CanonicalStreamItem | Token | TokenDetail | Event | str,
-) -> StreamState | None:
-    if isinstance(item, CanonicalStreamItem):
-        return _canonical_state_for_item(item)
-    return _legacy_state_for_item(item)
-
-
-def _canonical_state_for_item(item: CanonicalStreamItem) -> StreamState | None:
-    if item.kind is StreamItemKind.REASONING_DELTA:
-        return StreamState.REASONING
-    if item.kind in (
-        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-        StreamItemKind.TOOL_CALL_READY,
-        StreamItemKind.TOOL_CALL_DONE,
-        StreamItemKind.TOOL_EXECUTION_STARTED,
-        StreamItemKind.TOOL_EXECUTION_OUTPUT,
-        StreamItemKind.TOOL_EXECUTION_PROGRESS,
-        StreamItemKind.TOOL_EXECUTION_COMPLETED,
-        StreamItemKind.TOOL_EXECUTION_ERROR,
-        StreamItemKind.TOOL_EXECUTION_CANCELLED,
-    ):
-        return StreamState.TOOL
-    if item.kind is StreamItemKind.ANSWER_DELTA:
-        return StreamState.ANSWER
-    return None
-
-
-def _legacy_state_for_item(
-    item: Token | TokenDetail | Event | str,
-) -> StreamState | None:
-    if isinstance(item, ReasoningToken):
-        return StreamState.REASONING
-    if isinstance(item, (ToolCallToken, Event)):
-        if isinstance(item, Event) and item.type not in (
-            EventType.TOOL_DIAGNOSTIC,
-            EventType.TOOL_PROCESS,
-            EventType.TOOL_RESULT,
-        ):
-            return None
-        return StreamState.TOOL
-    if isinstance(item, str):
-        return StreamState.ANSWER
-    return StreamState.ANSWER if isinstance(item, Token) else None
-
-
-def _call_identifier(
-    item: CanonicalStreamItem | Token | TokenDetail | Event | str,
-) -> str | None:
-    if isinstance(item, CanonicalStreamItem):
-        return item.correlation.tool_call_id
-    return _legacy_call_identifier(item)
-
-
-def _legacy_call_identifier(
-    item: Token | TokenDetail | Event | str,
-) -> str | None:
-    if isinstance(item, ToolCallToken) and item.call is not None:
-        return str(item.call.id)
-    if isinstance(item, Event):
-        if item.type is EventType.TOOL_PROCESS:
-            payload: dict[str, Any] | list[Any] = item.payload or []
-            if isinstance(payload, dict):
-                candidates = payload.get("calls", [])
-            else:
-                candidates = payload
-            if isinstance(candidates, list) and candidates:
-                call = candidates[0]
-                if isinstance(call, ToolCall):
-                    return str(call.id)
-        if (
-            item.type
-            in (
-                EventType.TOOL_DIAGNOSTIC,
-                EventType.TOOL_RESULT,
-            )
-            and item.payload
-        ):
-            result = item.payload.get("result")
-            if item.type is EventType.TOOL_DIAGNOSTIC:
-                result = result or _payload_diagnostic(item.payload)
-            if isinstance(result, ToolCallDiagnostic):
-                return str(result.call_id or result.id)
-            if isinstance(result, (ToolCallResult, ToolCallError)):
-                return str(result.call.id)
-            call = item.payload.get("call")
-            if isinstance(call, ToolCall):
-                return str(call.id)
-    return None
-
-
 def _token_text(
-    item: CanonicalStreamItem | Token | TokenDetail | Event | str,
+    item: CanonicalStreamItem,
 ) -> str:
-    if isinstance(item, CanonicalStreamItem):
-        if item.kind is StreamItemKind.ANSWER_DELTA:
-            return item.text_delta or ""
-        return ""
-    return _legacy_token_text(item)
-
-
-def _legacy_token_text(item: Token | TokenDetail | Event | str) -> str:
-    if isinstance(item, str):
-        return item
-    if isinstance(item, Token):
-        return item.token
+    if item.kind is StreamItemKind.ANSWER_DELTA:
+        return item.text_delta or ""
     return ""
 
 
@@ -1836,37 +1606,6 @@ def _stream_terminal_error(item: CanonicalStreamItem) -> str:
     if data:
         return str(data)
     return "Stream failed"
-
-
-def _payload_diagnostic(
-    payload: dict[str, Any],
-) -> ToolCallDiagnostic | None:
-    diagnostic = payload.get("diagnostic")
-    if isinstance(diagnostic, ToolCallDiagnostic):
-        return diagnostic
-    diagnostics = payload.get("diagnostics")
-    if isinstance(diagnostics, list):
-        return next(
-            (
-                item
-                for item in diagnostics
-                if isinstance(item, ToolCallDiagnostic)
-            ),
-            None,
-        )
-    return None
-
-
-def _diagnostic_payload(
-    diagnostic: ToolCallDiagnostic,
-) -> dict[str, Any]:
-    payload = {
-        "id": str(diagnostic.id),
-        **tool_call_diagnostic_payload(diagnostic),
-    }
-    if diagnostic.call_id is not None:
-        payload["call_id"] = str(diagnostic.call_id)
-    return payload
 
 
 def _enum_value(value: Any) -> str | None:

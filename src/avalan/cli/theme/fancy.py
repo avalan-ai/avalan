@@ -14,7 +14,6 @@ from ...entities import (
     Similarity,
     TextPartition,
     Token,
-    TokenDetail,
     TokenizerConfig,
     ToolCallDiagnostic,
     ToolCallError,
@@ -2145,7 +2144,8 @@ class FancyTheme(Theme):
             if display_token_size and tokens:
                 # Pick current token to highlight
                 current_data = None
-                current_dtoken: TokenDetail | None = None
+                current_dtoken: Token | None = None
+                current_dtoken_tokens: list[Token] | None = None
                 if display_probabilities and dtokens_selected:
                     current_selected_index = (
                         0
@@ -2169,15 +2169,20 @@ class FancyTheme(Theme):
                         selected_token = dtokens_selected[
                             current_selected_index
                         ]
-                        if isinstance(selected_token, TokenDetail):
+                        if hasattr(selected_token, "tokens"):
                             current_dtoken = selected_token
+                            current_dtoken_tokens = getattr(
+                                selected_token,
+                                "tokens",
+                                None,
+                            )
                     current_data = (
                         [
                             t.probability
-                            for t in current_dtoken.tokens
+                            for t in current_dtoken_tokens
                             if t.probability is not None
                         ]
-                        if current_dtoken and current_dtoken.tokens
+                        if current_dtoken_tokens
                         else None
                     )
                     if current_dtoken:
@@ -2188,7 +2193,7 @@ class FancyTheme(Theme):
                                 current_dtoken.probability or 0.0,
                                 format="{:.4g}",
                             )
-                            + f"and {current_dtoken.tokens}"
+                            + f"and {current_dtoken_tokens}"
                         )
 
                 tokens_panel = self.tokenizer_tokens(
@@ -2257,8 +2262,8 @@ class FancyTheme(Theme):
                 # Split token alternatives to two tables
                 dbatch_first_table = None
                 dbatch_second_table = None
-                if pick > 0 and current_dtoken and current_dtoken.tokens:
-                    dtoken_tokens = current_dtoken.tokens
+                if pick > 0 and current_dtoken and current_dtoken_tokens:
+                    dtoken_tokens = current_dtoken_tokens
                     max_dtoken = max(
                         dtoken_tokens,
                         key=lambda dtoken: dtoken.probability or 0.0,
@@ -2565,7 +2570,7 @@ class FancyTheme(Theme):
     def _tokens_table(
         self,
         dbatch: list[Token],
-        current_dtoken: TokenDetail | None,
+        current_dtoken: Token | None,
         max_dtoken: Token,
     ) -> Table:
         _p = self._percentage

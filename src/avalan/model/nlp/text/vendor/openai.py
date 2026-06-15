@@ -21,6 +21,7 @@ from .....model.stream import (
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    StreamValidationError,
     StreamVisibility,
     TextGenerationSingleStream,
     normalize_provider_stream,
@@ -189,7 +190,11 @@ class OpenAIStream(TextGenerationVendorStream):
             if terminal_usage is not None:
                 self._usage = terminal_usage
 
-        super().__init__(generator(), provider_family=provider_family)
+        super().__init__(
+            generator(),
+            provider_family=provider_family,
+            sources=(stream,),
+        )
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
@@ -205,28 +210,33 @@ class OpenAIStream(TextGenerationVendorStream):
         self._canonical_tool_calls = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
-        return normalize_provider_stream(
-            self._provider_events(),
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            provider_family=self._provider_family,
-            capabilities=StreamProviderCapabilities(
-                backend=StreamProducerBackend.HOSTED,
+        return self._close_stream_on_exit(
+            normalize_provider_stream(
+                self._provider_events(),
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
                 provider_family=self._provider_family,
-                supports_reasoning=True,
-                supports_tool_calls=True,
-                supports_usage=True,
-                supports_terminal_events=True,
-                supports_cancellation=True,
+                capabilities=StreamProviderCapabilities(
+                    backend=StreamProducerBackend.HOSTED,
+                    provider_family=self._provider_family,
+                    supports_reasoning=True,
+                    supports_tool_calls=True,
+                    supports_usage=True,
+                    supports_terminal_events=True,
+                    supports_cancellation=True,
+                ),
+                close_after_terminal=close_after_terminal,
             ),
-            close_after_terminal=close_after_terminal,
         )
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
-        async for event in self._stream:
-            for provider_event in self._provider_events_from_event(event):
-                yield provider_event
+        try:
+            async for event in self._stream:
+                for provider_event in self._provider_events_from_event(event):
+                    yield provider_event
+        finally:
+            await self.aclose()
 
     def _provider_events_from_event(
         self, event: object
@@ -405,6 +415,21 @@ class OpenAIStream(TextGenerationVendorStream):
             call_id = self._tool_call_id_from_event(event, required=False)
         if call_id is None:
             return ()
+        if call_id not in self._canonical_tool_calls:
+            pending_call_ids = [
+                pending_call_id
+                for pending_call_id, state in (
+                    self._canonical_tool_calls.items()
+                )
+                if state.get("arguments_seen")
+                and pending_call_id not in self._canonical_done_tool_call_ids
+            ]
+            if pending_call_ids:
+                raise StreamValidationError(
+                    "response tool call item id "
+                    f"{call_id} does not match pending tool call item "
+                    f"{pending_call_ids[0]}"
+                )
         if call_id in self._canonical_done_tool_call_ids:
             raise ValueError("response tool call already completed")
         state = self._canonical_tool_calls.setdefault(

@@ -3,7 +3,13 @@ from types import MappingProxyType
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 
-from avalan.event import Event, EventType
+from avalan.event import Event, EventObservabilityPayload, EventType
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    stream_observability_payload,
+)
 from avalan.task import (
     PrivacyAction,
     PrivacySanitizer,
@@ -83,6 +89,46 @@ class SanitizedTaskEventTest(TestCase):
         self.assertNotIn("secret token", str(payload))
         self.assertNotIn("token_id", payload)
         self.assertNotIn("token_ids", payload)
+
+    def test_token_event_keeps_canonical_stream_observability(self) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="stream-1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=7,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="private reasoning",
+        )
+        draft = sanitize_raw_task_event(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                payload={
+                    "canonical_stream": {"kind": "answer.delta"},
+                    "token": "private answer",
+                },
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        stream_observability_payload(item)
+                    )
+                ),
+            ),
+            PrivacySanitizer(),
+        )
+
+        payload = cast(dict[str, object], draft.payload)
+        canonical_stream = cast(
+            dict[str, object],
+            payload["canonical_stream"],
+        )
+        self.assertEqual(
+            canonical_stream["kind"],
+            StreamItemKind.REASONING_DELTA.value,
+        )
+        self.assertEqual(canonical_stream["channel"], "reasoning")
+        self.assertEqual(canonical_stream["sequence"], 7)
+        self.assertNotIn("summary", canonical_stream)
+        self.assertNotIn("private", str(payload))
 
     def test_tool_model_engine_and_memory_events_keep_safe_metadata(
         self,

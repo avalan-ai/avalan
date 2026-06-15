@@ -2,10 +2,16 @@ from ...model.stream import (
     CanonicalStreamAccumulator,
     CanonicalStreamItem,
     StreamConsumerProjection,
+    StreamProjectionState,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
-    StreamValidationError,
     canonical_item_from_consumer_projection,
+)
+from ...model.stream import (
+    stream_consumer_iterator as _stream_consumer_iterator,
+)
+from ...model.stream import (
+    stream_iterator as _stream_iterator,
 )
 from ...types import LooseJsonValue
 
@@ -19,7 +25,7 @@ from asyncio import (
 from asyncio import (
     Event as AsyncEvent,
 )
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import suppress
 from dataclasses import dataclass
 from inspect import isawaitable
@@ -39,6 +45,22 @@ class ProtocolStreamSnapshot:
     flow_items: tuple[CanonicalStreamItem, ...]
     usage_items: tuple[CanonicalStreamItem, ...]
     control_items: tuple[CanonicalStreamItem, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ProtocolStreamTerminalSnapshot:
+    outcome: StreamTerminalOutcome | None
+    sequence: int | None
+    data: LooseJsonValue | None
+    succeeded: bool
+
+    def __post_init__(self) -> None:
+        if self.outcome is not None:
+            assert isinstance(self.outcome, StreamTerminalOutcome)
+        if self.sequence is not None:
+            assert isinstance(self.sequence, int)
+            assert self.sequence >= 0
+        assert isinstance(self.succeeded, bool)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -140,28 +162,9 @@ class ProtocolStreamAccumulator:
         self._accumulator.validate_complete()
 
 
-def stream_iterator(source: object) -> AsyncIterator[Any]:
-    assert isinstance(source, AsyncIterable)
-    return source.__aiter__()
-
-
-def stream_consumer_iterator(
-    source: object,
-    *,
-    stream_session_id: str,
-    run_id: str,
-    turn_id: str,
-) -> AsyncIterator[Any]:
-    consumer_projections = getattr(source, "consumer_projections", None)
-    if callable(consumer_projections):
-        iterator = consumer_projections(
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-        )
-        assert isinstance(iterator, AsyncIterable)
-        return _validated_consumer_projection_iterator(iterator.__aiter__())
-    return stream_iterator(source)
+ProtocolStreamProjectionState = StreamProjectionState
+stream_iterator = _stream_iterator
+stream_consumer_iterator = _stream_consumer_iterator
 
 
 async def cancellable_stream_iterator(
@@ -206,21 +209,6 @@ async def _pull_stream_item(iterator: AsyncIterator[Any]) -> Any:
     return await anext(iterator)
 
 
-async def _validated_consumer_projection_iterator(
-    iterator: AsyncIterator[Any],
-) -> AsyncIterator[StreamConsumerProjection]:
-    try:
-        async for item in iterator:
-            if not isinstance(item, StreamConsumerProjection):
-                raise StreamValidationError(
-                    "consumer projection stream item must be "
-                    "StreamConsumerProjection"
-                )
-            yield item
-    finally:
-        await _call_optional(iterator, "aclose")
-
-
 def stream_terminal_succeeded(
     terminal: StreamConsumerProjection | StreamTerminalOutcome | None,
 ) -> bool:
@@ -233,6 +221,29 @@ def stream_terminal_succeeded(
         else terminal
     )
     return outcome is None or outcome is StreamTerminalOutcome.COMPLETED
+
+
+def protocol_stream_terminal_snapshot(
+    terminal: StreamConsumerProjection | StreamTerminalOutcome | None,
+) -> ProtocolStreamTerminalSnapshot:
+    assert terminal is None or isinstance(
+        terminal, (StreamConsumerProjection, StreamTerminalOutcome)
+    )
+    if isinstance(terminal, StreamConsumerProjection):
+        assert terminal.is_stream_terminal
+        outcome = terminal.terminal_outcome
+        sequence = terminal.sequence
+        data = terminal.data
+    else:
+        outcome = terminal
+        sequence = None
+        data = None
+    return ProtocolStreamTerminalSnapshot(
+        outcome=outcome,
+        sequence=sequence,
+        data=data,
+        succeeded=stream_terminal_succeeded(outcome),
+    )
 
 
 def protocol_stream_retention_settings(

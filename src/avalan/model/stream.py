@@ -11,7 +11,7 @@ from .provider import ProviderFamily, provider_family_value
 
 from abc import ABC, abstractmethod
 from asyncio import CancelledError
-from collections.abc import AsyncIterable, Awaitable, Iterable
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -110,6 +110,7 @@ class StreamLegacySurfaceClassification(StrEnum):
     REMOVE_NOW = "remove_now"
     MIGRATE_LATER = "migrate_later"
     TEMPORARY_INGESTION_SHIM = "temporary_ingestion_shim"
+    TEMPORARY_COMPATIBILITY_SHIM = "temporary_compatibility_shim"
 
 
 class StreamProducerBackend(StrEnum):
@@ -213,6 +214,36 @@ class StreamLegacySurfaceInventoryEntry:
             assert self.canonical_channel is not None
         else:
             assert self.ingestion_shim is None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamLegacyClassifierInventoryEntry:
+    module: str
+    qualname: str
+    surfaces: tuple[StreamLegacySurface, ...]
+    classification: StreamLegacySurfaceClassification
+    owner: str
+    removal_condition: str
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.module, "module")
+        _assert_non_empty_string(self.qualname, "qualname")
+        assert isinstance(self.surfaces, tuple)
+        assert self.surfaces
+        assert len(set(self.surfaces)) == len(self.surfaces)
+        for surface in self.surfaces:
+            assert isinstance(surface, StreamLegacySurface)
+        assert isinstance(
+            self.classification,
+            StreamLegacySurfaceClassification,
+        )
+        assert self.classification in (
+            StreamLegacySurfaceClassification.MIGRATE_LATER,
+            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM,
+            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM,
+        )
+        _assert_non_empty_string(self.owner, "owner")
+        _assert_non_empty_string(self.removal_condition, "removal_condition")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -364,6 +395,60 @@ class StreamPerformanceBudget:
             ("per_item_overhead_us", self.per_item_overhead_us),
         ):
             _assert_positive_int(value, field_name)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamPerformanceBudgetReconciliation:
+    baseline_budget: StreamPerformanceBudget = field(
+        default_factory=StreamPerformanceBudget
+    )
+    enforced_budget: StreamPerformanceBudget = field(
+        default_factory=StreamPerformanceBudget
+    )
+    equivalence_harness_passed: bool = True
+    benchmark_source: str = "specs/streaming/BENCHMARKS.md"
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.baseline_budget, StreamPerformanceBudget)
+        assert isinstance(self.enforced_budget, StreamPerformanceBudget)
+        assert isinstance(
+            self.equivalence_harness_passed, bool
+        ), "equivalence_harness_passed must be a boolean"
+        _assert_non_empty_string(self.benchmark_source, "benchmark_source")
+        loosened = self.loosened_metrics
+        tightened = self.tightened_metrics
+        assert not loosened, "enforced budget must not loosen baseline"
+        if tightened:
+            assert self.equivalence_harness_passed
+
+    @property
+    def tightened_metrics(self) -> tuple[str, ...]:
+        return self._metrics_with_enforced_budget_below_baseline()
+
+    @property
+    def loosened_metrics(self) -> tuple[str, ...]:
+        return self._metrics_with_enforced_budget_above_baseline()
+
+    def _metrics_with_enforced_budget_below_baseline(self) -> tuple[str, ...]:
+        return self._compare_metrics(enforced_below_baseline=True)
+
+    def _metrics_with_enforced_budget_above_baseline(self) -> tuple[str, ...]:
+        return self._compare_metrics(enforced_below_baseline=False)
+
+    def _compare_metrics(
+        self, *, enforced_below_baseline: bool
+    ) -> tuple[str, ...]:
+        metrics: list[str] = []
+        for field_name in _STREAM_PERFORMANCE_BUDGET_FIELDS:
+            baseline_value = getattr(self.baseline_budget, field_name)
+            enforced_value = getattr(self.enforced_budget, field_name)
+            if enforced_below_baseline:
+                matches = enforced_value < baseline_value
+            else:
+                matches = enforced_value > baseline_value
+            if matches:
+                metrics.append(field_name)
+        return tuple(metrics)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -756,21 +841,46 @@ def stream_consumer_projection_from_token(
     run_id: str = "legacy-run",
     turn_id: str = "legacy-turn",
 ) -> StreamConsumerProjection:
-    assert isinstance(
-        token, (CanonicalStreamItem, StreamConsumerProjection, Token, str)
-    )
     if isinstance(token, StreamConsumerProjection):
         return token
     if isinstance(token, CanonicalStreamItem):
         return project_canonical_stream_item(token)
     return project_canonical_stream_item(
-        canonical_item_from_token(
-            token,
-            sequence,
+        _LegacyTokenStreamAdapter(
             stream_session_id=stream_session_id,
             run_id=run_id,
             turn_id=turn_id,
+        ).item_from_token(
+            token,
+            sequence,
         )
+    )
+
+
+def project_stream_consumer_item(
+    item: object,
+    sequence: int,
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+    unsupported_message: str,
+    accumulate: bool = False,
+    legacy_item_mapper: (
+        Callable[[object], Iterable[CanonicalStreamItem] | None] | None
+    ) = None,
+) -> StreamConsumerProjection:
+    state = StreamProjectionState(
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+        accumulate=accumulate,
+        legacy_item_mapper=legacy_item_mapper,
+    )
+    return state.project(
+        item,
+        sequence,
+        unsupported_message=unsupported_message,
     )
 
 
@@ -812,6 +922,83 @@ def stream_projection_is_tool_call(
     return projection.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
 
 
+def stream_projection_display_token(
+    item: CanonicalStreamItem | StreamConsumerProjection,
+) -> Token | None:
+    assert isinstance(item, (CanonicalStreamItem, StreamConsumerProjection))
+    projection = (
+        project_canonical_stream_item(item)
+        if isinstance(item, CanonicalStreamItem)
+        else item
+    )
+    text = stream_projection_text_delta(projection)
+    if text is None or stream_projection_is_tool_call(projection):
+        return None
+
+    metadata = projection.metadata
+    if not any(
+        key in metadata
+        for key in (
+            "token_id",
+            "probability",
+            "step",
+            "probability_distribution",
+            "tokens",
+        )
+    ):
+        return None
+
+    token_id = metadata.get("token_id")
+    probability = metadata.get("probability")
+    token_kwargs: dict[str, Any] = {"id": None, "token": text}
+    if isinstance(token_id, int):
+        token_kwargs["id"] = token_id
+    if isinstance(probability, int | float):
+        token_kwargs["probability"] = float(probability)
+
+    if (
+        "step" in metadata
+        or "probability_distribution" in metadata
+        or "tokens" in metadata
+    ):
+        detail_kwargs = dict(token_kwargs)
+        step = metadata.get("step")
+        if isinstance(step, int):
+            detail_kwargs["step"] = step
+        if "probability_distribution" in metadata:
+            detail_kwargs["probability_distribution"] = cast(
+                Any,
+                metadata["probability_distribution"],
+            )
+        candidates = _display_token_candidates(metadata.get("tokens"))
+        if candidates is not None:
+            detail_kwargs["tokens"] = candidates
+        return TokenDetail(**detail_kwargs)
+
+    return Token(**token_kwargs)
+
+
+def _display_token_candidates(value: object) -> list[Token] | None:
+    if not isinstance(value, list):
+        return None
+    candidates: list[Token] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("token")
+        if not isinstance(text, str):
+            continue
+        token_id = item.get("token_id")
+        probability = item.get("probability")
+        kwargs: dict[str, Any] = {"id": None, "token": text}
+        if isinstance(token_id, int):
+            kwargs["id"] = token_id
+        if isinstance(probability, int | float):
+            kwargs["probability"] = float(probability)
+        candidates.append(Token(**kwargs))
+    return candidates
+
+
 async def iter_stream_consumer_projections(
     items: AsyncIterable[CanonicalStreamItem],
     *,
@@ -820,11 +1007,15 @@ async def iter_stream_consumer_projections(
     assert isinstance(items, AsyncIterable)
     assert isinstance(validate_order, bool)
     accumulator = CanonicalStreamAccumulator() if validate_order else None
+    last_sequence: int | None = None
     iterator = items.__aiter__()
     try:
         async for item in iterator:
             if accumulator is not None:
                 accumulator.add(item)
+                last_sequence = _validate_lossless_sequence_gap(
+                    item, last_sequence
+                )
             yield project_canonical_stream_item(item)
         if accumulator is not None:
             accumulator.validate_complete()
@@ -833,6 +1024,65 @@ async def iter_stream_consumer_projections(
             await _close_async_iterables(iterator, items)
         else:
             await _close_async_iterable(iterator)
+
+
+def stream_iterator(source: object) -> AsyncIterator[Any]:
+    assert isinstance(source, AsyncIterable)
+    return source.__aiter__()
+
+
+def stream_consumer_iterator(
+    source: object,
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+    prefer_consumer_projection_api: bool = True,
+) -> AsyncIterator[Any]:
+    assert isinstance(prefer_consumer_projection_api, bool)
+    consumer_projections = getattr(source, "consumer_projections", None)
+    if prefer_consumer_projection_api and callable(consumer_projections):
+        iterator = consumer_projections(
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+        )
+        assert isinstance(iterator, AsyncIterable)
+        return _validated_consumer_projection_iterator(iterator.__aiter__())
+    return stream_iterator(source)
+
+
+async def _validated_consumer_projection_iterator(
+    iterator: AsyncIterator[Any],
+) -> AsyncIterator[StreamConsumerProjection]:
+    accumulator = CanonicalStreamAccumulator()
+    last_sequence: int | None = None
+    try:
+        async for item in iterator:
+            if not isinstance(item, StreamConsumerProjection):
+                raise StreamValidationError(
+                    "consumer projection stream item must be "
+                    "StreamConsumerProjection"
+                )
+            canonical_item = canonical_item_from_consumer_projection(item)
+            accumulator.add(canonical_item)
+            last_sequence = _validate_lossless_sequence_gap(
+                canonical_item, last_sequence
+            )
+            yield item
+        accumulator.validate_complete()
+    finally:
+        await _close_async_iterable(iterator)
+
+
+def _validate_lossless_sequence_gap(
+    item: CanonicalStreamItem,
+    last_sequence: int | None,
+) -> int:
+    assert isinstance(item, CanonicalStreamItem)
+    if last_sequence is not None and item.sequence != last_sequence + 1:
+        raise StreamValidationError("lossless consumer stream sequence gap")
+    return item.sequence
 
 
 def stream_observability_payload(
@@ -1000,11 +1250,32 @@ _TOOL_EXECUTION_KINDS = frozenset(
     }
 )
 _TOOL_RELATED_KINDS = _TOOL_CALL_KINDS | _TOOL_EXECUTION_KINDS
+_MODEL_CONTINUATION_TERMINAL_KINDS = frozenset(
+    {
+        StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+        StreamItemKind.MODEL_CONTINUATION_ERROR,
+        StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+    }
+)
+_MODEL_CONTINUATION_KINDS = frozenset(
+    {
+        StreamItemKind.MODEL_CONTINUATION_STARTED,
+        *tuple(_MODEL_CONTINUATION_TERMINAL_KINDS),
+    }
+)
 _USAGE_KINDS = frozenset(
     {
         StreamItemKind.USAGE_UPDATE,
         StreamItemKind.USAGE_COMPLETED,
     }
+)
+_STREAM_PERFORMANCE_BUDGET_FIELDS = (
+    "time_to_first_item_ms",
+    "cancellation_latency_ms",
+    "close_latency_ms",
+    "max_queue_depth",
+    "max_memory_bytes",
+    "per_item_overhead_us",
 )
 
 
@@ -1017,6 +1288,31 @@ class _ToolLifecycleState:
     terminal_data: LooseJsonValue | None = None
     argument_deltas: list[str] = field(default_factory=list)
     output_deltas: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class _TextChannelBoundaryState:
+    started: bool = False
+    done: bool = False
+
+
+@dataclass(slots=True)
+class _ToolCallBoundaryState:
+    started: bool = False
+    ready: bool = False
+    done: bool = False
+
+
+@dataclass(slots=True)
+class _ToolExecutionBoundaryState:
+    started: bool = False
+    terminal_kind: StreamItemKind | None = None
+
+
+@dataclass(slots=True)
+class _ModelContinuationBoundaryState:
+    started: bool = False
+    terminal_kind: StreamItemKind | None = None
 
 
 def _assert_positive_int(value: object, field_name: str) -> None:
@@ -1118,10 +1414,145 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
     ),
     StreamLegacySurfaceInventoryEntry(
         surface=StreamLegacySurface.EVENT,
-        classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+        ),
         owner="event",
         removal_condition=(
             "Event streaming is projected through canonical observability."
+        ),
+    ),
+)
+
+
+_LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
+    StreamLegacyClassifierInventoryEntry, ...
+] = (
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.stream",
+        qualname="_LegacyTokenStreamAdapter.item_from_token",
+        surfaces=(
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        ),
+        owner="model.stream",
+        removal_condition=(
+            "Local and SDK producers emit canonical stream items before "
+            "model.stream ingestion."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.stream",
+        qualname="_LegacyTokenStreamAdapter.events_from_token",
+        surfaces=(StreamLegacySurface.STRING,),
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        ),
+        owner="model.stream",
+        removal_condition=(
+            "Local producers emit parsed provider events or canonical items "
+            "instead of raw string deltas."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.response.text",
+        qualname="TextGenerationResponse.__aiter__",
+        surfaces=(StreamLegacySurface.STRING,),
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+        ),
+        owner="model.response",
+        removal_condition=(
+            "Public SDK async iteration no longer accepts bare string "
+            "output functions."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.response.text",
+        qualname="TextGenerationResponse.__anext__",
+        surfaces=(
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+        ),
+        owner="model.response",
+        removal_condition=(
+            "Public SDK async iteration yields canonical stream projections."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.response.text",
+        qualname="TextGenerationResponse._record_returned_token",
+        surfaces=(StreamLegacySurface.TOOL_CALL_TOKEN,),
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+        ),
+        owner="model.response",
+        removal_condition=(
+            "Legacy tool-call token finalization is replaced by canonical "
+            "tool-call boundary events."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.agent.orchestrator.response.orchestrator_response",
+        qualname="OrchestratorResponse._stream_item_projection",
+        surfaces=(
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+            StreamLegacySurface.EVENT,
+        ),
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+        ),
+        owner="agent.orchestrator",
+        removal_condition=(
+            "Orchestrator public iteration and parser queues carry canonical "
+            "stream projections instead of legacy token or event items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.server.a2a.router",
+        qualname="_A2ALegacyStreamAdapter.map",
+        surfaces=(
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        ),
+        owner="server.a2a",
+        removal_condition=(
+            "A2A response streams receive canonical consumer projections."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.server.routers.mcp",
+        qualname="_MCPLegacyStreamAdapter.map",
+        surfaces=(
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.EVENT,
+        ),
+        classification=(
+            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        ),
+        owner="server.mcp",
+        removal_condition=(
+            "MCP response streams receive canonical consumer projections."
         ),
     ),
 )
@@ -1133,6 +1564,12 @@ def legacy_stream_surface_inventory() -> (
     return _LEGACY_STREAM_SURFACE_INVENTORY
 
 
+def legacy_stream_classifier_inventory() -> (
+    tuple[StreamLegacyClassifierInventoryEntry, ...]
+):
+    return _LEGACY_STREAM_CLASSIFIER_INVENTORY
+
+
 def classify_legacy_stream_surface(
     surface: StreamLegacySurface,
 ) -> StreamLegacySurfaceInventoryEntry:
@@ -1141,6 +1578,18 @@ def classify_legacy_stream_surface(
         if entry.surface is surface:
             return entry
     raise StreamValidationError("unknown legacy stream surface")
+
+
+def classify_legacy_stream_classifier(
+    module: str,
+    qualname: str,
+) -> StreamLegacyClassifierInventoryEntry:
+    _assert_non_empty_string(module, "module")
+    _assert_non_empty_string(qualname, "qualname")
+    for entry in _LEGACY_STREAM_CLASSIFIER_INVENTORY:
+        if entry.module == module and entry.qualname == qualname:
+            return entry
+    raise StreamValidationError("unknown legacy stream classifier")
 
 
 def is_stream_terminal_kind(kind: StreamItemKind) -> bool:
@@ -1332,11 +1781,12 @@ def validate_canonical_stream_items(
     last_sequence: int | None = None
     terminal: StreamTerminalOutcome | None = None
     closed = False
-    answer_done = False
-    reasoning_done = False
+    answer_boundary = _TextChannelBoundaryState()
+    reasoning_boundary = _TextChannelBoundaryState()
     usage_completed = False
-    tool_call_done: set[str] = set()
-    tool_execution_terminal: set[str] = set()
+    tool_call_states: dict[str, _ToolCallBoundaryState] = {}
+    tool_execution_states: dict[str, _ToolExecutionBoundaryState] = {}
+    model_continuation_states: dict[str, _ModelContinuationBoundaryState] = {}
 
     for index, item in enumerate(result):
         _validate_stream_start(item, index == 0)
@@ -1361,17 +1811,24 @@ def validate_canonical_stream_items(
         if item.kind is StreamItemKind.STREAM_CLOSED:
             raise StreamValidationError("stream closed before terminal")
 
-        answer_done = _validate_answer_boundary(item, answer_done)
-        reasoning_done = _validate_reasoning_boundary(item, reasoning_done)
-        _validate_tool_call_boundary(item, tool_call_done)
-        _validate_tool_execution_boundary(item, tool_execution_terminal)
-
         if item.kind is StreamItemKind.USAGE_COMPLETED:
             if usage_completed:
                 raise StreamValidationError("duplicate completed usage item")
+            _validate_open_channel_boundaries_closed(
+                answer_boundary,
+                reasoning_boundary,
+                tool_call_states,
+                tool_execution_states,
+                model_continuation_states,
+            )
             usage_completed = True
         else:
             _validate_post_final_usage_item(item, usage_completed)
+
+        _validate_answer_boundary(item, answer_boundary)
+        _validate_reasoning_boundary(item, reasoning_boundary)
+        _validate_tool_call_boundary(item, tool_call_states)
+        _validate_tool_execution_boundary(item, tool_execution_states)
 
         if outcome is not None:
             if (
@@ -1382,7 +1839,16 @@ def validate_canonical_stream_items(
                 raise StreamValidationError(
                     "completed stream missing final usage"
                 )
+            _validate_open_channel_boundaries_closed(
+                answer_boundary,
+                reasoning_boundary,
+                tool_call_states,
+                tool_execution_states,
+                model_continuation_states,
+            )
             terminal = outcome
+
+        _validate_model_continuation_boundary(item, model_continuation_states)
 
     if terminal is None:
         raise StreamValidationError("stream missing terminal outcome")
@@ -1451,58 +1917,194 @@ def _validate_post_final_usage_item(
 
 def _validate_answer_boundary(
     item: CanonicalStreamItem,
-    answer_done: bool,
-) -> bool:
-    if item.channel is StreamChannel.ANSWER and answer_done:
-        raise StreamValidationError("answer item emitted after answer done")
-    return answer_done or item.kind is StreamItemKind.ANSWER_DONE
+    state: _TextChannelBoundaryState,
+) -> None:
+    _validate_text_channel_boundary(
+        item,
+        state,
+        delta_kind=StreamItemKind.ANSWER_DELTA,
+        done_kind=StreamItemKind.ANSWER_DONE,
+        channel_name="answer",
+    )
 
 
 def _validate_reasoning_boundary(
     item: CanonicalStreamItem,
-    reasoning_done: bool,
-) -> bool:
-    if item.channel is StreamChannel.REASONING and reasoning_done:
-        raise StreamValidationError(
-            "reasoning item emitted after reasoning done"
-        )
-    return reasoning_done or item.kind is StreamItemKind.REASONING_DONE
+    state: _TextChannelBoundaryState,
+) -> None:
+    _validate_text_channel_boundary(
+        item,
+        state,
+        delta_kind=StreamItemKind.REASONING_DELTA,
+        done_kind=StreamItemKind.REASONING_DONE,
+        channel_name="reasoning",
+    )
+
+
+def _validate_text_channel_boundary(
+    item: CanonicalStreamItem,
+    state: _TextChannelBoundaryState,
+    *,
+    delta_kind: StreamItemKind,
+    done_kind: StreamItemKind,
+    channel_name: str,
+) -> None:
+    if item.kind is delta_kind:
+        if state.done:
+            raise StreamValidationError(
+                f"{channel_name} item emitted after {channel_name} done"
+            )
+        state.started = True
+        return
+    if item.kind is done_kind:
+        if not state.started:
+            raise StreamValidationError(f"{channel_name} done before content")
+        if state.done:
+            raise StreamValidationError(f"duplicate {channel_name} done item")
+        state.done = True
 
 
 def _validate_tool_call_boundary(
     item: CanonicalStreamItem,
-    done_tool_call_ids: set[str],
+    states: dict[str, _ToolCallBoundaryState],
 ) -> None:
     if item.kind not in _TOOL_CALL_KINDS:
         return
     tool_call_id = item.correlation.tool_call_id
     assert tool_call_id is not None
-    if tool_call_id in done_tool_call_ids:
+    state = states.setdefault(tool_call_id, _ToolCallBoundaryState())
+    state.started = True
+    if state.done:
         raise StreamValidationError(
             "tool-call item emitted after tool-call done"
         )
-    if item.kind is StreamItemKind.TOOL_CALL_DONE:
-        done_tool_call_ids.add(tool_call_id)
+    if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+        if state.ready:
+            raise StreamValidationError(
+                "tool-call argument emitted after ready"
+            )
+    elif item.kind is StreamItemKind.TOOL_CALL_READY:
+        if state.ready:
+            raise StreamValidationError("duplicate tool-call ready item")
+        state.ready = True
+    elif item.kind is StreamItemKind.TOOL_CALL_DONE:
+        if not state.ready and not _is_marked_tool_call_terminal_close(item):
+            raise StreamValidationError("tool-call done before ready")
+        state.done = True
+
+
+def _is_marked_tool_call_terminal_close(item: CanonicalStreamItem) -> bool:
+    close_reason = item.metadata.get("tool_call.close_reason")
+    return close_reason in {"cancelled", "error", "malformed"}
 
 
 def _validate_tool_execution_boundary(
     item: CanonicalStreamItem,
-    terminal_tool_call_ids: set[str],
+    states: dict[str, _ToolExecutionBoundaryState],
 ) -> None:
     if item.channel is not StreamChannel.TOOL_EXECUTION:
         return
     tool_call_id = item.correlation.tool_call_id
     assert tool_call_id is not None
-    if tool_call_id in terminal_tool_call_ids:
+    state = states.setdefault(tool_call_id, _ToolExecutionBoundaryState())
+    if state.terminal_kind is not None:
+        if item.kind in _TOOL_EXECUTION_TERMINAL_KINDS:
+            raise StreamValidationError("duplicate tool execution terminal")
         raise StreamValidationError(
             "tool execution item emitted after terminal item"
         )
+    if item.kind is StreamItemKind.TOOL_EXECUTION_STARTED:
+        if state.started:
+            raise StreamValidationError("duplicate tool execution start")
+        state.started = True
+        return
+    if not state.started:
+        if item.kind in _TOOL_EXECUTION_TERMINAL_KINDS:
+            raise StreamValidationError("tool execution terminal before start")
+        raise StreamValidationError("tool execution item before start")
     if item.kind in _TOOL_EXECUTION_TERMINAL_KINDS:
-        terminal_tool_call_ids.add(tool_call_id)
+        state.terminal_kind = item.kind
+
+
+def _validate_model_continuation_boundary(
+    item: CanonicalStreamItem,
+    states: dict[str, _ModelContinuationBoundaryState],
+) -> None:
+    if item.kind not in _MODEL_CONTINUATION_KINDS:
+        return
+    continuation_id = item.correlation.model_continuation_id
+    if continuation_id is None:
+        raise StreamValidationError(
+            "model continuation item missing model_continuation_id"
+        )
+    state = states.setdefault(
+        continuation_id, _ModelContinuationBoundaryState()
+    )
+    if state.terminal_kind is not None:
+        if item.kind in _MODEL_CONTINUATION_TERMINAL_KINDS:
+            raise StreamValidationError(
+                "duplicate model continuation terminal"
+            )
+        raise StreamValidationError(
+            "model continuation item emitted after terminal item"
+        )
+    if item.kind is StreamItemKind.MODEL_CONTINUATION_STARTED:
+        if state.started:
+            raise StreamValidationError("duplicate model continuation start")
+        state.started = True
+        return
+    if not state.started:
+        raise StreamValidationError("model continuation terminal before start")
+    state.terminal_kind = item.kind
+
+
+def _validate_open_channel_boundaries_closed(
+    answer_boundary: _TextChannelBoundaryState,
+    reasoning_boundary: _TextChannelBoundaryState,
+    tool_call_states: dict[str, _ToolCallBoundaryState],
+    tool_execution_states: dict[str, _ToolExecutionBoundaryState],
+    model_continuation_states: dict[str, _ModelContinuationBoundaryState],
+) -> None:
+    if answer_boundary.started and not answer_boundary.done:
+        raise StreamValidationError("answer channel missing done")
+    if reasoning_boundary.started and not reasoning_boundary.done:
+        raise StreamValidationError("reasoning channel missing done")
+    for tool_call_id, state in tool_call_states.items():
+        if not state.started or state.done:
+            continue
+        if not state.ready:
+            raise StreamValidationError(
+                f"tool call {tool_call_id} missing ready"
+            )
+        raise StreamValidationError(f"tool call {tool_call_id} missing done")
+    for tool_call_id, execution_state in tool_execution_states.items():
+        if execution_state.started and execution_state.terminal_kind is None:
+            raise StreamValidationError(
+                f"tool execution {tool_call_id} missing terminal"
+            )
+    for (
+        continuation_id,
+        continuation_state,
+    ) in model_continuation_states.items():
+        if (
+            continuation_state.started
+            and continuation_state.terminal_kind is None
+        ):
+            raise StreamValidationError(
+                f"model continuation {continuation_id} missing terminal"
+            )
 
 
 class CanonicalStreamAccumulator:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        retention_policy: StreamRetentionPolicy | None = None,
+    ) -> None:
+        if retention_policy is None:
+            retention_policy = StreamRetentionPolicy()
+        assert isinstance(retention_policy, StreamRetentionPolicy)
+        self._retention_policy = retention_policy
         self._items: list[CanonicalStreamItem] = []
         self._answer_text: list[str] = []
         self._reasoning_text: list[str] = []
@@ -1518,12 +2120,22 @@ class CanonicalStreamAccumulator:
         self._turn_id: str | None = None
         self._last_sequence: int | None = None
         self._terminal_outcome: StreamTerminalOutcome | None = None
+        self._terminal_item: CanonicalStreamItem | None = None
         self._closed = False
-        self._answer_done = False
-        self._reasoning_done = False
+        self._answer_boundary = _TextChannelBoundaryState()
+        self._reasoning_boundary = _TextChannelBoundaryState()
         self._usage_completed = False
-        self._tool_call_done: set[str] = set()
-        self._tool_execution_terminal: set[str] = set()
+        self._tool_call_states: dict[str, _ToolCallBoundaryState] = {}
+        self._tool_execution_states: dict[str, _ToolExecutionBoundaryState] = (
+            {}
+        )
+        self._model_continuation_states: dict[
+            str, _ModelContinuationBoundaryState
+        ] = {}
+
+    @property
+    def retention_policy(self) -> StreamRetentionPolicy:
+        return self._retention_policy
 
     @property
     def items(self) -> tuple[CanonicalStreamItem, ...]:
@@ -1576,13 +2188,21 @@ class CanonicalStreamAccumulator:
         return self._terminal_outcome
 
     @property
+    def terminal_item(self) -> CanonicalStreamItem | None:
+        return self._terminal_item
+
+    @property
     def closed(self) -> bool:
         return self._closed
 
     def add(self, item: CanonicalStreamItem) -> None:
         assert isinstance(item, CanonicalStreamItem)
         self._validate_next(item)
-        self._items.append(item)
+        self._append_retained(
+            self._items,
+            item,
+            self._retention_policy.accumulator_item_limit,
+        )
         self._accumulate(item)
 
     def add_many(
@@ -1594,7 +2214,20 @@ class CanonicalStreamAccumulator:
         return self
 
     def validate_complete(self) -> tuple[CanonicalStreamItem, ...]:
-        return validate_canonical_stream_items(self._items)
+        if self._session_id is None:
+            raise StreamValidationError(
+                "stream must contain at least one item"
+            )
+        if self._terminal_outcome is None:
+            raise StreamValidationError("stream missing terminal outcome")
+        _validate_open_channel_boundaries_closed(
+            self._answer_boundary,
+            self._reasoning_boundary,
+            self._tool_call_states,
+            self._tool_execution_states,
+            self._model_continuation_states,
+        )
+        return self.items
 
     def _validate_next(self, item: CanonicalStreamItem) -> None:
         is_first = self._session_id is None
@@ -1635,13 +2268,11 @@ class CanonicalStreamAccumulator:
         if item.kind is StreamItemKind.STREAM_CLOSED:
             raise StreamValidationError("stream closed before terminal")
 
-        self._answer_done = _validate_answer_boundary(item, self._answer_done)
-        self._reasoning_done = _validate_reasoning_boundary(
-            item, self._reasoning_done
-        )
-        _validate_tool_call_boundary(item, self._tool_call_done)
-        _validate_tool_execution_boundary(item, self._tool_execution_terminal)
         self._validate_usage(item)
+        _validate_answer_boundary(item, self._answer_boundary)
+        _validate_reasoning_boundary(item, self._reasoning_boundary)
+        _validate_tool_call_boundary(item, self._tool_call_states)
+        _validate_tool_execution_boundary(item, self._tool_execution_states)
 
         if outcome is not None:
             if (
@@ -1652,13 +2283,31 @@ class CanonicalStreamAccumulator:
                 raise StreamValidationError(
                     "completed stream missing final usage"
                 )
+            _validate_open_channel_boundaries_closed(
+                self._answer_boundary,
+                self._reasoning_boundary,
+                self._tool_call_states,
+                self._tool_execution_states,
+                self._model_continuation_states,
+            )
             self._terminal_outcome = outcome
+            self._terminal_item = item
+        _validate_model_continuation_boundary(
+            item, self._model_continuation_states
+        )
         self._last_sequence = last_sequence
 
     def _validate_usage(self, item: CanonicalStreamItem) -> None:
         if item.kind is StreamItemKind.USAGE_COMPLETED:
             if self._usage_completed:
                 raise StreamValidationError("duplicate completed usage item")
+            _validate_open_channel_boundaries_closed(
+                self._answer_boundary,
+                self._reasoning_boundary,
+                self._tool_call_states,
+                self._tool_execution_states,
+                self._model_continuation_states,
+            )
             self._usage_completed = True
         else:
             _validate_post_final_usage_item(item, self._usage_completed)
@@ -1686,11 +2335,23 @@ class CanonicalStreamAccumulator:
             )
 
         if item.kind is StreamItemKind.STREAM_DIAGNOSTIC:
-            self._diagnostics.append(item)
+            self._append_retained(
+                self._diagnostics,
+                item,
+                self._retention_policy.replay_history_item_limit,
+            )
         if item.channel is StreamChannel.FLOW:
-            self._flow_items.append(item)
+            self._append_retained(
+                self._flow_items,
+                item,
+                self._retention_policy.flow_history_item_limit,
+            )
         if item.channel is StreamChannel.USAGE:
-            self._usage_items.append(item)
+            self._append_retained(
+                self._usage_items,
+                item,
+                self._retention_policy.metrics_history_item_limit,
+            )
             self._final_usage = item.usage
         if (
             item.kind is StreamItemKind.STREAM_COMPLETED
@@ -1698,9 +2359,181 @@ class CanonicalStreamAccumulator:
         ):
             self._final_usage = item.usage
         if item.channel is StreamChannel.CONTROL:
-            self._control_items.append(item)
+            self._append_retained(
+                self._control_items,
+                item,
+                self._retention_policy.replay_history_item_limit,
+            )
         if item.kind is StreamItemKind.STREAM_CLOSED:
             self._closed = True
+
+    def _append_retained(
+        self,
+        items: list[CanonicalStreamItem],
+        item: CanonicalStreamItem,
+        limit: int,
+    ) -> None:
+        assert limit >= 0
+        if limit == 0:
+            return
+        items.append(item)
+        overflow = len(items) - limit
+        if overflow > 0:
+            del items[:overflow]
+
+
+@dataclass(slots=True)
+class StreamProjectionState:
+    stream_session_id: str
+    run_id: str
+    turn_id: str
+    accumulator: CanonicalStreamAccumulator = field(
+        default_factory=CanonicalStreamAccumulator
+    )
+    has_canonical_items: bool = False
+    legacy_stream_seen: bool = False
+    accumulate: bool = True
+    legacy_item_mapper: (
+        Callable[[object], Iterable[CanonicalStreamItem] | None] | None
+    ) = None
+    _legacy_adapter: object | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("stream_session_id", self.stream_session_id),
+            ("run_id", self.run_id),
+            ("turn_id", self.turn_id),
+        ):
+            _assert_non_empty_string(value, field_name)
+        assert isinstance(self.accumulator, CanonicalStreamAccumulator)
+        assert isinstance(self.has_canonical_items, bool)
+        assert isinstance(self.legacy_stream_seen, bool)
+        assert isinstance(self.accumulate, bool)
+        if self.legacy_item_mapper is not None:
+            assert callable(self.legacy_item_mapper)
+
+    def project(
+        self,
+        item: object,
+        sequence: int,
+        *,
+        unsupported_message: str,
+    ) -> StreamConsumerProjection:
+        projections = self.project_many(
+            item, sequence, unsupported_message=unsupported_message
+        )
+        if len(projections) != 1:
+            raise StreamValidationError(unsupported_message)
+        return projections[0]
+
+    def project_many(
+        self,
+        item: object,
+        sequence: int,
+        *,
+        unsupported_message: str,
+    ) -> tuple[StreamConsumerProjection, ...]:
+        assert isinstance(sequence, int), "sequence must be an integer"
+        assert sequence >= 0, "sequence must not be negative"
+        _assert_non_empty_string(unsupported_message, "unsupported_message")
+
+        if isinstance(item, CanonicalStreamItem):
+            return (self._project_canonical_item(item),)
+        if isinstance(item, StreamConsumerProjection):
+            return (self._project_consumer_projection(item),)
+        if self.has_canonical_items:
+            raise StreamValidationError(
+                "legacy stream item after canonical stream item"
+            )
+
+        self.legacy_stream_seen = True
+        if self.legacy_item_mapper is not None:
+            try:
+                mapped = self.legacy_item_mapper(item)
+            except AssertionError as exc:
+                raise StreamValidationError(unsupported_message) from exc
+            if mapped is not None:
+                mapped_items = tuple(mapped)
+                return tuple(
+                    self._project_mapped_legacy_item(mapped_item)
+                    for mapped_item in mapped_items
+                )
+
+        try:
+            return (
+                project_canonical_stream_item(
+                    self._get_legacy_adapter().item_from_token(
+                        item,
+                        sequence,
+                    )
+                ),
+            )
+        except AssertionError as exc:
+            raise StreamValidationError(unsupported_message) from exc
+
+    def _get_legacy_adapter(self) -> "_LegacyTokenStreamAdapter":
+        if self._legacy_adapter is None:
+            self._legacy_adapter = _LegacyTokenStreamAdapter(
+                stream_session_id=self.stream_session_id,
+                run_id=self.run_id,
+                turn_id=self.turn_id,
+            )
+        return cast("_LegacyTokenStreamAdapter", self._legacy_adapter)
+
+    def validate_complete(self) -> None:
+        if self.has_canonical_items and self.accumulate:
+            self.accumulator.validate_complete()
+
+    def terminal_projection(self) -> StreamConsumerProjection | None:
+        for item in reversed(self.accumulator.items):
+            if item.is_stream_terminal:
+                return project_canonical_stream_item(item)
+        if self.accumulator.terminal_item is not None:
+            return project_canonical_stream_item(
+                self.accumulator.terminal_item
+            )
+        return None
+
+    def _project_canonical_item(
+        self,
+        item: CanonicalStreamItem,
+    ) -> StreamConsumerProjection:
+        if self.legacy_stream_seen:
+            raise StreamValidationError(
+                "canonical stream item after legacy stream item"
+            )
+        self.has_canonical_items = True
+        if self.accumulate:
+            self.accumulator.add(item)
+        return project_canonical_stream_item(item)
+
+    def _project_consumer_projection(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> StreamConsumerProjection:
+        if self.legacy_stream_seen:
+            raise StreamValidationError(
+                "canonical stream item after legacy stream item"
+            )
+        self.has_canonical_items = True
+        if self.accumulate:
+            self.accumulator.add(
+                canonical_item_from_consumer_projection(projection)
+            )
+        return projection
+
+    def _project_mapped_legacy_item(
+        self,
+        item: CanonicalStreamItem,
+    ) -> StreamConsumerProjection:
+        assert isinstance(item, CanonicalStreamItem)
+        if self.accumulate:
+            self.accumulator.add(item)
+        return project_canonical_stream_item(item)
 
 
 def accumulate_canonical_stream_items(
@@ -1811,8 +2644,12 @@ async def normalize_local_stream(
         assert isinstance(capabilities, StreamProviderCapabilities)
         assert capabilities.backend is StreamProducerBackend.LOCAL
 
-    parser = _LocalTextStreamParser()
-    pending_tool_call: ToolCall | None = None
+    legacy_adapter = _LegacyTokenStreamAdapter(
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+        parser=_LocalTextStreamParser(),
+    )
     token_iterator = tokens.__aiter__()
     tokens_exhausted = False
     tokens_closed = False
@@ -1825,7 +2662,7 @@ async def normalize_local_stream(
         await _close_async_iterable(token_iterator)
 
     async def events() -> AsyncIterator[StreamProviderEvent]:
-        nonlocal pending_tool_call, tokens_exhausted
+        nonlocal tokens_exhausted
         try:
             while True:
                 try:
@@ -1834,50 +2671,9 @@ async def normalize_local_stream(
                     tokens_exhausted = True
                     break
 
-                if isinstance(token, str):
-                    for event in _legacy_tool_call_boundary_events(
-                        pending_tool_call
-                    ):
-                        yield event
-                    pending_tool_call = None
-                    for event in parser.push(token):
-                        yield event
-                else:
-                    if (
-                        isinstance(token, ToolCallToken)
-                        and pending_tool_call is not None
-                        and token.call is not None
-                        and _legacy_tool_call_id(token.call)
-                        != _legacy_tool_call_id(pending_tool_call)
-                    ):
-                        for event in _legacy_tool_call_boundary_events(
-                            pending_tool_call
-                        ):
-                            yield event
-                        pending_tool_call = None
-                    elif not isinstance(token, ToolCallToken):
-                        for event in _legacy_tool_call_boundary_events(
-                            pending_tool_call
-                        ):
-                            yield event
-                        pending_tool_call = None
-
-                    item = canonical_item_from_token(token, 0)
-                    yield StreamProviderEvent(
-                        kind=item.kind,
-                        text_delta=item.text_delta,
-                        correlation=item.correlation,
-                        visibility=item.visibility,
-                        metadata=item.metadata,
-                    )
-                    if (
-                        isinstance(token, ToolCallToken)
-                        and token.call is not None
-                    ):
-                        pending_tool_call = token.call
-            for event in parser.flush():
-                yield event
-            for event in _legacy_tool_call_boundary_events(pending_tool_call):
+                for event in legacy_adapter.events_from_token(token):
+                    yield event
+            for event in legacy_adapter.flush_events():
                 yield event
         finally:
             await close_tokens()
@@ -1901,19 +2697,22 @@ async def normalize_local_stream(
 
 
 def _legacy_tool_call_boundary_events(
-    call: ToolCall | None,
+    tool_call_id: str | None,
+    data: LooseJsonValue | None,
 ) -> tuple[StreamProviderEvent, ...]:
-    if call is None:
+    if tool_call_id is None:
         return ()
-    call_id = _legacy_tool_call_id(call)
-    correlation = StreamItemCorrelation(tool_call_id=call_id)
+    assert isinstance(tool_call_id, str)
+    assert tool_call_id.strip()
+    data = data if isinstance(data, dict) else {}
+    correlation = StreamItemCorrelation(tool_call_id=tool_call_id)
     return (
         StreamProviderEvent(
             kind=StreamItemKind.TOOL_CALL_READY,
             correlation=correlation,
             data={
-                "name": call.name,
-                "arguments": call.arguments,
+                "name": data.get("name"),
+                "arguments": data.get("arguments"),
             },
         ),
         StreamProviderEvent(
@@ -1935,6 +2734,8 @@ class _LocalTextStreamParser:
     _tool_end_tag: str = "</tool_call>"
     _reasoning_buffer: str = ""
     _reasoning_active: bool = False
+    _reasoning_delta_emitted: bool = False
+    _reasoning_done_pending: bool = False
     _tool_buffer: str = ""
     _tool_state: str = "outside"
     _tool_call_id: str | None = None
@@ -1961,12 +2762,12 @@ class _LocalTextStreamParser:
             if self._reasoning_active:
                 events.append(self._reasoning_delta(text))
             else:
+                self._append_pending_reasoning_done(events)
                 events.extend(self._push_tool(text))
         if self._reasoning_active:
             self._reasoning_active = False
-            events.append(
-                StreamProviderEvent(kind=StreamItemKind.REASONING_DONE)
-            )
+            self._append_reasoning_done(events)
+        self._append_pending_reasoning_done(events)
         events.extend(self._flush_tool())
         return tuple(events)
 
@@ -1986,9 +2787,7 @@ class _LocalTextStreamParser:
                         end_index + len(self._reasoning_end_tag) :
                     ]
                     self._reasoning_active = False
-                    events.append(
-                        StreamProviderEvent(kind=StreamItemKind.REASONING_DONE)
-                    )
+                    self._reasoning_done_pending = True
                     continue
                 flush_length = self._flushable_prefix_length(
                     self._reasoning_buffer,
@@ -2006,20 +2805,35 @@ class _LocalTextStreamParser:
                 self._reasoning_start_tag
             )
             if start_index != -1:
-                events.extend(
-                    self._push_tool(self._reasoning_buffer[:start_index])
-                )
+                visible_prefix = self._reasoning_buffer[:start_index]
+                continuing_reasoning = self._reasoning_done_pending
+                if continuing_reasoning and (
+                    not visible_prefix or visible_prefix.isspace()
+                ):
+                    self._append_reasoning_delta(events, visible_prefix)
+                else:
+                    self._append_pending_reasoning_done(events)
+                    events.extend(self._push_tool(visible_prefix))
                 self._reasoning_buffer = self._reasoning_buffer[
                     start_index + len(self._reasoning_start_tag) :
                 ]
                 self._reasoning_active = True
+                self._reasoning_done_pending = False
+                if not continuing_reasoning:
+                    self._reasoning_delta_emitted = False
                 continue
+            if (
+                self._reasoning_done_pending
+                and self._awaiting_repeated_reasoning_start()
+            ):
+                break
             flush_length = self._flushable_prefix_length(
                 self._reasoning_buffer,
                 self._reasoning_start_tag,
             )
             if not flush_length:
                 break
+            self._append_pending_reasoning_done(events)
             events.extend(
                 self._push_tool(self._reasoning_buffer[:flush_length])
             )
@@ -2181,7 +2995,26 @@ class _LocalTextStreamParser:
         text: str,
     ) -> None:
         if text:
+            self._reasoning_delta_emitted = True
             events.append(self._reasoning_delta(text))
+
+    def _append_reasoning_done(
+        self,
+        events: list[StreamProviderEvent],
+    ) -> None:
+        if not self._reasoning_delta_emitted:
+            events.append(self._reasoning_delta(""))
+        self._reasoning_delta_emitted = False
+        events.append(StreamProviderEvent(kind=StreamItemKind.REASONING_DONE))
+
+    def _append_pending_reasoning_done(
+        self,
+        events: list[StreamProviderEvent],
+    ) -> None:
+        if not self._reasoning_done_pending:
+            return
+        self._reasoning_done_pending = False
+        self._append_reasoning_done(events)
 
     def _reasoning_delta(self, text: str) -> StreamProviderEvent:
         return StreamProviderEvent(
@@ -2244,6 +3077,12 @@ class _LocalTextStreamParser:
                 return start_index
 
             search_from = start_index + 1
+
+    def _awaiting_repeated_reasoning_start(self) -> bool:
+        stripped = self._reasoning_buffer.lstrip()
+        if not stripped:
+            return True
+        return self._reasoning_start_tag.startswith(stripped)
 
     def _tool_flushable_prefix_length(self) -> int:
         return self._flushable_prefix_length(
@@ -2310,6 +3149,7 @@ async def _close_async_iterables(
 
 @dataclass(slots=True)
 class _ProviderToolCallState:
+    started: bool = False
     ready: bool = False
     done: bool = False
     malformed: bool = False
@@ -2366,6 +3206,7 @@ class _ProviderStreamNormalizer:
         if event.kind is StreamItemKind.USAGE_COMPLETED:
             return self._final_usage(event)
 
+        self._validate_event_after_final_usage(event)
         self._track_tool_call_state(event)
         item = self._item(
             kind=event.kind,
@@ -2380,6 +3221,18 @@ class _ProviderStreamNormalizer:
         )
         self._track_channel_boundary(item)
         return (item,)
+
+    def _validate_event_after_final_usage(
+        self,
+        event: StreamProviderEvent,
+    ) -> None:
+        if not self._usage_completed:
+            return
+        if event.kind is StreamItemKind.STREAM_DIAGNOSTIC:
+            return
+        raise StreamValidationError(
+            "semantic stream item emitted after final usage"
+        )
 
     def completed(self) -> tuple[CanonicalStreamItem, ...]:
         incomplete_tool_call_error = self._incomplete_tool_call_error()
@@ -2405,6 +3258,9 @@ class _ProviderStreamNormalizer:
         self,
         event: StreamProviderEvent,
     ) -> tuple[CanonicalStreamItem, ...]:
+        incomplete_tool_call_error = self._incomplete_tool_call_error()
+        if incomplete_tool_call_error is not None:
+            raise StreamValidationError(incomplete_tool_call_error)
         items = list(self._open_channel_done_items())
         item = self._item(
             kind=event.kind,
@@ -2483,6 +3339,21 @@ class _ProviderStreamNormalizer:
         if self._reasoning_started and not self._reasoning_done:
             item = self._item(kind=StreamItemKind.REASONING_DONE)
             self._track_channel_boundary(item)
+            items.append(item)
+        for tool_call_id, state in self._tool_call_states.items():
+            if not state.started or state.done:
+                continue
+            metadata: dict[str, LooseJsonValue] = {}
+            if state.malformed:
+                metadata["tool_call.close_reason"] = "malformed"
+            elif not state.ready:
+                metadata["tool_call.close_reason"] = "error"
+            item = self._item(
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
+                metadata=metadata,
+            )
+            state.done = True
             items.append(item)
         return tuple(items)
 
@@ -2573,9 +3444,11 @@ class _ProviderStreamNormalizer:
                 raise StreamValidationError(
                     "tool-call argument emitted after ready"
                 )
+            state.started = True
         elif event.kind is StreamItemKind.TOOL_CALL_READY:
             if state.ready:
                 raise StreamValidationError("duplicate tool-call ready item")
+            state.started = True
             state.ready = True
         elif event.kind is StreamItemKind.TOOL_CALL_DONE:
             if not state.ready:
@@ -2756,11 +3629,244 @@ class TextGenerationSingleStream(TextGenerationStream):
         return self._content
 
 
+@dataclass(slots=True)
+class _LegacyTokenStreamAdapter:
+    stream_session_id: str = "legacy-stream"
+    run_id: str = "legacy-run"
+    turn_id: str = "legacy-turn"
+    parser: _LocalTextStreamParser | None = None
+    pending_tool_call_id: str | None = None
+    pending_tool_call_data: LooseJsonValue | None = None
+    pending_reasoning_done: bool = False
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.stream_session_id, "stream_session_id")
+        _assert_non_empty_string(self.run_id, "run_id")
+        _assert_non_empty_string(self.turn_id, "turn_id")
+        if self.parser is not None:
+            assert isinstance(self.parser, _LocalTextStreamParser)
+        if self.pending_tool_call_id is not None:
+            _assert_non_empty_string(
+                self.pending_tool_call_id, "pending_tool_call_id"
+            )
+
+    def item_from_token(
+        self,
+        token: object,
+        sequence: int,
+    ) -> CanonicalStreamItem:
+        assert isinstance(sequence, int), "sequence must be an integer"
+        assert sequence >= 0, "sequence must not be negative"
+        if isinstance(token, str):
+            text = token
+            metadata: dict[str, LooseJsonValue] = {}
+        else:
+            assert isinstance(token, Token)
+            assert isinstance(token.token, str)
+            text = token.token
+            metadata = {}
+            if isinstance(token.id, int) and token.id >= 0:
+                metadata["token_id"] = token.id
+            if token.probability is not None:
+                metadata["probability"] = token.probability
+            if isinstance(token, TokenDetail):
+                if token.step is not None:
+                    metadata["step"] = token.step
+                if token.probability_distribution is not None:
+                    metadata["probability_distribution"] = (
+                        token.probability_distribution
+                    )
+                if token.tokens is not None:
+                    candidate_metadata: list[dict[str, LooseJsonValue]] = []
+                    for candidate in token.tokens:
+                        assert isinstance(candidate, Token)
+                        assert isinstance(candidate.token, str)
+                        candidate_entry: dict[str, LooseJsonValue] = {
+                            "token": candidate.token
+                        }
+                        if isinstance(candidate.id, int) and candidate.id >= 0:
+                            candidate_entry["token_id"] = candidate.id
+                        if candidate.probability is not None:
+                            candidate_entry["probability"] = (
+                                candidate.probability
+                            )
+                        candidate_metadata.append(candidate_entry)
+                    metadata["tokens"] = cast(
+                        LooseJsonValue, candidate_metadata
+                    )
+            if (
+                isinstance(token, ToolCallToken)
+                and token.provider_name is not None
+            ):
+                metadata["provider_name"] = token.provider_name
+
+        if isinstance(token, ReasoningToken):
+            return CanonicalStreamItem(
+                stream_session_id=self.stream_session_id,
+                run_id=self.run_id,
+                turn_id=self.turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta=text,
+                visibility=StreamVisibility.PRIVATE,
+                metadata=metadata,
+            )
+        if isinstance(token, ToolCallToken):
+            tool_call_id = (
+                _legacy_tool_call_id(token.call)
+                if token.call is not None
+                else "legacy-tool-call"
+            )
+            data: LooseJsonValue | None = None
+            if token.call is not None:
+                data = cast(
+                    LooseJsonValue,
+                    {
+                        "name": token.call.name,
+                        "arguments": token.call.arguments,
+                    },
+                )
+            return CanonicalStreamItem(
+                stream_session_id=self.stream_session_id,
+                run_id=self.run_id,
+                turn_id=self.turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
+                text_delta=text,
+                data=data,
+                metadata=metadata,
+            )
+        return CanonicalStreamItem(
+            stream_session_id=self.stream_session_id,
+            run_id=self.run_id,
+            turn_id=self.turn_id,
+            sequence=sequence,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=text,
+            metadata=metadata,
+        )
+
+    def events_from_token(
+        self,
+        token: Token | TokenDetail | str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        if isinstance(token, str):
+            assert self.parser is not None
+            return (
+                *self._pop_pending_reasoning_done_events(),
+                *self._pop_pending_tool_call_events(),
+                *self.parser.push(token),
+            )
+
+        item = self.item_from_token(token, 0)
+        boundary_events = self._boundary_events_before_item(item)
+        self._remember_pending_tool_call(item)
+        self._remember_pending_reasoning(item)
+        return (
+            *boundary_events,
+            self._provider_event_from_item(item),
+        )
+
+    def flush_events(self) -> tuple[StreamProviderEvent, ...]:
+        parser_events: tuple[StreamProviderEvent, ...] = ()
+        if self.parser is not None:
+            parser_events = self.parser.flush()
+        return (
+            *parser_events,
+            *self._pop_pending_reasoning_done_events(),
+            *self._pop_pending_tool_call_events(),
+        )
+
+    def _boundary_events_before_item(
+        self,
+        item: CanonicalStreamItem,
+    ) -> tuple[StreamProviderEvent, ...]:
+        assert isinstance(item, CanonicalStreamItem)
+        events: list[StreamProviderEvent] = []
+        if item.kind is not StreamItemKind.REASONING_DELTA:
+            events.extend(self._pop_pending_reasoning_done_events())
+        if item.kind is not StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            events.extend(self._pop_pending_tool_call_events())
+            return tuple(events)
+        if item.data is None:
+            return tuple(events)
+        tool_call_id = item.correlation.tool_call_id
+        if (
+            self.pending_tool_call_id is not None
+            and tool_call_id != self.pending_tool_call_id
+        ):
+            events.extend(self._pop_pending_tool_call_events())
+        return tuple(events)
+
+    def _remember_pending_tool_call(
+        self,
+        item: CanonicalStreamItem,
+    ) -> None:
+        assert isinstance(item, CanonicalStreamItem)
+        if (
+            item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+            and item.data is not None
+        ):
+            self.pending_tool_call_id = item.correlation.tool_call_id
+            self.pending_tool_call_data = item.data
+
+    def _remember_pending_reasoning(
+        self,
+        item: CanonicalStreamItem,
+    ) -> None:
+        assert isinstance(item, CanonicalStreamItem)
+        if item.kind is StreamItemKind.REASONING_DELTA:
+            self.pending_reasoning_done = True
+
+    def _pop_pending_tool_call_events(
+        self,
+    ) -> tuple[StreamProviderEvent, ...]:
+        events = _legacy_tool_call_boundary_events(
+            self.pending_tool_call_id,
+            self.pending_tool_call_data,
+        )
+        self.pending_tool_call_id = None
+        self.pending_tool_call_data = None
+        return events
+
+    def _pop_pending_reasoning_done_events(
+        self,
+    ) -> tuple[StreamProviderEvent, ...]:
+        if not self.pending_reasoning_done:
+            return ()
+        self.pending_reasoning_done = False
+        return (
+            StreamProviderEvent(
+                kind=StreamItemKind.REASONING_DONE,
+                visibility=StreamVisibility.PRIVATE,
+            ),
+        )
+
+    @staticmethod
+    def _provider_event_from_item(
+        item: CanonicalStreamItem,
+    ) -> StreamProviderEvent:
+        assert isinstance(item, CanonicalStreamItem)
+        return StreamProviderEvent(
+            kind=item.kind,
+            text_delta=item.text_delta,
+            data=item.data,
+            usage=item.usage,
+            correlation=item.correlation,
+            visibility=item.visibility,
+            metadata=item.metadata,
+            provider_event_type=item.provider_event_type,
+        )
+
+
 def token_text(token: Token | TokenDetail | str) -> str:
-    if isinstance(token, str):
-        return token
-    assert isinstance(token, Token)
-    return token.token
+    return (
+        _LegacyTokenStreamAdapter().item_from_token(token, 0).text_delta or ""
+    )
 
 
 def canonical_item_from_token(
@@ -2771,79 +3877,14 @@ def canonical_item_from_token(
     run_id: str = "legacy-run",
     turn_id: str = "legacy-turn",
 ) -> CanonicalStreamItem:
-    assert isinstance(sequence, int), "sequence must be an integer"
-    assert sequence >= 0, "sequence must not be negative"
-    text = token_text(token)
-    metadata = _token_metadata(token)
-    if isinstance(token, ReasoningToken):
-        return CanonicalStreamItem(
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            sequence=sequence,
-            kind=StreamItemKind.REASONING_DELTA,
-            channel=StreamChannel.REASONING,
-            text_delta=text,
-            visibility=StreamVisibility.PRIVATE,
-            metadata=metadata,
-        )
-    if isinstance(token, ToolCallToken):
-        tool_call_id = str(token.call.id) if token.call else "legacy-tool-call"
-        data: LooseJsonValue | None = None
-        if token.call is not None:
-            data = cast(
-                LooseJsonValue,
-                {
-                    "name": token.call.name,
-                    "arguments": token.call.arguments,
-                },
-            )
-        return CanonicalStreamItem(
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            sequence=sequence,
-            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-            channel=StreamChannel.TOOL_CALL,
-            correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
-            text_delta=text,
-            data=data,
-            metadata=metadata,
-        )
-    return CanonicalStreamItem(
+    return _LegacyTokenStreamAdapter(
         stream_session_id=stream_session_id,
         run_id=run_id,
         turn_id=turn_id,
-        sequence=sequence,
-        kind=StreamItemKind.ANSWER_DELTA,
-        channel=StreamChannel.ANSWER,
-        text_delta=text,
-        metadata=metadata,
-    )
+    ).item_from_token(token, sequence)
 
 
 def _token_metadata(
     token: Token | TokenDetail | str,
 ) -> dict[str, LooseJsonValue]:
-    if isinstance(token, str):
-        return {}
-    metadata: dict[str, LooseJsonValue] = {}
-    if isinstance(token.id, int) and token.id >= 0:
-        metadata["token_id"] = token.id
-    if token.probability is not None:
-        metadata["probability"] = token.probability
-    if isinstance(token, TokenDetail):
-        if token.step is not None:
-            metadata["step"] = token.step
-        if token.probability_distribution is not None:
-            metadata["probability_distribution"] = (
-                token.probability_distribution
-            )
-        if token.tokens is not None:
-            metadata["tokens"] = [
-                _token_metadata(candidate) | {"token": candidate.token}
-                for candidate in token.tokens
-            ]
-    if isinstance(token, ToolCallToken) and token.provider_name is not None:
-        metadata["provider_name"] = token.provider_name
-    return metadata
+    return dict(_LegacyTokenStreamAdapter().item_from_token(token, 0).metadata)

@@ -22,15 +22,10 @@ from avalan.entities import (
     MessageRole,
     ReasoningToken,
     Token,
+    TokenDetail,
     ToolCall,
-    ToolCallDiagnostic,
-    ToolCallDiagnosticCode,
-    ToolCallDiagnosticStage,
-    ToolCallError,
-    ToolCallResult,
     ToolCallToken,
 )
-from avalan.event import Event, EventType
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -38,17 +33,17 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamTerminalOutcome,
     StreamValidationError,
+    canonical_item_from_token,
+    project_canonical_stream_item,
 )
 from avalan.server.a2a.router import (
     _STREAM_RESPONSE_ID_UNSET,
     A2AResponseTranslator,
     A2AStreamEventConverter,
     A2ATaskCreateRequest,
-    StreamState,
     _append_unique,
     _artifact_parts_from_payload,
     _build_agent_card,
-    _call_identifier,
     _canonical_tool_execution_payload,
     _canonical_tool_execution_status,
     _canonical_tool_execution_terminal_payload,
@@ -73,7 +68,6 @@ from avalan.server.a2a.router import (
     _select_jsonrpc_model,
     _skill_from_spec,
     _skill_tags,
-    _state_for_item,
     _status_to_state,
     _stream_terminal_error,
     _task_metadata,
@@ -537,11 +531,11 @@ def test_model_selection_and_message_text_fallbacks() -> None:
     assert _jsonrpc_message_text({}) == ""
 
 
-def test_translator_switch_state_paths() -> None:
-    asyncio.run(_run_translator_switch_state_paths())
+def test_translator_switch_channel_paths() -> None:
+    asyncio.run(_run_translator_switch_channel_paths())
 
 
-async def _run_translator_switch_state_paths() -> None:
+async def _run_translator_switch_channel_paths() -> None:
     store = TaskStore()
     await store.create_task(
         "switch",
@@ -552,13 +546,17 @@ async def _run_translator_switch_state_paths() -> None:
     )
     translator = A2AResponseTranslator("switch", store)
 
-    created = await translator._switch_state(StreamState.REASONING, None)
+    created = await translator._switch_channel(StreamChannel.REASONING, None)
     assert created
-    assert await translator._switch_state(StreamState.REASONING, None) == []
-    completed_reasoning = await translator._switch_state(None, None)
+    assert (
+        await translator._switch_channel(StreamChannel.REASONING, None) == []
+    )
+    completed_reasoning = await translator._switch_channel(None, None)
     assert any(
         event["event"] == "artifact.completed" for event in completed_reasoning
     )
+    with pytest.raises(AssertionError):
+        await translator._switch_channel("answer", None)  # type: ignore[arg-type]
 
     await store.create_task(
         "reasoning-to-tool",
@@ -568,9 +566,9 @@ async def _run_translator_switch_state_paths() -> None:
         metadata={},
     )
     reasoning_to_tool = A2AResponseTranslator("reasoning-to-tool", store)
-    await reasoning_to_tool._switch_state(StreamState.REASONING, None)
-    reasoning_switched = await reasoning_to_tool._switch_state(
-        StreamState.TOOL, "tool-from-reasoning"
+    await reasoning_to_tool._switch_channel(StreamChannel.REASONING, None)
+    reasoning_switched = await reasoning_to_tool._switch_channel(
+        StreamChannel.TOOL_CALL, "tool-from-reasoning"
     )
     assert any(
         event["event"] == "artifact.completed"
@@ -578,19 +576,28 @@ async def _run_translator_switch_state_paths() -> None:
         for event in reasoning_switched
     )
 
-    tool_events = await translator._switch_state(StreamState.TOOL, "tool-1")
+    tool_events = await translator._switch_channel(
+        StreamChannel.TOOL_CALL, "tool-1"
+    )
     assert translator._tool_artifact_id == "tool-1"
     assert tool_events
-    replaced_tool = await translator._switch_state(StreamState.TOOL, "tool-2")
+    same_tool_channel = await translator._switch_channel(
+        StreamChannel.TOOL_EXECUTION, "tool-1"
+    )
+    assert same_tool_channel == []
+    assert translator._state is StreamChannel.TOOL_EXECUTION
+    replaced_tool = await translator._switch_channel(
+        StreamChannel.TOOL_EXECUTION, "tool-2"
+    )
     assert translator._tool_artifact_id == "tool-2"
     assert any(
         event["event"] == "artifact.completed" for event in replaced_tool
     )
 
-    await translator._switch_state(StreamState.ANSWER, None)
+    await translator._switch_channel(StreamChannel.ANSWER, None)
     assert translator._tool_artifact_id is None
     assert translator._answer_artifact_id == "answer"
-    finished = await translator._switch_state(None, None)
+    finished = await translator._switch_channel(None, None)
     assert translator._answer_artifact_id is None
     assert any(event["event"] == "artifact.completed" for event in finished)
 
@@ -602,9 +609,9 @@ async def _run_translator_switch_state_paths() -> None:
         metadata={},
     )
     answer_to_tool = A2AResponseTranslator("answer-to-tool", store)
-    await answer_to_tool._switch_state(StreamState.ANSWER, None)
-    answer_switched = await answer_to_tool._switch_state(
-        StreamState.TOOL, "tool-after-answer"
+    await answer_to_tool._switch_channel(StreamChannel.ANSWER, None)
+    answer_switched = await answer_to_tool._switch_channel(
+        StreamChannel.TOOL_CALL, "tool-after-answer"
     )
     assert any(
         event["event"] == "artifact.completed"
@@ -629,128 +636,91 @@ async def _run_tool_handlers_cover_branches() -> None:
         )
         return A2AResponseTranslator(task_id, local_store)
 
-    translator_dict = await prepare("tool-dict")
-    call = ToolCall(id="call-1", name="tool", arguments={"value": 1})
-    event_dict = Event(
-        type=EventType.TOOL_PROCESS,
-        payload={"calls": [call, "skip"]},
+    correlation = StreamItemCorrelation(tool_call_id="call-1")
+    translator_ready = await prepare("tool-ready")
+    await translator_ready._process_item(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
     )
-    process_events = await translator_dict._handle_tool_process(event_dict)
-    assert any(event["event"] == "artifact.delta" for event in process_events)
+    ready_events = await translator_ready._process_item(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.TOOL_CALL_READY,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=correlation,
+            data={"name": "tool", "arguments": {"value": 1}},
+        )
+    )
+    assert any(event["event"] == "artifact.delta" for event in ready_events)
 
-    translator_list = await prepare("tool-list")
-    call_none = ToolCall(id="call-2", name="tool", arguments=None)
-    event_list = Event(type=EventType.TOOL_PROCESS, payload=[call_none])
-    process_list_events = await translator_list._handle_tool_process(
-        event_list
+    translator_output = await prepare("tool-output")
+    await translator_output._process_item(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
     )
-    assert process_list_events
+    await translator_output._process_item(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=correlation,
+            metadata={"tool_name": "tool"},
+        )
+    )
+    output_events = await translator_output._process_item(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=correlation,
+            text_delta="ok",
+            data={"category": "stdout", "content": "ok"},
+            metadata={"tool_name": "tool"},
+        )
+    )
+    assert any(event["event"] == "artifact.delta" for event in output_events)
 
-    translator_result = await prepare("tool-result")
-    result_call = ToolCall(id="call-3", name="tool", arguments=None)
-    result = ToolCallResult(
-        id="res-1",
-        call=result_call,
-        result={"ok": True},
-        name="tool",
-        arguments=None,
-    )
-    result_event = Event(
-        type=EventType.TOOL_RESULT,
-        payload={"result": result, "call": result_call},
-    )
-    result_events = await translator_result._handle_tool_result(result_event)
-    assert any(
-        event["event"] == "artifact.completed" for event in result_events
-    )
-
-    translator_error = await prepare("tool-error")
-    error_call = ToolCall(id="call-4", name="tool", arguments=None)
-    error = ToolCallError(
-        id="err-1",
-        call=error_call,
-        error=RuntimeError("fail"),
-        message="fail",
-        name="tool",
-        arguments=None,
-    )
-    error_event = Event(
-        type=EventType.TOOL_RESULT,
-        payload={"result": error, "call": error_call},
-    )
-    error_events = await translator_error._handle_tool_result(error_event)
-    assert any(
-        event["event"] == "artifact.completed" for event in error_events
-    )
-    error_artifact = await translator_error._store.get_artifact(
-        "tool-error", "call-4"
-    )
-    assert error_artifact["content"][0]["data"]["error"] == {
-        "type": "RuntimeError",
-        "message": "Tool call failed.",
-    }
-    assert "'message': 'fail'" not in str(
-        error_artifact["content"][0]["data"]["error"]
-    )
-
-    translator_diagnostic = await prepare("tool-diagnostic")
-    diagnostic_call = ToolCall(id="call-d", name="missing", arguments=None)
-    diagnostic = ToolCallDiagnostic(
-        id="diag-d",
-        call_id=diagnostic_call.id,
-        requested_name="missing",
-        code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
-        stage=ToolCallDiagnosticStage.RESOLVE,
-        message="Unknown tool.",
-    )
-    diagnostic_event = Event(
-        type=EventType.TOOL_DIAGNOSTIC,
-        payload={"call": diagnostic_call, "diagnostic": diagnostic},
-    )
-    diagnostic_events = await translator_diagnostic._handle_tool_result(
-        diagnostic_event
+    completed_events = await translator_output._process_item(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            channel=StreamChannel.TOOL_EXECUTION,
+            correlation=correlation,
+            metadata={"tool_name": "tool"},
+        )
     )
     assert any(
-        event["event"] == "artifact.completed" for event in diagnostic_events
+        event["event"] == "artifact.completed" for event in completed_events
     )
-    diagnostic_artifact = await translator_diagnostic._store.get_artifact(
-        "tool-diagnostic", "call-d"
-    )
-    assert diagnostic_artifact["metadata"]["status"] == "diagnostic"
-    assert diagnostic_artifact["metadata"]["diagnostic_code"] == "tool.unknown"
-    assert (
-        diagnostic_artifact["content"][0]["data"]["diagnostic"]["message"]
-        == "Unknown tool."
-    )
-
-    translator_payload = await prepare("tool-payload")
-    payload_call = ToolCall(id="call-5", name="tool", arguments=None)
-    payload_event = Event(type=EventType.TOOL_RESULT, payload=payload_call)
-    payload_events = await translator_payload._handle_tool_result(
-        payload_event
-    )
-    assert payload_events
-
-    translator_fallback = await prepare("tool-fallback")
-    translator_fallback._tool_artifact_id = "call-6"
-    fallback_event = Event(type=EventType.TOOL_RESULT, payload={})
-    fallback_events = await translator_fallback._handle_tool_result(
-        fallback_event
-    )
-    assert any(
-        event["event"] == "artifact.completed" for event in fallback_events
-    )
-
-    translator_uuid = await prepare("tool-uuid")
-    translator_uuid._tool_artifact_id = None
-    uuid_event = Event(type=EventType.TOOL_RESULT, payload={})
-    uuid_events = await translator_uuid._handle_tool_result(uuid_event)
-    assert uuid_events
 
     translator_token = await prepare("tool-token")
     token_call = ToolCall(id="call-7", name="tool", arguments=None)
     token = ToolCallToken(token="", call=token_call)
-    token_events = await translator_token._handle_tool_token(token)
+    token_events = await translator_token._process_item(token)
     assert any(event["event"] == "artifact.delta" for event in token_events)
 
 
@@ -770,23 +740,38 @@ async def _run_translator_additional_branches() -> None:
     translator = A2AResponseTranslator("extra", store)
 
     await translator._ensure_reasoning_artifact()
-    translator._state = StreamState.REASONING
-    non_tool_event = Event(type=EventType.START, payload={})
-    non_tool_events = await translator._process_item(non_tool_event)
+    translator._state = StreamChannel.REASONING
+    control_events = await translator._process_item(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+    )
     assert any(
-        event["event"] == "artifact.completed" for event in non_tool_events
+        event["event"] == "artifact.completed" for event in control_events
     )
 
-    tool_call = ToolCall(id="proc", name="processor", arguments={"a": 1})
-    process_event = Event(
-        type=EventType.TOOL_PROCESS,
-        payload={"calls": [tool_call]},
+    process_events = await translator._process_item(
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.TOOL_CALL_READY,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id="proc"),
+            data={"name": "processor", "arguments": {"a": 1}},
+        )
     )
-    process_events = await translator._process_item(process_event)
     assert any(event["event"] == "artifact.delta" for event in process_events)
 
-    await translator._process_item("chunk")
-    finish_events = await translator._finish()
+    translator_legacy = A2AResponseTranslator("extra", store)
+    await translator_legacy._process_item("chunk")
+    finish_events = await translator_legacy._finish()
     assert any(
         event["event"] == "artifact.completed" for event in finish_events
     )
@@ -799,7 +784,7 @@ async def _run_translator_additional_branches() -> None:
         input_messages=[],
         metadata={},
     )
-    tool_events = await translator_tool._handle_tool_token(
+    tool_events = await translator_tool._process_item(
         ToolCallToken(token="args", call=None)
     )
     assert any(event["event"] == "artifact.delta" for event in tool_events)
@@ -1238,89 +1223,46 @@ async def _run_additional_router_helpers() -> None:
         metadata={},
     )
 
-    assert _state_for_item(ReasoningToken("thinking")) is StreamState.REASONING
-    assert (
-        _state_for_item(Event(type=EventType.TOOL_PROCESS, payload={}))
-        is StreamState.TOOL
+    reasoning_item = canonical_item_from_token(
+        ReasoningToken("thinking"),
+        1,
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
     )
-    assert (
-        _state_for_item(Event(type=EventType.TOOL_RESULT, payload={}))
-        is StreamState.TOOL
+    answer_item = canonical_item_from_token(
+        Token(token="text"),
+        2,
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
     )
-    assert (
-        _state_for_item(Event(type=EventType.TOOL_DIAGNOSTIC, payload={}))
-        is StreamState.TOOL
+    tool_item = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=3,
+        kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        channel=StreamChannel.TOOL_CALL,
+        correlation=StreamItemCorrelation(tool_call_id="call"),
+        text_delta="{}",
     )
-    assert _state_for_item(Event(type=EventType.START, payload={})) is None
-    assert _state_for_item("text") is StreamState.ANSWER
-    assert _state_for_item(Token(token="text")) is StreamState.ANSWER
-    assert _state_for_item(123) is None
-
-    call = ToolCall(id="call", name="tool", arguments=None)
-    assert _call_identifier(ToolCallToken(token="", call=call)) == "call"
-    process_event = Event(
-        type=EventType.TOOL_PROCESS, payload={"calls": [call]}
-    )
-    assert _call_identifier(process_event) == "call"
-    process_list_event = Event(type=EventType.TOOL_PROCESS, payload=[call])
-    assert _call_identifier(process_list_event) == "call"
-    result_event = Event(
-        type=EventType.TOOL_RESULT,
-        payload={
-            "result": ToolCallResult(
-                id="r", call=call, result={}, name="tool", arguments=None
-            )
-        },
-    )
-    assert _call_identifier(result_event) == "call"
-    assert (
-        _call_identifier(
-            Event(type=EventType.TOOL_RESULT, payload={"call": call})
-        )
-        == "call"
-    )
-    diagnostic = ToolCallDiagnostic(
-        id="diag",
-        call_id="call-d",
-        requested_name="tool",
-        code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
-        stage=ToolCallDiagnosticStage.RESOLVE,
-        message="Unknown tool.",
-    )
-    assert (
-        _call_identifier(
-            Event(
-                type=EventType.TOOL_DIAGNOSTIC,
-                payload={"diagnostic": diagnostic},
-            )
-        )
-        == "call-d"
-    )
-    assert (
-        _call_identifier(
-            Event(
-                type=EventType.TOOL_DIAGNOSTIC,
-                payload={"diagnostics": ["bad", diagnostic]},
-            )
-        )
-        == "call-d"
-    )
-    assert (
-        _call_identifier(
-            Event(
-                type=EventType.TOOL_DIAGNOSTIC,
-                payload={"diagnostic": "bad"},
-            )
-        )
-        is None
-    )
-    assert (
-        _call_identifier(Event(type=EventType.TOOL_RESULT, payload={})) is None
+    control_item = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=4,
+        kind=StreamItemKind.STREAM_STARTED,
+        channel=StreamChannel.CONTROL,
     )
 
-    assert _token_text("plain") == "plain"
-    assert _token_text(Token(token="value")) == "value"
-    assert _token_text(Event(type=EventType.START, payload={})) == ""
+    assert reasoning_item.channel is StreamChannel.REASONING
+    assert tool_item.channel is StreamChannel.TOOL_CALL
+    assert answer_item.channel is StreamChannel.ANSWER
+    assert control_item.channel is StreamChannel.CONTROL
+
+    assert _token_text(answer_item) == "text"
+    assert _token_text(control_item) == ""
 
 
 def test_stream_generator_handles_cancelled(
@@ -1631,6 +1573,37 @@ def test_translator_rejects_mixed_stream_surfaces() -> None:
     asyncio.run(_run_translator_rejects_mixed_stream_surfaces())
 
 
+def test_translator_legacy_items_use_projection_adapter() -> None:
+    asyncio.run(_run_translator_legacy_items_use_projection_adapter())
+
+
+async def _run_translator_legacy_items_use_projection_adapter() -> None:
+    store = TaskStore()
+    task_id = "legacy-projection-adapter"
+    await store.create_task(
+        task_id,
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    events = await translator._process_item(
+        TokenDetail(id=7, token="chunk", probability=0.5)
+    )
+
+    assert translator._projection_state.legacy_stream_seen is True
+    assert translator._projection_state.has_canonical_items is False
+    assert translator._legacy_adapter.sequence == 2
+    snapshot = translator._accumulator.snapshot()
+    assert snapshot.answer_text == "chunk"
+    assert len(snapshot.control_items) == 1
+    assert snapshot.control_items[0].kind is StreamItemKind.STREAM_STARTED
+    assert snapshot.control_items[0].run_id == task_id
+    assert any(event["event"] == "artifact.delta" for event in events)
+
+
 async def _run_translator_rejects_mixed_stream_surfaces() -> None:
     async def prepare(task_id: str) -> A2AResponseTranslator:
         local_store = TaskStore()
@@ -1673,6 +1646,175 @@ async def _run_translator_rejects_mixed_stream_surfaces() -> None:
 
 def test_translator_rejects_duplicate_canonical_terminal() -> None:
     asyncio.run(_run_translator_rejects_duplicate_canonical_terminal())
+
+
+def test_translator_prefers_consumer_projection_stream() -> None:
+    asyncio.run(_run_translator_prefers_consumer_projection_stream())
+
+
+async def _run_translator_prefers_consumer_projection_stream() -> None:
+    store = TaskStore()
+    task_id = "consumer-projection-stream"
+    await store.create_task(
+        task_id,
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    class ProjectionSource:
+        def __init__(self) -> None:
+            self.raw_iterated = False
+            self.kwargs: dict[str, str] | None = None
+
+        def __aiter__(self) -> AsyncGenerator[Token, None]:
+            self.raw_iterated = True
+
+            async def gen() -> AsyncGenerator[Token, None]:
+                yield Token(token="raw")
+
+            return gen()
+
+        def consumer_projections(
+            self,
+            *,
+            stream_session_id: str,
+            run_id: str,
+            turn_id: str,
+        ) -> AsyncGenerator[object, None]:
+            self.kwargs = {
+                "stream_session_id": stream_session_id,
+                "run_id": run_id,
+                "turn_id": turn_id,
+            }
+
+            async def gen() -> AsyncGenerator[object, None]:
+                for item in (
+                    CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=0,
+                        kind=StreamItemKind.STREAM_STARTED,
+                        channel=StreamChannel.CONTROL,
+                    ),
+                    CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=1,
+                        kind=StreamItemKind.ANSWER_DELTA,
+                        channel=StreamChannel.ANSWER,
+                        text_delta="projected",
+                    ),
+                    CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=2,
+                        kind=StreamItemKind.ANSWER_DONE,
+                        channel=StreamChannel.ANSWER,
+                    ),
+                    CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=3,
+                        kind=StreamItemKind.USAGE_COMPLETED,
+                        channel=StreamChannel.USAGE,
+                        usage={"total_tokens": 1},
+                    ),
+                    CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=4,
+                        kind=StreamItemKind.STREAM_COMPLETED,
+                        channel=StreamChannel.CONTROL,
+                        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                    ),
+                ):
+                    yield project_canonical_stream_item(item)
+
+            return gen()
+
+    source = ProjectionSource()
+
+    text = await translator.consume(source)
+
+    assert text == "projected"
+    assert source.raw_iterated is False
+    assert source.kwargs == {
+        "stream_session_id": "a2a-stream",
+        "run_id": task_id,
+        "turn_id": "a2a-turn",
+    }
+    task = await store.get_task(task_id)
+    assert task["status"] == "completed"
+    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
+    assert artifacts["answer"]["content"][0]["text"] == "projected"
+
+
+def test_translator_rejects_malformed_consumer_projection_stream() -> None:
+    asyncio.run(_run_translator_rejects_bad_projection_stream())
+
+
+async def _run_translator_rejects_bad_projection_stream() -> None:
+    store = TaskStore()
+    task_id = "malformed-consumer-projection-stream"
+    await store.create_task(
+        task_id,
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    class BadProjectionSource:
+        def __init__(self) -> None:
+            self.raw_iterated = False
+
+        def __aiter__(self) -> AsyncGenerator[Token, None]:
+            self.raw_iterated = True
+
+            async def gen() -> AsyncGenerator[Token, None]:
+                yield Token(token="raw")
+
+            return gen()
+
+        def consumer_projections(
+            self,
+            *,
+            stream_session_id: str,
+            run_id: str,
+            turn_id: str,
+        ) -> AsyncGenerator[object, None]:
+            async def gen() -> AsyncGenerator[object, None]:
+                yield "bad"
+
+            return gen()
+
+    source = BadProjectionSource()
+
+    with pytest.raises(
+        StreamValidationError,
+        match=(
+            "consumer projection stream item must be StreamConsumerProjection"
+        ),
+    ):
+        async for _ in translator.run_stream(source):
+            continue
+
+    assert source.raw_iterated is False
+    task = await store.get_task(task_id)
+    assert task["status"] == "failed"
+    assert (
+        task["error"]
+        == "consumer projection stream item must be StreamConsumerProjection"
+    )
 
 
 async def _run_translator_rejects_duplicate_canonical_terminal() -> None:

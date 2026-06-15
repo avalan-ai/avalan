@@ -47,6 +47,8 @@ from avalan.model.call import ModelCallContext
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
     StreamItemKind,
     StreamTerminalOutcome,
     validate_canonical_stream_items,
@@ -293,19 +295,21 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         )
         self.assertIs(
             token_events[0].observability.kind,
-            EventPayloadKind.TEMPORARY_LEGACY,
+            EventPayloadKind.CANONICAL_STREAM,
         )
         self.assertEqual(
-            token_events[0].observability.data,
-            {
-                "event_type": EventType.TOKEN_GENERATED.value,
-                "model_id": "m",
-                "step": 0,
-                "token_id": 42,
-                "token_length": 1,
-                "token_type": "str",
-            },
+            token_events[0].observability.data["kind"],
+            StreamItemKind.ANSWER_DELTA.value,
         )
+        self.assertEqual(
+            token_events[0].observability.data["channel"],
+            "answer",
+        )
+        self.assertEqual(
+            token_events[0].observability.data["summary"],
+            {"text_delta_length": 1},
+        )
+        self.assertNotIn("token", token_events[0].observability.data)
         self.assertEqual(
             token_events[1].payload,
             {
@@ -317,9 +321,182 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(
-            token_events[1].observability.data["token_length"],
-            1,
+            token_events[1].observability.data["summary"],
+            {"text_delta_length": 1, "metadata_keys": ["token_id"]},
         )
+
+    async def test_consumer_projections_align_token_event_sequences(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
+        event_manager.enrich_token_ids = False
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+        )
+
+        projections = [
+            projection
+            async for projection in resp.consumer_projections(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+        answer_sequences = [
+            projection.sequence
+            for projection in projections
+            if projection.kind is StreamItemKind.ANSWER_DELTA
+        ]
+        token_events = [
+            call.args[0]
+            for call in event_manager.trigger.await_args_list
+            if call.args[0].type is EventType.TOKEN_GENERATED
+        ]
+        event_sequences = [
+            event.observability.data["sequence"] for event in token_events
+        ]
+
+        self.assertEqual(answer_sequences, [1, 2])
+        self.assertEqual(event_sequences, answer_sequences)
+
+    async def test_consumer_projections_align_canonical_answer_event_sequence(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
+
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            yield CanonicalStreamItem(
+                stream_session_id="provider-stream",
+                run_id="provider-run",
+                turn_id="provider-turn",
+                sequence=36,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="provider-stream",
+                run_id="provider-run",
+                turn_id="provider-turn",
+                sequence=37,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="provider-stream",
+                run_id="provider-run",
+                turn_id="provider-turn",
+                sequence=38,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="provider-stream",
+                run_id="provider-run",
+                turn_id="provider-turn",
+                sequence=39,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={"source": "test"},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="provider-stream",
+                run_id="provider-run",
+                turn_id="provider-turn",
+                sequence=40,
+                kind=StreamItemKind.STREAM_CLOSED,
+                channel=StreamChannel.CONTROL,
+            )
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            TextGenerationResponse(
+                lambda **_: gen(),
+                logger=getLogger(),
+                use_async_generator=True,
+                generation_settings=GenerationSettings(),
+                settings=GenerationSettings(),
+            ),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+        )
+
+        projections = [
+            projection
+            async for projection in resp.consumer_projections(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+        answer_sequences = [
+            projection.sequence
+            for projection in projections
+            if projection.kind is StreamItemKind.ANSWER_DELTA
+        ]
+        token_events = [
+            call.args[0]
+            for call in event_manager.trigger.await_args_list
+            if call.args[0].type is EventType.TOKEN_GENERATED
+        ]
+        event_sequences = [
+            event.observability.data["sequence"] for event in token_events
+        ]
+
+        self.assertEqual(answer_sequences, [1])
+        self.assertEqual(event_sequences, answer_sequences)
+
+    async def test_projection_rejects_mismatched_token_event_sequence(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+        resp._last_token_event_canonical_item = CanonicalStreamItem(
+            stream_session_id=resp._canonical_stream_session_id,
+            run_id=resp._canonical_run_id,
+            turn_id=resp._canonical_turn_id,
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="same",
+        )
+
+        self.assertIsNone(
+            resp._matching_token_event_canonical_item(
+                ReasoningToken(token="same")
+            )
+        )
+        self.assertIsNone(resp._last_token_event_canonical_item)
 
     async def test_to_str_emits_streamed_token_events(self):
         engine = _DummyEngine()
@@ -358,12 +535,62 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             [
-                event.observability.data["token_length"]
+                cast(
+                    dict[str, object],
+                    event.observability.data["summary"],
+                )["text_delta_length"]
                 for event in token_events
             ],
             [1, 1],
         )
+        event_sequences = [
+            event.observability.data["sequence"] for event in token_events
+        ]
+        canonical_sequences = {item.sequence for item in resp.canonical_items}
+        self.assertEqual(event_sequences, [1, 2])
+        self.assertTrue(canonical_sequences.isdisjoint(event_sequences))
+        self.assertEqual(
+            [item.kind for item in resp.canonical_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
         engine.tokenizer.encode.assert_not_called()
+
+    async def test_token_events_skip_tokenizer_when_enrichment_disabled(self):
+        class LazyTokenizerEngine:
+            model_id = "m"
+
+            @property
+            def tokenizer(self) -> object:
+                raise AssertionError("tokenizer should be opt-in")
+
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = LazyTokenizerEngine()
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        event_manager.should_emit.return_value = True
+        event_manager.enrich_token_ids = False
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+        )
+
+        item = await resp._emit_token_generated_event("a")
+
+        self.assertIsNotNone(item)
+        event = event_manager.trigger.await_args.args[0]
+        self.assertIs(event.type, EventType.TOKEN_GENERATED)
+        self.assertIsNone(event.payload["token_id"])
+        self.assertEqual(event.payload["token"], "a")
 
     async def test_iteration_skips_token_events_without_subscriber(self):
         engine = _DummyEngine()
@@ -953,6 +1180,13 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                     progress=0.5,
                 )
             )
+            await context.stream_event(
+                ToolExecutionStreamEvent(
+                    kind=ToolExecutionStreamKind.LOG,
+                    content="trace\n",
+                    metadata={"logger": "tool"},
+                )
+            )
             return ToolCallResult(
                 id="result1",
                 call=call,
@@ -1011,6 +1245,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.TOOL_EXECUTION_OUTPUT,
                 StreamItemKind.TOOL_EXECUTION_OUTPUT,
                 StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                StreamItemKind.TOOL_EXECUTION_OUTPUT,
                 StreamItemKind.TOOL_EXECUTION_COMPLETED,
                 StreamItemKind.MODEL_CONTINUATION_STARTED,
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED,
@@ -1028,9 +1263,14 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 (item.data["category"], item.text_delta)
                 for item in output_items
             ],
-            [("stdout", "alpha\n"), ("stderr", "warn\n")],
+            [
+                ("stdout", "alpha\n"),
+                ("stderr", "warn\n"),
+                ("log", "trace\n"),
+            ],
         )
         self.assertEqual(output_items[0].data["metadata"], {"bytes": 6})
+        self.assertEqual(output_items[2].data["metadata"], {"logger": "tool"})
         progress_item = canonical_items[7]
         self.assertEqual(
             progress_item.data,
@@ -1041,6 +1281,21 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 "metadata": {},
             },
         )
+        terminal_item = canonical_items[9]
+        self.assertIs(
+            terminal_item.kind, StreamItemKind.TOOL_EXECUTION_COMPLETED
+        )
+        self.assertTrue(
+            all(
+                item.sequence < terminal_item.sequence
+                for item in (*output_items, progress_item)
+            )
+        )
+        context = agent.await_args.args[0]
+        assert isinstance(context.input, list)
+        self.assertEqual(context.input[-2].tool_calls[0].id, "call1")
+        self.assertEqual(context.input[-1].role, MessageRole.TOOL)
+        self.assertEqual(loads(str(context.input[-1].content)), "alpha\n")
 
     async def test_tool_stream_events_after_terminal_are_ignored(
         self,
@@ -4006,6 +4261,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
+        agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             _empty_text_response(),
@@ -4026,6 +4282,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             await response._next_item(),
             await response._next_item(),
         ]
+        model_event = await response._next_item()
 
         result_events = [
             item
@@ -4041,6 +4298,35 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 if event.payload is not None
             ],
             ["call-1", "call-2", "call-3"],
+        )
+        assert isinstance(model_event, Event)
+        self.assertEqual(model_event.type, EventType.TOOL_MODEL_RESPONSE)
+        agent.assert_awaited_once()
+        child_context = agent.await_args.args[0]
+        continuation_messages = cast(list[Message], child_context.input)
+        self.assertEqual(
+            [
+                message.tool_calls[0].id
+                for message in continuation_messages
+                if message.tool_calls
+            ],
+            ["call-1", "call-2", "call-3"],
+        )
+        self.assertEqual(
+            [
+                message.content
+                for message in continuation_messages
+                if message.role is MessageRole.TOOL
+            ],
+            ['"first"', '"second"', '"third"'],
+        )
+        self.assertEqual(
+            [
+                item.correlation.tool_call_id
+                for item in response.canonical_items
+                if item.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED
+            ],
+            ["call-2", "call-1", "call-3"],
         )
         validate_tool_lifecycle_items(response.canonical_items)
 

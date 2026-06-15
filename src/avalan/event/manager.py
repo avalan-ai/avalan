@@ -76,6 +76,11 @@ class EventHistoryConfig:
         assert_optional_non_negative_int(self.max_events, "max_events")
         assert_optional_non_negative_int(self.max_bytes, "max_bytes")
         assert_optional_non_negative_number(self.ttl_seconds, "ttl_seconds")
+        assert not self.enabled or (
+            self.max_events is not None
+            or self.max_bytes is not None
+            or self.ttl_seconds is not None
+        ), "enabled history must define at least one bound"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -106,12 +111,14 @@ class EventManagerDefaults:
     history_config: EventHistoryConfig
     delivery_config: EventDeliveryConfig
     listen_config: EventListenConfig
+    collect_stats: bool = True
     enrich_token_ids: bool = False
 
     def __post_init__(self) -> None:
         assert isinstance(self.history_config, EventHistoryConfig)
         assert isinstance(self.delivery_config, EventDeliveryConfig)
         assert isinstance(self.listen_config, EventListenConfig)
+        assert isinstance(self.collect_stats, bool)
         assert isinstance(self.enrich_token_ids, bool)
 
 
@@ -149,6 +156,7 @@ class EventManager:
     _history_config: EventHistoryConfig
     _listen_config: EventListenConfig
     _enrich_token_ids: bool
+    _collect_stats: bool
     _stats: EventStats
     _closed: bool
 
@@ -161,9 +169,11 @@ class EventManager:
         history_config: EventHistoryConfig | None = None,
         listen_config: EventListenConfig | None = None,
         mode: EventManagerMode = EventManagerMode.SDK,
+        collect_stats: bool | None = None,
     ) -> None:
         assert isinstance(mode, EventManagerMode)
         assert isinstance(enrich_token_ids, bool)
+        assert collect_stats is None or isinstance(collect_stats, bool)
         mode_defaults = self.defaults_for_mode(mode)
         if history_config is None:
             history_config = (
@@ -177,6 +187,8 @@ class EventManager:
             default_delivery_config = mode_defaults.delivery_config
         if listen_config is None:
             listen_config = mode_defaults.listen_config
+        if collect_stats is None:
+            collect_stats = mode_defaults.collect_stats
         if not enrich_token_ids:
             enrich_token_ids = mode_defaults.enrich_token_ids
         assert isinstance(history_config, EventHistoryConfig)
@@ -191,6 +203,7 @@ class EventManager:
         self._history_config = history_config
         self._listen_config = listen_config
         self._enrich_token_ids = enrich_token_ids
+        self._collect_stats = collect_stats
         self._stats = EventStats()
         self._closed = False
 
@@ -207,6 +220,7 @@ class EventManager:
                         )
                     ),
                     listen_config=EventListenConfig(enabled=False),
+                    collect_stats=False,
                 )
             case EventManagerMode.CLI:
                 return EventManagerDefaults(
@@ -288,6 +302,10 @@ class EventManager:
     @property
     def enrich_token_ids(self) -> bool:
         return self._enrich_token_ids
+
+    @property
+    def collect_stats(self) -> bool:
+        return self._collect_stats
 
     @property
     def stats(self) -> EventStatsSnapshot:
@@ -447,9 +465,7 @@ class EventManager:
 
         self._store_history(event)
         self._enqueue_for_listen(event)
-        self._stats.record_published(
-            event.type, queue_depth=self._queue_depth()
-        )
+        self._record_published(event.type)
 
         delivery_errors: list[BaseException] = []
         for subscriber in list(self._subscribers.get(event.type, [])):
@@ -475,7 +491,7 @@ class EventManager:
                 event = await wait_for(
                     self._delivery_queue.get(), timeout=timeout
                 )
-                self._stats.record_delivered(queue_depth=self._queue_depth())
+                self._record_delivered()
                 yield event
             except TimeoutError:
                 if (
@@ -512,9 +528,9 @@ class EventManager:
         self._history_bytes = 0
         dropped += self._drain_queue(self._delivery_queue)
         if dropped:
-            self._stats.record_dropped(dropped, queue_depth=0)
+            self._record_dropped(dropped, queue_depth=0)
         else:
-            self._stats.record_queue_depth(0)
+            self._record_queue_depth(0)
         if tasks:
             await gather(*tasks, return_exceptions=True)
 
@@ -565,10 +581,10 @@ class EventManager:
             return
         if self._delivery_queue.full():
             if self._listen_config.policy is EventDeliveryPolicy.DROP:
-                self._stats.record_dropped(queue_depth=self._queue_depth())
+                self._record_dropped()
                 return
             _ = self._delivery_queue.get_nowait()
-            self._stats.record_coalesced()
+            self._record_coalesced()
         self._delivery_queue.put_nowait(event)
 
     def _queue_depth(self) -> int:
@@ -620,38 +636,39 @@ class EventManager:
     async def _call_listener(
         self, subscriber: _Subscriber, event: Event
     ) -> Literal[True]:
-        started = monotonic()
+        started = monotonic() if self._collect_stats else 0.0
         try:
             result = subscriber.listener(event)
             if isawaitable(result):
                 if subscriber.config.timeout is None:
                     await result
                 else:
-                    wait_started = monotonic()
+                    wait_started = monotonic() if self._collect_stats else 0.0
                     try:
                         await wait_for(
                             result, timeout=subscriber.config.timeout
                         )
                     finally:
-                        if subscriber.config.critical:
-                            self._stats.record_critical_wait_time(
+                        if subscriber.config.critical and self._collect_stats:
+                            self._record_critical_wait_time(
                                 monotonic() - wait_started
                             )
         except CancelledError:
             if self._current_task_is_cancelling():
                 raise
-            self._stats.record_failed()
+            self._record_failed()
             raise
         except Exception:
-            self._stats.record_failed()
+            self._record_failed()
             raise
-        self._stats.record_delivered(queue_depth=self._queue_depth())
-        self._stats.record_listener_lag(monotonic() - started)
+        self._record_delivered()
+        if self._collect_stats:
+            self._record_listener_lag(monotonic() - started)
         return True
 
     def _enqueue_or_drop(self, subscriber: _Subscriber, event: Event) -> None:
         if subscriber.queue.full():
-            self._stats.record_dropped(queue_depth=self._queue_depth())
+            self._record_dropped()
             return
         self._enqueue(subscriber, event)
 
@@ -660,23 +677,26 @@ class EventManager:
     ) -> None:
         if subscriber.queue.full():
             _ = subscriber.queue.get_nowait()
-            self._stats.record_coalesced()
+            self._record_coalesced()
         self._enqueue(subscriber, event)
 
     def _enqueue_or_fail_closed(
         self, subscriber: _Subscriber, event: Event
     ) -> None:
         if subscriber.queue.full():
-            self._stats.record_failed()
+            self._record_failed()
             self._close_subscriber(subscriber.listener, cancel_task=True)
             return
         self._enqueue(subscriber, event)
 
     def _enqueue(self, subscriber: _Subscriber, event: Event) -> None:
         subscriber.queue.put_nowait(
-            _QueuedEvent(event=event, enqueued_at=monotonic())
+            _QueuedEvent(
+                event=event,
+                enqueued_at=monotonic() if self._collect_stats else 0.0,
+            )
         )
-        self._stats.record_queue_depth(self._queue_depth())
+        self._record_queue_depth()
         self._ensure_worker(subscriber)
 
     def _ensure_worker(self, subscriber: _Subscriber) -> None:
@@ -688,7 +708,8 @@ class EventManager:
             if subscriber.queue.empty():
                 break
             queued = await subscriber.queue.get()
-            self._stats.record_listener_lag(monotonic() - queued.enqueued_at)
+            if self._collect_stats:
+                self._record_listener_lag(monotonic() - queued.enqueued_at)
             try:
                 await self._call_listener(subscriber, queued.event)
             except CancelledError:
@@ -699,14 +720,14 @@ class EventManager:
                         subscriber.listener, cancel_task=False
                     )
                     return
-                self._stats.record_queue_depth(self._queue_depth())
+                self._record_queue_depth()
             except Exception:
                 if subscriber.config.policy is EventDeliveryPolicy.FAIL_CLOSED:
                     self._close_subscriber(
                         subscriber.listener, cancel_task=False
                     )
                     return
-                self._stats.record_queue_depth(self._queue_depth())
+                self._record_queue_depth()
 
     def _close_subscriber(
         self, listener: Listener, *, cancel_task: bool
@@ -724,12 +745,58 @@ class EventManager:
                 if not subscribers:
                     self._subscribers.pop(event_type)
         if dropped:
-            self._stats.record_dropped(
+            self._record_dropped(
                 dropped,
-                queue_depth=self._queue_depth(),
             )
         else:
-            self._stats.record_queue_depth(self._queue_depth())
+            self._record_queue_depth()
+
+    def _record_published(self, event_type: EventType) -> None:
+        if self._collect_stats:
+            self._stats.record_published(
+                event_type, queue_depth=self._queue_depth()
+            )
+
+    def _record_delivered(self) -> None:
+        if self._collect_stats:
+            self._stats.record_delivered(queue_depth=self._queue_depth())
+
+    def _record_dropped(
+        self,
+        count: int = 1,
+        *,
+        queue_depth: int | None = None,
+    ) -> None:
+        if not self._collect_stats:
+            return
+        self._stats.record_dropped(
+            count,
+            queue_depth=(
+                self._queue_depth() if queue_depth is None else queue_depth
+            ),
+        )
+
+    def _record_queue_depth(self, queue_depth: int | None = None) -> None:
+        if self._collect_stats:
+            self._stats.record_queue_depth(
+                self._queue_depth() if queue_depth is None else queue_depth
+            )
+
+    def _record_coalesced(self) -> None:
+        if self._collect_stats:
+            self._stats.record_coalesced()
+
+    def _record_failed(self) -> None:
+        if self._collect_stats:
+            self._stats.record_failed()
+
+    def _record_listener_lag(self, seconds: float) -> None:
+        if self._collect_stats:
+            self._stats.record_listener_lag(seconds)
+
+    def _record_critical_wait_time(self, seconds: float) -> None:
+        if self._collect_stats:
+            self._stats.record_critical_wait_time(seconds)
 
     @staticmethod
     def _current_task_is_cancelling() -> bool:

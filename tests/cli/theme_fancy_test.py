@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
 from types import SimpleNamespace
@@ -41,6 +42,11 @@ from avalan.entities import (
 from avalan.event import Event, EventStats, EventType
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import PermanentMemoryPartition
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _DisplayToken(Token):
+    tokens: list[Token] | None = None
 
 
 class FancyThemeFlowProgressTestCase(unittest.TestCase):
@@ -1029,6 +1035,100 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(frame1[1].renderables)
         self.assertTrue(frame2[1].renderables)
+
+    async def test_tokens_probability_uses_display_token_metadata(self):
+        alt = Token(id=2, token="b", probability=0.6)
+        dtoken = _DisplayToken(
+            id=1,
+            token="a",
+            probability=0.8,
+            tokens=[alt],
+        )
+
+        with (
+            patch(
+                "avalan.cli.theme.fancy._lf",
+                lambda i: list(filter(None, i or [])),
+            ),
+            patch(
+                "avalan.cli.theme.fancy._j",
+                lambda sep, items: sep.join(str(x) for x in items if x),
+            ),
+        ):
+            gen = self.theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=1,
+                display_probabilities=True,
+                pick=1,
+                focus_on_token_when=lambda x: True,
+                thinking_text_tokens=[],
+                tool_text_tokens=[],
+                answer_text_tokens=["y"],
+                tokens=[dtoken],
+                input_token_count=0,
+                total_tokens=1,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.1,
+                ttnt=0.1,
+                ttsr=0.0,
+                elapsed=1.0,
+                console_width=40,
+                logger=MagicMock(),
+                maximum_frames=1,
+            )
+            token, frame = await gen.__anext__()
+
+        self.assertIs(token, dtoken)
+        self.assertTrue(frame.renderables)
+
+    async def test_tokens_probability_ignores_plain_display_token(self):
+        token = Token(id=1, token="a", probability=0.8)
+
+        with (
+            patch(
+                "avalan.cli.theme.fancy._lf",
+                lambda i: list(filter(None, i or [])),
+            ),
+            patch(
+                "avalan.cli.theme.fancy._j",
+                lambda sep, items: sep.join(str(x) for x in items if x),
+            ),
+        ):
+            gen = self.theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=1,
+                display_probabilities=True,
+                pick=1,
+                focus_on_token_when=lambda x: True,
+                thinking_text_tokens=[],
+                tool_text_tokens=[],
+                answer_text_tokens=["y"],
+                tokens=[token],
+                input_token_count=0,
+                total_tokens=1,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.1,
+                ttnt=0.1,
+                ttsr=0.0,
+                elapsed=1.0,
+                console_width=40,
+                logger=MagicMock(),
+                maximum_frames=1,
+            )
+            current_token, frame = await gen.__anext__()
+
+        self.assertIsNone(current_token)
+        self.assertTrue(frame.renderables)
 
     async def test_tokens_early_return(self):
         with patch(

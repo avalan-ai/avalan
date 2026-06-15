@@ -20,6 +20,85 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         )
         self.assertFalse(parser.is_thinking)
 
+    async def test_split_tags_embedded_in_chunks(self) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
+        outputs = []
+        for text in [
+            "lead <thi",
+            "nk>",
+            " private ",
+            "</thi",
+            "nk> tail",
+        ]:
+            outputs.extend(await parser.push(text))
+
+        self.assertEqual(outputs[0], "lead ")
+        self.assertEqual(outputs[-1], " tail")
+        reasoning = outputs[1:-1]
+        self.assertTrue(
+            all(isinstance(token, ReasoningToken) for token in reasoning)
+        )
+        self.assertEqual(
+            [token.token for token in reasoning],
+            ["<thi", "nk>", " private ", "</thi", "nk>"],
+        )
+        self.assertFalse(parser.is_thinking)
+
+    async def test_empty_chunk_preserves_pending_embedded_marker(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
+        outputs = []
+        for text in ["alpha <thi", "", "nk>hidden</think> omega"]:
+            outputs.extend(await parser.push(text))
+
+        self.assertEqual(outputs[0], "alpha ")
+        self.assertEqual(outputs[-1], " omega")
+        reasoning = outputs[1:-1]
+        self.assertTrue(
+            all(isinstance(token, ReasoningToken) for token in reasoning)
+        )
+        self.assertEqual(
+            [token.token for token in reasoning],
+            ["<thi", "nk>", "hidden", "</think>"],
+        )
+        self.assertFalse(parser.is_thinking)
+
+    async def test_whitespace_chunk_breaks_pending_embedded_marker(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
+        outputs = []
+        for text in ["alpha <thi", " ", "nk> visible"]:
+            outputs.extend(await parser.push(text))
+        outputs.extend(await parser.flush())
+
+        self.assertEqual("".join(outputs), "alpha <thi nk> visible")
+        self.assertFalse(
+            any(isinstance(token, ReasoningToken) for token in outputs)
+        )
+        self.assertFalse(parser.is_thinking)
+
+    async def test_malformed_embedded_partial_tag_stays_visible(self) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(), logger=getLogger()
+        )
+        outputs = []
+        for text in ["lead <thi", "s tail"]:
+            outputs.extend(await parser.push(text))
+
+        self.assertEqual("".join(outputs), "lead <this tail")
+        self.assertFalse(
+            any(isinstance(token, ReasoningToken) for token in outputs)
+        )
+        self.assertFalse(parser.is_thinking)
+
     async def test_unmatched_partial_tag(self) -> None:
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(), logger=getLogger()

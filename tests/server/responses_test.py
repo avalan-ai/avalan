@@ -53,8 +53,13 @@ class SimpleOrchestrator(Orchestrator):
 
 
 class EventfulServerOrchestrator(Orchestrator):
-    def __init__(self, *, streaming: bool = False) -> None:
-        self._event_manager = EventManager(mode=EventManagerMode.SERVER)
+    def __init__(
+        self, *, streaming: bool = False, collect_stats: bool = False
+    ) -> None:
+        self._event_manager = EventManager(
+            mode=EventManagerMode.SERVER,
+            collect_stats=collect_stats,
+        )
         self._streaming = streaming
 
     async def __call__(self, messages, settings=None):  # type: ignore[no-untyped-def]
@@ -195,7 +200,30 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(orchestrator.event_manager.history, [])
-        self.assertEqual(orchestrator.event_manager.stats.published, 30)
+        self.assertEqual(orchestrator.event_manager._history_bytes, 0)
+        self.assertEqual(orchestrator.event_manager._delivery_queue.qsize(), 0)
+        self.assertEqual(orchestrator.event_manager.stats.published, 0)
+        self.assertEqual(orchestrator.event_manager.stats.queue_depth, 0)
+        self.assertEqual(orchestrator.event_manager.stats.dropped, 0)
+
+    async def test_server_event_stats_can_be_enabled_explicitly(self):
+        app = self.FastAPI()
+        orchestrator = EventfulServerOrchestrator(collect_stats=True)
+        app.state.orchestrator = orchestrator
+        app.include_router(self.responses.router)
+
+        client = self.TestClient(app)
+        resp = client.post(
+            "/responses",
+            json={
+                "input": [{"role": "user", "content": "hi"}],
+                "stream": False,
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(orchestrator.event_manager.history, [])
+        self.assertEqual(orchestrator.event_manager.stats.published, 10)
         self.assertEqual(orchestrator.event_manager.stats.queue_depth, 0)
         self.assertEqual(orchestrator.event_manager.stats.dropped, 0)
 
@@ -218,7 +246,9 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
             self.assertIn("event: response.completed", lines)
 
         self.assertEqual(orchestrator.event_manager.history, [])
-        self.assertEqual(orchestrator.event_manager.stats.published, 30)
+        self.assertEqual(orchestrator.event_manager._history_bytes, 0)
+        self.assertEqual(orchestrator.event_manager._delivery_queue.qsize(), 0)
+        self.assertEqual(orchestrator.event_manager.stats.published, 0)
         self.assertEqual(orchestrator.event_manager.stats.queue_depth, 0)
         self.assertEqual(orchestrator.event_manager.stats.dropped, 0)
 

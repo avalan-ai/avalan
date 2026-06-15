@@ -176,6 +176,111 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         with self.assertRaises(AssertionError):
             TextGenerationVendorStream(cast(Any, None)).__aiter__()
 
+    def test_stream_cancel_is_idempotent(self) -> None:
+        class Source:
+            def __init__(self) -> None:
+                self.cancel_count = 0
+
+            async def cancel(self) -> None:
+                self.cancel_count += 1
+
+        async def generator():
+            yield "token"
+
+        async def cancel_twice() -> Source:
+            source = Source()
+            stream = TextGenerationVendorStream(generator(), sources=(source,))
+            await stream.cancel()
+            await stream.cancel()
+            return source
+
+        source = run(cancel_twice())
+
+        self.assertEqual(source.cancel_count, 1)
+
+    def test_stream_close_accepts_sync_sources_and_dedupes(self) -> None:
+        class Source:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            def aclose(self) -> None:
+                self.close_count += 1
+
+        async def generator():
+            yield "token"
+
+        async def close_stream() -> Source:
+            source = Source()
+            stream = TextGenerationVendorStream(
+                generator(), sources=(source, source)
+            )
+            await stream.aclose()
+            await stream.aclose()
+            return source
+
+        source = run(close_stream())
+
+        self.assertEqual(source.close_count, 1)
+
+    def test_stream_close_rejects_bad_sync_result(self) -> None:
+        class Source:
+            def aclose(self) -> object:
+                return object()
+
+        async def generator():
+            yield "token"
+
+        async def close_stream() -> None:
+            stream = TextGenerationVendorStream(
+                generator(), sources=(Source(),)
+            )
+            await stream.aclose()
+
+        with self.assertRaises(AssertionError):
+            run(close_stream())
+
+    def test_stream_close_reports_single_source_error(self) -> None:
+        class Source:
+            async def aclose(self) -> None:
+                raise RuntimeError("source close failed")
+
+        async def generator():
+            yield "token"
+
+        async def close_stream() -> None:
+            stream = TextGenerationVendorStream(
+                generator(), sources=(Source(),)
+            )
+            await stream.aclose()
+
+        with self.assertRaisesRegex(RuntimeError, "source close failed"):
+            run(close_stream())
+
+    def test_stream_close_reports_multiple_source_errors(self) -> None:
+        class Source:
+            def __init__(self, name: str) -> None:
+                self._name = name
+
+            async def aclose(self) -> None:
+                raise RuntimeError(f"{self._name} close failed")
+
+        async def generator():
+            yield "token"
+
+        async def close_stream() -> None:
+            stream = TextGenerationVendorStream(
+                generator(), sources=(Source("first"), Source("second"))
+            )
+            await stream.aclose()
+
+        with self.assertRaises(ExceptionGroup) as context:
+            run(close_stream())
+
+        self.assertEqual(
+            [str(error) for error in context.exception.exceptions],
+            ["first close failed", "second close failed"],
+        )
+
     def test_encode_tool_name_preserves_provider_safe_names(self) -> None:
         self.assertEqual(
             TextGenerationVendor.encode_tool_name("tool_name"),

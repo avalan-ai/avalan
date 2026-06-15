@@ -52,6 +52,7 @@ class LiteLLMStream(TextGenerationVendorStream):
         super().__init__(
             generator(),
             provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+            sources=(stream,),
         )
 
     def canonical_stream(
@@ -62,28 +63,33 @@ class LiteLLMStream(TextGenerationVendorStream):
         turn_id: str,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        return normalize_provider_stream(
-            self._provider_events(),
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            provider_family=self._provider_family,
-            capabilities=StreamProviderCapabilities(
-                backend=StreamProducerBackend.HOSTED,
-                provider_family=ProviderFamily.OPENAI_COMPATIBLE,
-                supports_reasoning=True,
-                supports_tool_calls=True,
-                supports_usage=True,
-                supports_terminal_events=False,
-                supports_cancellation=True,
+        return self._close_stream_on_exit(
+            normalize_provider_stream(
+                self._provider_events(),
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                provider_family=self._provider_family,
+                capabilities=StreamProviderCapabilities(
+                    backend=StreamProducerBackend.HOSTED,
+                    provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+                    supports_reasoning=True,
+                    supports_tool_calls=True,
+                    supports_usage=True,
+                    supports_terminal_events=False,
+                    supports_cancellation=True,
+                ),
+                close_after_terminal=close_after_terminal,
             ),
-            close_after_terminal=close_after_terminal,
         )
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
-        async for chunk in self._stream:
-            async for event in self._provider_events_from_chunk(chunk):
-                yield event
+        try:
+            async for chunk in self._stream:
+                async for event in self._provider_events_from_chunk(chunk):
+                    yield event
+        finally:
+            await self.aclose()
 
     async def _provider_events_from_chunk(
         self, chunk: object

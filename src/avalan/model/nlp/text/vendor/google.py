@@ -40,7 +40,11 @@ class GoogleStream(TextGenerationVendorStream):
                     yield text
             self._usage = terminal_usage
 
-        super().__init__(generator(), provider_family=ProviderFamily.GOOGLE)
+        super().__init__(
+            generator(),
+            provider_family=ProviderFamily.GOOGLE,
+            sources=(stream,),
+        )
 
 
 class GoogleClient(TextGenerationVendor):

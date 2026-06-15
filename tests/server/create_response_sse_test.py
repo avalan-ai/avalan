@@ -4,6 +4,7 @@ import sys
 from collections.abc import AsyncIterator
 from datetime import date
 from decimal import Decimal
+from gc import collect
 from json import loads
 from logging import getLogger
 from pathlib import Path
@@ -12,17 +13,13 @@ from types import ModuleType
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
+from weakref import ReferenceType, ref
 
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import (
     MessageRole,
     ReasoningToken,
     ToolCall,
-    ToolCallDiagnostic,
-    ToolCallDiagnosticCode,
-    ToolCallDiagnosticStage,
-    ToolCallError,
-    ToolCallResult,
     ToolCallToken,
 )
 from avalan.event import Event, EventType
@@ -230,6 +227,14 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                             run_id="r",
                             turn_id="t",
                             sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=3,
                             kind=StreamItemKind.STREAM_COMPLETED,
                             channel=StreamChannel.CONTROL,
                             usage={},
@@ -278,6 +283,88 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.close_count, 1)
         orchestrator.sync_messages.assert_awaited_once()
+
+    async def test_repeated_response_stream_requests_release_sources(
+        self,
+    ) -> None:
+        logger = getLogger()
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+        closed: list[int] = []
+        cancelled: list[int] = []
+
+        class Source:
+            input_token_count = 0
+            output_token_count = 0
+
+            def __init__(self, index: int) -> None:
+                self._items = iter(("chunk",))
+                self.index = index
+
+            def __aiter__(self) -> "Source":
+                return self
+
+            async def __anext__(self) -> str:
+                try:
+                    return next(self._items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+            async def cancel(self) -> None:
+                cancelled.append(self.index)
+
+            async def aclose(self) -> None:
+                closed.append(self.index)
+
+        source_refs: list[ReferenceType[Source]] = []
+
+        class StreamingOrchestrator(Orchestrator):
+            model_ids = {"m"}
+
+            def __init__(self) -> None:
+                self.sync_count = 0
+                self.response_count = 0
+
+            async def __call__(self, messages, settings=None):  # type: ignore[no-untyped-def]
+                _ = messages, settings
+                source = Source(self.response_count)
+                self.response_count += 1
+                source_refs.append(ref(source))
+                return source
+
+            async def sync_messages(self) -> None:  # type: ignore[override]
+                self.sync_count += 1
+
+        orchestrator = StreamingOrchestrator()
+        previous_refs = 0
+        for _ in range(6):
+            streaming_response = await self.responses.create_response(
+                request, logger, orchestrator
+            )
+            chunks = [
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+                async for chunk in streaming_response.body_iterator
+            ]
+
+            self.assertIn("response.output_text.delta", "".join(chunks))
+            self.assertIn("event: done", chunks[-1])
+            self.assertEqual(len(source_refs), previous_refs + 1)
+            previous_refs = len(source_refs)
+            del chunks
+            del streaming_response
+
+        collect()
+
+        self.assertEqual(closed, list(range(6)))
+        self.assertEqual(cancelled, [])
+        self.assertEqual(orchestrator.sync_count, 6)
+        self.assertEqual(
+            [source_ref() for source_ref in source_refs],
+            [None for _ in source_refs],
+        )
 
     def test_response_sse_serialization_per_item_overhead_within_budget(
         self,
@@ -615,6 +702,14 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 run_id="r",
                 turn_id="t",
                 sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                 channel=StreamChannel.TOOL_CALL,
                 correlation=StreamItemCorrelation(tool_call_id="call-1"),
@@ -624,7 +719,25 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 stream_session_id="s",
                 run_id="r",
                 turn_id="t",
-                sequence=3,
+                sequence=4,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
                 kind=StreamItemKind.ANSWER_DELTA,
                 channel=StreamChannel.ANSWER,
                 text_delta="answer",
@@ -633,7 +746,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 stream_session_id="s",
                 run_id="r",
                 turn_id="t",
-                sequence=4,
+                sequence=7,
                 kind=StreamItemKind.ANSWER_DONE,
                 channel=StreamChannel.ANSWER,
             ),
@@ -641,7 +754,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 stream_session_id="s",
                 run_id="r",
                 turn_id="t",
-                sequence=5,
+                sequence=8,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={},
@@ -744,6 +857,24 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 run_id="r",
                 turn_id="t",
                 sequence=3,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
                 kind=StreamItemKind.ANSWER_DELTA,
                 channel=StreamChannel.ANSWER,
                 text_delta="done",
@@ -752,7 +883,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 stream_session_id="s",
                 run_id="r",
                 turn_id="t",
-                sequence=4,
+                sequence=6,
                 kind=StreamItemKind.ANSWER_DONE,
                 channel=StreamChannel.ANSWER,
             ),
@@ -760,7 +891,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 stream_session_id="s",
                 run_id="r",
                 turn_id="t",
-                sequence=5,
+                sequence=7,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={},
@@ -1277,6 +1408,14 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 run_id="r",
                 turn_id="t",
                 sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
                 kind=StreamItemKind.STREAM_ERRORED,
                 channel=StreamChannel.CONTROL,
                 data={
@@ -1322,7 +1461,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn("response.output_text.done", events)
         self.assertNotIn("response.completed", events)
         self.assertEqual(events[-1], "done")
-        self.assertEqual(failed_data["sequence_number"], 2)
+        self.assertEqual(failed_data["sequence_number"], 3)
         self.assertEqual(
             failed_data["error"],
             {"error_type": "RuntimeError", "message": "provider failed"},
@@ -1365,6 +1504,14 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 run_id="r",
                 turn_id="t",
                 sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
                 kind=StreamItemKind.STREAM_ERRORED,
                 channel=StreamChannel.CONTROL,
                 data={
@@ -1410,7 +1557,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn("response.output_text.done", events)
         self.assertNotIn("response.completed", events)
         self.assertEqual(events[-1], "done")
-        self.assertEqual(failed_data["sequence_number"], 2)
+        self.assertEqual(failed_data["sequence_number"], 3)
         self.assertEqual(
             failed_data["error"],
             {"error_type": "RuntimeError", "message": "provider failed"},
@@ -1552,8 +1699,10 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         projection = project_canonical_stream_item(item)
 
         self.assertEqual(self.responses._token_to_sse(projection, 0), [])
-        self.assertIsNone(self.responses._new_state(projection))
-        self.assertIsNone(self.responses._new_state(None))
+        self.assertIsNone(
+            self.responses._response_projection_state(projection)
+        )
+        self.assertIsNone(self.responses._response_projection_state(None))
 
     def test_projection_items_emit_response_sse(self) -> None:
         item = CanonicalStreamItem(
@@ -1569,11 +1718,10 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         events = self.responses._token_to_sse(projection, 7)
         payload = loads(events[0].split("\n")[1][6:])
+        state = self.responses._response_projection_state(projection)
 
-        self.assertIs(
-            self.responses._new_state(projection),
-            self.responses.ResponseState.ANSWERING,
-        )
+        self.assertEqual(state.output_item_type, "output_text")
+        self.assertEqual(state.content_part_type, "output_text")
         self.assertEqual(payload["type"], "response.output_text.delta")
         self.assertEqual(payload["delta"], "answer")
         self.assertEqual(payload["sequence_number"], 7)
@@ -1732,7 +1880,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(actual_parts, expected_parts)
         orchestrator.sync_messages.assert_awaited_once()
 
-    async def test_streaming_includes_tool_call_token_with_call(self) -> None:
+    async def test_streaming_includes_canonical_tool_error(self) -> None:
         logger = getLogger()
         orchestrator = Orchestrator.__new__(Orchestrator)
         orchestrator.sync_messages = AsyncMock()
@@ -1744,20 +1892,96 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         )
 
         call = ToolCall(id="call-1", name="adder", arguments={"x": 1})
-        error = ToolCallError(
-            id="call-1",
-            name="adder",
-            arguments={"x": 1},
-            call=call,
-            error=RuntimeError("fail"),
-            message="fail",
-        )
-
         tokens = [
-            Event(type=EventType.TOOL_PROCESS, payload=[call]),
-            ToolCallToken(token="payload", call=call),
-            Event(type=EventType.TOOL_RESULT, payload={"result": error}),
-            "final",
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+                text_delta='{"x":1}',
+                data={"name": call.name, "arguments": call.arguments},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+                data={"name": call.name, "arguments": call.arguments},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.TOOL_EXECUTION_ERROR,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+                data={
+                    "error": {
+                        "type": "RuntimeError",
+                        "message": "Tool call failed.",
+                    }
+                },
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="final",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=8,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
         ]
 
         class DummyResponse:
@@ -1799,29 +2023,21 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             for i, event in enumerate(events)
             if event == "response.function_call_arguments.delta"
         ]
-        self.assertEqual(len(function_indices), 3)
+        self.assertEqual(len(function_indices), 1)
 
         first_data = loads(data_lines[function_indices[0]][6:])
         self.assertEqual(first_data["id"], "call-1")
         first_delta = loads(first_data["delta"])
         self.assertEqual(first_delta["name"], "adder")
+        self.assertEqual(first_delta["arguments"], {"x": 1})
 
-        second_data = loads(data_lines[function_indices[1]][6:])
-        self.assertEqual(second_data["id"], "call-1")
-        second_delta = loads(second_data["delta"])
-        self.assertEqual(second_delta["arguments"], {"x": 1})
-
-        third_data = loads(data_lines[function_indices[2]][6:])
+        error_index = events.index("response.tool_execution.error")
+        error_data = loads(data_lines[error_index][6:])
+        self.assertEqual(error_data["id"], "call-1")
         self.assertEqual(
-            third_data["error"],
+            error_data["data"]["error"],
             {"type": "RuntimeError", "message": "Tool call failed."},
         )
-        third_delta = loads(third_data["delta"])
-        self.assertEqual(
-            third_delta["error"],
-            {"type": "RuntimeError", "message": "Tool call failed."},
-        )
-        self.assertNotIn('"message":"fail"', data_lines[function_indices[2]])
         self.assertIn("response.function_call_arguments.done", events)
         self.assertNotIn("response.custom_tool_call_input.done", events)
 
@@ -1829,6 +2045,183 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         output_data = loads(data_lines[output_index][6:])
         self.assertEqual(output_data["delta"], "final")
 
+        orchestrator.sync_messages.assert_awaited_once()
+
+    async def test_streaming_preserves_consecutive_tool_output_metadata(
+        self,
+    ) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        tokens = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="out",
+                data={"category": "stdout", "chunk": 1},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="err",
+                data={"category": "stderr", "chunk": 2},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="log",
+                data={"category": "log", "chunk": 3},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                data={"category": "progress", "progress": 0.5},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                data={"result": "done"},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+
+        class DummyResponse:
+            def __init__(self, items) -> None:  # type: ignore[no-untyped-def]
+                self._items = items
+                self.input_token_count = 0
+                self.output_token_count = 0
+
+            def __aiter__(self):  # type: ignore[override]
+                async def gen():
+                    for item in self._items:
+                        yield item
+
+                return gen()
+
+        response = DummyResponse(tokens)
+
+        async def orchestrate_stub(request, logger, orch):
+            return response, uuid4(), 0
+
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+
+        streaming_resp = await self.responses.create_response(
+            request, logger, orchestrator
+        )
+        chunks: list[str] = []
+        async for chunk in streaming_resp.body_iterator:
+            chunks.append(
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+            )
+
+        text = "".join(chunks)
+        blocks = [b for b in text.strip().split("\n\n") if b]
+        events = [block.split("\n")[0].split(": ")[1] for block in blocks]
+        data_lines = [block.split("\n")[1] for block in blocks]
+        output_payloads = [
+            loads(data_lines[index][6:])
+            for index, event in enumerate(events)
+            if event == "response.tool_execution.output"
+        ]
+        progress_payloads = [
+            loads(data_lines[index][6:])
+            for index, event in enumerate(events)
+            if event == "response.tool_execution.progress"
+        ]
+        completed_index = events.index("response.tool_execution.completed")
+        live_indexes = [
+            index
+            for index, event in enumerate(events)
+            if event
+            in {
+                "response.tool_execution.output",
+                "response.tool_execution.progress",
+            }
+        ]
+
+        self.assertEqual(
+            [payload["delta"] for payload in output_payloads],
+            ["out", "err", "log"],
+        )
+        self.assertEqual(
+            [payload["data"] for payload in output_payloads],
+            [
+                {"category": "stdout", "chunk": 1},
+                {"category": "stderr", "chunk": 2},
+                {"category": "log", "chunk": 3},
+            ],
+        )
+        self.assertEqual(
+            [payload["data"]["category"] for payload in progress_payloads],
+            ["progress"],
+        )
+        self.assertEqual(
+            [payload["sequence_number"] for payload in output_payloads],
+            [2, 3, 4],
+        )
+        self.assertEqual(
+            [payload["sequence_number"] for payload in progress_payloads],
+            [5],
+        )
+        self.assertTrue(all(index < completed_index for index in live_indexes))
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_streaming_preserves_falsy_tool_result(self) -> None:
@@ -1843,16 +2236,44 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         )
 
         call = ToolCall(id="call-1", name="counter", arguments={})
-        result = ToolCallResult(
-            id="call-1",
-            call=call,
-            name="counter",
-            arguments={},
-            result=0,
-        )
         tokens = [
-            Event(type=EventType.TOOL_PROCESS, payload=[call]),
-            Event(type=EventType.TOOL_RESULT, payload={"result": result}),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+                data={"result": 0},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
         ]
 
         class DummyResponse:
@@ -1888,16 +2309,13 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         result_blocks = [
             block
             for block in blocks
-            if block.startswith(
-                "event: response.function_call_arguments.delta"
-            )
+            if block.startswith("event: response.tool_execution.completed")
         ]
 
-        self.assertEqual(len(result_blocks), 2)
-        data = loads(result_blocks[1].split("\n")[1][6:])
+        self.assertEqual(len(result_blocks), 1)
+        data = loads(result_blocks[0].split("\n")[1][6:])
         self.assertEqual(data["id"], "call-1")
-        self.assertEqual(data["result"], "0")
-        self.assertEqual(loads(data["delta"])["result"], "0")
+        self.assertEqual(data["data"]["result"], 0)
         orchestrator.sync_messages.assert_awaited_once()
 
     async def test_streaming_includes_tool_diagnostic_event(self) -> None:
@@ -1911,25 +2329,60 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             stream=True,
         )
 
-        call = ToolCall(id="call-d", name="missing", arguments={})
-        diagnostic = ToolCallDiagnostic(
-            id="diag-d",
-            call_id=call.id,
-            requested_name="missing",
-            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
-            stage=ToolCallDiagnosticStage.RESOLVE,
-            message="Unknown tool.",
-        )
         tokens = [
-            Event(
-                type=EventType.TOOL_DIAGNOSTIC,
-                payload={"diagnostics": ["bad"]},
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
             ),
-            Event(
-                type=EventType.TOOL_DIAGNOSTIC,
-                payload={"call": call, "diagnostic": diagnostic},
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.STREAM_DIAGNOSTIC,
+                channel=StreamChannel.CONTROL,
+                correlation=StreamItemCorrelation(tool_call_id="call-d"),
+                text_delta="Unknown tool.",
+                data={
+                    "diagnostic": {
+                        "id": "diag-d",
+                        "call_id": "call-d",
+                        "code": "tool.unknown",
+                        "stage": "resolve",
+                    }
+                },
             ),
-            "final",
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="final",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
         ]
 
         class DummyResponse:
@@ -1966,11 +2419,13 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         events = [block.split("\n")[0].split(": ")[1] for block in blocks]
         data_lines = [block.split("\n")[1] for block in blocks]
 
-        self.assertIn("response.tool_call_diagnostic.delta", events)
-        diagnostic_index = events.index("response.tool_call_diagnostic.delta")
+        self.assertIn("response.diagnostic", events)
+        diagnostic_index = events.index("response.diagnostic")
         diagnostic_data = loads(data_lines[diagnostic_index][6:])
-        self.assertEqual(diagnostic_data["id"], "call-d")
-        self.assertEqual(diagnostic_data["diagnostic"]["code"], "tool.unknown")
+        self.assertEqual(diagnostic_data["delta"], "Unknown tool.")
+        self.assertEqual(
+            diagnostic_data["data"]["diagnostic"]["code"], "tool.unknown"
+        )
         output_index = events.index("response.output_text.delta")
         output_data = loads(data_lines[output_index][6:])
         self.assertEqual(output_data["delta"], "final")
@@ -1990,25 +2445,52 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         )
 
         call = ToolCall(id="call-1", name="database.sample", arguments={})
-        result = ToolCallResult(
-            id="call-1",
-            name="database.sample",
-            arguments={},
-            call=call,
-            result=[
-                {
-                    "id": UUID("019b7589-672b-766d-81c6-1da5efd5f49a"),
-                    "check_date": date(2025, 9, 19),
-                    "gross_check_amount": Decimal("524.46"),
-                }
-            ],
-        )
-
         tokens = [
-            Event(
-                type=EventType.TOOL_RESULT,
-                payload={"result": result},
-            )
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id=call.id),
+                data={
+                    "result": [
+                        {
+                            "id": UUID("019b7589-672b-766d-81c6-1da5efd5f49a"),
+                            "check_date": date(2025, 9, 19),
+                            "gross_check_amount": Decimal("524.46"),
+                        }
+                    ]
+                },
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
         ]
 
         class DummyResponse:
@@ -2045,9 +2527,9 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         events = [block.split("\n")[0].split(": ")[1] for block in blocks]
         data_lines = [block.split("\n")[1] for block in blocks]
 
-        function_index = events.index("response.function_call_arguments.delta")
-        payload = loads(data_lines[function_index][6:])
-        result_payload = loads(payload["result"])
+        tool_index = events.index("response.tool_execution.completed")
+        payload = loads(data_lines[tool_index][6:])
+        result_payload = payload["data"]["result"]
 
         self.assertEqual(
             result_payload,
@@ -2071,12 +2553,79 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             stream=True,
         )
 
-        call = ToolCall(id="c1", name="t", arguments={})
         tokens = [
-            "a",
-            Event(type=EventType.TOOL_PROCESS, payload=[call]),
-            ToolCallToken(token="t"),
-            "b",
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="a",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="c1"),
+                text_delta="t",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="c1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="c1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="b",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
         ]
 
         class DummyResponse:
@@ -2122,10 +2671,6 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.content_part.done",
             "response.output_item.done",
             "response.output_item.added",
-            "response.function_call_arguments.delta",
-            "response.function_call_arguments.done",
-            "response.output_item.done",
-            "response.output_item.added",
             "response.content_part.added",
             "response.custom_tool_call_input.delta",
             "response.custom_tool_call_input.done",
@@ -2137,19 +2682,12 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.output_text.done",
             "response.content_part.done",
             "response.output_item.done",
+            "response.usage.completed",
             "response.completed",
             "done",
         ]
 
         self.assertEqual(events, expected)
-
-        func_delta_index = events.index(
-            "response.function_call_arguments.delta"
-        )
-        data = loads(data_lines[func_delta_index][6:])
-        self.assertEqual(data["id"], "c1")
-        delta_obj = loads(data["delta"])
-        self.assertEqual(delta_obj["name"], "t")
 
         custom_delta_index = events.index(
             "response.custom_tool_call_input.delta"
@@ -2163,11 +2701,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             for i, e in enumerate(events)
             if e == "response.output_item.added"
         ]
-        output_data = loads(data_lines[output_indices[1]][6:])
-        self.assertEqual(output_data["item"]["id"], "c1")
-        self.assertEqual(output_data["item"]["type"], "function_call")
-
-        custom_output_data = loads(data_lines[output_indices[2]][6:])
+        custom_output_data = loads(data_lines[output_indices[1]][6:])
         self.assertEqual(
             custom_output_data["item"],
             {"type": "custom_tool_call_input", "id": "c1"},
@@ -2189,7 +2723,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         orchestrator.sync_messages.assert_awaited_once()
 
-    async def test_streaming_ignores_events(self) -> None:
+    async def test_streaming_rejects_legacy_events(self) -> None:
         logger = getLogger()
         orchestrator = Orchestrator.__new__(Orchestrator)
         orchestrator.sync_messages = AsyncMock()
@@ -2226,29 +2760,18 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             request, logger, orchestrator
         )
         chunks: list[str] = []
-        async for chunk in streaming_resp.body_iterator:
-            chunks.append(
-                chunk.decode() if isinstance(chunk, bytes) else chunk
-            )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item for Responses SSE projection",
+        ):
+            async for chunk in streaming_resp.body_iterator:
+                chunks.append(
+                    chunk.decode() if isinstance(chunk, bytes) else chunk
+                )
 
         text = "".join(chunks)
         blocks = [b for b in text.strip().split("\n\n") if b]
         events = [block.split("\n")[0].split(": ")[1] for block in blocks]
 
-        expected = [
-            "response.created",
-            "response.output_item.added",
-            "response.content_part.added",
-            "response.output_text.delta",
-            "response.output_text.done",
-            "response.content_part.done",
-            "response.output_item.done",
-            "response.completed",
-            "done",
-        ]
-
-        self.assertEqual(events, expected)
-        delta_index = events.index("response.output_text.delta")
-        delta_data = loads(blocks[delta_index].split("\n")[1][6:])
-        self.assertEqual(delta_data["delta"], "a")
-        orchestrator.sync_messages.assert_awaited_once()
+        self.assertEqual(events, ["response.created"])
+        orchestrator.sync_messages.assert_not_awaited()

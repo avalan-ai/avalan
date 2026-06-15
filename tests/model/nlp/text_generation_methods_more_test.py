@@ -213,6 +213,32 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
         await second
         self.assertEqual(await streamer.text_queue.get(), "second")
 
+    async def test_lossless_streamer_handoff_timeout_does_not_duplicate(self):
+        stop_event = Event()
+
+        class DummyStreamer:
+            def __init__(self):
+                self.stop_signal = object()
+                self.text_queue = asyncio.Queue()
+                self.loop = asyncio.get_running_loop()
+
+        streamer = DummyStreamer()
+        _configure_lossless_streamer_handoff(
+            streamer, stop_event, max_queue_size=1
+        )
+        await asyncio.to_thread(streamer.on_finalized_text, "first")
+
+        second = asyncio.create_task(
+            asyncio.to_thread(streamer.on_finalized_text, "second")
+        )
+        await asyncio.sleep(generation_module._STREAMER_TIMEOUT_SECONDS * 2)
+
+        self.assertFalse(second.done())
+        self.assertEqual(await streamer.text_queue.get(), "first")
+        await second
+        self.assertEqual(await streamer.text_queue.get(), "second")
+        self.assertTrue(streamer.text_queue.empty())
+
     async def test_lossless_streamer_handoff_stops_blocked_put(self):
         stop_event = Event()
 
@@ -367,6 +393,92 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(chunks, ["a", ""])
         model._log.assert_any_call(
             "Created generator async text token streamer with 64 queued chunks"
+        )
+
+    async def test_stream_generator_blocks_under_slow_consumer_pressure(self):
+        model = self._model()
+        created_streamers = []
+        queued_before_last = Event()
+        last_put_started = Event()
+        generation_completed = Event()
+        produced: list[int] = []
+
+        class DummyStreamer:
+            def __init__(self, *args, **kwargs):
+                self.stop_signal = object()
+                self.text_queue = asyncio.Queue()
+                self.loop = asyncio.get_running_loop()
+                created_streamers.append(self)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                val = await self.text_queue.get()
+                if val is self.stop_signal:
+                    raise StopAsyncIteration
+                return val
+
+        def gen_side_effect(*args, streamer=None, **kwargs):
+            for index in range(66):
+                if index == 65:
+                    last_put_started.set()
+                streamer.on_finalized_text(f"chunk-{index}")
+                produced.append(index)
+                if index == 64:
+                    queued_before_last.set()
+            streamer.on_finalized_text("", stream_end=True)
+            generation_completed.set()
+
+        with (
+            patch(
+                "avalan.model.nlp.text.generation.AsyncTextIteratorStreamer",
+                DummyStreamer,
+            ),
+            patch.object(
+                TextGenerationModel,
+                "_generate_output",
+                side_effect=gen_side_effect,
+            ),
+        ):
+            stream = model._stream_generator(
+                {"input_ids": torch.tensor([[1, 2]])},
+                GenerationSettings(max_new_tokens=66),
+                None,
+                False,
+            )
+            first = await stream.__anext__()
+
+            self.assertEqual(first, "chunk-0")
+            self.assertTrue(
+                await asyncio.to_thread(queued_before_last.wait, 1.0)
+            )
+            self.assertTrue(
+                await asyncio.to_thread(last_put_started.wait, 1.0)
+            )
+            await asyncio.sleep(
+                generation_module._STREAMER_TIMEOUT_SECONDS * 2
+            )
+
+            self.assertFalse(generation_completed.is_set())
+            self.assertNotIn(65, produced)
+            self.assertLessEqual(
+                created_streamers[0].text_queue.qsize(),
+                generation_module._STREAM_HANDOFF_MAX_QUEUE_SIZE,
+            )
+
+            chunks = [first]
+
+            async def collect_rest() -> None:
+                async for chunk in stream:
+                    chunks.append(chunk)
+
+            await asyncio.wait_for(collect_rest(), timeout=2.0)
+
+        self.assertTrue(generation_completed.is_set())
+        self.assertEqual(
+            chunks,
+            [f"chunk-{index}" for index in range(66)] + [""],
         )
 
     async def test_stream_generator_stops_thread_when_closed(self):

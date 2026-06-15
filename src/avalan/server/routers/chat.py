@@ -1,24 +1,15 @@
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     MessageRole,
-    Token,
 )
-from ...event import Event
 from ...model.stream import (
-    CanonicalStreamAccumulator,
-    CanonicalStreamItem,
     StreamConsumerProjection,
     StreamItemKind,
     StreamTerminalOutcome,
-    StreamValidationError,
-    canonical_item_from_consumer_projection,
-    stream_consumer_projection_from_token,
+    project_stream_consumer_item,
 )
 from ...server.entities import (
     ChatCompletionChoice,
-    ChatCompletionChunk,
-    ChatCompletionChunkChoice,
-    ChatCompletionChunkChoiceDelta,
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatCompletionUsage,
@@ -29,17 +20,64 @@ from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
 from .streaming import (
+    ProtocolStreamProjectionState,
     cleanup_stream_sources,
+    protocol_stream_terminal_snapshot,
     stream_consumer_iterator,
     stream_terminal_succeeded,
 )
 
 from asyncio import CancelledError
+from dataclasses import dataclass, field
+from json import dumps
 from logging import Logger
 from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+
+_JSON_SEPARATORS = (",", ":")
+_CHAT_COMPLETION_CHUNK_SUFFIX = "}}]}"
+
+
+@dataclass(frozen=True, slots=True)
+class _ChatCompletionChunkEnvelope:
+    response_id: str
+    timestamp: int
+    model_id: str
+    _prefix: str = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.response_id, str)
+        assert isinstance(self.timestamp, int)
+        assert not isinstance(self.timestamp, bool)
+        assert isinstance(self.model_id, str)
+        object.__setattr__(
+            self,
+            "_prefix",
+            f'{{"id":{_json_string(self.response_id)},'
+            '"object":"chat.completion.chunk",'
+            f'"created":{self.timestamp},'
+            f'"model":{_json_string(self.model_id)},'
+            '"choices":[{"index":0,"delta":{"content":',
+        )
+
+    def chunk_json(self, content: str) -> str:
+        assert isinstance(content, str)
+        return (
+            self._prefix
+            + _json_string(content)
+            + _CHAT_COMPLETION_CHUNK_SUFFIX
+        )
+
+    def message(self, content: str) -> str:
+        return sse_message(self.chunk_json(content))
+
+
+def _json_string(value: str) -> str:
+    assert isinstance(value, str)
+    return dumps(value, ensure_ascii=False, separators=_JSON_SEPARATORS)
+
 
 router = APIRouter(
     prefix="/chat",
@@ -80,12 +118,20 @@ async def create_chat_completion(
 
         async def generate_chunks() -> AsyncIterator[str]:
             sequence = 0
-            canonical_accumulator: CanonicalStreamAccumulator | None = None
-            legacy_stream_seen = False
+            chunk_envelope = _ChatCompletionChunkEnvelope(
+                response_id=response_id,
+                timestamp=timestamp,
+                model_id=model_id,
+            )
+            stream_state = ProtocolStreamProjectionState(
+                stream_session_id="chat-sse-stream",
+                run_id=str(response_id),
+                turn_id="chat-sse-turn",
+            )
             iterator = stream_consumer_iterator(
                 response,
                 stream_session_id="chat-sse-stream",
-                run_id=response_id,
+                run_id=str(response_id),
                 turn_id="chat-sse-turn",
             )
             cancelled = False
@@ -96,69 +142,31 @@ async def create_chat_completion(
                         token = await anext(iterator)
                     except StopAsyncIteration:
                         break
-                    if isinstance(token, Event):
-                        continue
-                    if isinstance(token, CanonicalStreamItem):
-                        if legacy_stream_seen:
-                            raise StreamValidationError(
-                                "canonical stream item after legacy stream"
-                                " item"
-                            )
-                        if canonical_accumulator is None:
-                            canonical_accumulator = (
-                                CanonicalStreamAccumulator()
-                            )
-                        canonical_accumulator.add(token)
-                    elif isinstance(token, StreamConsumerProjection):
-                        if legacy_stream_seen:
-                            raise StreamValidationError(
-                                "canonical stream item after legacy stream"
-                                " item"
-                            )
-                        if canonical_accumulator is None:
-                            canonical_accumulator = (
-                                CanonicalStreamAccumulator()
-                            )
-                        canonical_accumulator.add(
-                            canonical_item_from_consumer_projection(token)
-                        )
-                    elif canonical_accumulator is not None:
-                        raise StreamValidationError(
-                            "legacy stream item after canonical stream item"
-                        )
-                    else:
-                        legacy_stream_seen = True
 
-                    projected_text = _stream_text(
-                        _stream_projection(token, sequence)
+                    projection = stream_state.project(
+                        token,
+                        sequence,
+                        unsupported_message=(
+                            "unsupported stream item for Chat SSE projection"
+                        ),
                     )
+                    projected_text = _stream_text(projection)
                     sequence += 1
                     if projected_text is None:
                         continue
 
-                    choice = ChatCompletionChunkChoice(
-                        delta=ChatCompletionChunkChoiceDelta(
-                            content=projected_text
-                        )
-                    )
-                    chunk = ChatCompletionChunk(
-                        id=response_id,
-                        created=timestamp,
-                        model=model_id,
-                        choices=[choice],
-                    )
-                    yield sse_message(chunk.model_dump_json())
+                    yield chunk_envelope.message(projected_text)
 
-                if canonical_accumulator is not None:
-                    canonical_accumulator.validate_complete()
-                    terminal = _chat_terminal_projection(canonical_accumulator)
+                if stream_state.has_canonical_items:
+                    stream_state.validate_complete()
+                    terminal = stream_state.terminal_projection()
                     terminal_event = _chat_terminal_event(
                         response_id,
                         timestamp,
                         model_id,
                         terminal,
                     )
-                    usage = _chat_usage(canonical_accumulator.final_usage)
+                    usage = _chat_usage(stream_state.accumulator.final_usage)
                     if usage is not None:
                         yield _chat_usage_chunk(
                             response_id,
@@ -232,16 +240,8 @@ def _chat_terminal_event(
     model_id: str,
     terminal: StreamConsumerProjection | StreamTerminalOutcome | None,
 ) -> str | None:
-    assert terminal is None or isinstance(
-        terminal, (StreamConsumerProjection, StreamTerminalOutcome)
-    )
-    if isinstance(terminal, StreamConsumerProjection):
-        assert terminal.is_stream_terminal
-    terminal_outcome = (
-        terminal.terminal_outcome
-        if isinstance(terminal, StreamConsumerProjection)
-        else terminal
-    )
+    terminal_snapshot = protocol_stream_terminal_snapshot(terminal)
+    terminal_outcome = terminal_snapshot.outcome
     if (
         terminal_outcome is None
         or terminal_outcome is StreamTerminalOutcome.COMPLETED
@@ -261,31 +261,28 @@ def _chat_terminal_event(
         "type": event,
         "choices": [],
     }
-    if isinstance(terminal, StreamConsumerProjection):
-        data["sequence_number"] = terminal.sequence
+    if terminal_snapshot.sequence is not None:
+        data["sequence_number"] = terminal_snapshot.sequence
         if (
             terminal_outcome is StreamTerminalOutcome.ERRORED
-            and terminal.data is not None
+            and terminal_snapshot.data is not None
         ):
-            data["error"] = terminal.data
+            data["error"] = terminal_snapshot.data
     return sse_message(to_json(data), event=event)
 
 
-def _chat_terminal_projection(
-    accumulator: CanonicalStreamAccumulator,
-) -> StreamConsumerProjection | None:
-    assert isinstance(accumulator, CanonicalStreamAccumulator)
-    for item in reversed(accumulator.items):
-        if item.is_stream_terminal:
-            return _stream_projection(item, item.sequence)
-    return None
-
-
 def _stream_projection(
-    token: CanonicalStreamItem | StreamConsumerProjection | Token | str,
+    token: object,
     sequence: int,
 ) -> StreamConsumerProjection:
-    return stream_consumer_projection_from_token(token, sequence)
+    return project_stream_consumer_item(
+        token,
+        sequence,
+        stream_session_id="chat-helper-stream",
+        run_id="chat-helper-run",
+        turn_id="chat-helper-turn",
+        unsupported_message="unsupported stream item for Chat SSE projection",
+    )
 
 
 def _stream_text(

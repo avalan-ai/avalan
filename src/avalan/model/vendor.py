@@ -23,9 +23,12 @@ from .stream import TextGenerationStream
 from abc import ABC
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from binascii import Error as BinasciiError
+from inspect import isawaitable
 from json import JSONDecodeError, dumps, loads
 from re import compile as compile_regex
-from typing import Any, AsyncIterator, cast
+from typing import Any, AsyncIterator, Awaitable, Iterable, TypeVar, cast
+
+_StreamItemT = TypeVar("_StreamItemT")
 
 
 class TextGenerationVendor(ABC):
@@ -214,6 +217,9 @@ class TextGenerationVendor(ABC):
 class TextGenerationVendorStream(TextGenerationStream):
     _generator: AsyncIterator[Token | TokenDetail | str]
     _provider_family: str | None
+    _stream_sources: tuple[object, ...]
+    _stream_closed: bool
+    _stream_cancelled: bool
     _usage: object | None
 
     def __init__(
@@ -221,10 +227,14 @@ class TextGenerationVendorStream(TextGenerationStream):
         generator: AsyncIterator[Token | TokenDetail | str],
         *,
         provider_family: ProviderFamily | str | None = None,
+        sources: Iterable[object] = (),
         usage: object | None = None,
     ) -> None:
         self._generator = generator
         self._provider_family = provider_family_value(provider_family)
+        self._stream_sources = tuple(sources)
+        self._stream_closed = False
+        self._stream_cancelled = False
         self._usage = usage
 
     @property
@@ -246,3 +256,59 @@ class TextGenerationVendorStream(TextGenerationStream):
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
+
+    async def _close_stream_on_exit(
+        self,
+        items: AsyncIterator[_StreamItemT],
+    ) -> AsyncIterator[_StreamItemT]:
+        try:
+            async for item in items:
+                yield item
+        finally:
+            await self.aclose()
+
+    async def cancel(self) -> None:
+        if self._stream_cancelled:
+            return
+        self._stream_cancelled = True
+        await self._call_stream_cleanup("cancel")
+
+    async def aclose(self) -> None:
+        if self._stream_closed:
+            return
+        self._stream_closed = True
+        await self._call_stream_cleanup("aclose")
+
+    async def _call_stream_cleanup(self, method_name: str) -> None:
+        assert method_name in ("cancel", "aclose")
+        errors: list[BaseException] = []
+        for source in self._cleanup_sources():
+            method = getattr(source, method_name, None)
+            if method is None:
+                continue
+            assert callable(method)
+            try:
+                result = method()
+                if isawaitable(result):
+                    awaited_result = await cast(Awaitable[object], result)
+                    assert awaited_result is None
+                else:
+                    assert result is None
+            except BaseException as exc:
+                errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("vendor stream cleanup failed", errors)
+
+    def _cleanup_sources(self) -> tuple[object, ...]:
+        sources = (self._generator, *self._stream_sources)
+        unique_sources: list[object] = []
+        seen: set[int] = set()
+        for source in sources:
+            source_id = id(source)
+            if source_id in seen:
+                continue
+            seen.add(source_id)
+            unique_sources.append(source)
+        return tuple(unique_sources)

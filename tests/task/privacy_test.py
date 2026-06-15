@@ -550,6 +550,44 @@ class PrivacyTest(TestCase):
         )
         self.assertNotIn("private token", str(event))
 
+    def test_event_redaction_keeps_canonical_stream_metadata(self) -> None:
+        sanitizer = PrivacySanitizer()
+
+        event = sanitizer.sanitize_event(
+            "token_generated",
+            {
+                "canonical_stream": {
+                    "stream_session_id": "stream-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 3,
+                    "kind": "reasoning.delta",
+                    "channel": "reasoning",
+                    "visibility": "private",
+                    "summary": {"text_delta_length": 12},
+                    "text_delta": "private token",
+                },
+                "token": "private token",
+            },
+        )
+
+        self.assertEqual(
+            event,
+            {
+                "event_type": "token_generated",
+                "canonical_stream": {
+                    "stream_session_id": "stream-1",
+                    "run_id": "run-1",
+                    "turn_id": "turn-1",
+                    "sequence": 3,
+                    "kind": "reasoning.delta",
+                    "channel": "reasoning",
+                    "visibility": "private",
+                },
+            },
+        )
+        self.assertNotIn("private token", str(event))
+
     def test_event_redaction_drops_error_text_and_paths(self) -> None:
         sanitizer = PrivacySanitizer()
 
