@@ -59,10 +59,37 @@ class TransformerTokenizerFullTestCase(TestCase):
 
     @patch("avalan.model.transformer.AutoTokenizer")
     def test_load_tokenizer_with_tokens(self, auto_tokenizer) -> None:
+        class FakeAddedToken:
+            def __init__(
+                self,
+                token: str,
+                *,
+                lstrip: bool,
+                normalized: bool,
+                rstrip: bool,
+                single_word: bool,
+                special: bool,
+            ) -> None:
+                self.token = token
+                self.lstrip = lstrip
+                self.normalized = normalized
+                self.rstrip = rstrip
+                self.single_word = single_word
+                self.special = special
+
+        class FakeTokenizersModule:
+            AddedToken = FakeAddedToken
+
         tok = MagicMock()
         tok.name_or_path = "base"
         auto_tokenizer.from_pretrained.return_value = tok
-        result = self.model._load_tokenizer_with_tokens("base")
+        with patch(
+            "avalan.model.transformer.import_module",
+            return_value=FakeTokenizersModule,
+        ) as import_module:
+            result = self.model._load_tokenizer_with_tokens("base")
+
+        import_module.assert_called_once_with("tokenizers")
         auto_tokenizer.from_pretrained.assert_called_once_with(
             "base",
             use_fast=True,
@@ -70,4 +97,24 @@ class TransformerTokenizerFullTestCase(TestCase):
         )
         tok.add_tokens.assert_called_once_with(["tok1", "tok2"])
         tok.add_special_tokens.assert_called_once()
+        special_tokens = tok.add_special_tokens.call_args.args[0][
+            "additional_special_tokens"
+        ]
+        self.assertEqual(
+            [
+                (
+                    token.token,
+                    token.lstrip,
+                    token.normalized,
+                    token.rstrip,
+                    token.single_word,
+                    token.special,
+                )
+                for token in special_tokens
+            ],
+            [
+                ("<S1>", False, False, False, False, False),
+                ("<S2>", False, False, False, False, False),
+            ],
+        )
         self.assertIs(result, tok)
