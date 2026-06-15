@@ -55,6 +55,11 @@ class OpenAIStream(TextGenerationVendorStream):
     _TEXT_DONE_EVENTS = {"response.text.done", "response.output_text.done"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
     _REASONING_DONE_EVENTS = {"response.reasoning_text.done"}
+    _TOOL_CALL_ITEM_TYPES = {
+        "custom_tool_call",
+        "function_call",
+        "tool_call",
+    }
     _TOOL_ARGUMENT_DELTA_EVENTS = {
         "response.custom_tool_call_input.delta",
         "response.function_call_arguments.delta",
@@ -96,19 +101,19 @@ class OpenAIStream(TextGenerationVendorStream):
                     continue
 
                 if etype == "response.output_item.added":
-                    item = getattr(event, "item", None)
-                    if item:
-                        custom = getattr(item, "custom_tool_call", None)
-                        if custom:
-                            call_id = getattr(
-                                custom, "id", getattr(item, "id", None)
-                            )
-                            if not isinstance(call_id, str):
-                                continue
-                            tool_calls[call_id] = {
-                                "name": getattr(custom, "name", None),
-                                "args_fragments": [],
-                            }
+                    item = OpenAIClient._response_field(event, "item")
+                    if not self._is_tool_call_item(item):
+                        continue
+                    try:
+                        call_id = self._tool_call_id_from_item(item)
+                    except ValueError:
+                        continue
+                    if call_id is None:
+                        continue
+                    tool_calls[call_id] = {
+                        "name": self._tool_call_name_from_item(item),
+                        "args_fragments": [],
+                    }
                     continue
 
                 if (
@@ -154,6 +159,9 @@ class OpenAIStream(TextGenerationVendorStream):
                         else None
                     )
                     if cached:
+                        name = self._tool_call_name_from_item(item)
+                        if name is not None:
+                            cached["name"] = name
                         args_fragments = cached["args_fragments"]
                         assert isinstance(args_fragments, list)
                         yield TextGenerationVendor.build_tool_call_token(
@@ -338,6 +346,8 @@ class OpenAIStream(TextGenerationVendorStream):
 
     def _record_output_item(self, event: object) -> None:
         item = OpenAIClient._response_field(event, "item")
+        if not self._is_tool_call_item(item):
+            return
         call_id = self._tool_call_id_from_item(item)
         name = self._tool_call_name_from_item(item)
         if call_id is None:
@@ -388,6 +398,8 @@ class OpenAIStream(TextGenerationVendorStream):
         event_type: str,
     ) -> tuple[StreamProviderEvent, ...]:
         item = OpenAIClient._response_field(event, "item")
+        if item is not None and not self._is_tool_call_item(item):
+            return ()
         call_id = self._tool_call_id_from_item(item)
         if call_id is None:
             call_id = self._tool_call_id_from_event(event, required=False)
@@ -424,6 +436,14 @@ class OpenAIStream(TextGenerationVendorStream):
         )
         self._canonical_done_tool_call_ids.add(call_id)
         return tuple(result)
+
+    def _is_tool_call_item(self, item: object) -> bool:
+        if item is None:
+            return False
+        if OpenAIClient._response_field(item, "custom_tool_call") is not None:
+            return True
+        item_type = OpenAIClient._response_field(item, "type")
+        return item_type is None or item_type in self._TOOL_CALL_ITEM_TYPES
 
     def _tool_argument_from_done_item(
         self,

@@ -11,7 +11,13 @@ from ...entities import (
     ToolCallToken,
 )
 from ...event import Event, EventType
-from ...model.stream import CanonicalStreamItem, StreamItemKind
+from ...model.stream import (
+    CanonicalStreamItem,
+    StreamItemKind,
+    StreamRetentionPolicy,
+    StreamTerminalOutcome,
+    StreamValidationError,
+)
 from ...server.entities import (
     ChatCompletionRequest,
     ChatMessage,
@@ -31,9 +37,16 @@ from . import (
     orchestrate,
     resolve_model_id,
 )
+from .streaming import (
+    ProtocolStreamAccumulator,
+    ProtocolStreamSnapshot,
+    cancellable_stream_iterator,
+    cleanup_stream_sources,
+    protocol_stream_retention_settings,
+)
 
+from asyncio import CancelledError, Lock, create_task
 from asyncio import Event as AsyncEvent
-from asyncio import Lock, create_task
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from json import JSONDecodeError, dumps, loads
@@ -126,9 +139,18 @@ class MCPResource:
 
 
 class MCPResourceStore:
-    def __init__(self) -> None:
+    def __init__(self, resource_item_limit: int | None = None) -> None:
+        if resource_item_limit is None:
+            resource_item_limit = protocol_stream_retention_settings(
+                StreamRetentionPolicy()
+            ).resource_item_limit
+        assert isinstance(resource_item_limit, int)
+        assert not isinstance(resource_item_limit, bool)
+        assert resource_item_limit >= 0
         self._resources: dict[str, MCPResource] = {}
+        self._resource_chunks: dict[str, list[str]] = {}
         self._counter = 0
+        self._resource_item_limit = resource_item_limit
         self._lock = Lock()
 
     async def create(
@@ -148,16 +170,23 @@ class MCPResourceStore:
                 uri=uri,
                 http_uri=http_uri,
                 mime_type=mime_type,
-                text=initial_text,
+                text=self._retained_text([initial_text]),
                 revision=1 if initial_text else 0,
             )
             self._resources[resource_id] = resource
+            self._resource_chunks[resource_id] = (
+                self._retained_chunks([initial_text]) if initial_text else []
+            )
             return replace(resource)
 
     async def append(self, resource_id: str, text: str) -> MCPResource:
         async with self._lock:
             resource = self._ensure(resource_id)
-            resource.text += text
+            chunks = self._resource_chunks.setdefault(resource_id, [])
+            chunks.append(text)
+            retained_chunks = self._retained_chunks(chunks)
+            self._resource_chunks[resource_id] = retained_chunks
+            resource.text = self._retained_text(retained_chunks)
             resource.revision += 1
             self._resources[resource_id] = resource
             return replace(resource)
@@ -176,10 +205,38 @@ class MCPResourceStore:
             resource = self._ensure(resource_id)
             return replace(resource)
 
+    async def history(self, resource_id: str) -> tuple[str, ...]:
+        async with self._lock:
+            self._ensure(resource_id)
+            return tuple(self._resource_chunks.get(resource_id, ()))
+
     def _ensure(self, resource_id: str) -> MCPResource:
         if resource_id not in self._resources:
             raise KeyError(resource_id)
         return self._resources[resource_id]
+
+    def _retained_chunks(self, chunks: list[str]) -> list[str]:
+        if self._resource_item_limit == 0:
+            return []
+        if len(chunks) <= self._resource_item_limit:
+            return list(chunks)
+        return list(chunks[-self._resource_item_limit :])
+
+    def _retained_text(self, chunks: list[str]) -> str:
+        return "".join(self._retained_chunks(chunks))
+
+
+@dataclass(slots=True)
+class _MCPStreamProjectionState:
+    accumulator: ProtocolStreamAccumulator
+    legacy_answer_chunks: list[str]
+    legacy_reasoning_chunks: list[str]
+    tool_summaries: dict[str, dict[str, JSONValue]]
+    resources: dict[str, MCPResource]
+    resource_store: MCPResourceStore
+    base_path: str
+    has_canonical_items: bool = False
+    legacy_stream_seen: bool = False
 
 
 def create_router() -> APIRouter:
@@ -665,6 +722,17 @@ async def _watch_for_cancellation(
             break
 
 
+async def _cleanup_mcp_stream_sources(
+    logger: Logger, *sources: object, cancelled: bool
+) -> None:
+    try:
+        await cleanup_stream_sources(*sources, cancelled=cancelled)
+    except BaseExceptionGroup as exc:
+        logger.exception("MCP stream source cleanup failed", exc_info=exc)
+    except (Exception, CancelledError) as exc:
+        logger.exception("MCP stream source cleanup failed", exc_info=exc)
+
+
 async def _stream_mcp_response(
     *,
     request_id: str | int,
@@ -679,11 +747,18 @@ async def _stream_mcp_response(
     base_path: str,
     cancel_event: AsyncEvent,
 ) -> AsyncIterator[bytes]:
-    answer_chunks: list[str] = []
-    reasoning_chunks: list[str] = []
-    tool_summaries: dict[str, dict[str, JSONValue]] = {}
-    resources: dict[str, MCPResource] = {}
+    state = _MCPStreamProjectionState(
+        accumulator=ProtocolStreamAccumulator(),
+        legacy_answer_chunks=[],
+        legacy_reasoning_chunks=[],
+        tool_summaries={},
+        resources={},
+        resource_store=resource_store,
+        base_path=base_path,
+    )
     finished_normally = False
+    response_iterator: AsyncIterator[ResponseItem] | None = None
+    stream_error_message: JSONObject | None = None
 
     def emit(message: JSONObject) -> Iterator[bytes]:
         encoded = (
@@ -693,117 +768,35 @@ async def _stream_mcp_response(
         yield encoded.encode("utf-8")
 
     try:
-        async for item in response:
-            if cancel_event.is_set():
-                break
-
-            if isinstance(item, CanonicalStreamItem):
-                reasoning_delta = _reasoning_delta(item)
-                if reasoning_delta is not None:
-                    if reasoning_delta:
-                        reasoning_chunks.append(reasoning_delta)
-                        reasoning_notification: JSONObject = {
-                            "jsonrpc": "2.0",
-                            "method": "notifications/message",
-                            "params": {
-                                "level": "debug",
-                                "message": {
-                                    "type": "reasoning",
-                                    "delta": reasoning_delta,
-                                },
-                            },
-                        }
-                        for payload in emit(reasoning_notification):
-                            yield payload
-                    continue
-
-            if isinstance(item, CanonicalStreamItem):
-                token_notification = _canonical_tool_notification(item)
-                if token_notification is not None:
-                    for payload in emit(token_notification):
-                        yield payload
-                    continue
-                if item.kind is not StreamItemKind.ANSWER_DELTA:
-                    continue
-
-            if isinstance(item, ReasoningToken):
-                reasoning_chunks.append(item.token)
-                notification: JSONObject = {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/message",
-                    "params": {
-                        "level": "debug",
-                        "message": {
-                            "type": "reasoning",
-                            "delta": item.token,
-                        },
-                    },
-                }
-                for payload in emit(notification):
-                    yield payload
-                continue
-
-            if isinstance(item, Event) and item.type in (
-                EventType.TOOL_DIAGNOSTIC,
-                EventType.TOOL_PROCESS,
-                EventType.TOOL_RESULT,
+        response_iterator = response.__aiter__()
+        async for item in cancellable_stream_iterator(
+            response_iterator, cancel_event
+        ):
+            for notification in await _mcp_notifications(
+                item, state, progress_token
             ):
-                async for notification in _tool_event_notifications(
-                    event=item,
-                    tool_summaries=tool_summaries,
-                    resources=resources,
-                    resource_store=resource_store,
-                    base_path=base_path,
-                ):
-                    for payload in emit(notification):
-                        yield payload
-                continue
-
-            if isinstance(item, ToolCallToken):
-                token_notification = _tool_call_token_notification(item)
-                if token_notification is not None:
-                    for payload in emit(token_notification):
-                        yield payload
-                continue
-
-            text = _token_text(item)
-
-            if text:
-                if isinstance(item, Token):
-                    answer_chunks.append(text)
-                    answer_notification: JSONObject = {
-                        "jsonrpc": "2.0",
-                        "method": "notifications/message",
-                        "params": {
-                            "level": "debug",
-                            "message": {
-                                "type": "answer",
-                                "delta": item.token,
-                            },
-                        },
-                    }
-                else:
-                    answer_chunks.append(text)
-                    answer_notification = {
-                        "jsonrpc": "2.0",
-                        "method": "notifications/progress",
-                        "params": {
-                            "progressToken": progress_token,
-                            "progress": {
-                                "type": "answer.delta",
-                                "delta": text,
-                            },
-                        },
-                    }
-                for payload in emit(answer_notification):
+                for payload in emit(notification):
                     yield payload
 
         finished_normally = not cancel_event.is_set()
-    except Exception as exc:  # pragma: no cover - defensive logging
+    except GeneratorExit:
+        cancel_event.set()
+        await _cleanup_mcp_stream_sources(
+            logger, response, response_iterator, cancelled=True
+        )
+        await _close_mcp_resource_notifications(
+            resource_store, state.resources
+        )
+        await orchestrator.sync_messages()
+        raise
+    except CancelledError:
+        cancel_event.set()
+        finished_normally = False
+    except Exception as exc:
         logger.exception("Error while streaming MCP response", exc_info=exc)
         cancel_event.set()
         finished_normally = False
-        error_message: JSONObject = {
+        stream_error_message = {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {
@@ -811,16 +804,14 @@ async def _stream_mcp_response(
                 "message": "An internal server error occurred.",
             },
         }
-        for payload in emit(error_message):
-            yield payload
-        await orchestrator.sync_messages()
-        return
 
     if cancel_event.is_set():
-        await _close_response_iterator(response)
-        for resource in resources.values():
-            closed = await resource_store.close(resource.id)
-            notification = _resource_notification(closed)
+        await _cleanup_mcp_stream_sources(
+            logger, response, response_iterator, cancelled=True
+        )
+        for notification in await _close_mcp_resource_notifications(
+            resource_store, state.resources
+        ):
             for payload in emit(notification):
                 yield payload
         cancel_error_message: JSONObject = {
@@ -828,42 +819,128 @@ async def _stream_mcp_response(
             "id": request_id,
             "error": {"code": -32000, "message": "Request cancelled"},
         }
-        for payload in emit(cancel_error_message):
+        error_message = stream_error_message or cancel_error_message
+        for payload in emit(error_message):
             yield payload
         await orchestrator.sync_messages()
         return
 
     if finished_normally:
-        completion: JSONObject = {
-            "jsonrpc": "2.0",
-            "method": "notifications/progress",
-            "params": {
-                "progressToken": progress_token,
-                "progress": {"type": "answer.completed"},
-            },
-        }
-        for payload in emit(completion):
-            yield payload
+        snapshot = state.accumulator.snapshot()
+        if state.has_canonical_items:
+            try:
+                state.accumulator.validate_complete()
+            except StreamValidationError as exc:
+                logger.exception("Invalid MCP canonical stream", exc_info=exc)
+                await _cleanup_mcp_stream_sources(
+                    logger, response, response_iterator, cancelled=False
+                )
+                for notification in await _close_mcp_resource_notifications(
+                    resource_store, state.resources
+                ):
+                    for payload in emit(notification):
+                        yield payload
+                validation_error_message: JSONObject = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32603,
+                        "message": "An internal server error occurred.",
+                    },
+                }
+                for payload in emit(validation_error_message):
+                    yield payload
+                await orchestrator.sync_messages()
+                return
+            if snapshot.terminal_outcome is StreamTerminalOutcome.CANCELLED:
+                await _cleanup_mcp_stream_sources(
+                    logger, response, response_iterator, cancelled=True
+                )
+                for notification in await _close_mcp_resource_notifications(
+                    resource_store, state.resources
+                ):
+                    for payload in emit(notification):
+                        yield payload
+                terminal_cancel_error_message: JSONObject = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32000, "message": "Request cancelled"},
+                }
+                for payload in emit(terminal_cancel_error_message):
+                    yield payload
+                await orchestrator.sync_messages()
+                return
+            if snapshot.terminal_outcome is StreamTerminalOutcome.ERRORED:
+                await _cleanup_mcp_stream_sources(
+                    logger, response, response_iterator, cancelled=False
+                )
+                for notification in await _close_mcp_resource_notifications(
+                    resource_store, state.resources
+                ):
+                    for payload in emit(notification):
+                        yield payload
+                error_message = {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32603,
+                        "message": _canonical_error_message(snapshot),
+                    },
+                }
+                for payload in emit(error_message):
+                    yield payload
+                await orchestrator.sync_messages()
+                return
+        else:
+            completion: JSONObject = {
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": {
+                    "progressToken": progress_token,
+                    "progress": {"type": "answer.completed"},
+                },
+            }
+            for payload in emit(completion):
+                yield payload
 
-        answer_text = "".join(answer_chunks)
-        reasoning_text = "".join(reasoning_chunks)
+        answer_text = (
+            snapshot.answer_text
+            if state.has_canonical_items
+            else "".join(state.legacy_answer_chunks)
+        )
+        reasoning_text = (
+            snapshot.reasoning_text
+            if state.has_canonical_items
+            else "".join(state.legacy_reasoning_chunks)
+        )
+        usage = snapshot.usage
 
         summary: dict[str, JSONValue] = {
             "id": str(response_id),
             "created": timestamp,
             "model": request_model.model,
             "usage": {
-                "input_text_tokens": response.input_token_count,
-                "output_text_tokens": response.output_token_count,
-                "total_tokens": (
-                    response.input_token_count + response.output_token_count
+                "input_text_tokens": _usage_count(
+                    usage, "input_text_tokens", response.input_token_count
+                ),
+                "output_text_tokens": _usage_count(
+                    usage, "output_text_tokens", response.output_token_count
+                ),
+                "total_tokens": _usage_count(
+                    usage,
+                    "total_tokens",
+                    (response.input_token_count + response.output_token_count),
                 ),
             },
         }
         if reasoning_text:
             summary["reasoning"] = reasoning_text
-        if tool_summaries:
-            summary["toolCalls"] = list(tool_summaries.values())
+        if state.has_canonical_items:
+            _merge_canonical_tool_call_arguments(
+                state.tool_summaries, snapshot.tool_call_arguments
+            )
+        if state.tool_summaries:
+            summary["toolCalls"] = list(state.tool_summaries.values())
 
         result_message: JSONRPCResult = {
             "jsonrpc": "2.0",
@@ -883,11 +960,246 @@ async def _stream_mcp_response(
     await orchestrator.sync_messages()
 
 
+async def _mcp_notifications(
+    item: ResponseItem,
+    state: _MCPStreamProjectionState,
+    progress_token: str,
+) -> list[JSONObject]:
+    return await _mcp_stream_item_notifications(item, state, progress_token)
+
+
+async def _mcp_stream_item_notifications(
+    item: ResponseItem,
+    state: _MCPStreamProjectionState,
+    progress_token: str,
+) -> list[JSONObject]:
+    notifications: list[JSONObject] = []
+
+    if isinstance(item, CanonicalStreamItem):
+        if state.legacy_stream_seen:
+            raise StreamValidationError(
+                "canonical stream item after legacy stream item"
+            )
+        state.has_canonical_items = True
+        state.accumulator.add(item)
+        if item.kind is StreamItemKind.TOOL_CALL_READY:
+            _record_canonical_tool_call_ready(item, state.tool_summaries)
+            return notifications
+        if item.kind is StreamItemKind.REASONING_DELTA:
+            reasoning_delta = _reasoning_delta(item)
+            if reasoning_delta:
+                notifications.append(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/message",
+                        "params": {
+                            "level": "debug",
+                            "message": {
+                                "type": "reasoning",
+                                "delta": reasoning_delta,
+                            },
+                        },
+                    }
+                )
+            return notifications
+
+    if isinstance(item, CanonicalStreamItem):
+        token_notification = _canonical_tool_notification(item)
+        if token_notification is not None:
+            notifications.append(token_notification)
+            return notifications
+        async for (
+            resource_notification
+        ) in _canonical_tool_resource_notifications(
+            item=item,
+            tool_summaries=state.tool_summaries,
+            resources=state.resources,
+            resource_store=state.resource_store,
+            base_path=state.base_path,
+        ):
+            notifications.append(resource_notification)
+        if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
+            return notifications
+        progress_notification = _canonical_progress_notification(
+            item, progress_token
+        )
+        if progress_notification is not None:
+            notifications.append(progress_notification)
+            return notifications
+        if item.kind is not StreamItemKind.ANSWER_DELTA:
+            return notifications
+    else:
+        if state.has_canonical_items:
+            raise StreamValidationError(
+                "legacy stream item after canonical stream item"
+            )
+        state.legacy_stream_seen = True
+        return await _mcp_legacy_stream_item_notifications(
+            item, state, progress_token
+        )
+
+    return notifications
+
+
+async def _mcp_legacy_stream_item_notifications(
+    item: ResponseItem,
+    state: _MCPStreamProjectionState,
+    progress_token: str,
+) -> list[JSONObject]:
+    notifications: list[JSONObject] = []
+
+    if isinstance(item, ReasoningToken):
+        state.legacy_reasoning_chunks.append(item.token)
+        notifications.append(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/message",
+                "params": {
+                    "level": "debug",
+                    "message": {
+                        "type": "reasoning",
+                        "delta": item.token,
+                    },
+                },
+            }
+        )
+        return notifications
+
+    if isinstance(item, Event) and item.type in (
+        EventType.TOOL_DIAGNOSTIC,
+        EventType.TOOL_PROCESS,
+        EventType.TOOL_RESULT,
+    ):
+        async for notification in _tool_event_notifications(
+            event=item,
+            tool_summaries=state.tool_summaries,
+            resources=state.resources,
+            resource_store=state.resource_store,
+            base_path=state.base_path,
+        ):
+            notifications.append(notification)
+        return notifications
+
+    if isinstance(item, ToolCallToken):
+        token_notification = _tool_call_token_notification(item)
+        if token_notification is not None:
+            notifications.append(token_notification)
+        return notifications
+
+    text = _legacy_token_text(item)
+    if text:
+        state.legacy_answer_chunks.append(text)
+        if isinstance(item, Token):
+            notifications.append(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/message",
+                    "params": {
+                        "level": "debug",
+                        "message": {
+                            "type": "answer",
+                            "delta": item.token,
+                        },
+                    },
+                }
+            )
+        else:
+            notifications.append(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/progress",
+                    "params": {
+                        "progressToken": progress_token,
+                        "progress": {
+                            "type": "answer.delta",
+                            "delta": text,
+                        },
+                    },
+                }
+            )
+
+    return notifications
+
+
+def _record_canonical_tool_call_ready(
+    item: CanonicalStreamItem,
+    tool_summaries: dict[str, dict[str, JSONValue]],
+) -> None:
+    assert item.kind is StreamItemKind.TOOL_CALL_READY
+    tool_call_id = item.correlation.tool_call_id
+    assert tool_call_id is not None
+    data = item.data if isinstance(item.data, dict) else {}
+    name = data.get("name")
+    arguments = data.get("arguments")
+    tool_summary = tool_summaries.setdefault(
+        tool_call_id,
+        {
+            "id": tool_call_id,
+            "name": None,
+            "arguments": None,
+        },
+    )
+    if isinstance(name, str) and name:
+        tool_summary["name"] = name
+    if arguments is not None:
+        tool_summary["arguments"] = cast(JSONValue, arguments)
+
+
+def _canonical_progress_notification(
+    item: CanonicalStreamItem,
+    progress_token: str,
+) -> JSONObject | None:
+    if item.kind is StreamItemKind.ANSWER_DELTA:
+        delta = item.text_delta or ""
+        if not delta:
+            return None
+        progress: dict[str, JSONValue] = {
+            "type": "answer.delta",
+            "delta": delta,
+        }
+    elif item.kind is StreamItemKind.STREAM_COMPLETED:
+        progress = {"type": "answer.completed"}
+    elif item.kind is StreamItemKind.STREAM_CANCELLED:
+        progress = {"type": "stream.cancelled"}
+    elif item.kind is StreamItemKind.STREAM_ERRORED:
+        progress = {"type": "stream.errored"}
+    else:
+        return None
+    return {
+        "jsonrpc": "2.0",
+        "method": "notifications/progress",
+        "params": {
+            "progressToken": progress_token,
+            "progress": progress,
+        },
+    }
+
+
+def _canonical_error_message(snapshot: ProtocolStreamSnapshot) -> str:
+    terminal = next(
+        (
+            item
+            for item in reversed(snapshot.control_items)
+            if item.kind is StreamItemKind.STREAM_ERRORED
+        ),
+        None,
+    )
+    if terminal is not None and isinstance(terminal.data, dict):
+        message = terminal.data.get("message")
+        if isinstance(message, str) and message:
+            return message
+    return "Stream errored."
+
+
 def _token_text(item: ResponseItem) -> str:
     if isinstance(item, CanonicalStreamItem):
         if item.kind is StreamItemKind.ANSWER_DELTA:
             return item.text_delta or ""
         return ""
+    return _legacy_token_text(item)
+
+
+def _legacy_token_text(item: ResponseItem) -> str:
     if isinstance(item, (Token, TokenDetail)):
         return item.token
     if isinstance(item, str):
@@ -898,8 +1210,16 @@ def _token_text(item: ResponseItem) -> str:
 def _reasoning_delta(
     item: CanonicalStreamItem | ReasoningToken,
 ) -> str | None:
-    if isinstance(item, ReasoningToken):
-        return item.token
+    if not isinstance(item, CanonicalStreamItem):
+        return _legacy_reasoning_delta(item)
+    return _canonical_reasoning_delta(item)
+
+
+def _legacy_reasoning_delta(item: ReasoningToken) -> str:
+    return item.token
+
+
+def _canonical_reasoning_delta(item: CanonicalStreamItem) -> str | None:
     if item.kind is StreamItemKind.REASONING_DELTA:
         return item.text_delta or ""
     if item.kind in (
@@ -939,6 +1259,139 @@ def _canonical_tool_notification(
             "message": message,
         },
     }
+
+
+async def _canonical_tool_resource_notifications(
+    *,
+    item: CanonicalStreamItem,
+    tool_summaries: dict[str, dict[str, JSONValue]],
+    resources: dict[str, MCPResource],
+    resource_store: MCPResourceStore,
+    base_path: str,
+) -> AsyncIterator[JSONObject]:
+    if item.kind not in (
+        StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        StreamItemKind.TOOL_EXECUTION_PROGRESS,
+    ):
+        return
+
+    tool_call_id = item.correlation.tool_call_id
+    if tool_call_id is None:
+        return
+    data = item.data
+    if not isinstance(data, dict):
+        return
+    category = data.get("category")
+    content = _canonical_tool_resource_content(item)
+    if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT and category not in {
+        "stdout",
+        "stderr",
+        "log",
+        "logs",
+    }:
+        return
+    if (
+        item.kind is StreamItemKind.TOOL_EXECUTION_PROGRESS
+        and category != "progress"
+    ):
+        return
+    if not content:
+        return
+
+    name = "logs" if category == "log" else str(category)
+    resource_key = f"{tool_call_id}:{name}"
+    resource = resources.get(resource_key)
+    if resource is None:
+        resource = await resource_store.create(
+            base_path=base_path, initial_text=content
+        )
+    else:
+        resource = await resource_store.append(resource.id, content)
+    resources[resource_key] = resource
+
+    tool_summary = tool_summaries.setdefault(
+        tool_call_id,
+        {
+            "id": tool_call_id,
+            "name": _metadata_string(item.metadata, "tool_name"),
+            "arguments": None,
+        },
+    )
+    tool_name = _metadata_string(item.metadata, "tool_name")
+    if tool_name and not tool_summary.get("name"):
+        tool_summary["name"] = tool_name
+    existing_resources = tool_summary.setdefault("resources", [])
+    if isinstance(existing_resources, list):
+        _append_tool_summary_resource(
+            existing_resources, uri=resource.uri, name=name
+        )
+
+    yield _resource_notification(resource)
+
+
+def _append_tool_summary_resource(
+    resources: list[JSONValue],
+    *,
+    uri: str,
+    name: str,
+) -> None:
+    for resource in resources:
+        if not isinstance(resource, dict):
+            continue
+        if resource.get("uri") == uri and resource.get("name") == name:
+            return
+    resources.append({"uri": uri, "name": name})
+
+
+def _canonical_tool_resource_content(item: CanonicalStreamItem) -> str:
+    if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
+        data = item.data if isinstance(item.data, dict) else {}
+        content = data.get("content", item.text_delta)
+        return content if isinstance(content, str) else ""
+    if item.kind is StreamItemKind.TOOL_EXECUTION_PROGRESS:
+        data = item.data if isinstance(item.data, dict) else {}
+        content = data.get("content")
+        if isinstance(content, str):
+            return content
+        progress = data.get("progress")
+        return to_json({"progress": progress}) if progress is not None else ""
+    return ""
+
+
+def _usage_count(
+    usage: object | None,
+    key: str,
+    fallback: int,
+) -> int:
+    if isinstance(usage, dict):
+        value = usage.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return fallback
+
+
+def _metadata_string(
+    metadata: Mapping[str, object],
+    key: str,
+) -> str | None:
+    value = metadata.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _merge_canonical_tool_call_arguments(
+    tool_summaries: dict[str, dict[str, JSONValue]],
+    tool_call_arguments: Mapping[str, str],
+) -> None:
+    for tool_call_id, arguments in tool_call_arguments.items():
+        tool_summary = tool_summaries.setdefault(
+            tool_call_id,
+            {
+                "id": tool_call_id,
+                "name": None,
+                "arguments": arguments,
+            },
+        )
+        tool_summary["arguments"] = arguments
 
 
 async def _close_response_iterator(response: StreamResponse) -> None:
@@ -1140,6 +1593,17 @@ def _resource_notification(resource: MCPResource) -> JSONObject:
         "method": "notifications/resources/updated",
         "params": params,
     }
+
+
+async def _close_mcp_resource_notifications(
+    resource_store: MCPResourceStore,
+    resources: Mapping[str, MCPResource],
+) -> tuple[JSONObject, ...]:
+    notifications: list[JSONObject] = []
+    for resource in resources.values():
+        closed = await resource_store.close(resource.id)
+        notifications.append(_resource_notification(closed))
+    return tuple(notifications)
 
 
 def _extract_append_streams(

@@ -130,7 +130,10 @@ class ToolManager:
     def describe_tool_call(self, call: ToolCall) -> ToolDescriptor | None:
         """Return the descriptor for an executable tool call."""
         assert isinstance(call, ToolCall)
-        resolution = self._resolve_call_name(call)
+        try:
+            resolution = self._resolve_call_name(call)
+        except AssertionError:
+            return None
         if resolution.canonical_name is None:
             return None
         return self._descriptors.get(resolution.canonical_name)
@@ -727,6 +730,14 @@ class ToolManager:
         call: ToolCall,
         context: ToolCallContext,
     ) -> PreparedToolCall | ToolCallDiagnostic:
+        if call.provider_name is None and not call.name.strip():
+            return self._diagnostic(
+                call=call,
+                code=ToolCallDiagnosticCode.MALFORMED_CALL,
+                stage=ToolCallDiagnosticStage.RESOLVE,
+                message="Tool call name must not be empty.",
+            )
+
         resolution = self._resolve_call_name(call)
         if resolution.diagnostic_code is not None:
             return self._resolution_diagnostic(call, resolution)

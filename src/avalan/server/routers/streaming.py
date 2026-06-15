@@ -1,13 +1,143 @@
 from ...model.stream import (
+    CanonicalStreamAccumulator,
+    CanonicalStreamItem,
     StreamConsumerProjection,
+    StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
+    canonical_item_from_consumer_projection,
 )
+from ...types import LooseJsonValue
 
-from asyncio import CancelledError
+from asyncio import (
+    FIRST_COMPLETED,
+    CancelledError,
+    Task,
+    create_task,
+    wait,
+)
+from asyncio import (
+    Event as AsyncEvent,
+)
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable
+from contextlib import suppress
+from dataclasses import dataclass
 from inspect import isawaitable
 from typing import Any, cast
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ProtocolStreamSnapshot:
+    answer_text: str
+    reasoning_text: str
+    usage: LooseJsonValue | None
+    terminal_outcome: StreamTerminalOutcome | None
+    terminal_succeeded: bool
+    tool_call_arguments: dict[str, str]
+    tool_execution_outputs: dict[str, str]
+    diagnostics: tuple[CanonicalStreamItem, ...]
+    flow_items: tuple[CanonicalStreamItem, ...]
+    usage_items: tuple[CanonicalStreamItem, ...]
+    control_items: tuple[CanonicalStreamItem, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ProtocolStreamRetentionSettings:
+    resource_item_limit: int
+    task_record_item_limit: int
+    flow_history_item_limit: int
+    active_session_lossless: bool
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("resource_item_limit", self.resource_item_limit),
+            ("task_record_item_limit", self.task_record_item_limit),
+            ("flow_history_item_limit", self.flow_history_item_limit),
+        ):
+            assert isinstance(value, int), f"{field_name} must be an integer"
+            assert value >= 0, f"{field_name} must not be negative"
+        assert isinstance(
+            self.active_session_lossless, bool
+        ), "active_session_lossless must be a boolean"
+        assert self.active_session_lossless
+
+
+class ProtocolStreamAccumulator:
+    def __init__(self) -> None:
+        self._accumulator = CanonicalStreamAccumulator()
+
+    @property
+    def answer_text(self) -> str:
+        return self._accumulator.answer_text
+
+    @property
+    def reasoning_text(self) -> str:
+        return self._accumulator.reasoning_text
+
+    @property
+    def usage(self) -> LooseJsonValue | None:
+        return self._accumulator.final_usage
+
+    @property
+    def terminal_outcome(self) -> StreamTerminalOutcome | None:
+        return self._accumulator.terminal_outcome
+
+    @property
+    def tool_call_arguments(self) -> dict[str, str]:
+        return self._accumulator.tool_call_arguments
+
+    @property
+    def tool_execution_outputs(self) -> dict[str, str]:
+        return self._accumulator.tool_execution_outputs
+
+    @property
+    def diagnostics(self) -> tuple[CanonicalStreamItem, ...]:
+        return self._accumulator.diagnostics
+
+    @property
+    def flow_items(self) -> tuple[CanonicalStreamItem, ...]:
+        return self._accumulator.flow_items
+
+    @property
+    def usage_items(self) -> tuple[CanonicalStreamItem, ...]:
+        return self._accumulator.usage_items
+
+    @property
+    def control_items(self) -> tuple[CanonicalStreamItem, ...]:
+        return self._accumulator.control_items
+
+    def add(
+        self,
+        item: CanonicalStreamItem | StreamConsumerProjection,
+    ) -> None:
+        assert isinstance(
+            item, (CanonicalStreamItem, StreamConsumerProjection)
+        )
+        canonical_item = (
+            canonical_item_from_consumer_projection(item)
+            if isinstance(item, StreamConsumerProjection)
+            else item
+        )
+        self._accumulator.add(canonical_item)
+
+    def snapshot(self) -> ProtocolStreamSnapshot:
+        terminal_outcome = self.terminal_outcome
+        return ProtocolStreamSnapshot(
+            answer_text=self.answer_text,
+            reasoning_text=self.reasoning_text,
+            usage=self.usage,
+            terminal_outcome=terminal_outcome,
+            terminal_succeeded=stream_terminal_succeeded(terminal_outcome),
+            tool_call_arguments=self.tool_call_arguments,
+            tool_execution_outputs=self.tool_execution_outputs,
+            diagnostics=self.diagnostics,
+            flow_items=self.flow_items,
+            usage_items=self.usage_items,
+            control_items=self.control_items,
+        )
+
+    def validate_complete(self) -> None:
+        self._accumulator.validate_complete()
 
 
 def stream_iterator(source: object) -> AsyncIterator[Any]:
@@ -32,6 +162,48 @@ def stream_consumer_iterator(
         assert isinstance(iterator, AsyncIterable)
         return _validated_consumer_projection_iterator(iterator.__aiter__())
     return stream_iterator(source)
+
+
+async def cancellable_stream_iterator(
+    iterator: AsyncIterator[Any],
+    cancel_event: AsyncEvent,
+) -> AsyncIterator[Any]:
+    assert hasattr(iterator, "__anext__")
+    assert isinstance(cancel_event, AsyncEvent)
+
+    while not cancel_event.is_set():
+        item_task: Task[Any] = create_task(_pull_stream_item(iterator))
+        cancel_task = create_task(cancel_event.wait())
+        try:
+            done, _ = await wait(
+                {item_task, cancel_task}, return_when=FIRST_COMPLETED
+            )
+            if cancel_task in done or cancel_event.is_set():
+                item_task.cancel()
+                with suppress(CancelledError, StopAsyncIteration):
+                    await item_task
+                break
+            cancel_task.cancel()
+            with suppress(CancelledError):
+                await cancel_task
+            try:
+                item = item_task.result()
+            except StopAsyncIteration:
+                break
+            yield item
+        finally:
+            if not item_task.done():
+                item_task.cancel()
+                with suppress(CancelledError):
+                    await item_task
+            if not cancel_task.done():
+                cancel_task.cancel()
+                with suppress(CancelledError):
+                    await cancel_task
+
+
+async def _pull_stream_item(iterator: AsyncIterator[Any]) -> Any:
+    return await anext(iterator)
 
 
 async def _validated_consumer_projection_iterator(
@@ -61,6 +233,19 @@ def stream_terminal_succeeded(
         else terminal
     )
     return outcome is None or outcome is StreamTerminalOutcome.COMPLETED
+
+
+def protocol_stream_retention_settings(
+    policy: StreamRetentionPolicy | None = None,
+) -> ProtocolStreamRetentionSettings:
+    assert policy is None or isinstance(policy, StreamRetentionPolicy)
+    policy = policy or StreamRetentionPolicy()
+    return ProtocolStreamRetentionSettings(
+        resource_item_limit=policy.mcp_resource_item_limit,
+        task_record_item_limit=policy.a2a_task_record_item_limit,
+        flow_history_item_limit=policy.flow_history_item_limit,
+        active_session_lossless=policy.active_session_lossless,
+    )
 
 
 async def cleanup_stream_sources(

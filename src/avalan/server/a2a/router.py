@@ -11,7 +11,12 @@ from ...entities import (
     ToolCallToken,
 )
 from ...event import Event, EventType
-from ...model.stream import CanonicalStreamItem, StreamItemKind
+from ...model.stream import (
+    CanonicalStreamItem,
+    StreamItemKind,
+    StreamTerminalOutcome,
+    StreamValidationError,
+)
 from ...utils import (
     to_json,
     tool_call_diagnostic_payload,
@@ -19,11 +24,15 @@ from ...utils import (
 )
 from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
+from ..routers.streaming import (
+    ProtocolStreamAccumulator,
+    cleanup_stream_sources,
+)
 from ..sse import sse_message
 from .store import TaskStore
 
 from asyncio import CancelledError
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from datetime import datetime, timezone
 from enum import Enum, auto
 from json import JSONDecodeError
@@ -95,6 +104,8 @@ _ANSWER_ARTIFACT_KIND: Final[str] = "answer"
 _STATUS_TO_STATE: Final[dict[str, a2a_types.TaskState]] = {
     "accepted": a2a_types.TaskState.submitted,
     "in_progress": a2a_types.TaskState.working,
+    "canceled": a2a_types.TaskState.canceled,
+    "cancelled": a2a_types.TaskState.canceled,
     "completed": a2a_types.TaskState.completed,
     "failed": a2a_types.TaskState.failed,
 }
@@ -212,7 +223,7 @@ def _task_metadata_from_overview(overview: dict[str, Any]) -> dict[str, Any]:
 
 
 class StreamState(Enum):
-    """High level phases produced while translating orchestrator tokens."""
+    """High level states produced while translating orchestrator tokens."""
 
     REASONING = auto()
     TOOL = auto()
@@ -456,13 +467,20 @@ class A2AResponseTranslator:
         self._task_id = task_id
         self._store = store
         self._state: StreamState | None = None
+        self._accumulator = ProtocolStreamAccumulator()
+        self._has_canonical_items = False
         self._reasoning_artifact_id: str | None = None
         self._answer_artifact_id: str | None = None
         self._tool_artifact_id: str | None = None
         self._answer: list[str] = []
+        self._terminal_outcome: StreamTerminalOutcome | None = None
+        self._terminal_error: str | None = None
+        self._legacy_stream_seen = False
 
     @property
     def text(self) -> str:
+        if self._has_canonical_items:
+            return self._accumulator.snapshot().answer_text
         return "".join(self._answer)
 
     async def run_stream(
@@ -475,11 +493,54 @@ class A2AResponseTranslator:
             self._task_id, "in_progress"
         ):
             yield event
-        async for item in response:
-            for event in await self._process_item(item):
+        response_iterator: (
+            AsyncIterator[
+                CanonicalStreamItem | Token | TokenDetail | Event | str
+            ]
+            | None
+        ) = None
+        try:
+            response_iterator = response.__aiter__()
+            async for item in response_iterator:
+                for event in await self._process_item(item):
+                    yield event
+            for event in await self._close_open_artifacts():
                 yield event
-        for event in await self._finish():
-            yield event
+            for event in await self._finish():
+                yield event
+        except GeneratorExit:
+            await cleanup_stream_sources(
+                response, response_iterator, cancelled=True
+            )
+            await self._close_open_artifacts()
+            await self._store.cancel_task(self._task_id)
+            raise
+        except CancelledError:
+            cleanup_error = await _cleanup_stream_sources_safely(
+                response, response_iterator, cancelled=True
+            )
+            for event in await self._close_open_artifacts():
+                yield event
+            for event in await self._store.cancel_task(self._task_id):
+                yield event
+            if cleanup_error is not None:
+                raise CancelledError() from cleanup_error
+            raise
+        except Exception as exc:
+            cleanup_error = await _cleanup_stream_sources_safely(
+                response, response_iterator, cancelled=False
+            )
+            for event in await self._close_open_artifacts():
+                yield event
+            for event in await self._store.fail_task(self._task_id, str(exc)):
+                yield event
+            if cleanup_error is not None:
+                raise exc from cleanup_error
+            raise
+        else:
+            await cleanup_stream_sources(
+                response, response_iterator, cancelled=False
+            )
 
     async def consume(
         self,
@@ -495,17 +556,22 @@ class A2AResponseTranslator:
         self, item: CanonicalStreamItem | Token | TokenDetail | Event | str
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
-        call_id = _call_identifier(item)
-        state = _state_for_item(item)
-        events.extend(await self._switch_state(state, call_id))
-
         if isinstance(item, CanonicalStreamItem):
+            if self._legacy_stream_seen:
+                raise StreamValidationError(
+                    "canonical stream item after legacy stream item"
+                )
+            self._has_canonical_items = True
+            self._accumulator.add(item)
+            events.extend(self._record_terminal(item))
+            call_id = _call_identifier(item)
+            state = _state_for_item(item)
+            events.extend(await self._switch_state(state, call_id))
             if item.kind is StreamItemKind.REASONING_DELTA:
                 events.extend(await self._ensure_reasoning_artifact())
                 assert self._reasoning_artifact_id
                 events.extend(
-                    await self._store.add_artifact_delta(
-                        self._task_id,
+                    await self._append_artifact_delta(
                         self._reasoning_artifact_id,
                         {"type": "text", "text": item.text_delta or ""},
                     )
@@ -514,15 +580,56 @@ class A2AResponseTranslator:
             if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
                 events.extend(await self._handle_canonical_tool_delta(item))
                 return events
+            if item.kind is StreamItemKind.TOOL_CALL_READY:
+                events.extend(await self._handle_canonical_tool_ready(item))
+                return events
+            if item.kind in (
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                StreamItemKind.TOOL_EXECUTION_ERROR,
+                StreamItemKind.TOOL_EXECUTION_CANCELLED,
+            ):
+                events.extend(
+                    await self._handle_canonical_tool_execution(item)
+                )
+                return events
             if item.kind is not StreamItemKind.ANSWER_DELTA:
                 return events
+            text = _token_text(item)
+            if text:
+                events.extend(await self._ensure_answer_artifact())
+                assert self._answer_artifact_id
+                events.extend(
+                    await self._append_artifact_delta(
+                        self._answer_artifact_id,
+                        {"type": "text", "text": text},
+                    )
+                )
+            return events
+        elif self._has_canonical_items:
+            raise StreamValidationError(
+                "legacy stream item after canonical stream item"
+            )
+        else:
+            self._legacy_stream_seen = True
+
+        return await self._process_legacy_item(item)
+
+    async def _process_legacy_item(
+        self, item: Token | TokenDetail | Event | str
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        call_id = _legacy_call_identifier(item)
+        state = _legacy_state_for_item(item)
+        events.extend(await self._switch_state(state, call_id))
 
         if isinstance(item, ReasoningToken):
             events.extend(await self._ensure_reasoning_artifact())
             assert self._reasoning_artifact_id
             events.extend(
-                await self._store.add_artifact_delta(
-                    self._task_id,
+                await self._append_artifact_delta(
                     self._reasoning_artifact_id,
                     {"type": "text", "text": item.token},
                 )
@@ -545,14 +652,13 @@ class A2AResponseTranslator:
             events.extend(await self._handle_tool_token(item))
             return events
 
-        text = _token_text(item)
+        text = _legacy_token_text(item)
         if text:
             events.extend(await self._ensure_answer_artifact())
             assert self._answer_artifact_id
             self._answer.append(text)
             events.extend(
-                await self._store.add_artifact_delta(
-                    self._task_id,
+                await self._append_artifact_delta(
                     self._answer_artifact_id,
                     {"type": "text", "text": text},
                 )
@@ -560,6 +666,22 @@ class A2AResponseTranslator:
         return events
 
     async def _finish(self) -> list[dict[str, Any]]:
+        events = await self._close_open_artifacts()
+        if self._has_canonical_items:
+            self._accumulator.validate_complete()
+        if self._terminal_outcome is StreamTerminalOutcome.CANCELLED:
+            events.extend(await self._store.cancel_task(self._task_id))
+        elif self._terminal_outcome is StreamTerminalOutcome.ERRORED:
+            events.extend(
+                await self._store.fail_task(
+                    self._task_id, self._terminal_error or "Stream failed"
+                )
+            )
+        else:
+            events.extend(await self._store.complete_task(self._task_id))
+        return events
+
+    async def _close_open_artifacts(self) -> list[dict[str, Any]]:
         events = await self._switch_state(None, None)
         if self._reasoning_artifact_id:
             events.extend(
@@ -575,8 +697,21 @@ class A2AResponseTranslator:
                 )
             )
             self._answer_artifact_id = None
-        events.extend(await self._store.complete_task(self._task_id))
         return events
+
+    def _record_terminal(
+        self, item: CanonicalStreamItem
+    ) -> list[dict[str, Any]]:
+        assert isinstance(item, CanonicalStreamItem)
+        if item.kind is StreamItemKind.STREAM_CLOSED:
+            return []
+        if not item.is_stream_terminal:
+            return []
+        assert item.terminal_outcome is not None
+        self._terminal_outcome = item.terminal_outcome
+        if item.terminal_outcome is StreamTerminalOutcome.ERRORED:
+            self._terminal_error = _stream_terminal_error(item)
+        return []
 
     async def _switch_state(
         self, state: StreamState | None, call_id: str | None
@@ -601,7 +736,7 @@ class A2AResponseTranslator:
             self._tool_artifact_id = None
         elif (
             self._state is StreamState.REASONING
-            and state is None
+            and state is not StreamState.REASONING
             and self._reasoning_artifact_id
         ):
             events.extend(
@@ -612,7 +747,7 @@ class A2AResponseTranslator:
             self._reasoning_artifact_id = None
         elif (
             self._state is StreamState.ANSWER
-            and state is None
+            and state is not StreamState.ANSWER
             and self._answer_artifact_id
         ):
             events.extend(
@@ -672,6 +807,16 @@ class A2AResponseTranslator:
         self._answer_artifact_id = artifact_id
         return created
 
+    async def _append_artifact_delta(
+        self, artifact_id: str, payload: Any
+    ) -> list[dict[str, Any]]:
+        assert artifact_id
+        return await self._store.add_artifact_delta(
+            self._task_id,
+            artifact_id,
+            payload,
+        )
+
     async def _handle_tool_process(self, event: Event) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         payload: dict[str, Any] | list[Any] = event.payload or []
@@ -697,8 +842,7 @@ class A2AResponseTranslator:
             )
             events.extend(created)
             events.extend(
-                await self._store.add_artifact_delta(
-                    self._task_id,
+                await self._append_artifact_delta(
                     self._tool_artifact_id,
                     {
                         "type": "arguments",
@@ -781,8 +925,7 @@ class A2AResponseTranslator:
         )
         events.extend(created)
         events.extend(
-            await self._store.add_artifact_delta(
-                self._task_id,
+            await self._append_artifact_delta(
                 self._tool_artifact_id,
                 content,
             )
@@ -803,7 +946,7 @@ class A2AResponseTranslator:
         events.extend(
             await self._store.add_status_event(
                 self._task_id,
-                status="completed",
+                status="in_progress",
                 metadata=status_metadata,
             )
         )
@@ -829,8 +972,7 @@ class A2AResponseTranslator:
             )
             events.extend(created)
             events.extend(
-                await self._store.add_artifact_delta(
-                    self._task_id,
+                await self._append_artifact_delta(
                     self._tool_artifact_id,
                     {
                         "type": "arguments",
@@ -863,10 +1005,129 @@ class A2AResponseTranslator:
                 )
                 events.extend(created)
             events.extend(
-                await self._store.add_artifact_delta(
-                    self._task_id,
+                await self._append_artifact_delta(
                     self._tool_artifact_id,
                     {"type": "text", "text": token.token},
+                )
+            )
+        return events
+
+    async def _handle_canonical_tool_execution(
+        self, item: CanonicalStreamItem
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        artifact_id = item.correlation.tool_call_id
+        assert artifact_id is not None
+        metadata: dict[str, Any] = {
+            "channel": "tool_execution",
+            "tool_call_id": artifact_id,
+        }
+        tool_name = item.metadata.get("tool_name")
+        if isinstance(tool_name, str) and tool_name:
+            metadata["tool_name"] = tool_name
+        tool_name_text = (
+            metadata["tool_name"]
+            if isinstance(metadata.get("tool_name"), str)
+            else None
+        )
+        (
+            self._tool_artifact_id,
+            created,
+        ) = await self._store.ensure_artifact(
+            self._task_id,
+            artifact_id=artifact_id,
+            name=tool_name_text,
+            kind="tool_execution",
+            role=str(MessageRole.ASSISTANT),
+            metadata=metadata,
+        )
+        events.extend(created)
+
+        if item.kind in (
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+        ):
+            payload = _canonical_tool_execution_payload(item)
+            if payload is not None:
+                events.extend(
+                    await self._append_artifact_delta(
+                        self._tool_artifact_id,
+                        payload,
+                    )
+                )
+
+        tool_execution_status = _canonical_tool_execution_status(item)
+        status_metadata: dict[str, Any] = {
+            "phase": item.kind.value,
+            "tool_call_id": artifact_id,
+            "tool_name": metadata.get("tool_name"),
+            "tool_execution_status": tool_execution_status,
+        }
+        events.extend(
+            await self._store.add_status_event(
+                self._task_id,
+                status="in_progress",
+                metadata=status_metadata,
+            )
+        )
+
+        if item.kind in (
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            StreamItemKind.TOOL_EXECUTION_CANCELLED,
+        ):
+            terminal_payload = _canonical_tool_execution_terminal_payload(item)
+            if terminal_payload is not None:
+                events.extend(
+                    await self._append_artifact_delta(
+                        self._tool_artifact_id,
+                        terminal_payload,
+                    )
+                )
+            events.extend(
+                await self._store.complete_artifact(
+                    self._task_id, self._tool_artifact_id
+                )
+            )
+            self._tool_artifact_id = None
+
+        return events
+
+    async def _handle_canonical_tool_ready(
+        self, item: CanonicalStreamItem
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        artifact_id = item.correlation.tool_call_id
+        assert artifact_id is not None
+        data = item.data if isinstance(item.data, dict) else {}
+        tool_name = data.get("name")
+        tool_name_text = tool_name if isinstance(tool_name, str) else None
+        metadata: dict[str, Any] = {
+            "channel": "tool_call",
+            "tool_call_id": artifact_id,
+        }
+        if tool_name_text:
+            metadata["tool_name"] = tool_name_text
+        if "arguments" in data:
+            metadata["arguments"] = data["arguments"]
+
+        (
+            self._tool_artifact_id,
+            created,
+        ) = await self._store.ensure_artifact(
+            self._task_id,
+            artifact_id=artifact_id,
+            name=tool_name_text,
+            kind="tool_call",
+            role=str(MessageRole.ASSISTANT),
+            metadata=metadata,
+        )
+        events.extend(created)
+        if "arguments" in data:
+            events.extend(
+                await self._append_artifact_delta(
+                    self._tool_artifact_id,
+                    {"type": "arguments", "arguments": data["arguments"]},
                 )
             )
         return events
@@ -888,8 +1149,7 @@ class A2AResponseTranslator:
         )
         events.extend(created)
         events.extend(
-            await self._store.add_artifact_delta(
-                self._task_id,
+            await self._append_artifact_delta(
                 self._tool_artifact_id,
                 {"type": "text", "text": item.text_delta or ""},
             )
@@ -905,6 +1165,21 @@ class A2AResponseTranslator:
             )
         )
         return events
+
+
+async def _cleanup_stream_sources_safely(
+    response: object,
+    response_iterator: object,
+    *,
+    cancelled: bool,
+) -> BaseException | None:
+    try:
+        await cleanup_stream_sources(
+            response, response_iterator, cancelled=cancelled
+        )
+    except (BaseExceptionGroup, CancelledError, Exception) as exc:
+        return exc
+    return None
 
 
 class A2AStreamEventConverter:
@@ -1245,18 +1520,32 @@ async def create_task(
     converter = A2AStreamEventConverter(task_id, store)
 
     async def stream() -> AsyncGenerator[str, None]:
+        translator_stream: AsyncGenerator[dict[str, Any], None] | None = None
+        emit_terminal_events = True
         try:
             for event in initial_events:
                 yield sse_message(
                     to_json(await converter.convert(event)),
                     event=event.get("event") or "message",
                 )
-            async for event in translator.run_stream(response):
+            translator_stream = translator.run_stream(response)
+            async for event in translator_stream:
                 yield sse_message(
                     to_json(await converter.convert(event)),
                     event=event.get("event") or "message",
                 )
+        except GeneratorExit:
+            emit_terminal_events = False
+            if translator_stream is not None:
+                await translator_stream.aclose()
+            await store.cancel_task(task_id)
+            raise
         except CancelledError:
+            for event in await store.cancel_task(task_id):
+                yield sse_message(
+                    to_json(await converter.convert(event)),
+                    event=event.get("event") or "message",
+                )
             raise
         except Exception as exc:  # pragma: no cover - defensive path
             logger.exception(
@@ -1268,26 +1557,27 @@ async def create_task(
                     event=event.get("event") or "message",
                 )
         finally:
-            completion_event = {
-                "event": "task.stream.completed",
-                "task_id": task_id,
-                "created_at": time(),
-                "data": {},
-            }
-            yield sse_message(
-                to_json(await converter.convert(completion_event)),
-                event="task.stream.completed",
-            )
-            done_event = {
-                "event": "done",
-                "task_id": task_id,
-                "created_at": time(),
-                "data": {},
-            }
-            yield sse_message(
-                to_json(await converter.convert(done_event)),
-                event="done",
-            )
+            if emit_terminal_events:
+                completion_event = {
+                    "event": "task.stream.completed",
+                    "task_id": task_id,
+                    "created_at": time(),
+                    "data": {},
+                }
+                yield sse_message(
+                    to_json(await converter.convert(completion_event)),
+                    event="task.stream.completed",
+                )
+                done_event = {
+                    "event": "done",
+                    "task_id": task_id,
+                    "created_at": time(),
+                    "data": {},
+                }
+                yield sse_message(
+                    to_json(await converter.convert(done_event)),
+                    event="done",
+                )
             await orchestrator.sync_messages()
 
     if payload.stream:
@@ -1379,13 +1669,33 @@ def _state_for_item(
     item: CanonicalStreamItem | Token | TokenDetail | Event | str,
 ) -> StreamState | None:
     if isinstance(item, CanonicalStreamItem):
-        if item.kind is StreamItemKind.REASONING_DELTA:
-            return StreamState.REASONING
-        if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
-            return StreamState.TOOL
-        if item.kind is StreamItemKind.ANSWER_DELTA:
-            return StreamState.ANSWER
-        return None
+        return _canonical_state_for_item(item)
+    return _legacy_state_for_item(item)
+
+
+def _canonical_state_for_item(item: CanonicalStreamItem) -> StreamState | None:
+    if item.kind is StreamItemKind.REASONING_DELTA:
+        return StreamState.REASONING
+    if item.kind in (
+        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        StreamItemKind.TOOL_CALL_READY,
+        StreamItemKind.TOOL_CALL_DONE,
+        StreamItemKind.TOOL_EXECUTION_STARTED,
+        StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        StreamItemKind.TOOL_EXECUTION_PROGRESS,
+        StreamItemKind.TOOL_EXECUTION_COMPLETED,
+        StreamItemKind.TOOL_EXECUTION_ERROR,
+        StreamItemKind.TOOL_EXECUTION_CANCELLED,
+    ):
+        return StreamState.TOOL
+    if item.kind is StreamItemKind.ANSWER_DELTA:
+        return StreamState.ANSWER
+    return None
+
+
+def _legacy_state_for_item(
+    item: Token | TokenDetail | Event | str,
+) -> StreamState | None:
     if isinstance(item, ReasoningToken):
         return StreamState.REASONING
     if isinstance(item, (ToolCallToken, Event)):
@@ -1406,6 +1716,12 @@ def _call_identifier(
 ) -> str | None:
     if isinstance(item, CanonicalStreamItem):
         return item.correlation.tool_call_id
+    return _legacy_call_identifier(item)
+
+
+def _legacy_call_identifier(
+    item: Token | TokenDetail | Event | str,
+) -> str | None:
     if isinstance(item, ToolCallToken) and item.call is not None:
         return str(item.call.id)
     if isinstance(item, Event):
@@ -1447,11 +1763,79 @@ def _token_text(
         if item.kind is StreamItemKind.ANSWER_DELTA:
             return item.text_delta or ""
         return ""
+    return _legacy_token_text(item)
+
+
+def _legacy_token_text(item: Token | TokenDetail | Event | str) -> str:
     if isinstance(item, str):
         return item
     if isinstance(item, Token):
         return item.token
     return ""
+
+
+def _canonical_tool_execution_payload(
+    item: CanonicalStreamItem,
+) -> dict[str, Any] | None:
+    assert isinstance(item, CanonicalStreamItem)
+    if item.kind is StreamItemKind.TOOL_EXECUTION_OUTPUT:
+        data = item.data if isinstance(item.data, dict) else {}
+        content = data.get("content", item.text_delta)
+        if content is None:
+            content = item.text_delta
+        return {
+            "type": "tool_output",
+            "category": str(data.get("category") or "stdout"),
+            "text": str(content or ""),
+        }
+    if item.kind is StreamItemKind.TOOL_EXECUTION_PROGRESS:
+        data = item.data if isinstance(item.data, dict) else {}
+        return {
+            "type": "progress",
+            "progress": dict(data),
+        }
+    return None
+
+
+def _canonical_tool_execution_terminal_payload(
+    item: CanonicalStreamItem,
+) -> dict[str, Any] | None:
+    assert isinstance(item, CanonicalStreamItem)
+    if item.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED:
+        return {"type": "tool_terminal", "status": "completed"}
+    if item.kind is StreamItemKind.TOOL_EXECUTION_ERROR:
+        return {
+            "type": "tool_terminal",
+            "status": "error",
+            "error": _stream_terminal_error(item),
+        }
+    if item.kind is StreamItemKind.TOOL_EXECUTION_CANCELLED:
+        return {"type": "tool_terminal", "status": "cancelled"}
+    return None
+
+
+def _canonical_tool_execution_status(item: CanonicalStreamItem) -> str:
+    assert isinstance(item, CanonicalStreamItem)
+    if item.kind is StreamItemKind.TOOL_EXECUTION_ERROR:
+        return "failed"
+    if item.kind is StreamItemKind.TOOL_EXECUTION_CANCELLED:
+        return "canceled"
+    if item.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED:
+        return "completed"
+    return "in_progress"
+
+
+def _stream_terminal_error(item: CanonicalStreamItem) -> str:
+    assert isinstance(item, CanonicalStreamItem)
+    data = item.data
+    if isinstance(data, dict):
+        for key in ("message", "error"):
+            value = data.get(key)
+            if value:
+                return str(value)
+    if data:
+        return str(data)
+    return "Stream failed"
 
 
 def _payload_diagnostic(

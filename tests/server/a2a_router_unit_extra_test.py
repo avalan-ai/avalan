@@ -1,10 +1,15 @@
 import asyncio
 import importlib
+import importlib.util
 import json
 import logging
+import sys
 from asyncio import CancelledError
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from datetime import datetime, timezone
+from importlib.abc import MetaPathFinder
+from importlib.machinery import ModuleSpec
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -26,6 +31,14 @@ from avalan.entities import (
     ToolCallToken,
 )
 from avalan.event import Event, EventType
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamTerminalOutcome,
+    StreamValidationError,
+)
 from avalan.server.a2a.router import (
     _STREAM_RESPONSE_ID_UNSET,
     A2AResponseTranslator,
@@ -36,6 +49,9 @@ from avalan.server.a2a.router import (
     _artifact_parts_from_payload,
     _build_agent_card,
     _call_identifier,
+    _canonical_tool_execution_payload,
+    _canonical_tool_execution_status,
+    _canonical_tool_execution_terminal_payload,
     _capability_extensions,
     _coerce,
     _coerce_list,
@@ -59,6 +75,7 @@ from avalan.server.a2a.router import (
     _skill_tags,
     _state_for_item,
     _status_to_state,
+    _stream_terminal_error,
     _task_metadata,
     _task_metadata_from_overview,
     _timestamp_to_iso,
@@ -71,11 +88,51 @@ from avalan.server.a2a.store import TaskStore
 from avalan.server.entities import ResponseFormatText
 
 
+def test_router_import_reports_missing_a2a_dependency() -> None:
+    class BlockA2AImport(MetaPathFinder):
+        def find_spec(
+            self,
+            fullname: str,
+            path: Sequence[str] | None = None,
+            target: object | None = None,
+        ) -> ModuleSpec | None:
+            if fullname == "a2a" or fullname.startswith("a2a."):
+                raise ImportError("blocked a2a")
+            return None
+
+    router_module = importlib.import_module("avalan.server.a2a.router")
+    router_file = router_module.__file__
+    assert router_file is not None
+    module_name = "avalan.server.a2a.router_missing_dependency_test"
+    spec = importlib.util.spec_from_file_location(
+        module_name, Path(router_file)
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    removed_modules = {
+        name: sys.modules.pop(name)
+        for name in tuple(sys.modules)
+        if name == "a2a" or name.startswith("a2a.")
+    }
+    import_blocker = BlockA2AImport()
+    sys.meta_path.insert(0, import_blocker)
+    try:
+        with pytest.raises(ImportError, match="A2A router requires"):
+            spec.loader.exec_module(module)
+    finally:
+        sys.meta_path.remove(import_blocker)
+        sys.modules.pop(module_name, None)
+        sys.modules.update(removed_modules)
+
+
 def test_timestamp_role_and_parts_helpers() -> None:
     ts = datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp()
     assert _timestamp_to_iso(None) is None
     assert _timestamp_to_iso(ts) == "2024-01-01T00:00:00Z"
     assert _status_to_state("completed").value == "completed"
+    assert _status_to_state("canceled").value == "canceled"
+    assert _status_to_state("cancelled").value == "canceled"
     assert _status_to_state("unknown").value == "unknown"
     assert _role_from_payload(None).value == "agent"
     assert _role_from_payload("user").value == "user"
@@ -108,6 +165,68 @@ def test_timestamp_role_and_parts_helpers() -> None:
     default_artifact = _artifact_parts_from_payload(None)
     assert getattr(default_artifact[0].root, "text") == ""
 
+
+def test_stream_terminal_error_payloads() -> None:
+    assert (
+        _stream_terminal_error(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data={"message": "message"},
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            )
+        )
+        == "message"
+    )
+    assert (
+        _stream_terminal_error(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data={"error": "error"},
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            )
+        )
+        == "error"
+    )
+    assert (
+        _stream_terminal_error(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data="plain",
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            )
+        )
+        == "plain"
+    )
+    assert (
+        _stream_terminal_error(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            )
+        )
+        == "Stream failed"
+    )
+
     overview = {
         "metadata": {"jsonrpc_id": "abc", "foo": "bar"},
         "model": "model-x",
@@ -119,6 +238,113 @@ def test_timestamp_role_and_parts_helpers() -> None:
         "model": "model-x",
         "instructions": "act",
     }
+
+
+def test_canonical_tool_execution_payload_helpers() -> None:
+    output = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=0,
+        kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="tool"),
+        text_delta="fallback",
+        data={"category": "stderr", "content": None},
+    )
+    assert _canonical_tool_execution_payload(output) == {
+        "type": "tool_output",
+        "category": "stderr",
+        "text": "fallback",
+    }
+
+    progress = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=1,
+        kind=StreamItemKind.TOOL_EXECUTION_PROGRESS,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="tool"),
+        data={"current": 1, "total": 2},
+    )
+    assert _canonical_tool_execution_payload(progress) == {
+        "type": "progress",
+        "progress": {"current": 1, "total": 2},
+    }
+    assert (
+        _canonical_tool_execution_payload(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=StreamItemCorrelation(tool_call_id="tool"),
+            )
+        )
+        is None
+    )
+
+
+def test_canonical_tool_execution_terminal_payload_helpers() -> None:
+    completed = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=0,
+        kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="tool"),
+    )
+    errored = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=1,
+        kind=StreamItemKind.TOOL_EXECUTION_ERROR,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="tool"),
+        data={"message": "failed"},
+    )
+    cancelled = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=2,
+        kind=StreamItemKind.TOOL_EXECUTION_CANCELLED,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="tool"),
+    )
+    started = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=3,
+        kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+        channel=StreamChannel.TOOL_EXECUTION,
+        correlation=StreamItemCorrelation(tool_call_id="tool"),
+    )
+
+    assert _canonical_tool_execution_terminal_payload(completed) == {
+        "type": "tool_terminal",
+        "status": "completed",
+    }
+    assert _canonical_tool_execution_terminal_payload(errored) == {
+        "type": "tool_terminal",
+        "status": "error",
+        "error": "failed",
+    }
+    assert _canonical_tool_execution_terminal_payload(cancelled) == {
+        "type": "tool_terminal",
+        "status": "cancelled",
+    }
+    assert _canonical_tool_execution_terminal_payload(started) is None
+    assert _canonical_tool_execution_status(errored) == "failed"
+    assert _canonical_tool_execution_status(cancelled) == "canceled"
+    assert _canonical_tool_execution_status(completed) == "completed"
+    assert _canonical_tool_execution_status(started) == "in_progress"
 
 
 def test_task_request_conversation_and_metadata() -> None:
@@ -334,6 +560,24 @@ async def _run_translator_switch_state_paths() -> None:
         event["event"] == "artifact.completed" for event in completed_reasoning
     )
 
+    await store.create_task(
+        "reasoning-to-tool",
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    reasoning_to_tool = A2AResponseTranslator("reasoning-to-tool", store)
+    await reasoning_to_tool._switch_state(StreamState.REASONING, None)
+    reasoning_switched = await reasoning_to_tool._switch_state(
+        StreamState.TOOL, "tool-from-reasoning"
+    )
+    assert any(
+        event["event"] == "artifact.completed"
+        and event["data"]["artifact"]["id"] == "reasoning"
+        for event in reasoning_switched
+    )
+
     tool_events = await translator._switch_state(StreamState.TOOL, "tool-1")
     assert translator._tool_artifact_id == "tool-1"
     assert tool_events
@@ -349,6 +593,24 @@ async def _run_translator_switch_state_paths() -> None:
     finished = await translator._switch_state(None, None)
     assert translator._answer_artifact_id is None
     assert any(event["event"] == "artifact.completed" for event in finished)
+
+    await store.create_task(
+        "answer-to-tool",
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    answer_to_tool = A2AResponseTranslator("answer-to-tool", store)
+    await answer_to_tool._switch_state(StreamState.ANSWER, None)
+    answer_switched = await answer_to_tool._switch_state(
+        StreamState.TOOL, "tool-after-answer"
+    )
+    assert any(
+        event["event"] == "artifact.completed"
+        and event["data"]["artifact"]["id"] == "answer"
+        for event in answer_switched
+    )
 
 
 def test_tool_handlers_cover_branches() -> None:
@@ -1067,10 +1329,17 @@ def test_stream_generator_handles_cancelled(
     asyncio.run(_run_stream_generator_handles_cancelled(monkeypatch))
 
 
+def test_stream_generator_handles_consumer_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asyncio.run(_run_stream_generator_handles_consumer_close(monkeypatch))
+
+
 async def _run_stream_generator_handles_cancelled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     router_module = importlib.import_module("avalan.server.a2a.router")
+    task_uuid = uuid4()
 
     class DummyStreamingResponse:
         def __init__(
@@ -1087,7 +1356,7 @@ async def _run_stream_generator_handles_cancelled(
                 yield None
             return
 
-        return iterator(), uuid4(), 0
+        return iterator(), task_uuid, 0
 
     async def canceling_run_stream(
         self: A2AResponseTranslator, response: object
@@ -1165,15 +1434,142 @@ async def _run_stream_generator_handles_cancelled(
     assert agen is not None
 
     try:
-        events = [await agen.__anext__() for _ in range(4)]
-        assert "task.stream.completed" in events[2]
-        assert "event: done" in events[3]
+        events = [await agen.__anext__() for _ in range(5)]
+        assert '"kind": "status-update"' in events[2]
+        assert '"state": "canceled"' in events[2]
+        assert '"final": true' in events[2]
+        assert "task.stream.completed" in events[3]
+        assert "event: done" in events[4]
 
         with pytest.raises(CancelledError):
             await agen.__anext__()
     finally:
         await agen.aclose()
 
+    task_payload = await store.get_task(str(task_uuid))
+    assert task_payload["status"] == "canceled"
+    assert orchestrator.synced is True
+
+
+async def _run_stream_generator_handles_consumer_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    router_module = importlib.import_module("avalan.server.a2a.router")
+    task_uuid = uuid4()
+    translator_closed = False
+
+    class DummyStreamingResponse:
+        def __init__(
+            self,
+            iterator: AsyncGenerator[str, None],
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            self.body_iterator = iterator
+
+    async def orchestrate_stub(*args: object, **kwargs: object):
+        async def iterator() -> AsyncGenerator[object, None]:
+            if False:
+                yield None
+            return
+
+        return iterator(), task_uuid, 0
+
+    async def closable_run_stream(
+        self: A2AResponseTranslator, response: object
+    ) -> AsyncGenerator[dict[str, object], None]:
+        nonlocal translator_closed
+        try:
+            yield {
+                "event": "task.status.changed",
+                "task_id": str(task_uuid),
+                "created_at": 0.0,
+                "data": {
+                    "status": "in_progress",
+                    "metadata": {"source": "translator"},
+                },
+            }
+            await asyncio.Event().wait()
+        finally:
+            translator_closed = True
+
+    monkeypatch.setattr(
+        router_module, "StreamingResponse", DummyStreamingResponse
+    )
+    monkeypatch.setattr(router_module, "orchestrate", orchestrate_stub)
+    monkeypatch.setattr(
+        A2AResponseTranslator,
+        "run_stream",
+        closable_run_stream,
+        raising=False,
+    )
+
+    class DummyOrchestrator:
+        def __init__(self) -> None:
+            self.id = uuid4()
+            self.name = "Agent"
+            self.model_ids = {"model"}
+            self.synced = False
+
+        async def sync_messages(self) -> None:
+            self.synced = True
+
+    orchestrator = DummyOrchestrator()
+    store = TaskStore()
+    payload = {
+        "model": "model",
+        "messages": [{"role": "user", "content": "hi"}],
+        "stream": True,
+    }
+    body = json.dumps(payload).encode()
+    first_chunk = True
+
+    async def receive() -> dict[str, object]:
+        nonlocal first_chunk
+        if first_chunk:
+            first_chunk = False
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "path": "/tasks",
+        "raw_path": b"/tasks",
+        "headers": [(b"content-type", b"application/json")],
+        "query_string": b"",
+        "server": ("test", 80),
+        "client": ("test", 1234),
+        "scheme": "http",
+        "root_path": "",
+        "app": SimpleNamespace(state=SimpleNamespace()),
+    }
+    request = Request(scope, receive)
+    logger = SimpleNamespace(exception=lambda *args, **kwargs: None)
+
+    response = await create_task(
+        request,
+        logger=logger,
+        orchestrator=orchestrator,
+        store=store,
+    )
+    agen: AsyncGenerator[str, None] | None = getattr(
+        response, "body_iterator", None
+    )
+    assert agen is not None
+
+    try:
+        while True:
+            event = await agen.__anext__()
+            if '"source": "translator"' in event:
+                break
+    finally:
+        await agen.aclose()
+
+    task_payload = await store.get_task(str(task_uuid))
+    assert task_payload["status"] == "canceled"
+    assert translator_closed is True
     assert orchestrator.synced is True
 
 
@@ -1202,6 +1598,136 @@ async def _run_translator_finish_handles_answer_artifact() -> None:
     events = await translator._finish()
     assert translator._answer_artifact_id is None
     assert any(event["event"] == "artifact.completed" for event in events)
+
+
+def test_translator_finish_handles_reasoning_artifact() -> None:
+    asyncio.run(_run_translator_finish_handles_reasoning_artifact())
+
+
+async def _run_translator_finish_handles_reasoning_artifact() -> None:
+    store = TaskStore()
+    await store.create_task(
+        "finish-reasoning",
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator("finish-reasoning", store)
+    artifact_id, _ = await store.ensure_artifact(
+        "finish-reasoning",
+        artifact_id="reasoning-art",
+        name="Reasoning",
+        kind="reasoning",
+        role=str(MessageRole.ASSISTANT),
+    )
+    translator._reasoning_artifact_id = artifact_id
+    events = await translator._finish()
+    assert translator._reasoning_artifact_id is None
+    assert any(event["event"] == "artifact.completed" for event in events)
+
+
+def test_translator_rejects_mixed_stream_surfaces() -> None:
+    asyncio.run(_run_translator_rejects_mixed_stream_surfaces())
+
+
+async def _run_translator_rejects_mixed_stream_surfaces() -> None:
+    async def prepare(task_id: str) -> A2AResponseTranslator:
+        local_store = TaskStore()
+        await local_store.create_task(
+            task_id,
+            model="model",
+            instructions=None,
+            input_messages=[],
+            metadata={},
+        )
+        return A2AResponseTranslator(task_id, local_store)
+
+    canonical_item = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=0,
+        kind=StreamItemKind.STREAM_STARTED,
+        channel=StreamChannel.CONTROL,
+    )
+    cases = (
+        (
+            "legacy-first",
+            ("legacy", canonical_item),
+            "canonical stream item after legacy stream item",
+        ),
+        (
+            "canonical-first",
+            (canonical_item, "legacy"),
+            "legacy stream item after canonical stream item",
+        ),
+    )
+
+    for task_id, items, message in cases:
+        translator = await prepare(task_id)
+        with pytest.raises(StreamValidationError, match=message):
+            for item in items:
+                await translator._process_item(item)
+
+
+def test_translator_rejects_duplicate_canonical_terminal() -> None:
+    asyncio.run(_run_translator_rejects_duplicate_canonical_terminal())
+
+
+async def _run_translator_rejects_duplicate_canonical_terminal() -> None:
+    store = TaskStore()
+    await store.create_task(
+        "duplicate-terminal",
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator("duplicate-terminal", store)
+    items = (
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.USAGE_COMPLETED,
+            channel=StreamChannel.USAGE,
+            usage={},
+        ),
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.STREAM_ERRORED,
+            channel=StreamChannel.CONTROL,
+            terminal_outcome=StreamTerminalOutcome.ERRORED,
+        ),
+    )
+
+    with pytest.raises(
+        StreamValidationError, match="duplicate stream terminal item"
+    ):
+        for item in items:
+            await translator._process_item(item)
 
 
 def test_artifact_result_additional_cases(
