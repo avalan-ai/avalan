@@ -251,7 +251,11 @@ class BedrockStream(TextGenerationVendorStream):
             if terminal_usage is not None:
                 self._usage = terminal_usage
 
-        super().__init__(generator(), provider_family=ProviderFamily.BEDROCK)
+        super().__init__(
+            generator(),
+            provider_family=ProviderFamily.BEDROCK,
+            sources=(events,),
+        )
 
     async def __anext__(self) -> Token | TokenDetail | str:
         return await self._generator.__anext__()
@@ -267,53 +271,60 @@ class BedrockStream(TextGenerationVendorStream):
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
-        return normalize_provider_stream(
-            self._provider_events(),
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            provider_family=self._provider_family,
-            capabilities=StreamProviderCapabilities(
-                backend=StreamProducerBackend.HOSTED,
+        return self._close_stream_on_exit(
+            normalize_provider_stream(
+                self._provider_events(),
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
                 provider_family=self._provider_family,
-                supports_reasoning=True,
-                supports_tool_calls=True,
-                supports_usage=True,
-                supports_terminal_events=True,
-                supports_cancellation=True,
+                capabilities=StreamProviderCapabilities(
+                    backend=StreamProducerBackend.HOSTED,
+                    provider_family=self._provider_family,
+                    supports_reasoning=True,
+                    supports_tool_calls=True,
+                    supports_usage=True,
+                    supports_terminal_events=True,
+                    supports_cancellation=True,
+                ),
+                close_after_terminal=close_after_terminal,
             ),
-            close_after_terminal=close_after_terminal,
         )
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
         message_stopped = False
         terminal_usage: LooseJsonValue | None = None
 
-        async for event in self._events:
-            metadata = _get(event, "metadata")
-            usage = (
-                metadata.get("usage") if isinstance(metadata, dict) else None
-            )
-            if usage is not None:
-                terminal_usage = cast(LooseJsonValue, usage)
-                continue
+        try:
+            async for event in self._events:
+                metadata = _get(event, "metadata")
+                usage = (
+                    metadata.get("usage")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                if usage is not None:
+                    terminal_usage = cast(LooseJsonValue, usage)
+                    continue
 
-            if _get(event, "messageStop"):
-                message_stopped = True
-                continue
+                if _get(event, "messageStop"):
+                    message_stopped = True
+                    continue
 
-            if message_stopped:
-                continue
+                if message_stopped:
+                    continue
 
-            for provider_event in self._provider_events_from_event(event):
-                yield provider_event
+                for provider_event in self._provider_events_from_event(event):
+                    yield provider_event
 
-        if terminal_usage is not None:
-            yield StreamProviderEvent(
-                kind=StreamItemKind.USAGE_COMPLETED,
-                usage=terminal_usage,
-            )
-        yield StreamProviderEvent(kind=StreamItemKind.STREAM_COMPLETED)
+            if terminal_usage is not None:
+                yield StreamProviderEvent(
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    usage=terminal_usage,
+                )
+            yield StreamProviderEvent(kind=StreamItemKind.STREAM_COMPLETED)
+        finally:
+            await self.aclose()
 
     def _provider_events_from_event(
         self, event: object

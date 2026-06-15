@@ -3223,7 +3223,7 @@ def test_ds4_stream_queue_backpressure_does_not_deadlock_event_loop(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> list[str]:
+    async def run_case() -> tuple[list[str], list[list[int]]]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101, 102, 103, 104, 105]
@@ -3243,15 +3243,26 @@ def test_ds4_stream_queue_backpressure_does_not_deadlock_event_loop(
             ),
         )
         chunks: list[str] = []
+        eval_counts_during_slow_consumer: list[list[int]] = []
         async for chunk in response:
             chunks.append(cast(str, chunk))
+            before_pause = list(fake.sessions[0].eval_calls)
             await asyncio.sleep(0.01)
+            eval_counts_during_slow_consumer.append(before_pause)
+            assert fake.sessions[0].eval_calls == before_pause
         model.close()
-        return chunks
+        return chunks, eval_counts_during_slow_consumer
 
-    chunks = run(asyncio.wait_for(run_case(), timeout=1.0))
+    chunks, eval_counts = run(asyncio.wait_for(run_case(), timeout=1.0))
 
     assert chunks == ["A", "B", "C", "D", "E"]
+    assert eval_counts == [
+        [101],
+        [101, 102],
+        [101, 102, 103],
+        [101, 102, 103, 104],
+        [101, 102, 103, 104, 105],
+    ]
 
 
 def test_ds4_reasoning_settings_map_to_think_modes(

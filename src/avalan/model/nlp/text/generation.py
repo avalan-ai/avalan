@@ -152,15 +152,16 @@ def _configure_lossless_streamer_handoff(
     setattr(streamer, "text_queue", queue)
 
     def put_item(value: object) -> None:
+        future = run_coroutine_threadsafe(queue.put(value), loop)
         while True:
             if stop_event.is_set():
+                future.cancel()
                 raise RuntimeError("Event loop is closed")
-            future = run_coroutine_threadsafe(queue.put(value), loop)
             try:
                 future.result(timeout=_STREAMER_TIMEOUT_SECONDS)
                 return
             except FutureTimeoutError:
-                future.cancel()
+                continue
 
     def on_finalized_text(text: str, stream_end: bool = False) -> None:
         put_item(text)

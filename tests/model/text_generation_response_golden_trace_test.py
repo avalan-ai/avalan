@@ -71,6 +71,18 @@ def _answer_done(sequence: int) -> CanonicalStreamItem:
     )
 
 
+def _reasoning_done(sequence: int) -> CanonicalStreamItem:
+    return CanonicalStreamItem(
+        stream_session_id=_STREAM_SESSION_ID,
+        run_id=_RUN_ID,
+        turn_id=_TURN_ID,
+        sequence=sequence,
+        kind=StreamItemKind.REASONING_DONE,
+        channel=StreamChannel.REASONING,
+        visibility=StreamVisibility.PRIVATE,
+    )
+
+
 def _usage_item(sequence: int, usage: object) -> CanonicalStreamItem:
     return CanonicalStreamItem(
         stream_session_id=_STREAM_SESSION_ID,
@@ -90,6 +102,7 @@ def _tool_item(
     tool_call_id: str,
     text_delta: str | None = None,
     data: object | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> CanonicalStreamItem:
     return CanonicalStreamItem(
         stream_session_id=_STREAM_SESSION_ID,
@@ -105,6 +118,7 @@ def _tool_item(
         correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
         text_delta=text_delta,
         data=data,  # type: ignore[arg-type]
+        metadata={} if metadata is None else metadata,  # type: ignore[arg-type]
     )
 
 
@@ -151,24 +165,63 @@ def _trace_from_tokens(
     terminal_kind: StreamItemKind = StreamItemKind.STREAM_COMPLETED,
     usage: object | None = None,
 ) -> StreamGoldenTrace:
-    items = [
-        _control_item(StreamItemKind.STREAM_STARTED, 0),
-        *(
-            canonical_item_from_token(
-                token,
-                sequence,
-                stream_session_id=_STREAM_SESSION_ID,
-                run_id=_RUN_ID,
-                turn_id=_TURN_ID,
-            )
-            for sequence, token in enumerate(tokens, start=1)
-        ),
-    ]
+    items = [_control_item(StreamItemKind.STREAM_STARTED, 0)]
+    reasoning_started = False
+    tool_call_data: dict[str, dict[str, object] | None] = {}
+
+    for sequence, token in enumerate(tokens, start=1):
+        canonical_item = canonical_item_from_token(
+            token,
+            sequence,
+            stream_session_id=_STREAM_SESSION_ID,
+            run_id=_RUN_ID,
+            turn_id=_TURN_ID,
+        )
+        items.append(canonical_item)
+        if canonical_item.kind is StreamItemKind.REASONING_DELTA:
+            reasoning_started = True
+        if canonical_item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            tool_call_id = canonical_item.correlation.tool_call_id
+            assert tool_call_id is not None
+            data: dict[str, object] | None = None
+            if isinstance(token, ToolCallToken) and token.call is not None:
+                data = {
+                    "name": token.call.name,
+                    "arguments": token.call.arguments,
+                }
+            tool_call_data.setdefault(tool_call_id, data)
+
     terminal_outcome = StreamTerminalOutcome.COMPLETED
     if terminal_kind is StreamItemKind.STREAM_ERRORED:
         terminal_outcome = StreamTerminalOutcome.ERRORED
     elif terminal_kind is StreamItemKind.STREAM_CANCELLED:
         terminal_outcome = StreamTerminalOutcome.CANCELLED
+
+    for tool_call_id, data in tool_call_data.items():
+        if data is not None:
+            items.append(
+                _tool_item(
+                    StreamItemKind.TOOL_CALL_READY,
+                    len(items),
+                    tool_call_id=tool_call_id,
+                    data=data,
+                )
+            )
+        items.append(
+            _tool_item(
+                StreamItemKind.TOOL_CALL_DONE,
+                len(items),
+                tool_call_id=tool_call_id,
+                metadata=(
+                    {}
+                    if data is not None
+                    else {"tool_call.close_reason": "error"}
+                ),
+            )
+        )
+
+    if reasoning_started:
+        items.append(_reasoning_done(len(items)))
     items.append(_answer_done(len(items)))
     items.append(
         _control_item(
@@ -311,6 +364,39 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "run_id": _RUN_ID,
                         "turn_id": _TURN_ID,
                         "sequence": 8,
+                        "kind": "tool_call.ready",
+                        "channel": "tool_call",
+                        "visibility": "public",
+                        "correlation": {"tool_call_id": "call-1"},
+                        "data": {
+                            "name": "math.calculator",
+                            "arguments": {"expression": "2+2"},
+                        },
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 9,
+                        "kind": "tool_call.done",
+                        "channel": "tool_call",
+                        "visibility": "public",
+                        "correlation": {"tool_call_id": "call-1"},
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 10,
+                        "kind": "reasoning.done",
+                        "channel": "reasoning",
+                        "visibility": "private",
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 11,
                         "kind": "answer.done",
                         "channel": "answer",
                         "visibility": "public",
@@ -319,7 +405,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "stream_session_id": _STREAM_SESSION_ID,
                         "run_id": _RUN_ID,
                         "turn_id": _TURN_ID,
-                        "sequence": 9,
+                        "sequence": 12,
                         "kind": "stream.completed",
                         "channel": "control",
                         "visibility": "public",
@@ -412,12 +498,18 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
             usage={"output_tokens": response.output_token_count},
         )
 
-        self.assertIsInstance(tokens[1], ReasoningToken)
         self.assertIsInstance(tokens[2], ReasoningToken)
         self.assertIsInstance(tokens[3], ReasoningToken)
+        self.assertIsInstance(tokens[4], ReasoningToken)
+        self.assertIsInstance(tokens[5], ReasoningToken)
+        self.assertIsInstance(tokens[6], ReasoningToken)
         self.assertEqual(
-            [token.token for token in tokens[1:4]],
-            [" <think> ", " private ", " </think> "],
+            [
+                token.token
+                for token in tokens[2:7]
+                if isinstance(token, ReasoningToken)
+            ],
+            ["<think>", " ", " private ", " ", "</think>"],
         )
         self.assertEqual(
             trace.to_fixture(),
@@ -449,10 +541,10 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "run_id": _RUN_ID,
                         "turn_id": _TURN_ID,
                         "sequence": 2,
-                        "kind": "reasoning.delta",
-                        "channel": "reasoning",
-                        "visibility": "private",
-                        "text_delta": " <think> ",
+                        "kind": "answer.delta",
+                        "channel": "answer",
+                        "visibility": "public",
+                        "text_delta": " ",
                     },
                     {
                         "stream_session_id": _STREAM_SESSION_ID,
@@ -462,7 +554,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "kind": "reasoning.delta",
                         "channel": "reasoning",
                         "visibility": "private",
-                        "text_delta": " private ",
+                        "text_delta": "<think>",
                     },
                     {
                         "stream_session_id": _STREAM_SESSION_ID,
@@ -472,13 +564,53 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "kind": "reasoning.delta",
                         "channel": "reasoning",
                         "visibility": "private",
-                        "text_delta": " </think> ",
+                        "text_delta": " ",
                     },
                     {
                         "stream_session_id": _STREAM_SESSION_ID,
                         "run_id": _RUN_ID,
                         "turn_id": _TURN_ID,
                         "sequence": 5,
+                        "kind": "reasoning.delta",
+                        "channel": "reasoning",
+                        "visibility": "private",
+                        "text_delta": " private ",
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 6,
+                        "kind": "reasoning.delta",
+                        "channel": "reasoning",
+                        "visibility": "private",
+                        "text_delta": " ",
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 7,
+                        "kind": "reasoning.delta",
+                        "channel": "reasoning",
+                        "visibility": "private",
+                        "text_delta": "</think>",
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 8,
+                        "kind": "answer.delta",
+                        "channel": "answer",
+                        "visibility": "public",
+                        "text_delta": " ",
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 9,
                         "kind": "answer.delta",
                         "channel": "answer",
                         "visibility": "public",
@@ -488,7 +620,16 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "stream_session_id": _STREAM_SESSION_ID,
                         "run_id": _RUN_ID,
                         "turn_id": _TURN_ID,
-                        "sequence": 6,
+                        "sequence": 10,
+                        "kind": "reasoning.done",
+                        "channel": "reasoning",
+                        "visibility": "private",
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 11,
                         "kind": "answer.done",
                         "channel": "answer",
                         "visibility": "public",
@@ -497,11 +638,11 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "stream_session_id": _STREAM_SESSION_ID,
                         "run_id": _RUN_ID,
                         "turn_id": _TURN_ID,
-                        "sequence": 7,
+                        "sequence": 12,
                         "kind": "stream.completed",
                         "channel": "control",
                         "visibility": "public",
-                        "usage": {"output_tokens": 5},
+                        "usage": {"output_tokens": 9},
                         "terminal_outcome": "completed",
                     },
                 ],
@@ -509,10 +650,10 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
         )
 
         accumulator = accumulate_canonical_stream_items(trace.items)
-        self.assertEqual(accumulator.answer_text, "lead tail")
+        self.assertEqual(accumulator.answer_text, "lead   tail")
         self.assertEqual(
             accumulator.reasoning_text,
-            " <think>  private  </think> ",
+            "<think>  private  </think>",
         )
 
     async def test_reasoning_trace_preserves_split_markers(self) -> None:
@@ -558,6 +699,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                 "reasoning.delta",
                 "reasoning.delta",
                 "answer.delta",
+                "reasoning.done",
                 "answer.done",
                 "stream.completed",
             ],
@@ -572,7 +714,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                 "stream_session_id": _STREAM_SESSION_ID,
                 "run_id": _RUN_ID,
                 "turn_id": _TURN_ID,
-                "sequence": 11,
+                "sequence": 12,
                 "kind": "stream.completed",
                 "channel": "control",
                 "visibility": "public",
@@ -680,6 +822,15 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "run_id": _RUN_ID,
                         "turn_id": _TURN_ID,
                         "sequence": 6,
+                        "kind": "reasoning.done",
+                        "channel": "reasoning",
+                        "visibility": "private",
+                    },
+                    {
+                        "stream_session_id": _STREAM_SESSION_ID,
+                        "run_id": _RUN_ID,
+                        "turn_id": _TURN_ID,
+                        "sequence": 7,
                         "kind": "answer.done",
                         "channel": "answer",
                         "visibility": "public",
@@ -688,7 +839,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         "stream_session_id": _STREAM_SESSION_ID,
                         "run_id": _RUN_ID,
                         "turn_id": _TURN_ID,
-                        "sequence": 7,
+                        "sequence": 8,
                         "kind": "stream.completed",
                         "channel": "control",
                         "visibility": "public",
@@ -865,7 +1016,14 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                 for item in trace.to_fixture()["items"]  # type: ignore[index]
                 if item["channel"] == "tool_call"
             ],
-            ["legacy-tool-call", "legacy-tool-call", "ds4_tool_abc"],
+            [
+                "legacy-tool-call",
+                "legacy-tool-call",
+                "ds4_tool_abc",
+                "legacy-tool-call",
+                "ds4_tool_abc",
+                "ds4_tool_abc",
+            ],
         )
 
     async def test_usage_callbacks_and_cancelled_terminal_trace(
@@ -1023,11 +1181,12 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         data={"renderable": "tokens"},
                         metadata={"protocol": "cli.theme"},
                     ),
-                    _answer_done(3),
-                    _usage_item(4, {"output_tokens": 2}),
+                    _reasoning_done(3),
+                    _answer_done(4),
+                    _usage_item(5, {"output_tokens": 2}),
                     _control_item(
                         StreamItemKind.STREAM_COMPLETED,
-                        5,
+                        6,
                         terminal_outcome=StreamTerminalOutcome.COMPLETED,
                     ),
                 ),
@@ -1105,16 +1264,37 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         },
                         metadata={"protocol": "openai.responses.sse"},
                     ),
-                    _answer_done(4),
-                    _usage_item(5, {"output_tokens": 3}),
+                    _protocol_item(
+                        StreamItemKind.TOOL_CALL_READY,
+                        4,
+                        protocol_item_id="responses-tool-ready",
+                        channel=StreamChannel.TOOL_CALL,
+                        data={
+                            "event": "response.custom_tool_call.done",
+                        },
+                        metadata={"protocol": "openai.responses.sse"},
+                    ),
+                    _protocol_item(
+                        StreamItemKind.TOOL_CALL_DONE,
+                        5,
+                        protocol_item_id="responses-tool-done",
+                        channel=StreamChannel.TOOL_CALL,
+                        data={
+                            "event": "response.custom_tool_call.done",
+                        },
+                        metadata={"protocol": "openai.responses.sse"},
+                    ),
+                    _reasoning_done(6),
+                    _answer_done(7),
+                    _usage_item(8, {"output_tokens": 3}),
                     _control_item(
                         StreamItemKind.STREAM_COMPLETED,
-                        6,
+                        9,
                         terminal_outcome=StreamTerminalOutcome.COMPLETED,
                     ),
                     _protocol_item(
                         StreamItemKind.STREAM_CLOSED,
-                        7,
+                        10,
                         protocol_item_id="responses-done",
                         data={"event": "done", "data": "[DONE]"},
                         metadata={"protocol": "openai.responses.sse"},
@@ -1126,8 +1306,14 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                 items=(
                     _control_item(StreamItemKind.STREAM_STARTED, 0),
                     _protocol_item(
-                        StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                        StreamItemKind.TOOL_EXECUTION_STARTED,
                         1,
+                        protocol_item_id="mcp-tool-start",
+                        metadata={"protocol": "mcp"},
+                    ),
+                    _protocol_item(
+                        StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                        2,
                         protocol_item_id="mcp-resource-update",
                         text_delta="log",
                         data={
@@ -1139,7 +1325,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                     ),
                     _protocol_item(
                         StreamItemKind.TOOL_EXECUTION_COMPLETED,
-                        2,
+                        3,
                         protocol_item_id="mcp-tool-result",
                         data={
                             "result": {
@@ -1148,10 +1334,10 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                         },
                         metadata={"protocol": "mcp"},
                     ),
-                    _usage_item(3, {"output_tokens": 1}),
+                    _usage_item(4, {"output_tokens": 1}),
                     _control_item(
                         StreamItemKind.STREAM_COMPLETED,
-                        4,
+                        5,
                         terminal_outcome=StreamTerminalOutcome.COMPLETED,
                     ),
                 ),
@@ -1220,7 +1406,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
             "response.custom_tool_call_input.delta",
         )
         self.assertEqual(
-            fixtures["protocol-mcp"]["items"][1]["data"]["method"],  # type: ignore[index]
+            fixtures["protocol-mcp"]["items"][2]["data"]["method"],  # type: ignore[index]
             "notifications/resources/updated",
         )
         self.assertEqual(

@@ -1,5 +1,5 @@
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.entities import (
     ToolCallDiagnostic,
@@ -11,7 +11,12 @@ from avalan.entities import (
     ToolManagerSettings,
 )
 from avalan.event import EventType
-from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.model.response.parsers.tool import (
+    ToolCallResponseParser,
+    _MarkdownFenceState,
+    _VisibleQuoteState,
+    _VisibleTextState,
+)
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
 
@@ -1027,6 +1032,165 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(items[2].payload[0].name, "math.calculator")
         self.assertEqual(items[2].payload[0].arguments, {"x": 1})
 
+    async def test_streaming_hot_path_uses_incremental_marker_state(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(enable_tools=[])
+        parser = ToolCallResponseParser(manager, None)
+        items: list = []
+
+        with (
+            patch.object(
+                ToolCallResponseParser,
+                "_markdown_fence_is_open",
+                side_effect=AssertionError("full fence scan used"),
+            ),
+            patch.object(
+                ToolCallResponseParser,
+                "_index_is_inside_visible_quote",
+                side_effect=AssertionError("full quote scan used"),
+            ),
+            patch.object(
+                ToolCallResponseParser,
+                "_split_current_call_close",
+                side_effect=AssertionError("full close scan used"),
+            ),
+        ):
+            for token in (
+                "```xml\n",
+                (
+                    '<tool_call>{"name": "ignored", "arguments": {}}'
+                    "</tool_call>\n"
+                ),
+                "```\n",
+                'visible "<tool_call" marker\n',
+                (
+                    '<tool_call>{"name": "math.calculator", '
+                    '"arguments": {"x": 1}}'
+                ),
+                "</tool",
+                "_call> tail",
+            ):
+                items.extend(await parser.push(token))
+
+        process_event = next(
+            item
+            for item in items
+            if getattr(item, "type", None) is EventType.TOOL_PROCESS
+        )
+
+        self.assertEqual(process_event.payload[0].name, "math.calculator")
+        self.assertEqual(process_event.payload[0].arguments, {"x": 1})
+        self.assertEqual(items[-1], " tail")
+        self.assertEqual(
+            [item for item in items if isinstance(item, str)],
+            [
+                "```xml\n",
+                (
+                    '<tool_call>{"name": "ignored", "arguments": {}}'
+                    "</tool_call>\n"
+                ),
+                "```\n",
+                'visible "<tool_call" marker\n',
+                " tail",
+            ],
+        )
+
+    def test_incremental_fence_state_preserves_fence_lengths(self) -> None:
+        state = _MarkdownFenceState()
+
+        state.push("````python\n")
+        self.assertTrue(state.is_open)
+        state.push("```\n")
+        self.assertTrue(state.is_open)
+        state.push("````\n")
+
+        self.assertFalse(state.is_open)
+
+    def test_incremental_visible_quote_state_delays_apostrophes(
+        self,
+    ) -> None:
+        quote = _VisibleQuoteState()
+        quote.push_character("a")
+        quote.push_character("'")
+
+        self.assertTrue(quote.is_open_before(None))
+
+        quote.push_character(" ")
+        self.assertTrue(quote.is_open_before("<"))
+        quote.push_character("\\")
+        quote.push_character("'")
+        self.assertTrue(quote.is_open_before("<"))
+        quote.push_character("'")
+
+        self.assertFalse(quote.is_open_before("<"))
+
+        leading_quote = _VisibleQuoteState()
+        leading_quote.push_character("'")
+
+        self.assertTrue(leading_quote.is_open_before("<"))
+
+    def test_incremental_visible_text_state_handles_empty_indexes(
+        self,
+    ) -> None:
+        state = _VisibleTextState()
+
+        self.assertEqual(state.executable_marker_indexes("plain", []), [])
+
+    def test_visible_marker_indexes_supports_explicit_buffer_prefix(
+        self,
+    ) -> None:
+        manager = MagicMock()
+        parser = ToolCallResponseParser(manager, None)
+
+        self.assertEqual(
+            parser._visible_marker_indexes(" before <tool_call>", "prefix "),
+            [8],
+        )
+
+    def test_marker_helper_branches(self) -> None:
+        manager = ToolManager.create_instance(enable_tools=[])
+        parser = ToolCallResponseParser(manager, None)
+
+        self.assertFalse(
+            ToolCallResponseParser._markdown_fence_is_open(
+                "````python\n````\n"
+            )
+        )
+        self.assertFalse(
+            ToolCallResponseParser._index_is_inside_visible_quote(
+                '"closed" <tool_call', len('"closed" ')
+            )
+        )
+        self.assertFalse(
+            ToolCallResponseParser._index_is_inside_visible_quote(
+                '"open\n<tool_call', len('"open\n')
+            )
+        )
+        self.assertIsNone(parser._self_closing_tool_close_span_at("plain", 0))
+        self.assertIsNone(
+            parser._self_closing_tool_close_span_at("<tool_call", 0)
+        )
+        self.assertIsNone(
+            parser._self_closing_tool_close_span_at("<tool_call>", 0)
+        )
+        self.assertEqual(
+            parser._self_closing_tool_close_span_at(
+                '<tool_call name="x"/>', 0
+            ),
+            (0, len('<tool_call name="x"/>')),
+        )
+        self.assertEqual(
+            parser._tool_start_marker_at("<tool_call", 0),
+            "<tool_call",
+        )
+        self.assertIsNone(parser._tool_start_marker_at("<tool_callout", 0))
+        self.assertEqual(
+            parser._tool_marker_at("</tool>", 0, ("</tool>",)),
+            "</tool>",
+        )
+        self.assertIsNone(parser._tool_marker_at("plain", 0, ("</tool>",)))
+
     async def test_fence_opened_after_tool_suffix_blocks_next_call(
         self,
     ) -> None:
@@ -1627,6 +1791,103 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(second[2], " tail")
         self.assertFalse(parser._inside_call)
         self.assertEqual(parser._buffer.getvalue(), " tail")
+
+    async def test_split_harmony_final_marker_stays_visible_suffix(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(
+            enable_tools=[],
+            settings=ToolManagerSettings(tool_format=ToolFormat.HARMONY),
+        )
+        parser = ToolCallResponseParser(manager, None)
+
+        first = await parser.push(
+            "<|start|>assistant<|channel|>commentary "
+            "to=functions.browser.open <|constrain|>json<|message|>"
+            '{"url":"https://example.com"}'
+        )
+        second = await parser.push("<|channel|>final<|mes")
+        third = await parser.push("sage|>done")
+        items = first + second + third
+
+        process_event = next(
+            item
+            for item in items
+            if getattr(item, "type", None) is EventType.TOOL_PROCESS
+        )
+        visible_items = [item for item in items if isinstance(item, str)]
+
+        self.assertEqual(process_event.payload[0].name, "browser.open")
+        self.assertEqual(
+            process_event.payload[0].arguments,
+            {"url": "https://example.com"},
+        )
+        self.assertEqual(
+            visible_items,
+            ["<|channel|>final<|message|>done"],
+        )
+        self.assertFalse(
+            any(
+                isinstance(item, ToolCallToken)
+                and "<|channel|>final" in item.token
+                for item in items
+            )
+        )
+        self.assertFalse(
+            any(
+                getattr(item, "type", None) is EventType.TOOL_DIAGNOSTIC
+                for item in items
+            )
+        )
+        self.assertFalse(parser._inside_call)
+        self.assertEqual(
+            parser._buffer.getvalue(),
+            "<|channel|>final<|message|>done",
+        )
+
+    async def test_real_tool_manager_skips_status_rescan_for_open_chunks(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(enable_tools=[])
+        original_status = manager.tool_call_status
+        status_lengths: list[int] = []
+
+        def status(
+            buffer: str, *, final: bool = False
+        ) -> ToolCallParser.ToolCallBufferStatus:
+            status_lengths.append(len(buffer))
+            return original_status(buffer, final=final)
+
+        setattr(manager, "tool_call_status", MagicMock(side_effect=status))
+        parser = ToolCallResponseParser(manager, None)
+
+        await parser.push(
+            '<tool_call>{"name": "math.calculator", "arguments": '
+            '{"expression": "'
+        )
+        status_lengths.clear()
+
+        for token in ("1", " + ", "1", '"}}'):
+            pushed = await parser.push(token)
+            self.assertTrue(
+                all(isinstance(item, ToolCallToken) for item in pushed)
+            )
+
+        self.assertEqual(status_lengths, [])
+
+        closed = await parser.push("</tool_call>")
+        process_event = next(
+            item
+            for item in closed
+            if getattr(item, "type", None) is EventType.TOOL_PROCESS
+        )
+
+        self.assertEqual(process_event.payload[0].name, "math.calculator")
+        self.assertEqual(
+            process_event.payload[0].arguments,
+            {"expression": "1 + 1"},
+        )
+        self.assertFalse(parser._inside_call)
 
     async def test_stream_keeps_fenced_call_after_closed_call_visible(
         self,

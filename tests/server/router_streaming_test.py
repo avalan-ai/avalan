@@ -8,6 +8,8 @@ from asyncio import (
 from collections.abc import AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 
+from avalan.event import Event, EventType
+from avalan.event.manager import EventManager, EventManagerMode
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -18,12 +20,16 @@ from avalan.model.stream import (
     StreamValidationError,
     project_canonical_stream_item,
 )
+from avalan.server.a2a.store import TaskStoreRetention
+from avalan.server.routers.mcp import MCPResourceStore
 from avalan.server.routers.streaming import (
     ProtocolStreamAccumulator,
+    ProtocolStreamProjectionState,
     ProtocolStreamRetentionSettings,
     cancellable_stream_iterator,
     cleanup_stream_sources,
     protocol_stream_retention_settings,
+    protocol_stream_terminal_snapshot,
     stream_consumer_iterator,
     stream_iterator,
     stream_terminal_succeeded,
@@ -75,17 +81,53 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
                 }
 
                 async def gen() -> AsyncIterator[object]:
-                    yield project_canonical_stream_item(
+                    items = (
                         CanonicalStreamItem(
                             stream_session_id="s",
                             run_id="r",
                             turn_id="t",
                             sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
                             kind=StreamItemKind.ANSWER_DELTA,
                             channel=StreamChannel.ANSWER,
                             text_delta="projected",
-                        )
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=3,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            usage={},
+                            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=4,
+                            kind=StreamItemKind.STREAM_CLOSED,
+                            channel=StreamChannel.CONTROL,
+                        ),
                     )
+                    for item in items:
+                        yield project_canonical_stream_item(item)
 
                 return gen()
 
@@ -99,6 +141,8 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         )
 
         projection = await anext(iterator)
+        self.assertIs(projection.kind, StreamItemKind.STREAM_STARTED)
+        projection = await anext(iterator)
         self.assertEqual(projection.text_delta, "projected")
         self.assertEqual(
             source.kwargs,
@@ -109,6 +153,13 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
             },
         )
         self.assertFalse(source.raw_iterated)
+        self.assertIs((await anext(iterator)).kind, StreamItemKind.ANSWER_DONE)
+        self.assertIs(
+            (await anext(iterator)).kind, StreamItemKind.STREAM_COMPLETED
+        )
+        self.assertIs(
+            (await anext(iterator)).kind, StreamItemKind.STREAM_CLOSED
+        )
         with self.assertRaises(StopAsyncIteration):
             await anext(iterator)
 
@@ -179,6 +230,454 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         ):
             await anext(iterator)
 
+    async def test_stream_consumer_iterator_rejects_projection_sequence_gap(
+        self,
+    ) -> None:
+        class Source:
+            def consumer_projections(
+                self,
+                *,
+                stream_session_id: str,
+                run_id: str,
+                turn_id: str,
+            ) -> AsyncIterator[object]:
+                async def gen() -> AsyncIterator[object]:
+                    items = (
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="dropped predecessor",
+                        ),
+                    )
+                    for item in items:
+                        yield project_canonical_stream_item(item)
+
+                return gen()
+
+        iterator = stream_consumer_iterator(
+            Source(),
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+
+        self.assertIs(
+            (await anext(iterator)).kind, StreamItemKind.STREAM_STARTED
+        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "lossless consumer stream sequence gap",
+        ):
+            await anext(iterator)
+
+    async def test_stream_consumer_iterator_rejects_out_of_order_projection(
+        self,
+    ) -> None:
+        class Source:
+            def consumer_projections(
+                self,
+                *,
+                stream_session_id: str,
+                run_id: str,
+                turn_id: str,
+            ) -> AsyncIterator[object]:
+                async def gen() -> AsyncIterator[object]:
+                    items = (
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=2,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="out of order",
+                        ),
+                    )
+                    for item in items:
+                        yield project_canonical_stream_item(item)
+
+                return gen()
+
+        iterator = stream_consumer_iterator(
+            Source(),
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+
+        self.assertIs(
+            (await anext(iterator)).kind, StreamItemKind.STREAM_STARTED
+        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "stream sequence must increase",
+        ):
+            await anext(iterator)
+
+    async def test_stream_consumer_iterator_rejects_late_projection_item(
+        self,
+    ) -> None:
+        class Source:
+            def consumer_projections(
+                self,
+                *,
+                stream_session_id: str,
+                run_id: str,
+                turn_id: str,
+            ) -> AsyncIterator[object]:
+                async def gen() -> AsyncIterator[object]:
+                    items = (
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            usage={},
+                            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="late",
+                        ),
+                    )
+                    for item in items:
+                        yield project_canonical_stream_item(item)
+
+                return gen()
+
+        iterator = stream_consumer_iterator(
+            Source(),
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+
+        self.assertIs(
+            (await anext(iterator)).kind, StreamItemKind.STREAM_STARTED
+        )
+        self.assertIs(
+            (await anext(iterator)).kind, StreamItemKind.STREAM_COMPLETED
+        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "semantic stream item emitted after terminal outcome",
+        ):
+            await anext(iterator)
+
+    def test_protocol_stream_projection_state_projects_canonical_stream(
+        self,
+    ) -> None:
+        state = ProtocolStreamProjectionState(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+        items = (
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={"total_tokens": 2},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=4,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        )
+
+        projections = [
+            state.project(
+                item,
+                item.sequence,
+                unsupported_message="unsupported stream item",
+            )
+            for item in items
+        ]
+
+        state.validate_complete()
+        self.assertTrue(state.has_canonical_items)
+        self.assertFalse(state.legacy_stream_seen)
+        self.assertEqual(state.accumulator.answer_text, "answer")
+        self.assertEqual(state.accumulator.final_usage, {"total_tokens": 2})
+        self.assertEqual(projections[1].text_delta, "answer")
+        terminal = state.terminal_projection()
+        self.assertIsNotNone(terminal)
+        self.assertEqual(terminal.sequence, 4)
+        self.assertIs(
+            terminal.terminal_outcome, StreamTerminalOutcome.COMPLETED
+        )
+
+    def test_protocol_stream_projection_state_accepts_projection_items(
+        self,
+    ) -> None:
+        state = ProtocolStreamProjectionState(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+        start_item = CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        canonical_item = CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="projected",
+        )
+        state.project(
+            project_canonical_stream_item(start_item),
+            0,
+            unsupported_message="unsupported stream item",
+        )
+        projection = project_canonical_stream_item(canonical_item)
+
+        result = state.project(
+            projection,
+            1,
+            unsupported_message="unsupported stream item",
+        )
+
+        self.assertIs(result, projection)
+        self.assertTrue(state.has_canonical_items)
+        self.assertEqual(state.accumulator.answer_text, "projected")
+
+    def test_protocol_stream_projection_state_can_skip_accumulation(
+        self,
+    ) -> None:
+        state = ProtocolStreamProjectionState(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            accumulate=False,
+        )
+        item = CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=0,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="projected",
+        )
+
+        projection = state.project(
+            item,
+            0,
+            unsupported_message="unsupported stream item",
+        )
+
+        state.validate_complete()
+        self.assertTrue(state.has_canonical_items)
+        self.assertEqual(projection.text_delta, "projected")
+        self.assertEqual(state.accumulator.items, ())
+        self.assertIsNone(state.terminal_projection())
+
+    def test_protocol_stream_projection_state_returns_no_terminal_projection(
+        self,
+    ) -> None:
+        state = ProtocolStreamProjectionState(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+
+        self.assertIsNone(state.terminal_projection())
+
+    def test_protocol_stream_terminal_snapshot_preserves_projection_fields(
+        self,
+    ) -> None:
+        terminal = project_canonical_stream_item(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=4,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data={"message": "failed"},
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            )
+        )
+
+        snapshot = protocol_stream_terminal_snapshot(terminal)
+
+        self.assertIs(snapshot.outcome, StreamTerminalOutcome.ERRORED)
+        self.assertEqual(snapshot.sequence, 4)
+        self.assertEqual(snapshot.data, {"message": "failed"})
+        self.assertFalse(snapshot.succeeded)
+
+    def test_protocol_stream_terminal_snapshot_preserves_outcomes(
+        self,
+    ) -> None:
+        completed = protocol_stream_terminal_snapshot(
+            StreamTerminalOutcome.COMPLETED
+        )
+        cancelled = protocol_stream_terminal_snapshot(
+            StreamTerminalOutcome.CANCELLED
+        )
+        missing = protocol_stream_terminal_snapshot(None)
+
+        self.assertIs(completed.outcome, StreamTerminalOutcome.COMPLETED)
+        self.assertTrue(completed.succeeded)
+        self.assertIsNone(completed.sequence)
+        self.assertIs(cancelled.outcome, StreamTerminalOutcome.CANCELLED)
+        self.assertFalse(cancelled.succeeded)
+        self.assertIsNone(missing.outcome)
+        self.assertTrue(missing.succeeded)
+
+    def test_protocol_stream_terminal_snapshot_rejects_non_terminal_projection(
+        self,
+    ) -> None:
+        projection = project_canonical_stream_item(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            )
+        )
+
+        with self.assertRaises(AssertionError):
+            protocol_stream_terminal_snapshot(projection)
+
+    def test_protocol_stream_projection_state_rejects_mixed_surfaces(
+        self,
+    ) -> None:
+        canonical_item = CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        cases = (
+            (
+                ("legacy", canonical_item),
+                "canonical stream item after legacy stream item",
+            ),
+            (
+                (canonical_item, "legacy"),
+                "legacy stream item after canonical stream item",
+            ),
+        )
+
+        for items, message in cases:
+            with self.subTest(message=message):
+                state = ProtocolStreamProjectionState(
+                    stream_session_id="stream",
+                    run_id="run",
+                    turn_id="turn",
+                )
+                state.project(
+                    items[0],
+                    0,
+                    unsupported_message="unsupported stream item",
+                )
+                with self.assertRaisesRegex(StreamValidationError, message):
+                    state.project(
+                        items[1],
+                        1,
+                        unsupported_message="unsupported stream item",
+                    )
+
+    def test_protocol_stream_projection_state_rejects_unsupported_items(
+        self,
+    ) -> None:
+        state = ProtocolStreamProjectionState(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError, "unsupported stream item for test"
+        ):
+            state.project(
+                Event(type=EventType.START, payload={}),
+                0,
+                unsupported_message="unsupported stream item for test",
+            )
+
     async def test_cancellable_stream_iterator_yields_until_cancelled(
         self,
     ) -> None:
@@ -191,6 +690,21 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(await anext(iterator), "first")
         cancel_event.set()
+        with self.assertRaises(StopAsyncIteration):
+            await anext(iterator)
+
+    async def test_cancellable_stream_iterator_stops_on_source_exhaustion(
+        self,
+    ) -> None:
+        class Source:
+            def __aiter__(self) -> "Source":
+                return self
+
+            async def __anext__(self) -> str:
+                raise StopAsyncIteration
+
+        iterator = cancellable_stream_iterator(Source(), AsyncEvent())
+
         with self.assertRaises(StopAsyncIteration):
             await anext(iterator)
 
@@ -682,6 +1196,67 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
                 flow_history_item_limit=0,
                 active_session_lossless=False,
             )
+
+    async def test_default_server_stream_retention_surfaces_are_bounded(
+        self,
+    ) -> None:
+        policy = StreamRetentionPolicy()
+        settings = protocol_stream_retention_settings()
+        event_manager = EventManager(mode=EventManagerMode.SERVER)
+        task_retention = TaskStoreRetention()
+        resource_store = MCPResourceStore()
+
+        self.assertEqual(
+            settings.resource_item_limit,
+            policy.mcp_resource_item_limit,
+        )
+        self.assertEqual(
+            settings.task_record_item_limit,
+            policy.a2a_task_record_item_limit,
+        )
+        self.assertEqual(
+            settings.flow_history_item_limit,
+            policy.flow_history_item_limit,
+        )
+        self.assertTrue(settings.active_session_lossless)
+
+        await event_manager.trigger(Event(type=EventType.START))
+
+        self.assertFalse(event_manager.history_config.enabled)
+        self.assertEqual(event_manager.history, [])
+        self.assertFalse(event_manager.listen_config.enabled)
+        self.assertFalse(event_manager.collect_stats)
+        self.assertEqual(event_manager.stats.total_triggers, 0)
+        self.assertEqual(
+            event_manager.default_delivery_config.queue_limit,
+            32,
+        )
+
+        self.assertEqual(
+            task_retention.max_tasks,
+            policy.a2a_task_record_item_limit,
+        )
+        for value in (
+            task_retention.max_events_per_task,
+            task_retention.max_message_chunks,
+            task_retention.max_message_bytes,
+            task_retention.max_artifact_items,
+            task_retention.max_artifact_bytes,
+        ):
+            with self.subTest(value=value):
+                self.assertIsInstance(value, int)
+                self.assertGreater(value, 0)
+
+        resource = await resource_store.create(base_path="/mcp")
+        for index in range(policy.mcp_resource_item_limit + 2):
+            await resource_store.append(resource.id, f"chunk-{index}")
+
+        history = await resource_store.history(resource.id)
+        self.assertLessEqual(len(history), policy.mcp_resource_item_limit)
+        self.assertEqual(
+            "".join(history),
+            (await resource_store.get(resource.id)).text,
+        )
 
     async def test_cleanup_stream_sources_closes_unique_sources(self) -> None:
         class Source:

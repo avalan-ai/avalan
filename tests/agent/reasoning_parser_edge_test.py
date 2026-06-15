@@ -69,7 +69,11 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
         )
         await parser.push("<")
         tokens = await parser.push("think>extra")
-        self.assertEqual(tokens, [])
+        self.assertEqual(
+            [token.token for token in tokens],
+            ["<", "think>", "extra"],
+        )
+        self.assertTrue(parser.is_thinking)
         self.assertEqual(parser._pending_tokens, [])
         self.assertEqual(parser._pending_str, "")
 
@@ -80,7 +84,11 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
             start_tag=FakeStartTag("<think>"),
         )
         tokens = await parser.push("<think>extra")
-        self.assertEqual(tokens, [])
+        self.assertEqual(
+            [token.token for token in tokens],
+            ["<think>", "extra"],
+        )
+        self.assertTrue(parser.is_thinking)
         self.assertEqual(parser._pending_tokens, [])
         self.assertEqual(parser._pending_str, "")
 

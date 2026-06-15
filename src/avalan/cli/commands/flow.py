@@ -55,6 +55,7 @@ from ...flow import (
     render_flow_view,
     skeleton_from_mermaid_view,
 )
+from ...model.stream import StreamItemKind
 from ...task import (
     TaskClientUnsupportedOperationError,
     TaskDefinition,
@@ -1878,13 +1879,10 @@ class _FlowRunProgressMonitor:
                 if count is not None:
                     node_stats.input_tokens += count
             case "token_generated":
-                token_type = _flow_progress_payload_string(
-                    payload,
-                    "token_type",
-                )
-                if token_type == "ReasoningToken":
+                token_category = _flow_progress_token_category(payload)
+                if token_category == "reasoning":
                     node_stats.reasoning_tokens += 1
-                else:
+                elif token_category == "output":
                     node_stats.output_tokens += 1
             case "tool_execute":
                 node_stats.tools_executed += 1
@@ -2058,6 +2056,72 @@ def _flow_progress_payload_string(
 ) -> str | None:
     value = payload.get(key)
     return value if isinstance(value, str) else None
+
+
+def _flow_progress_payload_mapping(
+    payload: Mapping[str, object],
+    key: str,
+) -> Mapping[str, object] | None:
+    value = payload.get(key)
+    return value if isinstance(value, Mapping) else None
+
+
+def _flow_progress_token_category(
+    payload: Mapping[str, object],
+) -> str | None:
+    stream_kind = _flow_progress_stream_item_kind(payload)
+    if stream_kind is StreamItemKind.REASONING_DELTA:
+        return "reasoning"
+    if stream_kind is StreamItemKind.ANSWER_DELTA:
+        return "output"
+    if _flow_progress_has_stream_item_kind(payload):
+        return None
+    return "output"
+
+
+def _flow_progress_stream_item_kind(
+    payload: Mapping[str, object],
+) -> StreamItemKind | None:
+    kind = _flow_progress_payload_string(payload, "stream_kind")
+    if kind is None:
+        stream_payload = _flow_progress_payload_mapping(payload, "stream")
+        if stream_payload is not None:
+            kind = _flow_progress_payload_string(stream_payload, "kind")
+    if kind is None:
+        canonical_payload = _flow_progress_payload_mapping(
+            payload,
+            "canonical_stream",
+        )
+        if canonical_payload is not None:
+            kind = _flow_progress_payload_string(canonical_payload, "kind")
+    if kind is None:
+        return None
+    try:
+        return StreamItemKind(kind)
+    except ValueError:
+        return None
+
+
+def _flow_progress_has_stream_item_kind(
+    payload: Mapping[str, object],
+) -> bool:
+    if _flow_progress_payload_string(payload, "stream_kind") is not None:
+        return True
+    stream_payload = _flow_progress_payload_mapping(payload, "stream")
+    if (
+        stream_payload is not None
+        and _flow_progress_payload_string(stream_payload, "kind") is not None
+    ):
+        return True
+    canonical_payload = _flow_progress_payload_mapping(
+        payload,
+        "canonical_stream",
+    )
+    return (
+        canonical_payload is not None
+        and _flow_progress_payload_string(canonical_payload, "kind")
+        is not None
+    )
 
 
 def _flow_progress_payload_int(

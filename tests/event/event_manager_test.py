@@ -543,6 +543,8 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             EventHistoryConfig(ttl_seconds=cast(Any, True))
         with self.assertRaises(AssertionError):
+            EventHistoryConfig()
+        with self.assertRaises(AssertionError):
             EventManager(
                 history_length=1,
                 history_config=EventHistoryConfig(max_events=1),
@@ -553,6 +555,95 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         manager = EventManager(history_config=config)
 
         self.assertIs(manager.history_config, config)
+
+    async def test_manager_instances_do_not_share_event_state(self) -> None:
+        first = EventManager(
+            history_config=EventHistoryConfig(max_events=2),
+            listen_config=EventListenConfig(queue_limit=2),
+        )
+        second = EventManager(
+            history_config=EventHistoryConfig(max_events=2),
+            listen_config=EventListenConfig(queue_limit=2),
+        )
+        called: list[EventType] = []
+
+        def listener(event: Event) -> None:
+            called.append(event.type)
+
+        first.add_listener(
+            listener,
+            [EventType.START, EventType.TOKEN_GENERATED],
+        )
+        first_start = Event(type=EventType.START)
+        first_end = Event(type=EventType.END)
+
+        await first.trigger(first_start)
+        await first.trigger(first_end)
+
+        self.assertEqual(called, [EventType.START])
+        self.assertTrue(first.should_emit(EventType.TOKEN_GENERATED))
+        self.assertFalse(second.should_emit(EventType.TOKEN_GENERATED))
+        self.assertEqual(first.history, [first_start, first_end])
+        self.assertEqual(second.history, [])
+        self.assertEqual(first.stats.total_triggers, 2)
+        self.assertEqual(first.stats.triggers[EventType.START], 1)
+        self.assertEqual(first.stats.triggers[EventType.END], 1)
+        self.assertEqual(second.stats.total_triggers, 0)
+        self.assertEqual(second.stats.triggers, {})
+        self.assertEqual(first._delivery_queue.qsize(), 2)
+        self.assertEqual(second._delivery_queue.qsize(), 0)
+
+        second_end = Event(type=EventType.END)
+        await second.trigger(second_end)
+
+        self.assertEqual(first.history, [first_start, first_end])
+        self.assertEqual(second.history, [second_end])
+        self.assertEqual(first.stats.triggers[EventType.START], 1)
+        self.assertEqual(second.stats.triggers[EventType.END], 1)
+        self.assertNotIn(EventType.START, second.stats.triggers)
+
+    async def test_listener_less_bursts_keep_history_and_queue_bounded(
+        self,
+    ) -> None:
+        manager = EventManager(
+            history_config=EventHistoryConfig(max_events=3),
+            listen_config=EventListenConfig(
+                queue_limit=2,
+                policy=EventDeliveryPolicy.DROP,
+            ),
+        )
+
+        def event_for_index(index: int) -> Event:
+            return Event.from_observability_payload(
+                type=EventType.START,
+                observability_payload=(
+                    EventObservabilityPayload.temporary_legacy(
+                        {
+                            "event_type": EventType.START.value,
+                            "index": index,
+                        },
+                        owner="event-manager-test",
+                        removal_condition="Test fixture only.",
+                    )
+                ),
+            )
+
+        for index in range(25):
+            await manager.trigger(event_for_index(index))
+
+        self.assertEqual(len(manager.history), 3)
+        self.assertEqual(
+            [
+                cast(dict[str, object], event.payload)["index"]
+                for event in manager.history
+            ],
+            [22, 23, 24],
+        )
+        self.assertEqual(manager._delivery_queue.qsize(), 2)
+        self.assertEqual(manager.stats.published, 25)
+        self.assertEqual(manager.stats.dropped, 23)
+        self.assertEqual(manager.stats.queue_depth, 2)
+        self.assertEqual(manager.stats.max_queue_depth, 2)
 
     def test_sdk_mode_uses_bounded_lossless_defaults(self) -> None:
         manager = EventManager()
@@ -565,6 +656,7 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
             EventDeliveryPolicy.BLOCK,
         )
         self.assertEqual(manager.default_delivery_config.queue_limit, 1)
+        self.assertTrue(manager.collect_stats)
         self.assertFalse(manager.enrich_token_ids)
 
     def test_server_mode_disables_history_and_drops_observability(
@@ -579,6 +671,56 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(manager.default_delivery_config.queue_limit, 32)
         self.assertFalse(manager.listen_config.enabled)
+        self.assertFalse(manager.collect_stats)
+
+    async def test_server_mode_stats_are_explicit_opt_in(self) -> None:
+        default_manager = EventManager(mode=EventManagerMode.SERVER)
+        stats_manager = EventManager(
+            mode=EventManagerMode.SERVER,
+            collect_stats=True,
+        )
+
+        await default_manager.trigger(Event(type=EventType.START))
+        await stats_manager.trigger(Event(type=EventType.START))
+
+        self.assertEqual(default_manager.stats.published, 0)
+        self.assertEqual(default_manager.stats.total_triggers, 0)
+        self.assertEqual(stats_manager.stats.published, 1)
+        self.assertEqual(stats_manager.stats.triggers[EventType.START], 1)
+
+    async def test_disabled_stats_still_delivers_to_subscribers(self) -> None:
+        manager = EventManager(
+            mode=EventManagerMode.SERVER,
+            default_delivery_config=EventDeliveryConfig(),
+        )
+        called: list[Event] = []
+
+        async def listener(event: Event) -> None:
+            called.append(event)
+
+        manager.add_listener(listener, [EventType.START])
+
+        event = Event(type=EventType.START)
+        await manager.trigger(event)
+
+        self.assertEqual(called, [event])
+        self.assertEqual(manager.stats.published, 0)
+        self.assertEqual(manager.stats.delivered, 0)
+
+    async def test_disabled_stats_do_not_track_dropped_listen_events(
+        self,
+    ) -> None:
+        manager = EventManager(
+            collect_stats=False,
+            listen_config=EventListenConfig(queue_limit=1),
+        )
+
+        await manager.trigger(Event(type=EventType.START))
+        await manager.trigger(Event(type=EventType.END))
+
+        self.assertEqual(manager._delivery_queue.qsize(), 1)
+        self.assertEqual(manager.stats.dropped, 0)
+        self.assertEqual(manager.stats.queue_depth, 0)
 
     def test_cli_mode_keeps_bounded_history_and_coalesces_ui_events(
         self,
@@ -695,23 +837,32 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
             )
         with self.assertRaises(AssertionError):
             EventManagerDefaults(
-                history_config=EventHistoryConfig(),
+                history_config=EventHistoryConfig(max_events=1),
                 delivery_config=cast(Any, object()),
                 listen_config=EventListenConfig(),
             )
         with self.assertRaises(AssertionError):
             EventManagerDefaults(
-                history_config=EventHistoryConfig(),
+                history_config=EventHistoryConfig(max_events=1),
                 delivery_config=EventDeliveryConfig(),
                 listen_config=cast(Any, object()),
             )
         with self.assertRaises(AssertionError):
             EventManagerDefaults(
-                history_config=EventHistoryConfig(),
+                history_config=EventHistoryConfig(max_events=1),
+                delivery_config=EventDeliveryConfig(),
+                listen_config=EventListenConfig(),
+                collect_stats=cast(Any, "yes"),
+            )
+        with self.assertRaises(AssertionError):
+            EventManagerDefaults(
+                history_config=EventHistoryConfig(max_events=1),
                 delivery_config=EventDeliveryConfig(),
                 listen_config=EventListenConfig(),
                 enrich_token_ids=cast(Any, "yes"),
             )
+        with self.assertRaises(AssertionError):
+            EventManager(collect_stats=cast(Any, "yes"))
 
     def test_listen_config_rejects_invalid_settings(self) -> None:
         with self.assertRaises(AssertionError):
@@ -1071,6 +1222,108 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(manager.stats.delivered, 0)
         self.assertEqual(manager.stats.failed, 1)
         self.assertFalse(manager.should_emit(EventType.TOKEN_GENERATED))
+
+    async def test_stream_item_subscriber_overflow_fails_closed(self) -> None:
+        manager = EventManager(listen_config=EventListenConfig(enabled=False))
+        called: list[Event] = []
+
+        async def listener(event: Event) -> None:
+            called.append(event)
+
+        manager.add_listener(
+            listener,
+            [EventType.TOKEN_GENERATED],
+            delivery_config=EventDeliveryConfig(
+                policy=EventDeliveryPolicy.FAIL_CLOSED,
+                queue_limit=1,
+            ),
+            include_token_events=True,
+        )
+
+        for sequence in range(3):
+            await manager.trigger_stream_item(
+                CanonicalStreamItem(
+                    stream_session_id="stream",
+                    run_id="run",
+                    turn_id="turn",
+                    sequence=sequence,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta=str(sequence),
+                )
+            )
+        await asyncio.sleep(0)
+
+        self.assertEqual(called, [])
+        self.assertEqual(manager.stats.delivered, 0)
+        self.assertEqual(manager.stats.failed, 1)
+        self.assertFalse(manager.should_emit(EventType.TOKEN_GENERATED))
+
+    async def test_coalescing_ui_stream_subscriber_keeps_lossless_items(
+        self,
+    ) -> None:
+        manager = EventManager(listen_config=EventListenConfig(enabled=False))
+        ui_started = asyncio.Event()
+        release_ui = asyncio.Event()
+        ui_sequences: list[int] = []
+        lossless_sequences: list[int] = []
+        total_items = 72
+
+        def event_sequence(event: Event) -> int:
+            payload = event.payload
+            assert isinstance(payload, dict)
+            sequence = payload["sequence"]
+            assert isinstance(sequence, int)
+            return sequence
+
+        async def ui_listener(event: Event) -> None:
+            ui_sequences.append(event_sequence(event))
+            ui_started.set()
+            await release_ui.wait()
+
+        async def lossless_listener(event: Event) -> None:
+            lossless_sequences.append(event_sequence(event))
+
+        manager.add_ui_listener(
+            ui_listener,
+            [EventType.TOKEN_GENERATED],
+            include_token_events=True,
+        )
+        manager.add_listener(
+            lossless_listener,
+            [EventType.TOKEN_GENERATED],
+            include_token_events=True,
+            subscriber_class=EventSubscriberClass.LOSSLESS,
+        )
+
+        for sequence in range(total_items):
+            await manager.trigger_stream_item(
+                CanonicalStreamItem(
+                    stream_session_id="stream",
+                    run_id="run",
+                    turn_id="turn",
+                    sequence=sequence,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta=str(sequence),
+                )
+            )
+            if sequence == 0:
+                await asyncio.wait_for(ui_started.wait(), timeout=0.1)
+
+        self.assertEqual(lossless_sequences, list(range(total_items)))
+        self.assertGreater(manager.stats.coalesced, 0)
+
+        ui_subscriber = manager._subscriber_index[ui_listener]
+        assert ui_subscriber.task is not None
+        release_ui.set()
+        await asyncio.wait_for(ui_subscriber.task, timeout=0.1)
+
+        self.assertEqual(ui_sequences[0], 0)
+        self.assertEqual(ui_sequences[-1], total_items - 1)
+        self.assertLess(len(ui_sequences), total_items)
+        self.assertEqual(lossless_sequences, list(range(total_items)))
+        self.assertEqual(manager.stats.dropped, 0)
 
     async def test_non_critical_token_listener_does_not_block_generation(
         self,

@@ -1,4 +1,4 @@
-from ..event import Event, EventType
+from ..event import Event, EventPayloadKind, EventType
 from ..types import (
     JsonValue,
 )
@@ -261,6 +261,12 @@ def _raw_event_payload(event: object) -> Mapping[str, object]:
     payload: dict[str, object] = {}
     if isinstance(event.payload, Mapping):
         payload.update(event.payload)
+    observability_payload = event.observability_payload
+    if (
+        observability_payload is not None
+        and observability_payload.kind is EventPayloadKind.CANONICAL_STREAM
+    ):
+        payload["canonical_stream"] = dict(observability_payload.data)
     if _finite_number(event.started):
         payload["started_at"] = event.started
     if _finite_number(event.finished):

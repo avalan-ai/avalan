@@ -88,6 +88,54 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         resp.set_thinking(False)
         self.assertFalse(resp.is_thinking)
 
+    async def test_aiter_preserves_thinking_on_reiteration(self) -> None:
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: _gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        resp.__aiter__()
+        resp.set_thinking(True)
+
+        iterator = resp.__aiter__()
+
+        self.assertIs(iterator, resp)
+        self.assertTrue(resp.is_thinking)
+
+    async def test_aiter_does_not_preserve_parser_derived_thinking(
+        self,
+    ) -> None:
+        async def gen():
+            yield "answer "
+            yield "<think>"
+            yield "private"
+            yield "</think>"
+            yield "tail"
+
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        iterator = resp.__aiter__()
+
+        self.assertEqual(await iterator.__anext__(), "answer ")
+        self.assertIsInstance(await iterator.__anext__(), ReasoningToken)
+        self.assertTrue(resp.is_thinking)
+
+        restarted = resp.__aiter__()
+        first = await restarted.__anext__()
+
+        self.assertEqual(first, "answer ")
+        self.assertNotIsInstance(first, ReasoningToken)
+        self.assertFalse(resp.is_thinking)
+
     async def test_disabled_reasoning_parser_returns_raw_token(self):
         async def gen():
             yield "b"

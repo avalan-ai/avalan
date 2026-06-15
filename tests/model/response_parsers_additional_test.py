@@ -70,6 +70,221 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
         tokens = await parser.push("thought")
         self.assertTrue(any(isinstance(t, ReasoningToken) for t in tokens))
 
+    async def test_split_markers_preserve_surrounding_whitespace(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger("reasoning-whitespace"),
+        )
+        output = []
+
+        for token in (
+            "lead ",
+            " <thi",
+            "nk> ",
+            " private ",
+            " </thi",
+            "nk> ",
+            "tail",
+        ):
+            output.extend(await parser.push(token))
+        output.extend(await parser.flush())
+
+        self.assertEqual(
+            [
+                item.token if isinstance(item, ReasoningToken) else item
+                for item in output
+            ],
+            [
+                "lead ",
+                " ",
+                "<thi",
+                "nk>",
+                " ",
+                " private ",
+                " ",
+                "</thi",
+                "nk>",
+                " ",
+                "tail",
+            ],
+        )
+        self.assertEqual(
+            [isinstance(item, ReasoningToken) for item in output],
+            [
+                False,
+                False,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                False,
+                False,
+            ],
+        )
+
+    async def test_split_marker_false_positive_remains_visible(self) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger("reasoning-false-positive"),
+        )
+        output = []
+
+        for token in ("<", " think", "> visible"):
+            output.extend(await parser.push(token))
+        output.extend(await parser.flush())
+
+        self.assertEqual(
+            "".join(
+                item.token if isinstance(item, ReasoningToken) else item
+                for item in output
+            ),
+            "< think> visible",
+        )
+        self.assertFalse(
+            any(isinstance(item, ReasoningToken) for item in output)
+        )
+
+    async def test_pending_marker_whitespace_flushes_on_current_side(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger("reasoning-pending-space"),
+        )
+
+        await parser.push("<")
+        visible = await parser.push(" ")
+
+        self.assertEqual(visible, ["<", " "])
+        self.assertFalse(parser.is_thinking)
+
+        parser.set_thinking(True)
+        await parser.push("<")
+        private = await parser.push(" ")
+
+        self.assertEqual(
+            [
+                item.token if isinstance(item, ReasoningToken) else item
+                for item in private
+            ],
+            ["<", " "],
+        )
+        self.assertTrue(
+            all(isinstance(item, ReasoningToken) for item in private)
+        )
+
+    async def test_embedded_markers_preserve_prefixes_and_suffixes(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger("reasoning-embedded"),
+        )
+
+        output = await parser.push("lead <think>hidden</think> tail")
+
+        self.assertEqual(
+            [
+                item.token if isinstance(item, ReasoningToken) else item
+                for item in output
+            ],
+            ["lead ", "<think>", "hidden", "</think>", " tail"],
+        )
+        self.assertEqual(
+            [isinstance(item, ReasoningToken) for item in output],
+            [False, True, True, True, False],
+        )
+        self.assertFalse(parser.is_thinking)
+
+    async def test_adjacent_embedded_reasoning_sections_do_not_leak(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger("reasoning-adjacent"),
+        )
+
+        output = await parser.push("x<think>a</think><think>b</think>y")
+
+        self.assertEqual(
+            [
+                item.token if isinstance(item, ReasoningToken) else item
+                for item in output
+            ],
+            [
+                "x",
+                "<think>",
+                "a",
+                "</think>",
+                "<think>",
+                "b",
+                "</think>",
+                "y",
+            ],
+        )
+        self.assertEqual(
+            [isinstance(item, ReasoningToken) for item in output],
+            [False, True, True, True, True, True, True, False],
+        )
+        self.assertEqual(
+            "".join(
+                item for item in output if not isinstance(item, ReasoningToken)
+            ),
+            "xy",
+        )
+
+    async def test_adjacent_split_reasoning_sections_do_not_leak(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger("reasoning-adjacent-split"),
+        )
+        output = []
+
+        for token in tuple("x<think>a</think><think>b</think>y"):
+            output.extend(await parser.push(token))
+        output.extend(await parser.flush())
+
+        public = "".join(
+            item for item in output if not isinstance(item, ReasoningToken)
+        )
+        private = "".join(
+            item.token for item in output if isinstance(item, ReasoningToken)
+        )
+
+        self.assertEqual(public, "xy")
+        self.assertEqual(private, "<think>a</think><think>b</think>")
+
+    async def test_thinking_partial_end_marker_keeps_prefix_private(
+        self,
+    ) -> None:
+        parser = ReasoningParser(
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger("reasoning-partial-end"),
+        )
+        parser.set_thinking(True)
+
+        output = await parser.push("private</thi")
+
+        self.assertEqual(
+            [
+                item.token if isinstance(item, ReasoningToken) else item
+                for item in output
+            ],
+            ["private"],
+        )
+        self.assertTrue(
+            all(isinstance(item, ReasoningToken) for item in output)
+        )
+        self.assertEqual(parser._pending_tokens, ["</thi"])
+        self.assertEqual(parser._pending_str, "</thi")
+
     async def test_pending_str_trims_excess(self) -> None:
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
@@ -130,7 +345,13 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
 
         parser._start_tag = FakeTag(parser._start_tag)
         result = await parser.push(parser._start_tag.value)
-        self.assertEqual(result, [])
+        self.assertEqual(
+            [
+                item.token if isinstance(item, ReasoningToken) else item
+                for item in result
+            ],
+            ["<think>"],
+        )
         self.assertTrue(parser.is_thinking)
 
 

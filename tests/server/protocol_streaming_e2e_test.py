@@ -1,13 +1,18 @@
 import asyncio
+from argparse import Namespace
 from asyncio import Event as AsyncEvent
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from json import loads
 from logging import getLogger
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import MagicMock, call
 from uuid import uuid4
 
 from a2a import types as a2a_types
 
+from avalan.cli.commands import model as model_cmds
 from avalan.entities import MessageRole
 from avalan.event import Event, EventType
 from avalan.flow.stream import canonical_flow_event_listener
@@ -17,6 +22,7 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
+    iter_stream_consumer_projections,
 )
 from avalan.server.a2a.router import (
     A2AResponseTranslator,
@@ -30,12 +36,17 @@ from avalan.server.routers import mcp as mcp_router
 class _CanonicalResponse:
     input_token_count = 0
     output_token_count = 0
+    can_think = False
+    is_thinking = False
 
     def __init__(self, items: tuple[CanonicalStreamItem, ...]) -> None:
         self._items = items
 
     def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
         return _iter_items(self._items)
+
+    def set_thinking(self, value: bool) -> None:
+        self.is_thinking = value
 
 
 class _SyncingOrchestrator:
@@ -89,6 +100,7 @@ def _channel(kind: StreamItemKind) -> StreamChannel:
     if kind in {
         StreamItemKind.TOOL_EXECUTION_STARTED,
         StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        StreamItemKind.TOOL_EXECUTION_PROGRESS,
         StreamItemKind.TOOL_EXECUTION_COMPLETED,
     }:
         return StreamChannel.TOOL_EXECUTION
@@ -143,21 +155,36 @@ def _canonical_items(
             10,
             StreamItemKind.TOOL_EXECUTION_OUTPUT,
             correlation=call,
-            text_delta=" update",
-            data={"category": "stdout", "content": " update"},
+            text_delta=" warning",
+            data={"category": "stderr", "content": " warning"},
             metadata={"tool_name": "search"},
         ),
         _stream_item(
             11,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation=call,
+            text_delta=" trace",
+            data={"category": "log", "content": " trace"},
+            metadata={"tool_name": "search"},
+        ),
+        _stream_item(
+            12,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            correlation=call,
+            data={"category": "progress", "content": "50%", "progress": 0.5},
+            metadata={"tool_name": "search"},
+        ),
+        _stream_item(
+            13,
             StreamItemKind.TOOL_EXECUTION_COMPLETED,
             correlation=call,
         ),
-        _stream_item(12, StreamItemKind.ANSWER_DELTA, text_delta="final "),
-        _stream_item(13, StreamItemKind.ANSWER_DELTA, text_delta="answer"),
-        _stream_item(14, StreamItemKind.ANSWER_DONE),
-        _stream_item(15, StreamItemKind.USAGE_COMPLETED, usage=usage),
+        _stream_item(14, StreamItemKind.ANSWER_DELTA, text_delta="final "),
+        _stream_item(15, StreamItemKind.ANSWER_DELTA, text_delta="answer"),
+        _stream_item(16, StreamItemKind.ANSWER_DONE),
+        _stream_item(17, StreamItemKind.USAGE_COMPLETED, usage=usage),
         _stream_item(
-            16,
+            18,
             StreamItemKind.STREAM_COMPLETED,
             terminal_outcome=StreamTerminalOutcome.COMPLETED,
         ),
@@ -199,6 +226,193 @@ async def _run_same_canonical_stream_projects_through_protocols() -> None:
     items = _canonical_items(flow_item)
     await _assert_mcp_projection(items)
     await _assert_a2a_projection(items)
+
+
+def test_lossy_cli_frames_do_not_drop_lossless_public_surfaces() -> None:
+    asyncio.run(_run_lossy_cli_frames_do_not_drop_lossless_public_surfaces())
+
+
+async def _run_lossy_cli_frames_do_not_drop_lossless_public_surfaces() -> None:
+    usage = {"output_tokens": 2}
+    items = (
+        _stream_item(0, StreamItemKind.STREAM_STARTED),
+        _stream_item(1, StreamItemKind.ANSWER_DELTA, text_delta="A"),
+        _stream_item(2, StreamItemKind.ANSWER_DELTA, text_delta="B"),
+        _stream_item(3, StreamItemKind.ANSWER_DONE),
+        _stream_item(4, StreamItemKind.USAGE_COMPLETED, usage=usage),
+        _stream_item(
+            5,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    )
+
+    sdk_items = [
+        item
+        async for item in iter_stream_consumer_projections(_iter_items(items))
+    ]
+    assert [item.sequence for item in sdk_items] == list(range(len(items)))
+    assert [item.kind for item in sdk_items] == [item.kind for item in items]
+    assert [item.text_delta for item in sdk_items[1:3]] == ["A", "B"]
+
+    await _assert_stdout_projection(items)
+    await _assert_lossy_cli_projection(items)
+    await _assert_simple_mcp_projection(items)
+    await _assert_simple_a2a_projection(items)
+
+
+async def _assert_stdout_projection(
+    items: tuple[CanonicalStreamItem, ...],
+) -> None:
+    console = MagicMock()
+    await model_cmds.token_generation(
+        args=Namespace(skip_display_reasoning_time=False),
+        console=console,
+        theme=MagicMock(),
+        logger=MagicMock(),
+        orchestrator=None,
+        event_stats=None,
+        lm=MagicMock(),
+        input_string="i",
+        response=_CanonicalResponse(items),
+        display_tokens=0,
+        dtokens_pick=0,
+        with_stats=False,
+        tool_events_limit=2,
+        refresh_per_second=2,
+    )
+
+    assert console.print.call_args_list == [
+        call("A", end=""),
+        call("B", end=""),
+    ]
+
+
+async def _assert_lossy_cli_projection(
+    items: tuple[CanonicalStreamItem, ...],
+) -> None:
+    yielded_frames: list[str] = []
+    closed_frames: list[str] = []
+
+    async def fake_tokens(
+        *parameters: object, **_: object
+    ) -> AsyncIterator[tuple[object | None, str]]:
+        answer_text = "".join(cast(list[str], parameters[9]))
+        try:
+            yielded_frames.append(f"first:{answer_text}")
+            yield None, f"frame:{answer_text}:first"
+            yielded_frames.append(f"second:{answer_text}")
+            yield None, f"frame:{answer_text}:second"
+        finally:
+            closed_frames.append(answer_text)
+
+    theme = MagicMock()
+    theme.tokens = MagicMock(side_effect=fake_tokens)
+    args = Namespace(
+        skip_display_reasoning_time=False,
+        display_time_to_n_token=1,
+        display_pause=0,
+        start_thinking=False,
+        display_probabilities=False,
+        display_probabilities_maximum=1.0,
+        display_probabilities_sample_minimum=0.0,
+        record=False,
+    )
+
+    await model_cmds._token_stream(
+        args=args,
+        console=MagicMock(width=80),
+        live=MagicMock(),
+        group=None,
+        tokens_group_index=None,
+        theme=theme,
+        logger=MagicMock(),
+        orchestrator=None,
+        event_stats=None,
+        lm=SimpleNamespace(
+            model_id="m",
+            tokenizer_config=None,
+            input_token_count=lambda _: 1,
+        ),
+        input_string="i",
+        response=_CanonicalResponse(items),
+        display_tokens=1,
+        dtokens_pick=1,
+        refresh_per_second=1000,
+        stop_signal=None,
+        tool_events_limit=2,
+        with_stats=True,
+    )
+
+    assert yielded_frames == ["first:A", "first:AB"]
+    assert closed_frames == ["A", "AB"]
+
+
+async def _assert_simple_mcp_projection(
+    items: tuple[CanonicalStreamItem, ...],
+) -> None:
+    request_model = ChatCompletionRequest(
+        model="test-model",
+        messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        stream=True,
+    )
+    payloads: list[dict[str, object]] = []
+    async for chunk in mcp_router._stream_mcp_response(
+        request_id="req-simple",
+        request_model=request_model,
+        response=_CanonicalResponse(items),
+        response_id=uuid4(),
+        timestamp=1,
+        progress_token="progress-simple",
+        orchestrator=_SyncingOrchestrator(),
+        logger=getLogger("test.protocol.mcp.simple"),
+        resource_store=mcp_router.MCPResourceStore(),
+        base_path="/mcp",
+        cancel_event=AsyncEvent(),
+    ):
+        payloads.extend(
+            loads(part) for part in chunk.decode("utf-8").splitlines() if part
+        )
+
+    progress = [
+        payload["params"]["progress"]
+        for payload in payloads
+        if payload.get("method") == "notifications/progress"
+    ]
+    assert [
+        item["delta"]
+        for item in progress
+        if item.get("type") == "answer.delta"
+    ] == ["A", "B"]
+    result_payloads = [payload for payload in payloads if "result" in payload]
+    assert len(result_payloads) == 1
+    result = result_payloads[0]["result"]
+    assert isinstance(result, dict)
+    assert result["content"] == [{"type": "text", "text": "AB"}]
+
+
+async def _assert_simple_a2a_projection(
+    items: tuple[CanonicalStreamItem, ...],
+) -> None:
+    store = TaskStore()
+    task_id = "lossy-frame-isolation"
+    await store.create_task(
+        task_id,
+        model="test-model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+    _ = [event async for event in translator.run_stream(_iter_items(items))]
+
+    assert translator.text == "AB"
+    task = await store.get_task(task_id)
+    assert task["status"] == "completed"
+    assert task["artifacts"][0]["content"] == [
+        {"type": "text", "text": "A"},
+        {"type": "text", "text": "B"},
+    ]
 
 
 async def _assert_mcp_projection(
@@ -259,7 +473,30 @@ async def _assert_mcp_projection(
         for payload in payloads
         if payload.get("method") == "notifications/resources/updated"
     ]
-    assert len(resources) == 2
+    tool_result_index = next(
+        index
+        for index, payload in enumerate(payloads)
+        if (
+            payload.get("method") == "notifications/message"
+            and _mcp_message(payload).get("type") == "tool.result"
+        )
+    )
+    live_resources = [
+        index
+        for index, payload in enumerate(payloads)
+        if (
+            payload.get("method") == "notifications/resources/updated"
+            and "delta" in _mcp_resource(payload)
+        )
+    ]
+    closed_resources = [
+        payload
+        for payload in resources
+        if _mcp_resource(payload).get("closed") is True
+    ]
+    assert len(live_resources) == 4
+    assert len(closed_resources) == 4
+    assert all(index < tool_result_index for index in live_resources)
     result_payloads = [payload for payload in payloads if "result" in payload]
     assert len(result_payloads) == 1
     result = result_payloads[0]["result"]
@@ -277,8 +514,12 @@ async def _assert_mcp_projection(
     assert tool_call["id"] == "call-1"
     assert tool_call["name"] == "search"
     assert tool_call["arguments"] == '{"query":"docs"}'
-    assert len(tool_call["resources"]) == 1
-    assert tool_call["resources"][0]["name"] == "stdout"
+    assert [resource["name"] for resource in tool_call["resources"]] == [
+        "stdout",
+        "stderr",
+        "logs",
+        "progress",
+    ]
 
 
 async def _assert_a2a_projection(
@@ -325,9 +566,32 @@ async def _assert_a2a_projection(
     assert artifacts["call-1"]["kind"] == "tool_execution"
     assert tool_content[0]["text"] == '{"query":"'
     assert tool_content[1]["text"] == 'docs"}'
-    assert tool_content[2]["text"] == "live"
-    assert tool_content[3]["text"] == " update"
-    assert tool_content[4]["status"] == "completed"
+    terminal_index = next(
+        index
+        for index, item in enumerate(tool_content)
+        if item.get("type") == "tool_terminal"
+    )
+    live_tool_content = [
+        item
+        for item in tool_content[:terminal_index]
+        if item.get("type") in {"tool_output", "progress"}
+    ]
+    assert [
+        item.get("category", item.get("progress", {}).get("category"))
+        for item in live_tool_content
+    ] == ["stdout", "stderr", "log", "progress"]
+    assert tool_content[terminal_index]["status"] == "completed"
     assert artifact_updates
     assert status_updates[-1].status.state is a2a_types.TaskState.completed
     assert status_updates[-1].final is True
+
+
+def _mcp_message(payload: dict[str, object]) -> dict[str, object]:
+    params = cast(dict[str, object], payload["params"])
+    return cast(dict[str, object], params["message"])
+
+
+def _mcp_resource(payload: dict[str, object]) -> dict[str, object]:
+    params = cast(dict[str, object], payload["params"])
+    resources = cast(list[dict[str, object]], params["resources"])
+    return resources[0]

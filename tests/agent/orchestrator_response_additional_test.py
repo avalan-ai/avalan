@@ -32,6 +32,7 @@ from avalan.model.call import ModelCallContext
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamConsumerProjection,
     StreamItemKind,
     StreamTerminalOutcome,
     StreamValidationError,
@@ -117,6 +118,143 @@ def _make_response(
 
 
 class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
+    async def test_stream_item_projection_confines_legacy_surfaces(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        tool_token = ToolCallToken(token='{"x":1}', call=call)
+        event = Event(type=EventType.TOOL_PROCESS, payload=[call])
+        canonical_item = CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=7,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
+        projection_item = StreamConsumerProjection.from_item(canonical_item)
+
+        string_projection = response._stream_item_projection("raw", 3)
+        event_projection = response._stream_item_projection(event, 4)
+        tool_projection = response._stream_item_projection(tool_token, 5)
+        semantic_projection = response._stream_item_projection(
+            projection_item,
+            6,
+        )
+
+        assert string_projection.canonical_item is not None
+        self.assertEqual(
+            string_projection.canonical_item.kind,
+            StreamItemKind.ANSWER_DELTA,
+        )
+        self.assertEqual(string_projection.canonical_item.text_delta, "raw")
+        self.assertEqual(string_projection.parser_text, "raw")
+        self.assertEqual(string_projection.legacy_token, "raw")
+        self.assertIs(event_projection.event, event)
+        self.assertIsNone(event_projection.canonical_item)
+        self.assertIs(tool_projection.legacy_tool_call_token, tool_token)
+        assert tool_projection.canonical_item is not None
+        self.assertEqual(
+            tool_projection.canonical_item.kind,
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+        )
+        self.assertEqual(
+            tool_projection.canonical_item.correlation.tool_call_id,
+            "call-1",
+        )
+        self.assertEqual(
+            tool_projection.canonical_item.data,
+            {"name": "calc", "arguments": {"x": 1}},
+        )
+        self.assertTrue(semantic_projection.canonical_source)
+        assert semantic_projection.canonical_item is not None
+        self.assertEqual(semantic_projection.canonical_item, canonical_item)
+
+    async def test_stream_item_projection_rejects_unsupported_item(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        with self.assertRaises(AssertionError):
+            response._stream_item_projection(object(), 0)
+
+    async def test_projection_reuses_recorded_tool_lifecycle_item(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        token = ToolCallToken(token='{"x":1}', call=call)
+        response._append_canonical_item(StreamItemKind.STREAM_STARTED)
+        response._record_streamed_tool_call_token(token)
+        items_before = response.canonical_items
+
+        response._append_canonical_projection_item(token)
+        response._append_canonical_projection_item(
+            Event(type=EventType.TOOL_PROCESS, payload=[call])
+        )
+
+        self.assertEqual(response.canonical_items, items_before)
+        self.assertEqual(
+            [item.kind for item in response.canonical_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            ],
+        )
+
+    async def test_iteration_projects_raw_response_event_through_emit(self):
+        class Response:
+            is_async_generator = True
+
+            def __aiter__(self):
+                return self.output_gen()
+
+            async def output_gen(self):
+                yield Event(type=EventType.TOOL_DIAGNOSTIC)
+
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            cast(TextGenerationResponse, Response()),
+            agent,
+            operation,
+            {},
+        )
+
+        item = await response.__aiter__().__anext__()
+
+        assert isinstance(item, Event)
+        self.assertEqual(item.type, EventType.TOOL_DIAGNOSTIC)
+
     async def test_legacy_tool_event_shim_inventory_covers_tool_events(self):
         inventory = legacy_tool_event_shim_inventory()
 
@@ -531,16 +669,23 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             [event.observability.kind for event in token_events],
             [
-                EventPayloadKind.TEMPORARY_LEGACY,
-                EventPayloadKind.TEMPORARY_LEGACY,
+                EventPayloadKind.CANONICAL_STREAM,
+                EventPayloadKind.CANONICAL_STREAM,
             ],
         )
         self.assertEqual(
             [
-                event.observability.data["token_length"]
+                cast(
+                    dict[str, object],
+                    event.observability.data["summary"],
+                )["text_delta_length"]
                 for event in token_events
             ],
             [1, 1],
+        )
+        self.assertEqual(
+            [event.observability.data["sequence"] for event in token_events],
+            [0, 1],
         )
 
     async def test_response_text_and_calls_reads_semantic_answer_items(self):

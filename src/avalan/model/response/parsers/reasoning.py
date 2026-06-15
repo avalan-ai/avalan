@@ -73,17 +73,21 @@ class ReasoningParser:
         return self._thinking_budget_exhausted
 
     async def push(self, token: str) -> Iterable[Any]:
-        if self._thinking_budget_exhausted and not self._thinking:
-            self._logger.debug(
-                "Thinking budget exhausted and no longer thinking"
-            )
-            return [token]
+        if not token:
+            return []
 
         token_clean = token.strip()
-        expecting_tag = self._end_tag if self._thinking else self._start_tag
+        expecting_start = not self._thinking
+        expecting_tag = self._marker_text(expecting_start)
         result: list[Any] = []
 
         if self._pending_tokens:
+            if not token_clean:
+                result.extend(self._flush_pending(self._thinking))
+                if self._thinking:
+                    return self._thinking_token_result(token, result)
+                result.append(token)
+                return result
             candidate = self._pending_str + token_clean
             if expecting_tag.startswith(candidate):
                 self._pending_tokens.append(token)
@@ -93,53 +97,47 @@ class ReasoningParser:
                     removed_clean = removed.strip()
                     self._pending_str = self._pending_str[len(removed_clean) :]
                 if candidate == expecting_tag:
-                    return self._set_thinking(
-                        result, expecting_tag == self._start_tag
+                    return self._set_thinking_from_pending(
+                        result, expecting_start
                     )
+                return result
+            if isinstance(expecting_tag, str) and candidate.startswith(
+                expecting_tag
+            ):
+                needed_length = len(expecting_tag) - len(self._pending_str)
+                tag_start = len(token) - len(token.lstrip())
+                tag_end = tag_start + needed_length
+                self._pending_tokens.append(token[:tag_end])
+                self._pending_str += token_clean[:needed_length]
+                result = self._set_thinking_from_pending(
+                    result, expecting_start
+                )
+                remainder = token[tag_end:]
+                if remainder:
+                    result.extend(await self.push(remainder))
                 return result
             result.extend(self._flush_pending(self._thinking))
 
-        if token_clean in (self._start_tag, self._end_tag) or (
-            not self._thinking and token_clean.startswith(self._prefixes)
-        ):
-            return self._set_thinking(
-                result, token_clean != self._end_tag, token=token
+        end_tag = self._marker_text(False)
+        if token_clean in (self._marker_text(True), end_tag):
+            return self._set_thinking_from_token(
+                result, token_clean != end_tag, token
             )
 
-        if expecting_tag.startswith(token_clean):
+        if not self._thinking and token_clean.startswith(self._prefixes):
+            return self._set_thinking(result, True, token=token)
+
+        if token_clean and expecting_tag.startswith(token_clean):
             self._pending_tokens.append(token)
             self._pending_str += token_clean
-            while len(self._pending_str) > len(expecting_tag):
-                removed = self._pending_tokens.pop(0)
-                removed_clean = removed.strip()
-                self._pending_str = self._pending_str[len(removed_clean) :]
-            if token_clean == expecting_tag:
-                return self._set_thinking(
-                    result, expecting_tag == self._start_tag
-                )
             return result
+
+        embedded = await self._push_embedded_marker(token)
+        if embedded is not None:
+            return embedded
 
         if self._thinking:
-            within_budget = (
-                self._settings.max_new_tokens is None
-                or self._token_count < self._settings.max_new_tokens
-            )
-            if within_budget:
-                self._logger.debug('Adding reasoning token "%s"', token)
-                result.extend(self._wrap(token))
-                return result
-            if self._settings.stop_on_max_new_tokens:
-                self._logger.debug(
-                    "Maximum token limit %s reached",
-                    self._settings.max_new_tokens,
-                )
-                raise ReasoningTokenLimitExceeded
-
-            self._logger.debug(
-                'Adding reasoning token "%s" after budget exceeded', token
-            )
-            result.append(token)
-            return result
+            return self._thinking_token_result(token, result)
 
         result.append(token)
         return result
@@ -174,6 +172,160 @@ class ReasoningParser:
             result.extend(self._wrap(token))
         return result
 
+    def _set_thinking_from_pending(
+        self, result: list[Any], is_start: bool
+    ) -> list[Any]:
+        raw = "".join(self._pending_tokens)
+        marker = self._marker_text(is_start)
+        marker_index = raw.find(marker)
+        if marker_index == -1:
+            result.extend(self._flush_pending(self._thinking))
+            return result
+        marker_end = marker_index + len(marker)
+        prefix, marker_parts, suffix = self._pending_marker_segments(
+            marker_index, marker_end
+        )
+        self._pending_tokens.clear()
+        self._pending_str = ""
+        return self._set_thinking_from_segments(
+            result, is_start, prefix, marker_parts, suffix
+        )
+
+    def _set_thinking_from_token(
+        self, result: list[Any], is_start: bool, token: str
+    ) -> list[Any]:
+        marker = self._marker_text(is_start)
+        marker_index = token.find(marker)
+        assert marker_index != -1
+        marker_end = marker_index + len(marker)
+        return self._set_thinking_from_segments(
+            result,
+            is_start,
+            [token[:marker_index]],
+            [marker],
+            [token[marker_end:]],
+        )
+
+    def _set_thinking_from_segments(
+        self,
+        result: list[Any],
+        is_start: bool,
+        prefix: list[str],
+        marker_parts: list[str],
+        suffix: list[str],
+    ) -> list[Any]:
+        if is_start:
+            for part in prefix:
+                if part:
+                    result.extend(
+                        self._wrap(part) if self._thinking else [part]
+                    )
+            self._thinking = True
+            self._thinking_turns += 1
+            if self._thinking_turns >= self._max_thinking_turns:
+                self._thinking_budget_exhausted = True
+            for part in (*marker_parts, *suffix):
+                if part:
+                    result.extend(self._wrap(part))
+            return result
+
+        for part in (*prefix, *marker_parts):
+            if part:
+                result.extend(self._wrap(part))
+        self._thinking = False
+        for part in suffix:
+            if part:
+                result.append(part)
+        return result
+
+    def _pending_marker_segments(
+        self, marker_index: int, marker_end: int
+    ) -> tuple[list[str], list[str], list[str]]:
+        prefix: list[str] = []
+        marker_parts: list[str] = []
+        suffix: list[str] = []
+        position = 0
+        for token in self._pending_tokens:
+            token_end = position + len(token)
+            if position < marker_index:
+                prefix_end = min(token_end, marker_index)
+                prefix.append(token[: prefix_end - position])
+            if token_end > marker_index and position < marker_end:
+                part_start = max(marker_index, position) - position
+                part_end = min(token_end, marker_end) - position
+                marker_parts.append(token[part_start:part_end])
+            if token_end > marker_end:
+                suffix_start = max(marker_end, position) - position
+                suffix.append(token[suffix_start:])
+            position = token_end
+        return prefix, marker_parts, suffix
+
+    def _marker_text(self, is_start: bool) -> str:
+        marker = self._start_tag if is_start else self._end_tag
+        marker_value = getattr(marker, "value", marker)
+        assert isinstance(marker_value, str)
+        return marker_value
+
+    async def _push_embedded_marker(self, token: str) -> list[Any] | None:
+        is_start = not self._thinking
+        marker = self._marker_text(is_start)
+
+        marker_index = token.find(marker)
+        if marker_index != -1:
+            result: list[Any] = []
+            before = token[:marker_index]
+            if before:
+                if self._thinking:
+                    result = self._thinking_token_result(before, result)
+                else:
+                    result.append(before)
+            marker_text = token[marker_index : marker_index + len(marker)]
+            result = self._set_thinking(result, is_start, token=marker_text)
+            remainder = token[marker_index + len(marker) :]
+            if remainder:
+                result.extend(await self.push(remainder))
+            return result
+
+        suffix_length = self._marker_suffix_length(token, marker)
+        if suffix_length and suffix_length < len(token):
+            result = []
+            before = token[:-suffix_length]
+            if before:
+                if self._thinking:
+                    result = self._thinking_token_result(before, result)
+                else:
+                    result.append(before)
+            pending = token[-suffix_length:]
+            self._pending_tokens.append(pending)
+            self._pending_str += pending.strip()
+            return result
+
+        return None
+
+    def _thinking_token_result(
+        self, token: str, result: list[Any]
+    ) -> list[Any]:
+        within_budget = (
+            self._settings.max_new_tokens is None
+            or self._token_count < self._settings.max_new_tokens
+        )
+        if within_budget:
+            self._logger.debug('Adding reasoning token "%s"', token)
+            result.extend(self._wrap(token))
+            return result
+        if self._settings.stop_on_max_new_tokens:
+            self._logger.debug(
+                "Maximum token limit %s reached",
+                self._settings.max_new_tokens,
+            )
+            raise ReasoningTokenLimitExceeded
+
+        self._logger.debug(
+            'Adding reasoning token "%s" after budget exceeded', token
+        )
+        result.append(token)
+        return result
+
     def _wrap(self, t: str) -> list[Any]:
         self._token_count += 1
         return [ReasoningToken(t)]
@@ -191,3 +343,11 @@ class ReasoningParser:
             self._pending_tokens.clear()
             self._pending_str = ""
         return result
+
+    @staticmethod
+    def _marker_suffix_length(token: str, marker: str) -> int:
+        max_suffix = min(len(token), len(marker) - 1)
+        for length in range(max_suffix, 0, -1):
+            if marker.startswith(token[-length:]):
+                return length
+        return 0

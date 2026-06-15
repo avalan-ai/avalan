@@ -1,10 +1,34 @@
-from asyncio import CancelledError, run, sleep
+from ast import (
+    AST,
+    AsyncFunctionDef,
+    Attribute,
+    BinOp,
+    BitOr,
+    Call,
+    ClassDef,
+    FunctionDef,
+    Name,
+    NodeVisitor,
+    Tuple,
+    parse,
+)
+from asyncio import (
+    CancelledError,
+    create_task,
+    run,
+    sleep,
+    wait_for,
+)
+from asyncio import (
+    Event as AsyncEvent,
+)
 from collections.abc import AsyncIterable, AsyncIterator
 from datetime import datetime
+from pathlib import Path
 from time import perf_counter
 from typing import Any, cast
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 from avalan.entities import (
     ReasoningToken,
@@ -26,11 +50,14 @@ from avalan.model.stream import (
     StreamGoldenTrace,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamLegacyClassifierInventoryEntry,
     StreamLegacySurface,
     StreamLegacySurfaceClassification,
     StreamLegacySurfaceInventoryEntry,
     StreamPerformanceBudget,
+    StreamPerformanceBudgetReconciliation,
     StreamProducerBackend,
+    StreamProjectionState,
     StreamProviderCapabilities,
     StreamProviderEvent,
     StreamRetentionPolicy,
@@ -43,21 +70,27 @@ from avalan.model.stream import (
     StreamVisibility,
     TextGenerationSingleStream,
     TextGenerationStream,
+    _LegacyTokenStreamAdapter,
+    _token_metadata,
     accumulate_canonical_stream_items,
     assemble_tool_observations,
     canonical_item_from_consumer_projection,
     canonical_item_from_token,
+    classify_legacy_stream_classifier,
     classify_legacy_stream_surface,
     is_stream_terminal_kind,
     is_tool_execution_terminal_kind,
     iter_stream_consumer_projections,
+    legacy_stream_classifier_inventory,
     legacy_stream_surface_inventory,
     normalize_local_stream,
     normalize_provider_stream,
     project_canonical_stream_item,
+    project_stream_consumer_item,
     stream_channel_for_kind,
     stream_consumer_projection_from_token,
     stream_observability_payload,
+    stream_projection_display_token,
     stream_projection_is_reasoning,
     stream_projection_is_tool_call,
     stream_projection_text_delta,
@@ -66,6 +99,8 @@ from avalan.model.stream import (
     validate_stream_runtime_contract,
     validate_tool_lifecycle_items,
 )
+
+STREAM_TEST_TIMEOUT = 1.0
 
 
 def _item(
@@ -140,6 +175,20 @@ def _tool_item(
         text_delta=text_delta,
         data=data,
     )
+
+
+def _first_sequence(
+    items: tuple[CanonicalStreamItem, ...],
+    kind: StreamItemKind,
+) -> int:
+    return next(item.sequence for item in items if item.kind is kind)
+
+
+def _last_sequence(
+    items: tuple[CanonicalStreamItem, ...],
+    kind: StreamItemKind,
+) -> int:
+    return next(item.sequence for item in reversed(items) if item.kind is kind)
 
 
 class _StreamProbe(TextGenerationStream):
@@ -238,6 +287,152 @@ async def _collect_projection_items(
             )
         ]
     )
+
+
+_LEGACY_CLASSIFIER_MODULE_PATHS = {
+    "avalan.model.stream": Path("src/avalan/model/stream.py"),
+    "avalan.model.response.text": Path("src/avalan/model/response/text.py"),
+    "avalan.agent.orchestrator.response.orchestrator_response": Path(
+        "src/avalan/agent/orchestrator/response/orchestrator_response.py"
+    ),
+    "avalan.cli.theme.fancy": Path("src/avalan/cli/theme/fancy.py"),
+    "avalan.cli.commands.model": Path("src/avalan/cli/commands/model.py"),
+    "avalan.server.routers.chat": Path("src/avalan/server/routers/chat.py"),
+    "avalan.server.routers.responses": Path(
+        "src/avalan/server/routers/responses.py"
+    ),
+    "avalan.server.routers.mcp": Path("src/avalan/server/routers/mcp.py"),
+    "avalan.server.a2a.router": Path("src/avalan/server/a2a/router.py"),
+}
+_LEGACY_CLASSIFIER_SCAN_ROOTS = (Path("src/avalan/server"),)
+
+_LEGACY_CLASSIFIER_SYMBOL_SURFACES = {
+    "Token": StreamLegacySurface.TOKEN,
+    "TokenDetail": StreamLegacySurface.TOKEN_DETAIL,
+    "ReasoningToken": StreamLegacySurface.REASONING_TOKEN,
+    "ToolCallToken": StreamLegacySurface.TOOL_CALL_TOKEN,
+    "Event": StreamLegacySurface.EVENT,
+}
+
+_LEGACY_CLASSIFIER_STRING_SITES = {
+    (
+        "avalan.agent.orchestrator.response.orchestrator_response",
+        "OrchestratorResponse._stream_item_projection",
+    ),
+    ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
+    ("avalan.model.stream", "_LegacyTokenStreamAdapter.item_from_token"),
+    ("avalan.model.stream", "_LegacyTokenStreamAdapter.events_from_token"),
+}
+
+
+class _LegacyStreamClassifierVisitor(NodeVisitor):
+    def __init__(self, module: str) -> None:
+        self.module = module
+        self.stack: list[str] = []
+        self.sites: dict[tuple[str, str], set[StreamLegacySurface]] = {}
+
+    def visit_ClassDef(self, node: ClassDef) -> None:
+        self.stack.append(node.name)
+        self.generic_visit(node)
+        self.stack.pop()
+
+    def visit_FunctionDef(self, node: FunctionDef) -> None:
+        self.stack.append(node.name)
+        self.generic_visit(node)
+        self.stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> None:
+        self.stack.append(node.name)
+        self.generic_visit(node)
+        self.stack.pop()
+
+    def visit_Call(self, node: Call) -> None:
+        if (
+            isinstance(node.func, Name)
+            and node.func.id == "isinstance"
+            and len(node.args) >= 2
+        ):
+            key = (self.module, ".".join(self.stack))
+            surfaces = self._surfaces_for_node(node.args[1], key)
+            if surfaces:
+                self.sites.setdefault(key, set()).update(surfaces)
+        self.generic_visit(node)
+
+    def _surfaces_for_node(
+        self,
+        node: AST,
+        key: tuple[str, str],
+    ) -> set[StreamLegacySurface]:
+        if isinstance(node, Name):
+            if node.id == "str" and key in _LEGACY_CLASSIFIER_STRING_SITES:
+                return {StreamLegacySurface.STRING}
+            surface = _LEGACY_CLASSIFIER_SYMBOL_SURFACES.get(node.id)
+            return set() if surface is None else {surface}
+        if isinstance(node, Attribute):
+            surface = _LEGACY_CLASSIFIER_SYMBOL_SURFACES.get(node.attr)
+            return set() if surface is None else {surface}
+        if isinstance(node, Tuple):
+            surfaces: set[StreamLegacySurface] = set()
+            for element in node.elts:
+                surfaces.update(self._surfaces_for_node(element, key))
+            return surfaces
+        if isinstance(node, BinOp) and isinstance(node.op, BitOr):
+            return self._surfaces_for_node(
+                node.left, key
+            ) | self._surfaces_for_node(node.right, key)
+        return set()
+
+
+def _legacy_stream_classifier_sites(
+    module: str,
+    tree: AST,
+) -> dict[tuple[str, str], set[StreamLegacySurface]]:
+    visitor = _LegacyStreamClassifierVisitor(module)
+    visitor.visit(tree)
+    return visitor.sites
+
+
+def _source_legacy_stream_classifier_sites(
+    root: Path,
+) -> dict[tuple[str, str], frozenset[StreamLegacySurface]]:
+    sites: dict[tuple[str, str], set[StreamLegacySurface]] = {}
+    for module, path in _legacy_classifier_module_paths(root).items():
+        module_sites = _legacy_stream_classifier_sites(
+            module,
+            parse((root / path).read_text(encoding="utf-8")),
+        )
+        for key, surfaces in module_sites.items():
+            sites.setdefault(key, set()).update(surfaces)
+    return {key: frozenset(value) for key, value in sites.items()}
+
+
+def _legacy_classifier_module_paths(root: Path) -> dict[str, Path]:
+    paths = dict(_LEGACY_CLASSIFIER_MODULE_PATHS)
+    for scan_root in _LEGACY_CLASSIFIER_SCAN_ROOTS:
+        for path in (root / scan_root).rglob("*.py"):
+            relative = path.relative_to(root)
+            module = ".".join(relative.with_suffix("").parts[1:])
+            paths.setdefault(module, relative)
+    return paths
+
+
+def _inventory_legacy_stream_classifier_sites() -> (
+    dict[tuple[str, str], frozenset[StreamLegacySurface]]
+):
+    sites: dict[tuple[str, str], set[StreamLegacySurface]] = {}
+    for entry in legacy_stream_classifier_inventory():
+        key = (entry.module, entry.qualname)
+        class_surfaces = {
+            surface
+            for surface in entry.surfaces
+            if (
+                surface is not StreamLegacySurface.STRING
+                or key in _LEGACY_CLASSIFIER_STRING_SITES
+            )
+        }
+        if class_surfaces:
+            sites[key] = class_surfaces
+    return {key: frozenset(value) for key, value in sites.items()}
 
 
 class StreamContractTestCase(TestCase):
@@ -490,6 +685,473 @@ class StreamContractTestCase(TestCase):
         with self.assertRaises(AssertionError):
             stream_consumer_projection_from_token("a", -1)
 
+    def test_stream_projection_state_projects_canonical_and_projection_items(
+        self,
+    ) -> None:
+        started = _item(StreamItemKind.STREAM_STARTED, 0)
+        answer = _item(
+            StreamItemKind.ANSWER_DELTA,
+            1,
+            text_delta="answer",
+        )
+        answer_done = _item(StreamItemKind.ANSWER_DONE, 2)
+        completed = _item(
+            StreamItemKind.STREAM_COMPLETED,
+            3,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        projections = (
+            state.project(
+                started,
+                99,
+                unsupported_message="unsupported stream item",
+            ),
+            state.project(
+                project_canonical_stream_item(answer),
+                100,
+                unsupported_message="unsupported stream item",
+            ),
+            state.project(
+                answer_done,
+                101,
+                unsupported_message="unsupported stream item",
+            ),
+            state.project(
+                completed,
+                102,
+                unsupported_message="unsupported stream item",
+            ),
+        )
+
+        state.validate_complete()
+        self.assertTrue(state.has_canonical_items)
+        self.assertFalse(state.legacy_stream_seen)
+        self.assertEqual([item.sequence for item in projections], [0, 1, 2, 3])
+        self.assertEqual(state.accumulator.answer_text, "answer")
+        terminal = state.terminal_projection()
+        self.assertIsNotNone(terminal)
+        self.assertEqual(terminal.sequence, 3)
+
+    def test_stream_projection_state_rejects_terminal_with_open_channel(
+        self,
+    ) -> None:
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+        state.project(
+            project_canonical_stream_item(
+                _item(StreamItemKind.STREAM_STARTED, 0)
+            ),
+            99,
+            unsupported_message="unsupported stream item",
+        )
+        state.project(
+            project_canonical_stream_item(
+                _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="answer")
+            ),
+            100,
+            unsupported_message="unsupported stream item",
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError, "answer channel missing done"
+        ):
+            state.project(
+                project_canonical_stream_item(_stream_errored(2)),
+                101,
+                unsupported_message="unsupported stream item",
+            )
+        self.assertIsNone(state.terminal_projection())
+
+    def test_stream_projection_state_keeps_terminal_after_history_eviction(
+        self,
+    ) -> None:
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            accumulator=CanonicalStreamAccumulator(
+                retention_policy=StreamRetentionPolicy(
+                    accumulator_item_limit=1,
+                )
+            ),
+        )
+        for item in (
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            _item(StreamItemKind.USAGE_COMPLETED, 1, usage={}),
+            _stream_completed(2),
+            _item(StreamItemKind.STREAM_CLOSED, 3),
+        ):
+            state.project(
+                item,
+                item.sequence,
+                unsupported_message="unsupported stream item",
+            )
+
+        state.validate_complete()
+        self.assertEqual(
+            [item.kind for item in state.accumulator.items],
+            [StreamItemKind.STREAM_CLOSED],
+        )
+        terminal = state.terminal_projection()
+        self.assertIsNotNone(terminal)
+        self.assertEqual(terminal.sequence, 2)
+        self.assertIs(
+            terminal.terminal_outcome,
+            StreamTerminalOutcome.COMPLETED,
+        )
+
+    def test_stream_projection_state_returns_no_terminal_for_open_stream(
+        self,
+    ) -> None:
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+        state.project(
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            0,
+            unsupported_message="unsupported stream item",
+        )
+
+        self.assertIsNone(state.terminal_projection())
+
+    def test_stream_projection_state_projects_legacy_tokens_with_fallback_ids(
+        self,
+    ) -> None:
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        projection = state.project(
+            Token(token="legacy"),
+            7,
+            unsupported_message="unsupported stream item",
+        )
+
+        state.validate_complete()
+        self.assertFalse(state.has_canonical_items)
+        self.assertTrue(state.legacy_stream_seen)
+        self.assertEqual(projection.stream_session_id, "fallback-stream")
+        self.assertEqual(projection.sequence, 7)
+        self.assertEqual(projection.text_delta, "legacy")
+
+    def test_stream_projection_state_reuses_legacy_adapter(self) -> None:
+        original_adapter = _LegacyTokenStreamAdapter(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+        adapter = MagicMock()
+        adapter.item_from_token.side_effect = original_adapter.item_from_token
+
+        with patch(
+            "avalan.model.stream._LegacyTokenStreamAdapter",
+            return_value=adapter,
+        ) as adapter_class:
+            state = StreamProjectionState(
+                stream_session_id="fallback-stream",
+                run_id="fallback-run",
+                turn_id="fallback-turn",
+            )
+            first = state.project(
+                "one",
+                1,
+                unsupported_message="unsupported stream item",
+            )
+            second = state.project(
+                Token(token="two"),
+                2,
+                unsupported_message="unsupported stream item",
+            )
+
+        adapter_class.assert_called_once_with(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+        adapter.item_from_token.assert_has_calls(
+            [
+                call("one", 1),
+                call(Token(token="two"), 2),
+            ]
+        )
+        self.assertEqual(first.text_delta, "one")
+        self.assertEqual(second.text_delta, "two")
+
+    def test_stream_projection_state_does_not_share_legacy_adapters(
+        self,
+    ) -> None:
+        first_adapter = _LegacyTokenStreamAdapter(
+            stream_session_id="first-stream",
+            run_id="first-run",
+            turn_id="first-turn",
+        )
+        second_adapter = _LegacyTokenStreamAdapter(
+            stream_session_id="second-stream",
+            run_id="second-run",
+            turn_id="second-turn",
+        )
+
+        with patch(
+            "avalan.model.stream._LegacyTokenStreamAdapter",
+            side_effect=[first_adapter, second_adapter],
+        ) as adapter_class:
+            first_state = StreamProjectionState(
+                stream_session_id="first-stream",
+                run_id="first-run",
+                turn_id="first-turn",
+            )
+            second_state = StreamProjectionState(
+                stream_session_id="second-stream",
+                run_id="second-run",
+                turn_id="second-turn",
+            )
+
+            first = first_state.project(
+                "first",
+                0,
+                unsupported_message="unsupported stream item",
+            )
+            second = second_state.project(
+                "second",
+                0,
+                unsupported_message="unsupported stream item",
+            )
+
+        self.assertEqual(adapter_class.call_count, 2)
+        self.assertEqual(first.stream_session_id, "first-stream")
+        self.assertEqual(second.stream_session_id, "second-stream")
+        self.assertEqual(first.text_delta, "first")
+        self.assertEqual(second.text_delta, "second")
+
+    def test_project_stream_consumer_item_uses_shared_projection_state(
+        self,
+    ) -> None:
+        canonical = _item(
+            StreamItemKind.ANSWER_DELTA,
+            3,
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            text_delta="canonical",
+        )
+        legacy = Token(token="legacy")
+
+        canonical_projection = project_stream_consumer_item(
+            canonical,
+            99,
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            unsupported_message="unsupported helper stream item",
+        )
+        legacy_projection = project_stream_consumer_item(
+            legacy,
+            5,
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            unsupported_message="unsupported helper stream item",
+        )
+
+        self.assertEqual(canonical_projection.stream_session_id, "stream")
+        self.assertEqual(canonical_projection.sequence, 3)
+        self.assertEqual(canonical_projection.text_delta, "canonical")
+        self.assertEqual(
+            legacy_projection.stream_session_id, "fallback-stream"
+        )
+        self.assertEqual(legacy_projection.sequence, 5)
+        self.assertEqual(legacy_projection.text_delta, "legacy")
+
+    def test_project_stream_consumer_item_rejects_invalid_values(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported helper stream item",
+        ):
+            project_stream_consumer_item(
+                object(),
+                0,
+                stream_session_id="fallback-stream",
+                run_id="fallback-run",
+                turn_id="fallback-turn",
+                unsupported_message="unsupported helper stream item",
+            )
+        with self.assertRaises(AssertionError):
+            project_stream_consumer_item(
+                "legacy",
+                -1,
+                stream_session_id="fallback-stream",
+                run_id="fallback-run",
+                turn_id="fallback-turn",
+                unsupported_message="unsupported helper stream item",
+            )
+
+    def test_stream_projection_state_projects_mapped_legacy_items(
+        self,
+    ) -> None:
+        sentinel = object()
+
+        def map_legacy(item: object) -> tuple[CanonicalStreamItem, ...]:
+            if item is not sentinel:
+                return ()
+            return (
+                _item(
+                    StreamItemKind.STREAM_STARTED,
+                    0,
+                    stream_session_id="mapped-stream",
+                    run_id="mapped-run",
+                    turn_id="mapped-turn",
+                ),
+                _item(
+                    StreamItemKind.ANSWER_DELTA,
+                    1,
+                    stream_session_id="mapped-stream",
+                    run_id="mapped-run",
+                    turn_id="mapped-turn",
+                    text_delta="mapped",
+                ),
+                _item(
+                    StreamItemKind.ANSWER_DONE,
+                    2,
+                    stream_session_id="mapped-stream",
+                    run_id="mapped-run",
+                    turn_id="mapped-turn",
+                ),
+                _item(
+                    StreamItemKind.STREAM_COMPLETED,
+                    3,
+                    stream_session_id="mapped-stream",
+                    run_id="mapped-run",
+                    turn_id="mapped-turn",
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            )
+
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            legacy_item_mapper=map_legacy,
+        )
+
+        projections = state.project_many(
+            sentinel,
+            9,
+            unsupported_message="unsupported stream item",
+        )
+
+        state.validate_complete()
+        self.assertFalse(state.has_canonical_items)
+        self.assertTrue(state.legacy_stream_seen)
+        self.assertEqual(
+            [projection.sequence for projection in projections],
+            [0, 1, 2, 3],
+        )
+        self.assertEqual(state.accumulator.answer_text, "mapped")
+        terminal = state.terminal_projection()
+        self.assertIsNotNone(terminal)
+        self.assertEqual(
+            terminal.terminal_outcome,
+            StreamTerminalOutcome.COMPLETED,
+        )
+
+    def test_stream_projection_state_rejects_single_empty_mapped_item(
+        self,
+    ) -> None:
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            legacy_item_mapper=lambda _: (),
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item",
+        ):
+            state.project(
+                object(),
+                0,
+                unsupported_message="unsupported stream item",
+            )
+
+    def test_stream_projection_state_wraps_mapper_assertion(
+        self,
+    ) -> None:
+        def map_legacy(_: object) -> tuple[CanonicalStreamItem, ...]:
+            raise AssertionError("bad legacy item")
+
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            legacy_item_mapper=map_legacy,
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item",
+        ):
+            state.project_many(
+                object(),
+                0,
+                unsupported_message="unsupported stream item",
+            )
+
+    def test_stream_projection_state_rejects_invalid_and_mixed_items(
+        self,
+    ) -> None:
+        invalid_state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item",
+        ):
+            invalid_state.project(
+                object(),
+                0,
+                unsupported_message="unsupported stream item",
+            )
+
+        mixed_state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+        mixed_state.project(
+            "legacy",
+            0,
+            unsupported_message="unsupported stream item",
+        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "canonical stream item after legacy stream item",
+        ):
+            mixed_state.project(
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                1,
+                unsupported_message="unsupported stream item",
+            )
+
     def test_valid_trace_fixture_serializes_contract_fields(self) -> None:
         timestamp = datetime(2026, 1, 2, 3, 4, 5)
         tool = StreamItemCorrelation(tool_call_id="tool-1")
@@ -570,7 +1232,13 @@ class StreamContractTestCase(TestCase):
                 correlation=tool,
                 data={"result": 4},
             ),
-            _item(StreamItemKind.MODEL_CONTINUATION_COMPLETED, 13),
+            _item(
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+                13,
+                correlation=StreamItemCorrelation(
+                    model_continuation_id="continuation-1"
+                ),
+            ),
             _item(
                 StreamItemKind.FLOW_EVENT,
                 14,
@@ -667,6 +1335,100 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(accumulator.items, items)
         self.assertEqual(accumulator.final_usage, {"input_tokens": 1})
         self.assertEqual(accumulator.diagnostics, (items[2],))
+
+    def test_accumulator_bounds_retained_history_losslessly(self) -> None:
+        final_usage: object = {"output_tokens": 2}
+        items = (
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="hel"),
+            _item(StreamItemKind.ANSWER_DELTA, 2, text_delta="lo"),
+            _item(StreamItemKind.ANSWER_DONE, 3),
+            _item(
+                StreamItemKind.FLOW_EVENT,
+                4,
+                data={"node": "old"},
+            ),
+            _item(
+                StreamItemKind.FLOW_EVENT,
+                5,
+                data={"node": "new"},
+            ),
+            _item(
+                StreamItemKind.STREAM_DIAGNOSTIC,
+                6,
+                text_delta="old diagnostic",
+                visibility=StreamVisibility.DIAGNOSTIC,
+            ),
+            _item(
+                StreamItemKind.STREAM_DIAGNOSTIC,
+                7,
+                text_delta="new diagnostic",
+                visibility=StreamVisibility.DIAGNOSTIC,
+            ),
+            _item(
+                StreamItemKind.USAGE_UPDATE,
+                8,
+                usage={"output_tokens": 1},
+            ),
+            _item(
+                StreamItemKind.USAGE_COMPLETED,
+                9,
+                usage=final_usage,
+            ),
+            _stream_completed(10),
+            _item(StreamItemKind.STREAM_CLOSED, 11),
+        )
+        retention_policy = StreamRetentionPolicy(
+            accumulator_item_limit=3,
+            replay_history_item_limit=1,
+            flow_history_item_limit=1,
+            metrics_history_item_limit=1,
+        )
+        accumulator = CanonicalStreamAccumulator(
+            retention_policy=retention_policy
+        )
+
+        accumulator.add_many(items)
+
+        self.assertIs(accumulator.retention_policy, retention_policy)
+        self.assertEqual(accumulator.items, items[-3:])
+        self.assertEqual(accumulator.answer_text, "hello")
+        self.assertEqual(accumulator.flow_items, (items[5],))
+        self.assertEqual(accumulator.diagnostics, (items[7],))
+        self.assertEqual(accumulator.usage_items, (items[9],))
+        self.assertEqual(accumulator.control_items, (items[11],))
+        self.assertEqual(accumulator.final_usage, final_usage)
+        self.assertIs(accumulator.terminal_item, items[10])
+        self.assertEqual(accumulator.validate_complete(), items[-3:])
+
+    def test_accumulator_allows_disabled_retained_views(self) -> None:
+        items = (
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            _item(
+                StreamItemKind.USAGE_COMPLETED,
+                1,
+                usage={"output_tokens": 0},
+            ),
+            _stream_completed(2),
+        )
+        accumulator = CanonicalStreamAccumulator(
+            retention_policy=StreamRetentionPolicy(
+                replay_history_item_limit=0,
+                flow_history_item_limit=0,
+                metrics_history_item_limit=0,
+            )
+        )
+
+        accumulator.add_many(items)
+
+        self.assertEqual(accumulator.items, items)
+        self.assertEqual(accumulator.usage_items, ())
+        self.assertEqual(accumulator.control_items, ())
+        self.assertEqual(accumulator.final_usage, {"output_tokens": 0})
+
+    def test_accumulator_rejects_invalid_retention_policy(self) -> None:
+        with self.assertRaises(AssertionError):
+            CanonicalStreamAccumulator(retention_policy=cast(Any, object()))
 
     def test_error_and_cancel_are_terminal_without_final_usage(self) -> None:
         for kind, outcome in (
@@ -778,6 +1540,71 @@ class StreamContractTestCase(TestCase):
             lambda: StreamRuntimeContract(close_after_terminal=False),
             lambda: StreamRuntimeContract(cancellation_as_terminal=False),
             lambda: validate_stream_runtime_contract(cast(Any, None)),
+        )
+
+        for build_value in invalid_values:
+            with self.subTest(build_value=build_value):
+                with self.assertRaises(AssertionError):
+                    build_value()
+
+    def test_performance_budget_reconciliation_validation(self) -> None:
+        reconciliation = StreamPerformanceBudgetReconciliation()
+
+        self.assertEqual(reconciliation.tightened_metrics, ())
+        self.assertEqual(reconciliation.loosened_metrics, ())
+        self.assertEqual(
+            reconciliation.benchmark_source,
+            "specs/streaming/BENCHMARKS.md",
+        )
+
+        tightened_budget = StreamPerformanceBudget(
+            time_to_first_item_ms=4000,
+            cancellation_latency_ms=750,
+            close_latency_ms=750,
+            max_queue_depth=32,
+            max_memory_bytes=8 * 1024 * 1024,
+            per_item_overhead_us=125,
+        )
+        tightened = StreamPerformanceBudgetReconciliation(
+            enforced_budget=tightened_budget,
+            benchmark_source="benchmarks.md",
+        )
+
+        self.assertEqual(
+            tightened.tightened_metrics,
+            (
+                "time_to_first_item_ms",
+                "cancellation_latency_ms",
+                "close_latency_ms",
+                "max_queue_depth",
+                "max_memory_bytes",
+                "per_item_overhead_us",
+            ),
+        )
+        self.assertEqual(tightened.loosened_metrics, ())
+
+        invalid_values = (
+            lambda: StreamPerformanceBudgetReconciliation(
+                baseline_budget=object(),  # type: ignore[arg-type]
+            ),
+            lambda: StreamPerformanceBudgetReconciliation(
+                enforced_budget=object(),  # type: ignore[arg-type]
+            ),
+            lambda: StreamPerformanceBudgetReconciliation(
+                equivalence_harness_passed="yes",  # type: ignore[arg-type]
+            ),
+            lambda: StreamPerformanceBudgetReconciliation(
+                benchmark_source="",
+            ),
+            lambda: StreamPerformanceBudgetReconciliation(
+                enforced_budget=StreamPerformanceBudget(
+                    time_to_first_item_ms=5001,
+                ),
+            ),
+            lambda: StreamPerformanceBudgetReconciliation(
+                enforced_budget=tightened_budget,
+                equivalence_harness_passed=False,
+            ),
         )
 
         for build_value in invalid_values:
@@ -989,7 +1816,44 @@ class StreamContractTestCase(TestCase):
 
     def test_sequence_validator_rejects_channel_boundary_errors(self) -> None:
         tool = StreamItemCorrelation(tool_call_id="tool-1")
+        continuation = StreamItemCorrelation(
+            model_continuation_id="continuation-1"
+        )
         cases = (
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="open"),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.REASONING_DELTA, 1, text_delta="open"),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="open"),
+                _item(
+                    StreamItemKind.USAGE_COMPLETED,
+                    2,
+                    usage={"input_tokens": 1},
+                ),
+                _stream_errored(3),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="done"),
+                _item(StreamItemKind.ANSWER_DONE, 2),
+                _item(StreamItemKind.ANSWER_DONE, 3),
+                _stream_errored(4),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.REASONING_DELTA, 1, text_delta="done"),
+                _item(StreamItemKind.REASONING_DONE, 2),
+                _item(StreamItemKind.REASONING_DONE, 3),
+                _stream_errored(4),
+            ),
             (
                 _item(StreamItemKind.STREAM_STARTED, 0),
                 _item(StreamItemKind.ANSWER_DONE, 1),
@@ -1081,44 +1945,319 @@ class StreamContractTestCase(TestCase):
             ),
             (
                 _item(StreamItemKind.STREAM_STARTED, 0),
-                _item(StreamItemKind.TOOL_CALL_DONE, 1, correlation=tool),
+                _item(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    1,
+                    correlation=tool,
+                    text_delta='{"x":1}',
+                ),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    1,
+                    correlation=tool,
+                    text_delta='{"x":1}',
+                ),
                 _item(StreamItemKind.TOOL_CALL_READY, 2, correlation=tool),
                 _stream_errored(3),
             ),
             (
                 _item(StreamItemKind.STREAM_STARTED, 0),
                 _item(
-                    StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                     1,
                     correlation=tool,
+                    text_delta='{"x":1}',
                 ),
                 _item(
-                    StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                    StreamItemKind.USAGE_COMPLETED,
                     2,
-                    correlation=tool,
-                    text_delta="late",
+                    usage={"input_tokens": 1},
                 ),
                 _stream_errored(3),
             ),
             (
                 _item(StreamItemKind.STREAM_STARTED, 0),
                 _item(
-                    StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    1,
+                    correlation=tool,
+                    text_delta='{"x":1}',
+                ),
+                _item(StreamItemKind.TOOL_CALL_READY, 2, correlation=tool),
+                _item(
+                    StreamItemKind.USAGE_COMPLETED,
+                    3,
+                    usage={"input_tokens": 1},
+                ),
+                _stream_errored(4),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    1,
+                    correlation=tool,
+                    text_delta='{"x":1}',
+                ),
+                _item(StreamItemKind.TOOL_CALL_READY, 2, correlation=tool),
+                _item(StreamItemKind.TOOL_CALL_READY, 3, correlation=tool),
+                _stream_errored(4),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    1,
+                    correlation=tool,
+                    text_delta='{"x":1}',
+                ),
+                _item(StreamItemKind.TOOL_CALL_READY, 2, correlation=tool),
+                _item(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    3,
+                    correlation=tool,
+                    text_delta='{"late":true}',
+                ),
+                _stream_errored(4),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.TOOL_CALL_DONE, 1, correlation=tool),
+                _item(StreamItemKind.TOOL_CALL_READY, 2, correlation=tool),
+                _stream_errored(3),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.TOOL_CALL_READY, 1, correlation=tool),
+                _item(StreamItemKind.TOOL_CALL_DONE, 2, correlation=tool),
+                _item(StreamItemKind.TOOL_CALL_DONE, 3, correlation=tool),
+                _stream_errored(4),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                    1,
+                    correlation=tool,
+                    text_delta="early",
+                ),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_STARTED,
+                    1,
+                    correlation=tool,
+                ),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_STARTED,
                     1,
                     correlation=tool,
                 ),
                 _item(
-                    StreamItemKind.TOOL_EXECUTION_ERROR,
+                    StreamItemKind.TOOL_EXECUTION_STARTED,
                     2,
                     correlation=tool,
                 ),
                 _stream_errored(3),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_STARTED,
+                    1,
+                    correlation=tool,
+                ),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                    2,
+                    correlation=tool,
+                ),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                    3,
+                    correlation=tool,
+                    text_delta="late",
+                ),
+                _stream_errored(4),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_STARTED,
+                    1,
+                    correlation=tool,
+                ),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                    2,
+                    correlation=tool,
+                ),
+                _item(
+                    StreamItemKind.TOOL_EXECUTION_ERROR,
+                    3,
+                    correlation=tool,
+                ),
+                _stream_errored(4),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.MODEL_CONTINUATION_STARTED,
+                    1,
+                    correlation=continuation,
+                ),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.MODEL_CONTINUATION_STARTED,
+                    1,
+                    correlation=continuation,
+                ),
+                _item(
+                    StreamItemKind.MODEL_CONTINUATION_STARTED,
+                    2,
+                    correlation=continuation,
+                ),
+                _stream_errored(3),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+                    1,
+                    correlation=continuation,
+                ),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.MODEL_CONTINUATION_STARTED, 1),
+                _stream_errored(2),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(
+                    StreamItemKind.MODEL_CONTINUATION_STARTED,
+                    1,
+                    correlation=continuation,
+                ),
+                _item(
+                    StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+                    2,
+                    correlation=continuation,
+                ),
+                _item(
+                    StreamItemKind.MODEL_CONTINUATION_ERROR,
+                    3,
+                    correlation=continuation,
+                ),
+                _stream_errored(4),
             ),
         )
 
         for items in cases:
             with self.subTest(items=items):
                 with self.assertRaises(StreamValidationError):
+                    validate_canonical_stream_items(items)
+
+    def test_sequence_validator_rejects_done_before_content(self) -> None:
+        cases = (
+            (
+                StreamItemKind.ANSWER_DONE,
+                "answer done before content",
+            ),
+            (
+                StreamItemKind.REASONING_DONE,
+                "reasoning done before content",
+            ),
+        )
+
+        for done_kind, message in cases:
+            with self.subTest(done_kind=done_kind):
+                with self.assertRaisesRegex(StreamValidationError, message):
+                    validate_canonical_stream_items(
+                        (
+                            _item(StreamItemKind.STREAM_STARTED, 0),
+                            _item(done_kind, 1),
+                            _stream_errored(2),
+                        )
+                    )
+
+    def test_sequence_validator_rejects_items_after_channel_terminal(
+        self,
+    ) -> None:
+        cases = (
+            (
+                (
+                    _item(StreamItemKind.STREAM_STARTED, 0),
+                    _item(
+                        StreamItemKind.ANSWER_DELTA,
+                        1,
+                        text_delta="answer",
+                    ),
+                    _item(StreamItemKind.ANSWER_DONE, 2),
+                    _item(
+                        StreamItemKind.ANSWER_DELTA,
+                        3,
+                        text_delta="late",
+                    ),
+                    _stream_errored(4),
+                ),
+                "answer item emitted after answer done",
+            ),
+            (
+                (
+                    _item(StreamItemKind.STREAM_STARTED, 0),
+                    _tool_item(StreamItemKind.TOOL_EXECUTION_COMPLETED, 1),
+                    _stream_errored(2),
+                ),
+                "tool execution terminal before start",
+            ),
+            (
+                (
+                    _item(StreamItemKind.STREAM_STARTED, 0),
+                    _item(
+                        StreamItemKind.MODEL_CONTINUATION_STARTED,
+                        1,
+                        correlation=StreamItemCorrelation(
+                            model_continuation_id="continuation-1"
+                        ),
+                    ),
+                    _item(
+                        StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+                        2,
+                        correlation=StreamItemCorrelation(
+                            model_continuation_id="continuation-1"
+                        ),
+                    ),
+                    _item(
+                        StreamItemKind.MODEL_CONTINUATION_STARTED,
+                        3,
+                        correlation=StreamItemCorrelation(
+                            model_continuation_id="continuation-1"
+                        ),
+                    ),
+                    _stream_errored(4),
+                ),
+                "model continuation item emitted after terminal item",
+            ),
+        )
+
+        for items, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(StreamValidationError, message):
                     validate_canonical_stream_items(items)
 
     def test_tool_lifecycle_assembles_planned_order_observations(
@@ -1215,11 +2354,29 @@ class StreamContractTestCase(TestCase):
         validated = validate_tool_lifecycle_items(
             items, planned_tool_call_ids=("tool-1", "tool-2")
         )
+        emission_order_observations = assemble_tool_observations(validated)
         observations = assemble_tool_observations(
             validated, planned_tool_call_ids=("tool-1", "tool-2")
         )
 
         self.assertEqual(validated, items)
+        self.assertEqual(
+            [
+                item.correlation.tool_call_id
+                for item in validated
+                if item.kind
+                in {
+                    StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                    StreamItemKind.TOOL_EXECUTION_ERROR,
+                    StreamItemKind.TOOL_EXECUTION_CANCELLED,
+                }
+            ],
+            ["tool-2", "tool-1"],
+        )
+        self.assertEqual(
+            [item.tool_call_id for item in emission_order_observations],
+            ["tool-2", "tool-1"],
+        )
         self.assertEqual(
             [item.tool_call_id for item in observations], ["tool-1", "tool-2"]
         )
@@ -1259,6 +2416,28 @@ class StreamContractTestCase(TestCase):
             with self.subTest(validate=validate):
                 with self.assertRaises(AssertionError):
                     validate()
+
+    def test_tool_lifecycle_observation_assembly_rejects_planned_mismatches(
+        self,
+    ) -> None:
+        items = (
+            _tool_item(StreamItemKind.TOOL_CALL_READY, 0),
+            _tool_item(StreamItemKind.TOOL_CALL_DONE, 1),
+            _tool_item(StreamItemKind.TOOL_EXECUTION_STARTED, 2),
+            _tool_item(StreamItemKind.TOOL_EXECUTION_COMPLETED, 3),
+        )
+        cases = (
+            (("tool-2",), "unexpected tool call id"),
+            (("tool-1", "tool-2"), "planned tool call missing"),
+        )
+
+        for planned_tool_call_ids, message in cases:
+            with self.subTest(planned_tool_call_ids=planned_tool_call_ids):
+                with self.assertRaisesRegex(StreamValidationError, message):
+                    assemble_tool_observations(
+                        items,
+                        planned_tool_call_ids=planned_tool_call_ids,
+                    )
 
     def test_tool_lifecycle_rejects_invalid_transitions(self) -> None:
         complete_prefix = (
@@ -1335,6 +2514,15 @@ class StreamContractTestCase(TestCase):
                     text_delta="late",
                 ),
             ),
+            complete_prefix
+            + (
+                _tool_item(StreamItemKind.TOOL_EXECUTION_COMPLETED, 3),
+                _tool_item(
+                    StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                    4,
+                    data={"category": "progress", "progress": 0.9},
+                ),
+            ),
             (
                 _tool_item(
                     StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -1367,6 +2555,35 @@ class StreamContractTestCase(TestCase):
                 + (_tool_item(StreamItemKind.TOOL_EXECUTION_COMPLETED, 3),),
                 planned_tool_call_ids=("tool-1", "tool-2"),
             )
+
+    def test_tool_lifecycle_rejects_live_items_after_completion(self) -> None:
+        completed = (
+            _tool_item(StreamItemKind.TOOL_CALL_READY, 0),
+            _tool_item(StreamItemKind.TOOL_CALL_DONE, 1),
+            _tool_item(StreamItemKind.TOOL_EXECUTION_STARTED, 2),
+            _tool_item(StreamItemKind.TOOL_EXECUTION_COMPLETED, 3),
+        )
+        late_items = (
+            _tool_item(
+                StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                4,
+                text_delta="late",
+                data={"category": "stdout", "content": "late"},
+            ),
+            _tool_item(
+                StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                4,
+                data={"category": "progress", "progress": 0.9},
+            ),
+        )
+
+        for item in late_items:
+            with self.subTest(kind=item.kind):
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "tool execution item emitted after terminal item",
+                ):
+                    validate_tool_lifecycle_items(completed + (item,))
 
     def test_accumulator_separates_answer_from_other_channels(self) -> None:
         tool = StreamItemCorrelation(tool_call_id="tool-1")
@@ -1580,6 +2797,127 @@ class StreamContractTestCase(TestCase):
                 with self.assertRaises(StreamValidationError):
                     accumulator.add_many(items)
 
+    def test_accumulator_rejects_stream_terminal_with_open_channels(
+        self,
+    ) -> None:
+        tool = StreamItemCorrelation(tool_call_id="tool-1")
+        continuation = StreamItemCorrelation(
+            model_continuation_id="continuation-1"
+        )
+        open_channel_cases = (
+            (
+                "answer",
+                (
+                    _item(
+                        StreamItemKind.ANSWER_DELTA,
+                        1,
+                        text_delta="answer",
+                    ),
+                ),
+                "answer channel missing done",
+            ),
+            (
+                "reasoning",
+                (
+                    _item(
+                        StreamItemKind.REASONING_DELTA,
+                        1,
+                        text_delta="reasoning",
+                    ),
+                ),
+                "reasoning channel missing done",
+            ),
+            (
+                "tool-call missing ready",
+                (
+                    _item(
+                        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        1,
+                        correlation=tool,
+                        text_delta='{"city":"Paris"}',
+                    ),
+                ),
+                "tool call tool-1 missing ready",
+            ),
+            (
+                "tool-call missing done",
+                (
+                    _item(
+                        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        1,
+                        correlation=tool,
+                        text_delta='{"city":"Paris"}',
+                    ),
+                    _item(
+                        StreamItemKind.TOOL_CALL_READY,
+                        2,
+                        correlation=tool,
+                    ),
+                ),
+                "tool call tool-1 missing done",
+            ),
+            (
+                "tool execution",
+                (
+                    _item(
+                        StreamItemKind.TOOL_EXECUTION_STARTED,
+                        1,
+                        correlation=tool,
+                    ),
+                ),
+                "tool execution tool-1 missing terminal",
+            ),
+            (
+                "model continuation",
+                (
+                    _item(
+                        StreamItemKind.MODEL_CONTINUATION_STARTED,
+                        1,
+                        correlation=continuation,
+                    ),
+                ),
+                "model continuation continuation-1 missing terminal",
+            ),
+        )
+        terminal_cases = (
+            (
+                "completed",
+                lambda sequence: _item(
+                    StreamItemKind.STREAM_COMPLETED,
+                    sequence,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ),
+            ("errored", _stream_errored),
+            (
+                "cancelled",
+                lambda sequence: _item(
+                    StreamItemKind.STREAM_CANCELLED,
+                    sequence,
+                    terminal_outcome=StreamTerminalOutcome.CANCELLED,
+                ),
+            ),
+        )
+
+        for channel_label, open_items, message in open_channel_cases:
+            for terminal_label, terminal_factory in terminal_cases:
+                with self.subTest(
+                    channel=channel_label,
+                    terminal=terminal_label,
+                ):
+                    accumulator = CanonicalStreamAccumulator()
+                    accumulator.add(_item(StreamItemKind.STREAM_STARTED, 0))
+                    for open_item in open_items:
+                        accumulator.add(open_item)
+
+                    with self.assertRaisesRegex(
+                        StreamValidationError, message
+                    ):
+                        accumulator.add(terminal_factory(len(open_items) + 1))
+                    self.assertIsNone(accumulator.terminal_outcome)
+                    self.assertIsNone(accumulator.terminal_item)
+
     def test_accumulator_rejects_bad_item_and_incomplete_stream(self) -> None:
         accumulator = CanonicalStreamAccumulator()
 
@@ -1589,6 +2927,93 @@ class StreamContractTestCase(TestCase):
         accumulator.add(_item(StreamItemKind.STREAM_STARTED, 0))
         with self.assertRaises(StreamValidationError):
             accumulator.validate_complete()
+
+    def test_stream_negative_acceptance_edges(self) -> None:
+        with self.assertRaisesRegex(
+            StreamValidationError, "duplicate stream terminal item"
+        ):
+            validate_canonical_stream_items(
+                (
+                    _item(StreamItemKind.STREAM_STARTED, 0),
+                    _stream_errored(1),
+                    _item(
+                        StreamItemKind.STREAM_CANCELLED,
+                        2,
+                        terminal_outcome=StreamTerminalOutcome.CANCELLED,
+                    ),
+                )
+            )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "semantic stream item emitted after terminal outcome",
+        ):
+            validate_canonical_stream_items(
+                (
+                    _item(StreamItemKind.STREAM_STARTED, 0),
+                    _stream_errored(1),
+                    _item(StreamItemKind.ANSWER_DELTA, 2, text_delta="late"),
+                )
+            )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "stream missing terminal outcome",
+        ):
+            validate_canonical_stream_items(
+                (
+                    _item(StreamItemKind.STREAM_STARTED, 0),
+                    _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="open"),
+                )
+            )
+        with self.assertRaises(AssertionError):
+            _item(
+                StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                1,
+                text_delta="missing id",
+            )
+
+        malformed_items = run(
+            _collect_local_items(
+                _local_tokens(("<tool_call>not-json</tool_call>",))
+            )
+        )
+        diagnostic = next(
+            item
+            for item in malformed_items
+            if item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+        )
+        self.assertEqual(diagnostic.data["code"], "tool_call.malformed")
+        self.assertFalse(
+            any(
+                item.kind is StreamItemKind.TOOL_CALL_READY
+                for item in malformed_items
+            )
+        )
+
+        retention_policy = StreamRetentionPolicy(accumulator_item_limit=1)
+        accumulator = CanonicalStreamAccumulator(
+            retention_policy=retention_policy
+        )
+        accumulator.add_many(
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="kept"),
+                _item(StreamItemKind.ANSWER_DONE, 2),
+                _item(
+                    StreamItemKind.STREAM_COMPLETED,
+                    3,
+                    usage={"output_tokens": 1},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in accumulator.items],
+            [StreamItemKind.STREAM_COMPLETED],
+        )
+        self.assertEqual(accumulator.answer_text, "kept")
+        self.assertEqual(accumulator.final_usage, {"output_tokens": 1})
+        with self.assertRaises(AssertionError):
+            StreamRetentionPolicy(accumulator_item_limit=0)
 
     def test_consumer_projection_preserves_canonical_fields(self) -> None:
         correlation = StreamItemCorrelation(
@@ -1819,13 +3244,14 @@ class StreamContractTestCase(TestCase):
             _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="a"),
             _item(StreamItemKind.REASONING_DELTA, 2, text_delta="r"),
             _item(StreamItemKind.REASONING_DONE, 3),
+            _item(StreamItemKind.ANSWER_DONE, 4),
             _item(
                 StreamItemKind.USAGE_COMPLETED,
-                4,
+                5,
                 usage={"output_tokens": 1},
             ),
-            _stream_completed(5),
-            _item(StreamItemKind.STREAM_CLOSED, 6),
+            _stream_completed(6),
+            _item(StreamItemKind.STREAM_CLOSED, 7),
         )
 
         async def stream() -> AsyncIterator[CanonicalStreamItem]:
@@ -1835,7 +3261,7 @@ class StreamContractTestCase(TestCase):
         projections = run(_collect_projection_items(stream()))
 
         self.assertEqual(
-            [item.sequence for item in projections], list(range(7))
+            [item.sequence for item in projections], list(range(8))
         )
         self.assertEqual(
             [item.kind for item in projections],
@@ -1843,13 +3269,35 @@ class StreamContractTestCase(TestCase):
         )
         self.assertEqual(
             [item.text_delta for item in projections],
-            [None, "a", "r", None, None, None, None],
+            [None, "a", "r", None, None, None, None, None],
         )
-        self.assertEqual(projections[4].usage, {"output_tokens": 1})
+        self.assertEqual(projections[5].usage, {"output_tokens": 1})
         self.assertIs(
-            projections[5].terminal_outcome,
+            projections[6].terminal_outcome,
             StreamTerminalOutcome.COMPLETED,
         )
+
+    def test_consumer_projection_iterator_rejects_sequence_gap(
+        self,
+    ) -> None:
+        items = (
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            _item(
+                StreamItemKind.ANSWER_DELTA,
+                2,
+                text_delta="dropped predecessor",
+            ),
+        )
+
+        async def stream() -> AsyncIterator[CanonicalStreamItem]:
+            for item in items:
+                yield item
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "lossless consumer stream sequence gap",
+        ):
+            run(_collect_projection_items(stream()))
 
     def test_consumer_projection_per_item_overhead_within_budget(self) -> None:
         count = 1000
@@ -2460,6 +3908,140 @@ class StreamContractTestCase(TestCase):
             {"input_tokens": 1, "output_tokens": 2},
         )
 
+    def test_normalizers_emit_done_items_at_deterministic_boundaries(
+        self,
+    ) -> None:
+        native_items = run(
+            _collect_provider_items(
+                _provider_events(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            text_delta="native",
+                        ),
+                        StreamProviderEvent(kind=StreamItemKind.ANSWER_DONE),
+                        StreamProviderEvent(
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            usage={"output_tokens": 1},
+                        ),
+                    )
+                )
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in native_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+
+        final_usage_items = run(
+            _collect_provider_items(
+                _provider_events(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            text_delta="answer",
+                        ),
+                        StreamProviderEvent(
+                            kind=StreamItemKind.REASONING_DELTA,
+                            text_delta="reason",
+                            visibility=StreamVisibility.PRIVATE,
+                        ),
+                        StreamProviderEvent(
+                            kind=StreamItemKind.USAGE_COMPLETED,
+                            usage={"output_tokens": 2},
+                        ),
+                        StreamProviderEvent(
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                        ),
+                    )
+                )
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in final_usage_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+
+        exhausted_items = run(
+            _collect_provider_items(
+                _provider_events(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            text_delta="exhausted",
+                        ),
+                    )
+                )
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in exhausted_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+
+        parsed_reasoning_items = run(
+            _collect_local_items(_local_tokens(("<think>r</think>a",)))
+        )
+        self.assertLess(
+            _first_sequence(
+                parsed_reasoning_items, StreamItemKind.REASONING_DONE
+            ),
+            _first_sequence(
+                parsed_reasoning_items, StreamItemKind.ANSWER_DELTA
+            ),
+        )
+
+        parsed_tool_items = run(
+            _collect_local_items(
+                _local_tokens(("<tool_call>{}</tool_call> after",))
+            )
+        )
+        self.assertLess(
+            _first_sequence(parsed_tool_items, StreamItemKind.TOOL_CALL_DONE),
+            _last_sequence(parsed_tool_items, StreamItemKind.ANSWER_DELTA),
+        )
+
+        legacy_call = ToolCall(id="call-1", name="math", arguments={})
+        legacy_transition_items = run(
+            _collect_local_items(
+                _local_tokens(
+                    (
+                        ToolCallToken(token="{}", call=legacy_call),
+                        Token(token=" after"),
+                    )
+                )
+            )
+        )
+        self.assertLess(
+            _first_sequence(
+                legacy_transition_items, StreamItemKind.TOOL_CALL_DONE
+            ),
+            _first_sequence(
+                legacy_transition_items, StreamItemKind.ANSWER_DELTA
+            ),
+        )
+
     def test_provider_stream_normalizer_preserves_terminal_event_context(
         self,
     ) -> None:
@@ -2676,11 +4258,11 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.ANSWER_DELTA,
                 StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                 StreamItemKind.TOOL_CALL_READY,
                 StreamItemKind.TOOL_CALL_DONE,
                 StreamItemKind.ANSWER_DONE,
-                StreamItemKind.REASONING_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -2710,10 +4292,10 @@ class StreamContractTestCase(TestCase):
             ],
         )
         self.assertIs(items[2].visibility, StreamVisibility.PRIVATE)
-        self.assertEqual(items[3].correlation.tool_call_id, "call-1")
-        self.assertEqual(items[3].metadata["provider_name"], "math")
-        self.assertEqual(items[4].data, {"name": "math", "arguments": {}})
-        self.assertEqual(items[5].correlation.tool_call_id, "call-1")
+        self.assertEqual(items[4].correlation.tool_call_id, "call-1")
+        self.assertEqual(items[4].metadata["provider_name"], "math")
+        self.assertEqual(items[5].data, {"name": "math", "arguments": {}})
+        self.assertEqual(items[6].correlation.tool_call_id, "call-1")
         accumulator = accumulate_canonical_stream_items(items)
         self.assertEqual(accumulator.answer_text, "answer")
         self.assertEqual(accumulator.reasoning_text, "private")
@@ -2881,6 +4463,57 @@ class StreamContractTestCase(TestCase):
             ],
         )
 
+        token_items = run(
+            _collect_local_items(
+                _local_tokens(
+                    (
+                        ToolCallToken(token='{"x":1}', call=first_call),
+                        Token(token="answer"),
+                    )
+                )
+            )
+        )
+        self.assertEqual(
+            [item.kind for item in token_items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(token_items[4].text_delta, "answer")
+
+    def test_local_stream_normalizer_reports_invalid_legacy_tokens(
+        self,
+    ) -> None:
+        async def invalid_tokens() -> AsyncIterator[Any]:
+            yield object()
+
+        items = run(
+            _collect_local_items(
+                cast(
+                    AsyncIterable[Token | TokenDetail | str], invalid_tokens()
+                )
+            )
+        )
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertIsInstance(items[1].data, dict)
+        assert isinstance(items[1].data, dict)
+        self.assertEqual(items[1].data["error_type"], "AssertionError")
+
     def test_local_stream_normalizer_parses_split_reasoning_tags(
         self,
     ) -> None:
@@ -2921,6 +4554,202 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(accumulator.answer_text, "pre  post")
         self.assertEqual(accumulator.reasoning_text, " private ")
 
+    def test_local_stream_normalizer_preserves_split_marker_whitespace(
+        self,
+    ) -> None:
+        items = run(
+            _collect_local_items(
+                _local_tokens(
+                    (
+                        "  before \n<thi",
+                        "nk>\n  first",
+                        "\nsecond  ",
+                        "</thi",
+                        "nk>\n after  ",
+                    )
+                )
+            )
+        )
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].text_delta, "  before \n")
+        self.assertEqual(items[2].text_delta, "\n  first")
+        self.assertEqual(items[3].text_delta, "\nsecond  ")
+        self.assertEqual(items[5].text_delta, "\n after  ")
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, "  before \n\n after  ")
+        self.assertEqual(accumulator.reasoning_text, "\n  first\nsecond  ")
+
+    def test_local_stream_normalizer_detects_character_split_reasoning_tags(
+        self,
+    ) -> None:
+        items = run(
+            _collect_local_items(
+                _local_tokens(tuple("pre <think>\n  private\t</think> post"))
+            )
+        )
+
+        accumulator = accumulate_canonical_stream_items(items)
+
+        self.assertEqual(accumulator.answer_text, "pre  post")
+        self.assertEqual(accumulator.reasoning_text, "\n  private\t")
+        self.assertNotIn("<think>", accumulator.answer_text)
+        self.assertNotIn("</think>", accumulator.reasoning_text)
+        self.assertLess(
+            _first_sequence(items, StreamItemKind.REASONING_DONE),
+            _last_sequence(items, StreamItemKind.ANSWER_DELTA),
+        )
+
+    def test_local_stream_normalizer_handles_adjacent_reasoning_sections(
+        self,
+    ) -> None:
+        items = run(
+            _collect_local_items(
+                _local_tokens(tuple("x<think>a</think><think>b</think>y"))
+            )
+        )
+
+        accumulator = accumulate_canonical_stream_items(items)
+        reasoning_done_items = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.REASONING_DONE
+        ]
+
+        self.assertEqual(accumulator.answer_text, "xy")
+        self.assertEqual(accumulator.reasoning_text, "ab")
+        self.assertEqual(len(reasoning_done_items), 1)
+        self.assertGreater(
+            reasoning_done_items[0].sequence,
+            _last_sequence(items, StreamItemKind.REASONING_DELTA),
+        )
+        self.assertLess(
+            reasoning_done_items[0].sequence,
+            _last_sequence(items, StreamItemKind.ANSWER_DELTA),
+        )
+
+    def test_local_stream_normalizer_handles_split_adjacent_sections(
+        self,
+    ) -> None:
+        items = run(
+            _collect_local_items(
+                _local_tokens(
+                    (
+                        "x<thi",
+                        "nk>a</thi",
+                        "nk><thi",
+                        "nk>b</thi",
+                        "nk>y",
+                    )
+                )
+            )
+        )
+
+        accumulator = accumulate_canonical_stream_items(items)
+
+        self.assertEqual(accumulator.answer_text, "xy")
+        self.assertEqual(accumulator.reasoning_text, "ab")
+        self.assertEqual(
+            [
+                item.kind
+                for item in items
+                if item.kind
+                in {
+                    StreamItemKind.REASONING_DELTA,
+                    StreamItemKind.REASONING_DONE,
+                }
+            ],
+            [
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+            ],
+        )
+
+    def test_local_stream_normalizer_keeps_adjacent_gap_private(
+        self,
+    ) -> None:
+        items = run(
+            _collect_local_items(
+                _local_tokens(("x<think>a</think> \n <think>b</think>y",))
+            )
+        )
+
+        accumulator = accumulate_canonical_stream_items(items)
+
+        self.assertEqual(accumulator.answer_text, "xy")
+        self.assertEqual(accumulator.reasoning_text, "a \n b")
+
+    def test_local_stream_normalizer_closes_before_false_repeated_marker(
+        self,
+    ) -> None:
+        items = run(
+            _collect_local_items(
+                _local_tokens(("x<think>a</think><thinking>b",))
+            )
+        )
+
+        accumulator = accumulate_canonical_stream_items(items)
+
+        self.assertEqual(accumulator.answer_text, "x<thinking>b")
+        self.assertEqual(accumulator.reasoning_text, "a")
+        self.assertEqual(
+            len(
+                [
+                    item
+                    for item in items
+                    if item.kind is StreamItemKind.REASONING_DONE
+                ]
+            ),
+            1,
+        )
+
+    def test_local_stream_normalizer_handles_empty_reasoning_markers(
+        self,
+    ) -> None:
+        cases = (
+            ("empty", tuple("a<think></think>b"), "ab", ""),
+            (
+                "whitespace",
+                tuple("a<think>   \n</think>b"),
+                "ab",
+                "   \n",
+            ),
+        )
+
+        for label, tokens, answer, reasoning_text in cases:
+            with self.subTest(label=label):
+                items = run(_collect_local_items(_local_tokens(tokens)))
+                accumulator = accumulate_canonical_stream_items(items)
+                reasoning_deltas = [
+                    cast(str, item.text_delta)
+                    for item in items
+                    if item.kind is StreamItemKind.REASONING_DELTA
+                ]
+
+                self.assertEqual(accumulator.answer_text, answer)
+                self.assertEqual("".join(reasoning_deltas), reasoning_text)
+                self.assertEqual(accumulator.reasoning_text, reasoning_text)
+                if label == "empty":
+                    self.assertEqual(reasoning_deltas, [""])
+                self.assertIn(
+                    StreamItemKind.REASONING_DONE,
+                    [item.kind for item in items],
+                )
+
     def test_local_stream_normalizer_closes_unterminated_reasoning(
         self,
     ) -> None:
@@ -2959,6 +4788,41 @@ class StreamContractTestCase(TestCase):
             partial_marker_accumulator.reasoning_text, "private</thi"
         )
 
+    def test_local_stream_normalizer_keeps_partial_end_marker_reasoning(
+        self,
+    ) -> None:
+        items = run(
+            _collect_local_items(
+                _local_tokens(
+                    (
+                        "answer ",
+                        "<think>",
+                        " private </think",
+                        " not closed",
+                    )
+                )
+            )
+        )
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, "answer ")
+        self.assertEqual(
+            accumulator.reasoning_text, " private </think not closed"
+        )
+
     def test_local_stream_normalizer_flushes_partial_reasoning_marker(
         self,
     ) -> None:
@@ -2968,6 +4832,34 @@ class StreamContractTestCase(TestCase):
 
         self.assertEqual(accumulator.answer_text, "answer <thi")
         self.assertEqual(accumulator.reasoning_text, "")
+
+    def test_local_stream_normalizer_keeps_malformed_markers_as_answer(
+        self,
+    ) -> None:
+        cases = (
+            (("lead <thinking> tail",), "lead <thinking> tail"),
+            (("lead </think> tail",), "lead </think> tail"),
+            (("<thin", "g> visible"), "<thing> visible"),
+            (("<", " think", "> visible"), "< think> visible"),
+            (("lead <think",), "lead <think"),
+            (("lead <think", " unfinished"), "lead <think unfinished"),
+        )
+
+        for tokens, answer in cases:
+            with self.subTest(tokens=tokens):
+                items = run(_collect_local_items(_local_tokens(tokens)))
+                accumulator = accumulate_canonical_stream_items(items)
+
+                self.assertEqual(accumulator.answer_text, answer)
+                self.assertEqual(accumulator.reasoning_text, "")
+                self.assertNotIn(
+                    StreamItemKind.REASONING_DELTA,
+                    [item.kind for item in items],
+                )
+                self.assertNotIn(
+                    StreamItemKind.REASONING_DONE,
+                    [item.kind for item in items],
+                )
 
     def test_local_stream_normalizer_preserves_tool_call_prefix_text(
         self,
@@ -3408,14 +5300,13 @@ class StreamContractTestCase(TestCase):
             [item.kind for item in items],
             [
                 StreamItemKind.STREAM_STARTED,
-                StreamItemKind.ANSWER_DONE,
                 StreamItemKind.STREAM_ERRORED,
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
-        self.assertEqual([item.sequence for item in items], list(range(4)))
-        self.assertEqual(items[2].data["error_type"], "StreamValidationError")
-        self.assertIn("answer", items[2].data["message"])
+        self.assertEqual([item.sequence for item in items], list(range(3)))
+        self.assertEqual(items[1].data["error_type"], "StreamValidationError")
+        self.assertIn("answer done before content", items[1].data["message"])
         self.assertIs(
             accumulate_canonical_stream_items(items).terminal_outcome,
             StreamTerminalOutcome.ERRORED,
@@ -3467,6 +5358,7 @@ class StreamContractTestCase(TestCase):
                 [
                     StreamItemKind.STREAM_STARTED,
                     StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
                     StreamItemKind.STREAM_ERRORED,
                     StreamItemKind.STREAM_CLOSED,
                 ],
@@ -3493,6 +5385,7 @@ class StreamContractTestCase(TestCase):
                     StreamItemKind.STREAM_STARTED,
                     StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                     StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
                     StreamItemKind.STREAM_ERRORED,
                     StreamItemKind.STREAM_CLOSED,
                 ],
@@ -3540,6 +5433,7 @@ class StreamContractTestCase(TestCase):
                 [
                     StreamItemKind.STREAM_STARTED,
                     StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    StreamItemKind.TOOL_CALL_DONE,
                     StreamItemKind.STREAM_ERRORED,
                     StreamItemKind.STREAM_CLOSED,
                 ],
@@ -3565,6 +5459,7 @@ class StreamContractTestCase(TestCase):
                     StreamItemKind.STREAM_STARTED,
                     StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                     StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
                     StreamItemKind.STREAM_ERRORED,
                     StreamItemKind.STREAM_CLOSED,
                 ],
@@ -3606,6 +5501,15 @@ class StreamContractTestCase(TestCase):
                     items[-2].data["error_type"], "StreamValidationError"
                 )
                 self.assertIn(expected_message, items[-2].data["message"])
+                if expected_message == "missing ready":
+                    done = next(
+                        item
+                        for item in items
+                        if item.kind is StreamItemKind.TOOL_CALL_DONE
+                    )
+                    self.assertEqual(
+                        done.metadata["tool_call.close_reason"], "error"
+                    )
                 self.assertIs(
                     accumulate_canonical_stream_items(items).terminal_outcome,
                     StreamTerminalOutcome.ERRORED,
@@ -3640,10 +5544,17 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
                 StreamItemKind.STREAM_DIAGNOSTIC,
+                StreamItemKind.TOOL_CALL_DONE,
                 StreamItemKind.STREAM_COMPLETED,
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
+        done = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_DONE
+        )
+        self.assertEqual(done.metadata["tool_call.close_reason"], "malformed")
         self.assertIs(
             items[-2].terminal_outcome, StreamTerminalOutcome.COMPLETED
         )
@@ -3796,6 +5707,80 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(accumulator.final_usage, {"output_tokens": 1})
         self.assertEqual(accumulator.diagnostics, (items[2],))
 
+    def test_provider_stream_normalizer_allows_terminal_after_final_usage(
+        self,
+    ) -> None:
+        items = run(
+            _collect_provider_items(
+                _provider_events(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.USAGE_COMPLETED,
+                            usage={"output_tokens": 1},
+                        ),
+                        StreamProviderEvent(
+                            kind=StreamItemKind.STREAM_CANCELLED,
+                            data={"reason": "disconnect"},
+                        ),
+                    )
+                )
+            )
+        )
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_CANCELLED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.final_usage, {"output_tokens": 1})
+        self.assertIs(
+            accumulator.terminal_outcome, StreamTerminalOutcome.CANCELLED
+        )
+
+    def test_provider_stream_normalizer_rejects_incomplete_tool_final_usage(
+        self,
+    ) -> None:
+        correlation = StreamItemCorrelation(tool_call_id="call-1")
+        items = run(
+            _collect_provider_items(
+                _provider_events(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                            correlation=correlation,
+                            text_delta='{"x":1}',
+                        ),
+                        StreamProviderEvent(
+                            kind=StreamItemKind.USAGE_COMPLETED,
+                            usage={"output_tokens": 1},
+                        ),
+                    )
+                )
+            )
+        )
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[2].metadata["tool_call.close_reason"], "error")
+        self.assertIn("missing ready", items[3].data["message"])
+        self.assertIs(
+            accumulate_canonical_stream_items(items).terminal_outcome,
+            StreamTerminalOutcome.ERRORED,
+        )
+
     def test_provider_stream_normalizer_maps_cancellation_to_terminal(
         self,
     ) -> None:
@@ -3920,6 +5905,72 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
+
+    def test_provider_stream_cancellation_race_closes_source(self) -> None:
+        class PendingEvents:
+            def __init__(self) -> None:
+                self.started = AsyncEvent()
+                self.closed = False
+                self.cancelled = False
+
+            def __aiter__(self) -> "PendingEvents":
+                return self
+
+            async def __anext__(self) -> StreamProviderEvent:
+                self.started.set()
+                try:
+                    await AsyncEvent().wait()
+                except CancelledError:
+                    self.cancelled = True
+                    raise
+                return StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta="late",
+                )
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        async def cancel_pending_provider_read() -> (
+            tuple[PendingEvents, CanonicalStreamItem | None]
+        ):
+            events = PendingEvents()
+            stream = normalize_provider_stream(
+                events,
+                stream_session_id="provider-stream",
+                run_id="provider-run",
+                turn_id="provider-turn",
+            )
+            started = await stream.__anext__()
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            pull = create_task(stream.__anext__())
+            item: CanonicalStreamItem | None = None
+            try:
+                await wait_for(events.started.wait(), STREAM_TEST_TIMEOUT)
+                pull.cancel()
+                try:
+                    item = await wait_for(pull, STREAM_TEST_TIMEOUT)
+                except CancelledError:
+                    item = None
+            finally:
+                if not pull.done():
+                    pull.cancel()
+                    try:
+                        await wait_for(pull, STREAM_TEST_TIMEOUT)
+                    except CancelledError:
+                        pass
+                await cast(Any, stream).aclose()
+            return events, item
+
+        events, item = run(cancel_pending_provider_read())
+
+        self.assertTrue(events.cancelled)
+        self.assertTrue(events.closed)
+        if item is not None:
+            self.assertIs(item.kind, StreamItemKind.STREAM_CANCELLED)
+            self.assertIs(
+                item.terminal_outcome, StreamTerminalOutcome.CANCELLED
+            )
 
     def test_provider_stream_normalizer_closes_on_consumer_disconnect(
         self,
@@ -4090,6 +6141,142 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(tokens.read_count, 3)
         self.assertFalse(tokens.closed)
 
+    def test_provider_and_local_streams_wait_for_slow_consumers(
+        self,
+    ) -> None:
+        class GatedProviderEvents:
+            def __init__(self) -> None:
+                self.read_count = 0
+                self.second_pull_started = AsyncEvent()
+                self.release_second = AsyncEvent()
+                self.closed = False
+
+            def __aiter__(self) -> "GatedProviderEvents":
+                return self
+
+            async def __anext__(self) -> StreamProviderEvent:
+                self.read_count += 1
+                if self.read_count == 1:
+                    return StreamProviderEvent(
+                        kind=StreamItemKind.ANSWER_DELTA,
+                        text_delta="a",
+                    )
+                if self.read_count == 2:
+                    self.second_pull_started.set()
+                    await self.release_second.wait()
+                    return StreamProviderEvent(
+                        kind=StreamItemKind.ANSWER_DELTA,
+                        text_delta="b",
+                    )
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        class GatedLocalTokens:
+            def __init__(self) -> None:
+                self.read_count = 0
+                self.second_pull_started = AsyncEvent()
+                self.release_second = AsyncEvent()
+                self.closed = False
+
+            def __aiter__(self) -> "GatedLocalTokens":
+                return self
+
+            async def __anext__(self) -> str:
+                self.read_count += 1
+                if self.read_count == 1:
+                    return "a"
+                if self.read_count == 2:
+                    self.second_pull_started.set()
+                    await self.release_second.wait()
+                    return "b"
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        async def assert_provider_backpressure() -> None:
+            events = GatedProviderEvents()
+            stream = normalize_provider_stream(
+                events,
+                stream_session_id="provider-stream",
+                run_id="provider-run",
+                turn_id="provider-turn",
+            )
+
+            started = await stream.__anext__()
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            self.assertEqual(events.read_count, 0)
+
+            first = await stream.__anext__()
+            self.assertIs(first.kind, StreamItemKind.ANSWER_DELTA)
+            self.assertEqual(events.read_count, 1)
+            await sleep(0)
+            self.assertEqual(events.read_count, 1)
+
+            second_pull = create_task(stream.__anext__())
+            try:
+                await wait_for(
+                    events.second_pull_started.wait(), STREAM_TEST_TIMEOUT
+                )
+                self.assertEqual(events.read_count, 2)
+                self.assertFalse(second_pull.done())
+                events.release_second.set()
+                second = await wait_for(second_pull, STREAM_TEST_TIMEOUT)
+                self.assertIs(second.kind, StreamItemKind.ANSWER_DELTA)
+            finally:
+                if not second_pull.done():
+                    second_pull.cancel()
+                    try:
+                        await wait_for(second_pull, STREAM_TEST_TIMEOUT)
+                    except CancelledError:
+                        pass
+                await cast(Any, stream).aclose()
+            self.assertTrue(events.closed)
+
+        async def assert_local_backpressure() -> None:
+            tokens = GatedLocalTokens()
+            stream = normalize_local_stream(
+                tokens,
+                stream_session_id="local-stream",
+                run_id="local-run",
+                turn_id="local-turn",
+            )
+
+            started = await stream.__anext__()
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            self.assertEqual(tokens.read_count, 0)
+
+            first = await stream.__anext__()
+            self.assertIs(first.kind, StreamItemKind.ANSWER_DELTA)
+            self.assertEqual(tokens.read_count, 1)
+            await sleep(0)
+            self.assertEqual(tokens.read_count, 1)
+
+            second_pull = create_task(stream.__anext__())
+            try:
+                await wait_for(
+                    tokens.second_pull_started.wait(), STREAM_TEST_TIMEOUT
+                )
+                self.assertEqual(tokens.read_count, 2)
+                self.assertFalse(second_pull.done())
+                tokens.release_second.set()
+                second = await wait_for(second_pull, STREAM_TEST_TIMEOUT)
+                self.assertIs(second.kind, StreamItemKind.ANSWER_DELTA)
+            finally:
+                if not second_pull.done():
+                    second_pull.cancel()
+                    try:
+                        await wait_for(second_pull, STREAM_TEST_TIMEOUT)
+                    except CancelledError:
+                        pass
+                await cast(Any, stream).aclose()
+            self.assertTrue(tokens.closed)
+
+        run(assert_provider_backpressure())
+        run(assert_local_backpressure())
+
     def test_local_stream_normalizer_closes_on_consumer_disconnect(
         self,
     ) -> None:
@@ -4165,19 +6352,19 @@ class StreamContractTestCase(TestCase):
 
         events, items = run(collect_invalid())
 
-        self.assertEqual(events.read_count, 2)
+        self.assertEqual(events.read_count, 1)
         self.assertTrue(events.closed)
         self.assertEqual(
             [item.kind for item in items],
             [
                 StreamItemKind.STREAM_STARTED,
-                StreamItemKind.ANSWER_DONE,
                 StreamItemKind.STREAM_ERRORED,
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
-        self.assertEqual([item.sequence for item in items], list(range(4)))
-        self.assertEqual(items[2].data["error_type"], "StreamValidationError")
+        self.assertEqual([item.sequence for item in items], list(range(3)))
+        self.assertEqual(items[1].data["error_type"], "StreamValidationError")
+        self.assertIn("answer done before content", items[1].data["message"])
 
     def test_provider_stream_normalizer_ignores_late_provider_failure(
         self,
@@ -4390,6 +6577,16 @@ class StreamContractTestCase(TestCase):
                         entry.canonical_channel,
                         stream_channel_for_kind(entry.canonical_kind),
                     )
+                elif entry.surface is StreamLegacySurface.EVENT:
+                    self.assertIs(
+                        entry.classification,
+                        (
+                            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+                        ),
+                    )
+                    self.assertIsNone(entry.ingestion_shim)
+                    self.assertIsNone(entry.canonical_kind)
+                    self.assertIsNone(entry.canonical_channel)
                 else:
                     self.assertIs(
                         entry.classification,
@@ -4515,6 +6712,321 @@ class StreamContractTestCase(TestCase):
                 with self.assertRaises(AssertionError):
                     build_entry()
 
+    def test_legacy_classifier_inventory_matches_source(self) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+
+        self.assertEqual(
+            _source_legacy_stream_classifier_sites(repository_root),
+            _inventory_legacy_stream_classifier_sites(),
+        )
+
+        inventory = legacy_stream_classifier_inventory()
+        self.assertEqual(
+            len(inventory),
+            len({(entry.module, entry.qualname) for entry in inventory}),
+        )
+        self.assertTrue(
+            any(
+                StreamLegacySurface.STRING in entry.surfaces
+                for entry in inventory
+            )
+        )
+        self.assertTrue(
+            any(
+                entry.classification
+                is (
+                    StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+                )
+                for entry in inventory
+            )
+        )
+        self.assertTrue(
+            any(
+                entry.classification
+                is StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                for entry in inventory
+            )
+        )
+        self.assertNotIn(
+            ("avalan.cli.commands.model", "_token_stream"),
+            {(entry.module, entry.qualname) for entry in inventory},
+        )
+        inventory_keys = {
+            (entry.module, entry.qualname) for entry in inventory
+        }
+        for qualname in (
+            "OrchestratorResponse._next_item",
+            "OrchestratorResponse._response_text_and_calls",
+            "OrchestratorResponse._append_canonical_projection_item",
+            "OrchestratorResponse._emit",
+        ):
+            with self.subTest(qualname=qualname):
+                self.assertNotIn(
+                    (
+                        (
+                            "avalan.agent.orchestrator.response."
+                            "orchestrator_response"
+                        ),
+                        qualname,
+                    ),
+                    inventory_keys,
+                )
+        self.assertIn(
+            (
+                "avalan.agent.orchestrator.response.orchestrator_response",
+                "OrchestratorResponse._stream_item_projection",
+            ),
+            inventory_keys,
+        )
+        self.assertIn(
+            (
+                "avalan.model.stream",
+                "_LegacyTokenStreamAdapter.item_from_token",
+            ),
+            inventory_keys,
+        )
+        for qualname in (
+            "stream_consumer_projection_from_token",
+            "normalize_local_stream.events",
+            "token_text",
+            "canonical_item_from_token",
+            "_token_metadata",
+        ):
+            with self.subTest(qualname=qualname):
+                self.assertNotIn(
+                    ("avalan.model.stream", qualname),
+                    inventory_keys,
+                )
+        adapter_entry = classify_legacy_stream_classifier(
+            "avalan.model.stream",
+            "_LegacyTokenStreamAdapter.item_from_token",
+        )
+        self.assertEqual(
+            adapter_entry.surfaces,
+            (
+                StreamLegacySurface.STRING,
+                StreamLegacySurface.TOKEN,
+                StreamLegacySurface.TOKEN_DETAIL,
+                StreamLegacySurface.REASONING_TOKEN,
+                StreamLegacySurface.TOOL_CALL_TOKEN,
+            ),
+        )
+        events_entry = classify_legacy_stream_classifier(
+            "avalan.model.stream",
+            "_LegacyTokenStreamAdapter.events_from_token",
+        )
+        self.assertEqual(
+            events_entry.surfaces,
+            (StreamLegacySurface.STRING,),
+        )
+        orchestrator_entry = classify_legacy_stream_classifier(
+            "avalan.agent.orchestrator.response.orchestrator_response",
+            "OrchestratorResponse._stream_item_projection",
+        )
+        self.assertEqual(
+            orchestrator_entry.surfaces,
+            (
+                StreamLegacySurface.STRING,
+                StreamLegacySurface.TOOL_CALL_TOKEN,
+                StreamLegacySurface.EVENT,
+            ),
+        )
+        a2a_entry = classify_legacy_stream_classifier(
+            "avalan.server.a2a.router",
+            "_A2ALegacyStreamAdapter.map",
+        )
+        self.assertEqual(
+            a2a_entry.surfaces,
+            (
+                StreamLegacySurface.STRING,
+                StreamLegacySurface.TOKEN,
+                StreamLegacySurface.TOKEN_DETAIL,
+                StreamLegacySurface.REASONING_TOKEN,
+                StreamLegacySurface.TOOL_CALL_TOKEN,
+            ),
+        )
+        self.assertNotIn(
+            StreamLegacySurfaceClassification.MIGRATE_LATER,
+            {entry.classification for entry in inventory},
+        )
+        self.assertEqual(
+            {
+                StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM,
+                StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM,
+            },
+            {entry.classification for entry in inventory},
+        )
+        for entry in inventory:
+            with self.subTest(module=entry.module, qualname=entry.qualname):
+                self.assertIs(
+                    classify_legacy_stream_classifier(
+                        entry.module, entry.qualname
+                    ),
+                    entry,
+                )
+                self.assertTrue(entry.owner)
+                self.assertTrue(entry.removal_condition)
+                self.assertEqual(len(entry.surfaces), len(set(entry.surfaces)))
+
+        with self.assertRaises(AssertionError):
+            classify_legacy_stream_classifier("", "qualname")
+        with self.assertRaises(AssertionError):
+            classify_legacy_stream_classifier("module", "")
+        with patch(
+            "avalan.model.stream._LEGACY_STREAM_CLASSIFIER_INVENTORY",
+            (),
+        ):
+            with self.assertRaises(StreamValidationError):
+                classify_legacy_stream_classifier(
+                    "avalan.model.stream",
+                    "_LegacyTokenStreamAdapter.item_from_token",
+                )
+
+    def test_legacy_classifier_guard_detects_new_direct_classifiers(
+        self,
+    ) -> None:
+        tree = parse("""
+def consume(item):
+    if isinstance(item, ToolCallToken):
+        return item.token
+    return None
+""")
+
+        sites = _legacy_stream_classifier_sites("avalan.new_consumer", tree)
+
+        self.assertEqual(
+            sites,
+            {
+                ("avalan.new_consumer", "consume"): {
+                    StreamLegacySurface.TOOL_CALL_TOKEN
+                }
+            },
+        )
+        self.assertNotIn(
+            ("avalan.new_consumer", "consume"),
+            _inventory_legacy_stream_classifier_sites(),
+        )
+
+    def test_legacy_classifier_guard_detects_tracked_string_classifiers(
+        self,
+    ) -> None:
+        tree = parse("""
+class _LegacyTokenStreamAdapter:
+    def events_from_token(self, item):
+        if isinstance(item, str):
+            return item
+        return None
+
+def validate_name(value):
+    assert isinstance(value, str)
+""")
+
+        sites = _legacy_stream_classifier_sites("avalan.model.stream", tree)
+
+        self.assertEqual(
+            sites,
+            {
+                (
+                    "avalan.model.stream",
+                    "_LegacyTokenStreamAdapter.events_from_token",
+                ): {StreamLegacySurface.STRING}
+            },
+        )
+
+    def test_legacy_classifier_inventory_rejects_malformed_entries(
+        self,
+    ) -> None:
+        invalid_entries = (
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="",
+                qualname="function",
+                surfaces=(StreamLegacySurface.TOKEN,),
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+                owner="model.stream",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="",
+                surfaces=(StreamLegacySurface.TOKEN,),
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+                owner="model.stream",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="function",
+                surfaces=[StreamLegacySurface.TOKEN],  # type: ignore[arg-type]
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+                owner="model.stream",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="function",
+                surfaces=(),
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+                owner="model.stream",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="function",
+                surfaces=(
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.TOKEN,
+                ),
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+                owner="model.stream",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="function",
+                surfaces=("Token",),  # type: ignore[arg-type]
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+                owner="model.stream",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="function",
+                surfaces=(StreamLegacySurface.TOKEN,),
+                classification="temporary",  # type: ignore[arg-type]
+                owner="model.stream",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="function",
+                surfaces=(StreamLegacySurface.TOKEN,),
+                classification=(StreamLegacySurfaceClassification.REMOVE_NOW),
+                owner="model.stream",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="function",
+                surfaces=(StreamLegacySurface.TOKEN,),
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+                owner="",
+                removal_condition="done",
+            ),
+            lambda: StreamLegacyClassifierInventoryEntry(
+                module="avalan.model.stream",
+                qualname="function",
+                surfaces=(StreamLegacySurface.TOKEN,),
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+                owner="model.stream",
+                removal_condition="",
+            ),
+        )
+
+        for build_entry in invalid_entries:
+            with self.subTest(build_entry=build_entry):
+                with self.assertRaises(AssertionError):
+                    build_entry()
+
     def test_legacy_token_canonical_projection_separates_channels(
         self,
     ) -> None:
@@ -4558,7 +7070,7 @@ class StreamContractTestCase(TestCase):
         )
         string_answer = canonical_item_from_token(
             "s",
-            6,
+            9,
             stream_session_id="shim-stream",
             run_id="shim-run",
             turn_id="shim-turn",
@@ -4597,17 +7109,52 @@ class StreamContractTestCase(TestCase):
             reasoning,
             tool,
             call_tool,
+            _item(
+                StreamItemKind.TOOL_CALL_DONE,
+                6,
+                stream_session_id="shim-stream",
+                run_id="shim-run",
+                turn_id="shim-turn",
+                correlation=StreamItemCorrelation(
+                    tool_call_id="legacy-tool-call"
+                ),
+                metadata={"tool_call.close_reason": "error"},
+            ),
+            _item(
+                StreamItemKind.TOOL_CALL_READY,
+                7,
+                stream_session_id="shim-stream",
+                run_id="shim-run",
+                turn_id="shim-turn",
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                data={"name": "math", "arguments": {}},
+            ),
+            _item(
+                StreamItemKind.TOOL_CALL_DONE,
+                8,
+                stream_session_id="shim-stream",
+                run_id="shim-run",
+                turn_id="shim-turn",
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
             string_answer,
             _item(
+                StreamItemKind.REASONING_DONE,
+                10,
+                stream_session_id="shim-stream",
+                run_id="shim-run",
+                turn_id="shim-turn",
+            ),
+            _item(
                 StreamItemKind.ANSWER_DONE,
-                7,
+                11,
                 stream_session_id="shim-stream",
                 run_id="shim-run",
                 turn_id="shim-turn",
             ),
             _item(
                 StreamItemKind.USAGE_COMPLETED,
-                8,
+                12,
                 stream_session_id="shim-stream",
                 run_id="shim-run",
                 turn_id="shim-turn",
@@ -4615,7 +7162,7 @@ class StreamContractTestCase(TestCase):
             ),
             _item(
                 StreamItemKind.STREAM_COMPLETED,
-                9,
+                13,
                 stream_session_id="shim-stream",
                 run_id="shim-run",
                 turn_id="shim-turn",
@@ -4636,3 +7183,134 @@ class StreamContractTestCase(TestCase):
             canonical_item_from_token("bad", -1)
         with self.assertRaises(AssertionError):
             canonical_item_from_token(object(), 0)  # type: ignore[arg-type]
+
+    def test_legacy_token_adapter_validates_pending_id_and_metadata(
+        self,
+    ) -> None:
+        adapter = _LegacyTokenStreamAdapter(pending_tool_call_id="call-1")
+
+        self.assertEqual(adapter.pending_tool_call_id, "call-1")
+        self.assertEqual(
+            _token_metadata(
+                TokenDetail(
+                    id=7,
+                    token="detail",
+                    probability=0.75,
+                    step=2,
+                    probability_distribution="softmax",
+                    tokens=[Token(id=8, token="candidate")],
+                )
+            ),
+            {
+                "token_id": 7,
+                "probability": 0.75,
+                "step": 2,
+                "probability_distribution": "softmax",
+                "tokens": [{"token": "candidate", "token_id": 8}],
+            },
+        )
+
+        with self.assertRaises(AssertionError):
+            _LegacyTokenStreamAdapter(pending_tool_call_id="")
+
+    def test_stream_projection_display_token_uses_projection_metadata(
+        self,
+    ) -> None:
+        detail = stream_consumer_projection_from_token(
+            TokenDetail(
+                id=7,
+                token="detail",
+                probability=0.75,
+                step=2,
+                probability_distribution="softmax",
+                tokens=[
+                    Token(id=8, token="candidate", probability=0.25),
+                ],
+            ),
+            0,
+        )
+        display_token = stream_projection_display_token(detail)
+
+        self.assertIsInstance(display_token, TokenDetail)
+        assert isinstance(display_token, TokenDetail)
+        self.assertEqual(display_token.id, 7)
+        self.assertEqual(display_token.token, "detail")
+        self.assertEqual(display_token.probability, 0.75)
+        self.assertEqual(display_token.step, 2)
+        self.assertEqual(display_token.probability_distribution, "softmax")
+        self.assertEqual(
+            display_token.tokens,
+            [Token(id=8, token="candidate", probability=0.25)],
+        )
+
+        answer = stream_consumer_projection_from_token(
+            Token(id=9, token="a"), 1
+        )
+        self.assertEqual(
+            stream_projection_display_token(answer),
+            Token(id=9, token="a"),
+        )
+
+    def test_stream_projection_display_token_rejects_semantic_only_items(
+        self,
+    ) -> None:
+        answer = project_canonical_stream_item(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            )
+        )
+        tool = stream_consumer_projection_from_token(
+            ToolCallToken(token="tool", id=2),
+            2,
+        )
+        detail = project_canonical_stream_item(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+                metadata={
+                    "tokens": [
+                        {"token": "candidate", "token_id": 4},
+                        {"token_id": 5},
+                        "bad",
+                    ],
+                },
+            )
+        )
+        invalid_detail = project_canonical_stream_item(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+                metadata={"tokens": "bad"},
+            )
+        )
+
+        self.assertIsNone(stream_projection_display_token(answer))
+        self.assertIsNone(stream_projection_display_token(tool))
+        display_token = stream_projection_display_token(detail)
+        self.assertIsInstance(display_token, TokenDetail)
+        assert isinstance(display_token, TokenDetail)
+        self.assertEqual(
+            display_token.tokens, [Token(id=4, token="candidate")]
+        )
+        invalid_display_token = stream_projection_display_token(invalid_detail)
+        self.assertIsInstance(invalid_display_token, TokenDetail)
+        assert isinstance(invalid_display_token, TokenDetail)
+        self.assertIsNone(invalid_display_token.tokens)
+        with self.assertRaises(AssertionError):
+            stream_projection_display_token(object())  # type: ignore[arg-type]

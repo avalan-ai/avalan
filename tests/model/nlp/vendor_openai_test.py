@@ -1,6 +1,7 @@
 import importlib
 import sys
 import types
+from asyncio import CancelledError, Event, create_task, wait_for
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from json import loads
@@ -58,6 +59,48 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
+
+
+class TrackedAsyncIter:
+    def __init__(self, items):
+        self._iter = iter(items)
+        self.read_count = 0
+        self.close_count = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        self.read_count += 1
+        try:
+            return next(self._iter)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+class PendingAsyncIter:
+    def __init__(self):
+        self.started = Event()
+        self.pull_cancelled = False
+        self.close_count = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        self.started.set()
+        try:
+            await Event().wait()
+        except CancelledError:
+            self.pull_cancelled = True
+            raise
+        return SimpleNamespace(type="response.output_text.delta", delta="late")
+
+    async def aclose(self) -> None:
+        self.close_count += 1
 
 
 def patch_openai_imports():
@@ -796,6 +839,131 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             StreamTerminalOutcome.COMPLETED,
         )
 
+    async def test_canonical_stream_preserves_hosted_reasoning_whitespace(
+        self,
+    ):
+        usage = {
+            "input_tokens": 1,
+            "output_tokens": 4,
+            "total_tokens": 5,
+        }
+        events = [
+            SimpleNamespace(
+                type="response.output_text.delta", delta="pre <thi"
+            ),
+            SimpleNamespace(
+                type="response.output_text.delta",
+                delta="nk> stays answer ",
+            ),
+            SimpleNamespace(
+                type="response.reasoning_text.delta", delta="  plan"
+            ),
+            SimpleNamespace(type="response.reasoning_text.delta", delta="\n"),
+            SimpleNamespace(type="response.reasoning_text.done"),
+            SimpleNamespace(
+                type="response.output_text.delta", delta="post </think>"
+            ),
+            SimpleNamespace(type="response.output_text.done"),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(usage=usage),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+
+        items = [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.REASONING_DELTA
+            ],
+            ["  plan", "\n"],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(
+            accumulator.answer_text, "pre <think> stays answer post </think>"
+        )
+        self.assertEqual(accumulator.reasoning_text, "  plan\n")
+        self.assertEqual(accumulator.final_usage, usage)
+
+    async def test_canonical_disconnect_closes_provider_no_read_ahead(
+        self,
+    ):
+        source = TrackedAsyncIter(
+            [SimpleNamespace(type="response.output_text.delta", delta="late")]
+        )
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="responses-stream",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertEqual(source.read_count, 0)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_canonical_cancel_closes_pending_provider_pull(
+        self,
+    ):
+        source = PendingAsyncIter()
+        stream = self.mod.OpenAIStream(source)
+        canonical = stream.canonical_stream(
+            stream_session_id="responses-stream",
+            run_id="run-1",
+            turn_id="turn-1",
+        )
+
+        started = await anext(canonical)
+        pull = create_task(anext(canonical))
+        try:
+            await wait_for(source.started.wait(), 1.0)
+            pull.cancel()
+            try:
+                cancelled = await wait_for(pull, 1.0)
+            except CancelledError:
+                cancelled = None
+        finally:
+            await canonical.aclose()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        if cancelled is not None:
+            self.assertIs(cancelled.kind, StreamItemKind.STREAM_CANCELLED)
+            self.assertIs(
+                cancelled.terminal_outcome,
+                StreamTerminalOutcome.CANCELLED,
+            )
+        self.assertTrue(source.pull_cancelled)
+        self.assertEqual(source.close_count, 1)
+
     async def test_canonical_stream_maps_done_function_call_arguments(self):
         events = [
             {
@@ -1029,13 +1197,13 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
             [
                 StreamItemKind.STREAM_STARTED,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
                 StreamItemKind.TOOL_CALL_DONE,
                 StreamItemKind.STREAM_ERRORED,
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
-        error_data = items[4].data
+        self.assertEqual(items[2].metadata["tool_call.close_reason"], "error")
+        error_data = items[3].data
         assert isinstance(error_data, dict)
         self.assertEqual(error_data["error_type"], "StreamValidationError")
         self.assertIn("item-1", error_data["message"])

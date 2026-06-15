@@ -21,9 +21,10 @@ from avalan.entities import (
     TokenDetail,
     ToolCallToken,
 )
+from avalan.event import Event, EventType
+from avalan.event.manager import EventManager, EventManagerMode
 from avalan.model import TextGenerationResponse
 from avalan.model.stream import (
-    CanonicalStreamAccumulator,
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
@@ -32,6 +33,9 @@ from avalan.model.stream import (
     project_canonical_stream_item,
 )
 from avalan.server.entities import (
+    ChatCompletionChunk,
+    ChatCompletionChunkChoice,
+    ChatCompletionChunkChoiceDelta,
     ChatCompletionRequest,
     ChatMessage,
     ContentFile,
@@ -261,6 +265,66 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(model_id, routers.MODEL_FALLBACK)
 
+    def test_chat_chunk_envelope_matches_model_json(self) -> None:
+        envelope = self.chat._ChatCompletionChunkEnvelope(
+            response_id='response-"id"',
+            timestamp=7,
+            model_id="model-雪",
+        )
+        content = 'line\nsnow 雪 "quoted"'
+        expected = ChatCompletionChunk(
+            id='response-"id"',
+            created=7,
+            model="model-雪",
+            choices=[
+                ChatCompletionChunkChoice(
+                    delta=ChatCompletionChunkChoiceDelta(content=content)
+                )
+            ],
+        ).model_dump_json()
+
+        self.assertEqual(envelope.chunk_json(content), expected)
+        self.assertEqual(
+            envelope.message("x"),
+            f"data: {envelope.chunk_json('x')}\n\n",
+        )
+
+    def test_chat_chunk_envelope_does_not_leak_mutable_state(self) -> None:
+        envelope = self.chat._ChatCompletionChunkEnvelope(
+            response_id="response-id",
+            timestamp=7,
+            model_id="model-id",
+        )
+
+        first = loads(envelope.chunk_json("first"))
+        first["id"] = "changed"
+        first["choices"][0]["delta"]["content"] = "changed"
+        second = loads(envelope.chunk_json("second"))
+
+        self.assertEqual(second["id"], "response-id")
+        self.assertEqual(second["choices"][0]["delta"]["content"], "second")
+
+    def test_chat_chunk_envelope_rejects_invalid_state(self) -> None:
+        with self.assertRaises(AssertionError):
+            self.chat._ChatCompletionChunkEnvelope(
+                response_id=object(),
+                timestamp=7,
+                model_id="model-id",
+            )
+        with self.assertRaises(AssertionError):
+            self.chat._ChatCompletionChunkEnvelope(
+                response_id="response-id",
+                timestamp=True,
+                model_id="model-id",
+            )
+        envelope = self.chat._ChatCompletionChunkEnvelope(
+            response_id="response-id",
+            timestamp=7,
+            model_id="model-id",
+        )
+        with self.assertRaises(AssertionError):
+            envelope.chunk_json(object())  # type: ignore[arg-type]
+
     async def test_dependency_get_orchestrator(self) -> None:
         req = type(
             "Req",
@@ -275,7 +339,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
 
     async def test_create_chat_completion_stream(self) -> None:
         async def output_gen():
-            yield "a"
+            yield 'a\nsnow 雪 "quoted"'
             yield "b"
 
         logger = AsyncMock(spec=Logger)
@@ -291,10 +355,67 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         with patch("avalan.server.routers.time", return_value=1):
             resp = await self.chat.create_chat_completion(req, logger, orch)
         chunks = [chunk async for chunk in resp.body_iterator]
-        self.assertIn('"content":"a"', chunks[0])
+        first_payload = loads(chunks[0][6:])
+        self.assertEqual(
+            first_payload["choices"][0]["delta"]["content"],
+            'a\nsnow 雪 "quoted"',
+        )
         self.assertIn('"content":"b"', chunks[1])
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         orch.assert_awaited_once()
+
+    async def test_repeated_chat_stream_requests_bound_no_listener_state(
+        self,
+    ) -> None:
+        class EventfulChatOrchestrator(Orchestrator):
+            def __init__(self) -> None:
+                self._event_manager = EventManager(
+                    mode=EventManagerMode.SERVER
+                )
+                self.sync_count = 0
+
+            async def __call__(self, messages, settings=None):  # type: ignore[no-untyped-def]
+                _ = messages, settings
+                for _ in range(10):
+                    await self.event_manager.trigger(
+                        Event(type=EventType.START)
+                    )
+
+                async def output_gen():
+                    yield "bounded"
+
+                return TextGenerationResponse(
+                    output_gen,
+                    logger=getLogger(),
+                    use_async_generator=True,
+                )
+
+            async def sync_messages(self) -> None:  # type: ignore[override]
+                self.sync_count += 1
+
+        logger = AsyncMock(spec=Logger)
+        orchestrator = EventfulChatOrchestrator()
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        for _ in range(3):
+            resp = await self.chat.create_chat_completion(
+                req, logger, orchestrator
+            )
+            chunks = [chunk async for chunk in resp.body_iterator]
+            self.assertIn('"content":"bounded"', chunks[0])
+            self.assertEqual(chunks[-1], "data: [DONE]\n\n")
+
+        self.assertEqual(orchestrator.sync_count, 3)
+        self.assertEqual(orchestrator.event_manager.history, [])
+        self.assertEqual(orchestrator.event_manager._history_bytes, 0)
+        self.assertEqual(orchestrator.event_manager._delivery_queue.qsize(), 0)
+        self.assertEqual(orchestrator.event_manager.stats.published, 0)
+        self.assertEqual(orchestrator.event_manager.stats.queue_depth, 0)
+        self.assertEqual(orchestrator.event_manager.stats.dropped, 0)
 
     async def test_create_chat_completion_stream_uses_response_projections(
         self,
@@ -344,6 +465,14 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                             run_id="r",
                             turn_id="t",
                             sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=3,
                             kind=StreamItemKind.STREAM_COMPLETED,
                             channel=StreamChannel.CONTROL,
                             usage={},
@@ -551,6 +680,22 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 run_id="r",
                 turn_id="t",
                 sequence=3,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={"input_tokens": 2, "output_tokens": 1},
@@ -707,6 +852,14 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                     run_id="r",
                     turn_id="t",
                     sequence=2,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=3,
                     kind=StreamItemKind.USAGE_COMPLETED,
                     channel=StreamChannel.USAGE,
                     usage={"input_tokens": 4, "output_tokens": 3},
@@ -715,7 +868,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                     stream_session_id="s",
                     run_id="r",
                     turn_id="t",
-                    sequence=3,
+                    sequence=4,
                     kind=StreamItemKind.STREAM_COMPLETED,
                     channel=StreamChannel.CONTROL,
                     terminal_outcome=StreamTerminalOutcome.COMPLETED,
@@ -968,7 +1121,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             await self.chat.create_chat_completion(req, logger, orch)
         orch.assert_not_awaited()
 
-    async def test_streaming_skips_event_tokens(self) -> None:
+    async def test_streaming_rejects_legacy_event_tokens(self) -> None:
         from avalan.event import Event, EventType
 
         async def output_gen():
@@ -986,12 +1139,18 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         )
         with patch("avalan.server.routers.time", return_value=1):
             resp = await self.chat.create_chat_completion(req, logger, orch)
-        chunks = [chunk async for chunk in resp.body_iterator]
+        chunks = []
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item for Chat SSE projection",
+        ):
+            async for chunk in resp.body_iterator:
+                chunks.append(chunk)
         self.assertIn('"content":"a"', chunks[0])
-        self.assertIn('"content":"b"', chunks[1])
-        self.assertEqual(len(chunks), 3)
+        self.assertEqual(len(chunks), 1)
+        orch.sync_messages.assert_not_awaited()
 
-    async def test_streaming_skips_tool_diagnostic_event(self) -> None:
+    async def test_streaming_rejects_legacy_event_before_text(self) -> None:
         from avalan.event import Event, EventType
 
         async def output_gen():
@@ -999,7 +1158,6 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 type=EventType.TOOL_DIAGNOSTIC,
                 payload={"diagnostic": "ignored"},
             )
-            yield Event(type=EventType.START, payload={})
             yield "b"
 
         logger = AsyncMock(spec=Logger)
@@ -1012,11 +1170,15 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         )
         with patch("avalan.server.routers.time", return_value=1):
             resp = await self.chat.create_chat_completion(req, logger, orch)
-        chunks = [chunk async for chunk in resp.body_iterator]
-        self.assertIn('"content":"b"', chunks[0])
-        self.assertEqual(chunks[-1], "data: [DONE]\n\n")
-        self.assertEqual(len(chunks), 2)
-        orch.assert_awaited_once()
+        chunks = []
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item for Chat SSE projection",
+        ):
+            async for chunk in resp.body_iterator:
+                chunks.append(chunk)
+        self.assertEqual(chunks, [])
+        orch.sync_messages.assert_not_awaited()
 
     async def test_streaming_skips_reasoning_tokens(self) -> None:
         async def output_gen():
@@ -1104,6 +1266,13 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             self.chat._stream_text(ToolCallToken(token="raw"))  # type: ignore[arg-type]
 
+    def test_chat_stream_projection_rejects_unsupported_items(self) -> None:
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported stream item for Chat SSE projection",
+        ):
+            self.chat._stream_projection(object(), 0)  # type: ignore[arg-type]
+
     def test_chat_terminal_event_preserves_non_completed_outcomes(
         self,
     ) -> None:
@@ -1189,9 +1358,6 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             text_delta="answer",
         )
 
-        self.assertIsNone(
-            self.chat._chat_terminal_projection(CanonicalStreamAccumulator())
-        )
         with self.assertRaises(AssertionError):
             self.chat._chat_terminal_event(
                 "response-id",

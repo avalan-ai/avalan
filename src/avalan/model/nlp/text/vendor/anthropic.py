@@ -198,6 +198,7 @@ class AnthropicStream(TextGenerationVendorStream):
         super().__init__(
             cast(AsyncIterator[str | ToolCallToken], generator()),
             provider_family=ProviderFamily.ANTHROPIC,
+            sources=(events,),
         )
 
     async def __anext__(self) -> str | ToolCallToken:
@@ -214,57 +215,62 @@ class AnthropicStream(TextGenerationVendorStream):
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
-        return normalize_provider_stream(
-            self._provider_events(),
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            provider_family=self._provider_family,
-            capabilities=StreamProviderCapabilities(
-                backend=StreamProducerBackend.HOSTED,
+        return self._close_stream_on_exit(
+            normalize_provider_stream(
+                self._provider_events(),
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
                 provider_family=self._provider_family,
-                supports_reasoning=True,
-                supports_tool_calls=True,
-                supports_usage=True,
-                supports_terminal_events=True,
-                supports_cancellation=True,
+                capabilities=StreamProviderCapabilities(
+                    backend=StreamProducerBackend.HOSTED,
+                    provider_family=self._provider_family,
+                    supports_reasoning=True,
+                    supports_tool_calls=True,
+                    supports_usage=True,
+                    supports_terminal_events=True,
+                    supports_cancellation=True,
+                ),
+                close_after_terminal=close_after_terminal,
             ),
-            close_after_terminal=close_after_terminal,
         )
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
         cumulative_usage: object | None = None
-        async for event in self._events:
-            event_usage = _anthropic_event_usage(event)
-            if event_usage is not None:
-                cumulative_usage = _merge_usage(
-                    cumulative_usage,
-                    event_usage,
-                )
-            event_type = _field(event, "type")
-            if (
-                isinstance(event, RawMessageStopEvent)
-                or event_type == "message_stop"
-            ):
-                provider_payload = self._provider_payload(event)
-                provider_event_type = (
-                    event_type if isinstance(event_type, str) else None
-                )
-                if cumulative_usage is not None:
+        try:
+            async for event in self._events:
+                event_usage = _anthropic_event_usage(event)
+                if event_usage is not None:
+                    cumulative_usage = _merge_usage(
+                        cumulative_usage,
+                        event_usage,
+                    )
+                event_type = _field(event, "type")
+                if (
+                    isinstance(event, RawMessageStopEvent)
+                    or event_type == "message_stop"
+                ):
+                    provider_payload = self._provider_payload(event)
+                    provider_event_type = (
+                        event_type if isinstance(event_type, str) else None
+                    )
+                    if cumulative_usage is not None:
+                        yield StreamProviderEvent(
+                            kind=StreamItemKind.USAGE_COMPLETED,
+                            usage=cast(LooseJsonValue, cumulative_usage),
+                            provider_payload=provider_payload,
+                            provider_event_type=provider_event_type,
+                        )
                     yield StreamProviderEvent(
-                        kind=StreamItemKind.USAGE_COMPLETED,
-                        usage=cast(LooseJsonValue, cumulative_usage),
+                        kind=StreamItemKind.STREAM_COMPLETED,
                         provider_payload=provider_payload,
                         provider_event_type=provider_event_type,
                     )
-                yield StreamProviderEvent(
-                    kind=StreamItemKind.STREAM_COMPLETED,
-                    provider_payload=provider_payload,
-                    provider_event_type=provider_event_type,
-                )
-                break
-            for provider_event in self._provider_events_from_event(event):
-                yield provider_event
+                    break
+                for provider_event in self._provider_events_from_event(event):
+                    yield provider_event
+        finally:
+            await self.aclose()
 
     def _provider_events_from_event(
         self, event: object

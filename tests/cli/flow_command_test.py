@@ -28,6 +28,7 @@ from avalan.entities import (
     MessageContentText,
     ToolManagerSettings,
 )
+from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.flow import (
     FlowDefinition,
     FlowDefinitionCompileResult,
@@ -74,12 +75,20 @@ from avalan.flow import (
     render_flow_view,
     skeleton_from_mermaid_view,
 )
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    stream_observability_payload,
+)
 from avalan.task import (
+    PrivacySanitizer,
     TaskClientUnsupportedOperationError,
     TaskInputType,
     TaskOutputType,
     TaskRunState,
     TaskValidationCategory,
+    sanitize_raw_task_event,
 )
 from avalan.task import client as task_client_module
 from avalan.task.converters import (
@@ -214,7 +223,7 @@ class FlowRunCommandTestCase(TestCase):
                 event_type="token_generated",
                 payload={
                     "flow_node": "analyze_pov_1",
-                    "token_type": "ReasoningToken",
+                    "canonical_stream": {"kind": "reasoning.delta"},
                 },
             )
         )
@@ -305,7 +314,7 @@ class FlowRunCommandTestCase(TestCase):
                 event_type="token_generated",
                 payload={
                     "flow_node": "analyze_pov_1",
-                    "token_type": "ReasoningToken",
+                    "canonical_stream": {"kind": "reasoning.delta"},
                 },
             )
         )
@@ -357,7 +366,7 @@ class FlowRunCommandTestCase(TestCase):
                 event_type="token_generated",
                 payload={
                     "flow_node": "analyze_pov_1",
-                    "token_type": "ReasoningToken",
+                    "canonical_stream": {"kind": "reasoning.delta"},
                     "count": 2,
                 },
             )
@@ -367,6 +376,147 @@ class FlowRunCommandTestCase(TestCase):
         flow_stats = theme.flow_stats["analyze_pov_1"]
         self.assertEqual(flow_stats["output_tokens"], 1)
         self.assertEqual(flow_stats["reasoning_tokens"], 1)
+
+    def test_flow_progress_monitor_prefers_canonical_stream_kinds(
+        self,
+    ) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  analyze_pov_1\n",
+            node_states={"analyze_pov_1": "pending"},
+        )
+
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_started",
+                payload={"node": "analyze_pov_1", "status": "started"},
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "stream_kind": "reasoning.delta",
+                    "token_type": "Token",
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "stream": {"kind": "answer.delta"},
+                    "token_type": "ReasoningToken",
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "canonical_stream": {"kind": "answer.delta"},
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "stream_kind": "usage.update",
+                    "token_type": "Token",
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "stream": {"kind": "usage.update"},
+                    "token_type": "Token",
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "canonical_stream": {"kind": "bad"},
+                    "token_type": "Token",
+                },
+            )
+        )
+        monitor.observe(
+            SimpleNamespace(
+                event_type="token_generated",
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "token_type": "ReasoningToken",
+                },
+            )
+        )
+        monitor.render()
+
+        flow_stats = theme.flow_stats["analyze_pov_1"]
+        self.assertEqual(flow_stats["output_tokens"], 3)
+        self.assertEqual(flow_stats["reasoning_tokens"], 1)
+
+    def test_flow_progress_monitor_counts_sanitized_canonical_token_event(
+        self,
+    ) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  analyze_pov_1\n",
+            node_states={"analyze_pov_1": "pending"},
+        )
+        item = CanonicalStreamItem(
+            stream_session_id="stream-1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=1,
+            kind=StreamItemKind.REASONING_DELTA,
+            channel=StreamChannel.REASONING,
+            text_delta="private reasoning",
+        )
+        event = sanitize_raw_task_event(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                payload={
+                    "flow_node": "analyze_pov_1",
+                    "token": "private reasoning",
+                    "token_type": "Token",
+                },
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        stream_observability_payload(item)
+                    )
+                ),
+            ),
+            PrivacySanitizer(),
+        )
+
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_started",
+                payload={"node": "analyze_pov_1", "status": "started"},
+            )
+        )
+        monitor.observe(event)
+        monitor.render()
+
+        flow_stats = theme.flow_stats["analyze_pov_1"]
+        self.assertEqual(flow_stats["output_tokens"], 0)
+        self.assertEqual(flow_stats["reasoning_tokens"], 1)
+        self.assertNotIn("private reasoning", str(event.payload))
 
     def test_flow_progress_monitor_adds_usage_when_not_streaming(
         self,

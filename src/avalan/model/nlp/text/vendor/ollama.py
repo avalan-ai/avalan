@@ -28,6 +28,7 @@ class OllamaStream(TextGenerationVendorStream):
         super().__init__(
             cast(AsyncIterator[Token | TokenDetail | str], stream),
             provider_family=ProviderFamily.OLLAMA,
+            sources=(stream,),
         )
 
     async def __anext__(self) -> Token | TokenDetail | str:

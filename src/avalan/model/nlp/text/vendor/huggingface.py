@@ -38,6 +38,7 @@ class HuggingfaceStream(TextGenerationVendorStream):
         super().__init__(
             generator(),
             provider_family=ProviderFamily.HUGGING_FACE,
+            sources=(stream,),
         )
 
 

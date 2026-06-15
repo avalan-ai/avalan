@@ -10,12 +10,14 @@ from ..stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
+    StreamItemCorrelation,
     StreamItemKind,
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamTerminalOutcome,
     StreamValidationError,
     TextGenerationSingleStream,
+    _validate_lossless_sequence_gap,
     canonical_item_from_consumer_projection,
     canonical_item_from_token,
     iter_stream_consumer_projections,
@@ -73,6 +75,24 @@ def _canonical_item_from_output_item(
     )
 
 
+def _text_from_non_stream_result(result: object) -> str:
+    if isinstance(result, TextGenerationSingleStream):
+        return result.accumulator.answer_text
+    if isinstance(result, str):
+        return result
+    try:
+        item = canonical_item_from_token(
+            cast(Token | TokenDetail | str, result),
+            0,
+            stream_session_id="response-prefetch",
+            run_id="response-run",
+            turn_id="response-turn",
+        )
+    except AssertionError:
+        return str(result)
+    return item.text_delta or ""
+
+
 class TextGenerationResponse(AsyncIterator[OutputItem]):
     _json_patterns: list[Pattern[str]] = [
         # Markdown code fence with explicit json tag
@@ -95,15 +115,19 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
     _parser_queue: Queue[Token | TokenDetail | str] | None = None
     _logger: Logger
     _provider_family: str | None = None
-    _answer_buffer: StringIO = StringIO()
     _prefetched_text: str | None = None
     _final_text: str | None = None
     _terminal_failure_outcome: StreamTerminalOutcome | None = None
     _terminal_failure_message: str | None = None
     _output_closed: bool = False
     _bos_token: str | None = None
-    _semantic_accumulator: CanonicalStreamAccumulator | None = None
+    _stream_accumulator: CanonicalStreamAccumulator | None = None
+    _stream_accumulator_sequence: int = 0
+    _stream_lossless_sequence: int | None = None
+    _legacy_tool_call_data: dict[str, dict[str, Any]]
+    _semantic_stream_seen: bool = False
     _legacy_stream_seen: bool = False
+    _manual_thinking: bool = False
 
     def __init__(
         self,
@@ -127,6 +151,7 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
         self._on_consumed_callbacks = []
         self._final_text = None
         self._output_closed = False
+        self._manual_thinking = False
         self._reset_iteration_state()
 
         if "inputs" in kwargs:
@@ -137,8 +162,11 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
     def _reset_iteration_state(self) -> None:
         self._output_token_count = 0
         self._buffer = StringIO()
-        self._answer_buffer = StringIO()
-        self._semantic_accumulator = None
+        self._stream_accumulator = None
+        self._stream_accumulator_sequence = 0
+        self._stream_lossless_sequence = None
+        self._legacy_tool_call_data = {}
+        self._semantic_stream_seen = False
         self._legacy_stream_seen = False
         self._terminal_failure_outcome = None
         self._terminal_failure_message = None
@@ -152,6 +180,8 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                 logger=self._logger,
                 bos_token=self._bos_token,
             )
+            if self._manual_thinking:
+                self._reasoning_parser.set_thinking(True)
         else:
             self._parser_queue = None
             self._reasoning_parser = None
@@ -207,11 +237,7 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
         result = self._output_fn(*self._args, **self._kwargs)
         if isinstance(result, TextGenerationSingleStream):
             self._output = result
-            text = result.final_text
-        elif isinstance(result, (Token, TokenDetail)):
-            text = result.token
-        else:
-            text = str(result)
+        text = _text_from_non_stream_result(result)
 
         self._prefetched_text = text
         self._buffer = StringIO()
@@ -235,6 +261,13 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
 
     @property
     def usage(self) -> object | None:
+        if self._semantic_stream_seen and self._stream_accumulator:
+            usage = self._stream_accumulator.final_usage
+            if usage is not None:
+                return cast(object, usage)
+        return self._provider_usage()
+
+    def _provider_usage(self) -> object | None:
         usage = getattr(self._output_fn, "usage", None)
         if usage is not None:
             return cast(object, usage)
@@ -264,7 +297,9 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
         )
 
     def set_thinking(self, thinking: bool) -> None:
+        assert isinstance(thinking, bool)
         if self._reasoning_parser:
+            self._manual_thinking = thinking
             self._reasoning_parser.set_thinking(thinking)
 
     def canonical_stream(
@@ -460,15 +495,29 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
         yield text
 
     async def aclose(self) -> None:
-        output = self._output
-        if output is None or self._output_closed:
+        if self._output_closed:
             return
-        aclose = getattr(output, "aclose", None)
         self._output_closed = True
-        if aclose is None:
-            return
-        assert callable(aclose)
-        await self._close_output(cast(Callable[[], object], aclose))
+        await self._call_output_cleanup("aclose")
+
+    async def cancel(self) -> None:
+        await self._call_output_cleanup("cancel")
+
+    async def _call_output_cleanup(self, method_name: str) -> None:
+        assert method_name in ("cancel", "aclose")
+        seen: set[int] = set()
+        for source in (self._output, self._output_fn):
+            if source is None:
+                continue
+            source_id = id(source)
+            if source_id in seen:
+                continue
+            seen.add(source_id)
+            method = getattr(source, method_name, None)
+            if method is None:
+                continue
+            assert callable(method)
+            await self._close_output(cast(Callable[[], object], method))
 
     @staticmethod
     async def _close_output(aclose: Callable[[], object]) -> None:
@@ -499,19 +548,28 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                     if not parser_queue.empty():
                         continue
                 try:
-                    if self._semantic_accumulator is not None:
-                        self._semantic_accumulator.validate_complete()
+                    if self._stream_accumulator is None:
+                        self._finalize_legacy_stream_accumulator()
+                    if self._legacy_stream_seen:
+                        self._finalize_legacy_stream_accumulator()
+                    if self._stream_accumulator is not None:
+                        self._stream_accumulator.validate_complete()
                         self._remember_terminal_exception(
-                            self._semantic_accumulator
+                            self._stream_accumulator
                         )
                 except (Exception, CancelledError):
                     await self.aclose()
                     raise
                 if (
-                    self._semantic_accumulator is None
+                    self._stream_accumulator is None
                     or self._terminal_failure_outcome is None
                 ):
                     await self._trigger_consumed()
+                if (
+                    self._stream_accumulator is not None
+                    and self._terminal_failure_outcome is None
+                ):
+                    self._final_text = self._stream_accumulator.answer_text
                 await self.aclose()
                 raise
             except (Exception, CancelledError):
@@ -530,10 +588,7 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
             if isinstance(token, ToolCallToken) and token.call is not None:
                 return await self._record_returned_token(token)
 
-            if not self._reasoning_parser or (
-                self._reasoning_parser.is_thinking_budget_exhausted
-                and not self._reasoning_parser.is_thinking
-            ):
+            if not self._reasoning_parser:
                 return await self._record_returned_token(token)
 
             try:
@@ -587,38 +642,150 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
         token: OutputItem,
     ) -> OutputItem:
         try:
-            item = _canonical_item_from_output_item(
-                token,
-                0,
-                stream_session_id="response-stream",
-                run_id="response-run",
-                turn_id="response-turn",
-            )
             semantic_output = _is_semantic_output_item(token)
             if semantic_output:
+                item = _canonical_item_from_output_item(
+                    token,
+                    0,
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                )
                 if self._legacy_stream_seen:
                     raise StreamValidationError(
                         "canonical stream item after legacy stream item"
                     )
-                if self._semantic_accumulator is None:
-                    self._semantic_accumulator = CanonicalStreamAccumulator()
-                self._semantic_accumulator.add(item)
-            elif self._semantic_accumulator is not None:
+                if self._stream_accumulator is None:
+                    self._stream_accumulator = CanonicalStreamAccumulator()
+                self._semantic_stream_seen = True
+                self._stream_accumulator.add(item)
+                self._stream_lossless_sequence = (
+                    _validate_lossless_sequence_gap(
+                        item, self._stream_lossless_sequence
+                    )
+                )
+            elif self._semantic_stream_seen:
                 raise StreamValidationError(
                     "legacy stream item after canonical stream item"
                 )
             else:
                 self._legacy_stream_seen = True
-            if (
-                item.kind is StreamItemKind.ANSWER_DELTA
-                and item.text_delta is not None
-            ):
-                self._answer_buffer.write(item.text_delta)
+                accumulator = self._ensure_legacy_stream_accumulator()
+                legacy_item = _canonical_item_from_output_item(
+                    token,
+                    self._stream_accumulator_sequence,
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                )
+                accumulator.add(legacy_item)
+                if isinstance(token, ToolCallToken) and token.call is not None:
+                    tool_call_id = legacy_item.correlation.tool_call_id
+                    assert tool_call_id is not None
+                    self._legacy_tool_call_data[tool_call_id] = {
+                        "name": token.call.name,
+                        "arguments": token.call.arguments,
+                    }
+                self._stream_accumulator_sequence += 1
             self._output_token_count += 1
             return token
         except (Exception, CancelledError):
             await self.aclose()
             raise
+
+    def _ensure_legacy_stream_accumulator(
+        self,
+    ) -> CanonicalStreamAccumulator:
+        if self._stream_accumulator is None:
+            self._stream_accumulator = CanonicalStreamAccumulator()
+            self._stream_accumulator.add(
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=self._stream_accumulator_sequence,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                )
+            )
+            self._stream_accumulator_sequence += 1
+        return self._stream_accumulator
+
+    def _finalize_legacy_stream_accumulator(self) -> None:
+        accumulator = self._ensure_legacy_stream_accumulator()
+        if accumulator.terminal_outcome is not None:
+            return
+        for tool_call_id in accumulator.tool_call_arguments:
+            correlation = StreamItemCorrelation(tool_call_id=tool_call_id)
+            tool_call_data = self._legacy_tool_call_data.get(tool_call_id)
+            if tool_call_data is not None:
+                accumulator.add(
+                    CanonicalStreamItem(
+                        stream_session_id="response-stream",
+                        run_id="response-run",
+                        turn_id="response-turn",
+                        sequence=self._stream_accumulator_sequence,
+                        kind=StreamItemKind.TOOL_CALL_READY,
+                        channel=StreamChannel.TOOL_CALL,
+                        correlation=correlation,
+                        data=cast(Any, tool_call_data),
+                    )
+                )
+                self._stream_accumulator_sequence += 1
+            accumulator.add(
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=self._stream_accumulator_sequence,
+                    kind=StreamItemKind.TOOL_CALL_DONE,
+                    channel=StreamChannel.TOOL_CALL,
+                    correlation=correlation,
+                    metadata=(
+                        {}
+                        if tool_call_data is not None
+                        else {"tool_call.close_reason": "error"}
+                    ),
+                )
+            )
+            self._stream_accumulator_sequence += 1
+        if accumulator.reasoning_text:
+            accumulator.add(
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=self._stream_accumulator_sequence,
+                    kind=StreamItemKind.REASONING_DONE,
+                    channel=StreamChannel.REASONING,
+                )
+            )
+            self._stream_accumulator_sequence += 1
+        if accumulator.answer_text:
+            accumulator.add(
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=self._stream_accumulator_sequence,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                )
+            )
+            self._stream_accumulator_sequence += 1
+        accumulator.add(
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=self._stream_accumulator_sequence,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage=cast(Any, self._provider_usage() or {}),
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+        )
+        self._stream_accumulator_sequence += 1
 
     def __str__(self) -> str:
         if not self._use_async_generator:
@@ -648,42 +815,6 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
             self.__aiter__()
         assert self._output is not None
 
-        legacy_accumulator: CanonicalStreamAccumulator | None = None
-        semantic_accumulator = self._semantic_accumulator
-        sequence = 0
-        buffered_text = self._answer_buffer.getvalue()
-
-        def legacy_stream_accumulator() -> CanonicalStreamAccumulator:
-            nonlocal legacy_accumulator, sequence
-            if legacy_accumulator is not None:
-                return legacy_accumulator
-            legacy_accumulator = CanonicalStreamAccumulator()
-            legacy_accumulator.add(
-                CanonicalStreamItem(
-                    stream_session_id="response-stream",
-                    run_id="response-run",
-                    turn_id="response-turn",
-                    sequence=sequence,
-                    kind=StreamItemKind.STREAM_STARTED,
-                    channel=StreamChannel.CONTROL,
-                )
-            )
-            sequence += 1
-            if buffered_text:
-                legacy_accumulator.add(
-                    CanonicalStreamItem(
-                        stream_session_id="response-stream",
-                        run_id="response-run",
-                        turn_id="response-turn",
-                        sequence=sequence,
-                        kind=StreamItemKind.ANSWER_DELTA,
-                        channel=StreamChannel.ANSWER,
-                        text_delta=buffered_text,
-                    )
-                )
-                sequence += 1
-            return legacy_accumulator
-
         while True:
             try:
                 token = await self.__anext__()
@@ -691,63 +822,21 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                 break
 
             if _is_semantic_output_item(token):
-                semantic_accumulator = self._semantic_accumulator
-                assert semantic_accumulator is not None
+                accumulator = self._stream_accumulator
+                assert accumulator is not None
                 terminal_exception = self._remember_terminal_exception(
-                    semantic_accumulator
+                    accumulator
                 )
                 if terminal_exception is not None:
                     await self.aclose()
                     raise terminal_exception
-                continue
 
-            legacy_stream_accumulator().add(
-                _canonical_item_from_output_item(
-                    token,
-                    sequence,
-                    stream_session_id="response-stream",
-                    run_id="response-run",
-                    turn_id="response-turn",
-                )
-            )
-            sequence += 1
-
-        if semantic_accumulator is not None:
-            semantic_accumulator.validate_complete()
-            terminal_exception = self._remember_terminal_exception(
-                semantic_accumulator
-            )
-            if terminal_exception is not None:
-                raise terminal_exception
-            await self._trigger_consumed()
-            self._final_text = semantic_accumulator.answer_text
-            return self._final_text
-
-        accumulator = legacy_stream_accumulator()
-        accumulator.add(
-            CanonicalStreamItem(
-                stream_session_id="response-stream",
-                run_id="response-run",
-                turn_id="response-turn",
-                sequence=sequence,
-                kind=StreamItemKind.ANSWER_DONE,
-                channel=StreamChannel.ANSWER,
-            )
-        )
-        sequence += 1
-        accumulator.add(
-            CanonicalStreamItem(
-                stream_session_id="response-stream",
-                run_id="response-run",
-                turn_id="response-turn",
-                sequence=sequence,
-                kind=StreamItemKind.STREAM_COMPLETED,
-                channel=StreamChannel.CONTROL,
-                usage=cast(Any, self.usage or {}),
-                terminal_outcome=StreamTerminalOutcome.COMPLETED,
-            )
-        )
+        accumulator = self._stream_accumulator
+        assert accumulator is not None
         accumulator.validate_complete()
+        terminal_exception = self._remember_terminal_exception(accumulator)
+        if terminal_exception is not None:
+            raise terminal_exception
         await self._trigger_consumed()
         self._final_text = accumulator.answer_text
         return self._final_text

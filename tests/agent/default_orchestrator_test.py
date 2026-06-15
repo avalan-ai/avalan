@@ -325,12 +325,15 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         )
         self.assertIs(
             token_events[0].observability.kind,
-            EventPayloadKind.TEMPORARY_LEGACY,
+            EventPayloadKind.CANONICAL_STREAM,
         )
         self.assertEqual(
-            token_events[0].observability.data["token_length"],
-            1,
+            token_events[0].observability.data["kind"],
+            "answer.delta",
         )
+        summary = token_events[0].observability.data["summary"]
+        self.assertIsInstance(summary, dict)
+        self.assertEqual(summary["text_delta_length"], 1)
         self.assertEqual(
             token_events[1].payload,
             {
@@ -342,8 +345,8 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(
-            token_events[1].observability.data["token_length"],
-            1,
+            token_events[1].observability.data["kind"],
+            "answer.delta",
         )
 
         memory.__exit__.assert_called_once()

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from avalan.model.stream import StreamRetentionPolicy
 from avalan.server.a2a.store import (
     TaskArtifact,
     TaskEvent,
@@ -71,33 +72,90 @@ def test_task_store_covers_all_branches() -> None:
 def test_task_store_rejects_invalid_retention() -> None:
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_tasks=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_tasks=True)  # type: ignore[arg-type]
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_tasks="1")  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_task_age_seconds=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_task_age_seconds=True)  # type: ignore[arg-type]
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_task_age_seconds="1")  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_events_per_task=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_events_per_task=True)  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_messages_per_task=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_messages_per_task=True)  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_artifacts_per_task=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_artifacts_per_task=True)  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_message_chunks=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_message_chunks=True)  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_message_bytes=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_message_bytes=True)  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_artifact_items=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_artifact_items=True)  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_artifact_bytes=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_artifact_bytes=True)  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStore(retention="bad")  # type: ignore[arg-type]
+
+
+def test_task_store_default_retention_uses_stream_policy() -> None:
+    retention = TaskStoreRetention()
+
+    assert (
+        retention.max_tasks
+        == StreamRetentionPolicy().a2a_task_record_item_limit
+    )
+
+
+def test_repeated_default_task_requests_bound_records() -> None:
+    asyncio.run(_exercise_repeated_default_task_requests())
+
+
+async def _exercise_repeated_default_task_requests() -> None:
+    retention = TaskStoreRetention()
+    store = TaskStore()
+
+    for index in range(retention.max_tasks + 2):
+        task_id = f"task-{index}"
+        await store.create_task(
+            task_id,
+            model=None,
+            instructions=None,
+            input_messages=[],
+        )
+        await store.complete_task(task_id)
+
+    assert len(store._tasks) == retention.max_tasks
+    with pytest.raises(KeyError):
+        await store.get_task("task-0")
+
+    latest = await store.get_task(f"task-{retention.max_tasks + 1}")
+    assert latest["status"] == "completed"
 
 
 async def _exercise_task_store() -> None:

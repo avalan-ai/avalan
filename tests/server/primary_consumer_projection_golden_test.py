@@ -143,48 +143,24 @@ async def _async_items(
 def _responses_event_names(
     projections: tuple[StreamConsumerProjection, ...],
 ) -> list[str]:
-    state: responses.ResponseState | None = None
-    tool_call_id: str | None = None
+    adapter = responses._ResponsesSSEProjectionAdapter()
     names: list[str] = []
     for sequence, projection in enumerate(projections):
-        new_state = responses._new_state(projection)
-        call_id = (
-            projection.tool_call_id
-            if projection.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
-            else None
-        )
-        new_tool_call_id = (
-            call_id
-            if call_id is not None
-            else (
-                tool_call_id
-                if responses._is_tool_response_state(new_state)
-                else None
-            )
-        )
         names.extend(
             event.split("\n", maxsplit=1)[0].split(": ", maxsplit=1)[1]
-            for event in responses._switch_state(
-                state, new_state, tool_call_id, new_tool_call_id
-            )
-        )
-        state = new_state
-        tool_call_id = (
-            call_id
-            if responses._is_tool_response_state(state) and call_id is not None
-            else (
-                tool_call_id
-                if responses._is_tool_response_state(state)
-                else None
-            )
+            for event in adapter.switch(projection)
         )
         names.extend(
-            event.split("\n", maxsplit=1)[0].split(": ", maxsplit=1)[1]
-            for event in responses._token_to_sse(projection, sequence)
+            event.event
+            for event in responses._token_to_sse_events(
+                projection,
+                sequence,
+                adapter.active_tool_call_id,
+            )
         )
     names.extend(
         event.split("\n", maxsplit=1)[0].split(": ", maxsplit=1)[1]
-        for event in responses._switch_state(state, None, tool_call_id, None)
+        for event in adapter.close()
     )
     names.extend(
         event.event

@@ -1,7 +1,7 @@
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 
-from avalan.entities import GenerationSettings, Token
+from avalan.entities import GenerationSettings, Token, TokenDetail
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import TextGenerationSingleStream
 from avalan.task.usage import UsageSource, usage_observation_from_response
@@ -124,6 +124,24 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
         response._ensure_non_stream_prefetched()
         self.assertEqual(response._prefetched_text, "token-result")
         self.assertEqual(response.output_token_count, len("token-result"))
+
+    async def test_prefetch_handles_token_detail_instances(self) -> None:
+        settings = GenerationSettings()
+        response = TextGenerationResponse(
+            lambda **_: TokenDetail(
+                id=7,
+                token="detailed-result",
+                probability=0.5,
+                step=1,
+            ),
+            logger=getLogger("response-token-detail"),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=False,
+        )
+        response._ensure_non_stream_prefetched()
+        self.assertEqual(response._prefetched_text, "detailed-result")
+        self.assertEqual(response.output_token_count, len("detailed-result"))
 
     async def test_str_converts_generic_result(self) -> None:
         settings = GenerationSettings()

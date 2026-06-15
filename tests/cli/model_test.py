@@ -8,7 +8,7 @@ from tempfile import NamedTemporaryFile
 from threading import Event as ThreadEvent
 from time import perf_counter
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
@@ -25,6 +25,7 @@ from avalan.cli.commands import (
 from avalan.cli.commands import (
     model as model_cmds,
 )
+from avalan.cli.theme.fancy import FancyTheme
 from avalan.entities import (
     GenerationCacheStrategy,
     GenerationSettings,
@@ -40,9 +41,6 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
-    ToolCallDiagnostic,
-    ToolCallDiagnosticCode,
-    ToolCallDiagnosticStage,
     ToolCallToken,
     TransformerEngineSettings,
 )
@@ -268,6 +266,11 @@ class CliModelTestCase(TestCase):
         )
 
     def test_stream_projection_helpers_reject_invalid_text_input(self) -> None:
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported CLI stream item",
+        ):
+            model_cmds._stream_projection(object())  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
             model_cmds._stream_text(object())  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
@@ -590,9 +593,6 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.STREAM_STARTED,
                 channel=StreamChannel.CONTROL,
             )
-            yield model_cmds.Event(
-                type=model_cmds.EventType.TOOL_EXECUTE, payload={}
-            )
             yield CanonicalStreamItem(
                 stream_session_id="s",
                 run_id="r",
@@ -607,6 +607,14 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 run_id="r",
                 turn_id="t",
                 sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={},
@@ -691,11 +699,9 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
         console.print.assert_not_called()
 
-    async def test_stream_render_items_projects_canonical_items_and_events(
+    async def test_stream_render_items_projects_canonical_items(
         self,
     ):
-        event = model_cmds.Event(type=model_cmds.EventType.START)
-
         async def gen():
             yield CanonicalStreamItem(
                 stream_session_id="stream",
@@ -705,7 +711,6 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.STREAM_STARTED,
                 channel=StreamChannel.CONTROL,
             )
-            yield event
             yield CanonicalStreamItem(
                 stream_session_id="stream",
                 run_id="run",
@@ -720,6 +725,14 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 run_id="run",
                 turn_id="turn",
                 sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={},
@@ -736,26 +749,24 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(observed[1].event, event)
         projections = [
             item.projection for item in observed if item.projection is not None
         ]
         self.assertEqual(
             [item.sequence for item in projections],
-            [0, 1, 2],
+            [0, 1, 2, 3],
         )
         self.assertEqual(projections[0].stream_session_id, "stream")
         self.assertEqual(projections[1].text_delta, "answer")
-        self.assertIsNone(observed[2].source_token)
+        self.assertIsNone(observed[1].source_token)
         self.assertIs(
-            projections[2].terminal_outcome,
+            projections[3].terminal_outcome,
             StreamTerminalOutcome.COMPLETED,
         )
 
     async def test_stream_render_items_projects_consumer_projections(
         self,
     ):
-        event = model_cmds.Event(type=model_cmds.EventType.START)
         items = (
             CanonicalStreamItem(
                 stream_session_id="stream",
@@ -779,6 +790,14 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 run_id="run",
                 turn_id="turn",
                 sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={},
@@ -788,9 +807,9 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         async def gen():
             yield project_canonical_stream_item(items[0])
-            yield event
             yield project_canonical_stream_item(items[1])
             yield project_canonical_stream_item(items[2])
+            yield project_canonical_stream_item(items[3])
 
         observed = [
             item
@@ -802,20 +821,19 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(observed[1].event, event)
         projections = [
             item.projection for item in observed if item.projection is not None
         ]
         self.assertEqual(
             [item.sequence for item in projections],
-            [0, 1, 2],
+            [0, 1, 2, 3],
         )
         self.assertEqual(
             {item.stream_session_id for item in projections}, {"stream"}
         )
         self.assertEqual(projections[1].text_delta, "plan")
         self.assertIs(
-            projections[2].terminal_outcome,
+            projections[3].terminal_outcome,
             StreamTerminalOutcome.COMPLETED,
         )
 
@@ -845,6 +863,14 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 run_id="run",
                 turn_id="turn",
                 sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={},
@@ -864,7 +890,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         projections = [
             item.projection for item in observed if item.projection is not None
         ]
-        self.assertEqual([item.sequence for item in projections], [0, 1, 2])
+        self.assertEqual([item.sequence for item in projections], [0, 1, 2, 3])
         self.assertEqual(projections[1].text_delta, "answer")
 
     async def test_stream_render_items_rejects_late_projection(self):
@@ -993,12 +1019,51 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 stream_session_id="fallback-stream",
                 run_id="fallback-run",
                 turn_id="fallback-turn",
+                include_display_token=True,
             )
         ]
 
         self.assertEqual(len(observed), 1)
         self.assertEqual(observed[0].projection.text_delta, "answer")
-        self.assertIs(observed[0].source_token, token)
+        self.assertEqual(observed[0].source_token, token)
+
+    async def test_stream_render_items_skips_display_token_by_default(self):
+        token = Token(id=1, token="answer")
+
+        async def gen():
+            yield token
+
+        observed = [
+            item
+            async for item in model_cmds._stream_render_items(
+                gen(),
+                stream_session_id="fallback-stream",
+                run_id="fallback-run",
+                turn_id="fallback-turn",
+            )
+        ]
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].projection.text_delta, "answer")
+        self.assertIsNone(observed[0].source_token)
+
+    async def test_stream_render_items_rejects_invalid_display_token_flag(
+        self,
+    ):
+        async def gen():
+            yield Token(id=1, token="answer")
+
+        with self.assertRaises(AssertionError):
+            [
+                item
+                async for item in model_cmds._stream_render_items(
+                    gen(),
+                    stream_session_id="fallback-stream",
+                    run_id="fallback-run",
+                    turn_id="fallback-turn",
+                    include_display_token=cast(Any, "yes"),
+                )
+            ]
 
     async def test_stream_render_items_rejects_malformed_mixed_stream(self):
         async def gen():
@@ -1015,6 +1080,42 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(
             StreamValidationError,
             "legacy stream item after canonical stream item",
+        ):
+            [
+                item
+                async for item in model_cmds._stream_render_items(
+                    gen(),
+                    stream_session_id="fallback-stream",
+                    run_id="fallback-run",
+                    turn_id="fallback-turn",
+                )
+            ]
+
+    async def test_stream_render_items_rejects_unsupported_stream_item(self):
+        async def gen():
+            yield object()
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported CLI stream item",
+        ):
+            [
+                item
+                async for item in model_cmds._stream_render_items(
+                    gen(),
+                    stream_session_id="fallback-stream",
+                    run_id="fallback-run",
+                    turn_id="fallback-turn",
+                )
+            ]
+
+    async def test_stream_render_items_rejects_legacy_event_item(self):
+        async def gen():
+            yield Event(type=EventType.START)
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported CLI stream item",
         ):
             [
                 item
@@ -1059,6 +1160,117 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                         turn_id="fallback-turn",
                     )
                     [render_item async for render_item in stream]
+
+    async def test_stream_render_items_prefers_consumer_projections(self):
+        class Response:
+            def __init__(self) -> None:
+                self.raw_iterated = False
+                self.projection_requested = False
+
+            def __aiter__(self):
+                self.raw_iterated = True
+
+                async def gen():
+                    yield "raw"
+
+                return gen()
+
+            def consumer_projections(
+                self,
+                *,
+                stream_session_id: str,
+                run_id: str,
+                turn_id: str,
+            ):
+                self.projection_requested = True
+
+                async def gen():
+                    for item in (
+                        CanonicalStreamItem(
+                            stream_session_id="stream",
+                            run_id="run",
+                            turn_id="turn",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="stream",
+                            run_id="run",
+                            turn_id="turn",
+                            sequence=1,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="projected",
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="stream",
+                            run_id="run",
+                            turn_id="turn",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="stream",
+                            run_id="run",
+                            turn_id="turn",
+                            sequence=3,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            usage={},
+                            terminal_outcome=(StreamTerminalOutcome.COMPLETED),
+                        ),
+                    ):
+                        yield project_canonical_stream_item(item)
+
+                return gen()
+
+        response = Response()
+
+        items = [
+            item
+            async for item in model_cmds._stream_render_items(
+                response,
+                stream_session_id="fallback-stream",
+                run_id="fallback-run",
+                turn_id="fallback-turn",
+            )
+        ]
+
+        self.assertFalse(response.raw_iterated)
+        self.assertTrue(response.projection_requested)
+        projection = items[1].projection
+        assert projection is not None
+        self.assertEqual(projection.text_delta, "projected")
+
+    async def test_stream_render_items_rejects_bad_projection_api_item(self):
+        class Response:
+            def __aiter__(self):
+                async def gen():
+                    yield "raw"
+
+                return gen()
+
+            def consumer_projections(self, **_kwargs):
+                async def gen():
+                    yield "bad"
+
+                return gen()
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "consumer projection stream item must be StreamConsumerProjection",
+        ):
+            [
+                item
+                async for item in model_cmds._stream_render_items(
+                    Response(),
+                    stream_session_id="fallback-stream",
+                    run_id="fallback-run",
+                    turn_id="fallback-turn",
+                )
+            ]
 
     async def test_plain_stdout_rejects_semantic_after_legacy_stream(
         self,
@@ -1257,38 +1469,35 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         console.print.assert_not_called()
 
-    async def test_token_generation_no_stats_with_event(self):
+    async def test_token_generation_rejects_legacy_event_stream_item(self):
         async def gen():
-            yield model_cmds.Event(
-                type=model_cmds.EventType.TOOL_EXECUTE, payload={}
-            )
+            yield Event(type=EventType.TOOL_EXECUTE, payload={})
             yield "t"
-            yield model_cmds.Event(
-                type=model_cmds.EventType.TOOL_PROCESS, payload={}
-            )
+            yield Event(type=EventType.TOOL_PROCESS, payload={})
             yield "u"
 
         args = Namespace(
             skip_display_reasoning_time=False,
         )
         console = MagicMock()
-        await model_cmds.token_generation(
-            args=args,
-            console=console,
-            theme=MagicMock(),
-            logger=MagicMock(),
-            orchestrator=None,
-            event_stats=None,
-            lm=MagicMock(),
-            input_string="i",
-            response=gen(),
-            display_tokens=0,
-            dtokens_pick=0,
-            with_stats=False,
-            tool_events_limit=2,
-            refresh_per_second=2,
-        )
-        console.print.assert_has_calls([call("t", end=""), call("u", end="")])
+        with self.assertRaises(StreamValidationError):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=MagicMock(),
+                logger=MagicMock(),
+                orchestrator=None,
+                event_stats=None,
+                lm=MagicMock(),
+                input_string="i",
+                response=gen(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+            )
+        console.print.assert_not_called()
 
     async def test_token_generation_raises_event_stream_error(self):
         class DummyLive:
@@ -1361,6 +1570,14 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 run_id="run",
                 turn_id="turn",
                 sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
                 kind=StreamItemKind.ANSWER_DELTA,
                 channel=StreamChannel.ANSWER,
                 text_delta="answer",
@@ -1369,7 +1586,15 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 stream_session_id="stream",
                 run_id="run",
                 turn_id="turn",
-                sequence=3,
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=5,
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={},
@@ -1463,6 +1688,556 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             ],
         )
         self.assertIsNotNone(captured[0]["ttft"])
+
+    async def test_token_stream_skips_tokenizer_config_without_display_tokens(
+        self,
+    ):
+        items = [
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    for item in items:
+                        yield item
+
+                return gen()
+
+        class LazyTokenConfigLm:
+            model_id = "m"
+
+            @property
+            def tokenizer_config(self) -> object:
+                raise AssertionError("tokenizer config should be opt-in")
+
+            def input_token_count(self, value: object) -> int:
+                _ = value
+                return 1
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+        captured: list[tuple[object, object, object]] = []
+
+        async def fake_tokens(*p, **kw):
+            _ = kw
+            captured.append((p[1], p[2], p[10]))
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        await model_cmds._token_stream(
+            args=args,
+            console=MagicMock(width=80),
+            live=MagicMock(),
+            group=None,
+            tokens_group_index=None,
+            theme=theme,
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=LazyTokenConfigLm(),
+            input_string="i",
+            response=Resp(),
+            display_tokens=0,
+            dtokens_pick=0,
+            refresh_per_second=2,
+            stop_signal=None,
+            tool_events_limit=2,
+            with_stats=True,
+        )
+
+        self.assertEqual(captured, [(None, None, None)])
+
+    async def test_token_stream_passes_tokenizer_config_for_display_tokens(
+        self,
+    ):
+        token = Token(id=7, token="answer")
+        tokenizer_tokens = {"answer": 7}
+        tokenizer_special_tokens = {"<eos>": 2}
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    yield token
+
+                return gen()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+        captured: list[tuple[object, object, object]] = []
+
+        async def fake_tokens(*p, **kw):
+            _ = kw
+            captured.append((p[1], p[2], p[10]))
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+        lm = SimpleNamespace(
+            model_id="m",
+            tokenizer_config=SimpleNamespace(
+                tokens=tokenizer_tokens,
+                special_tokens=tokenizer_special_tokens,
+            ),
+            input_token_count=lambda value: 1,
+        )
+
+        await model_cmds._token_stream(
+            args=args,
+            console=MagicMock(width=80),
+            live=MagicMock(),
+            group=None,
+            tokens_group_index=None,
+            theme=theme,
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=lm,
+            input_string="i",
+            response=Resp(),
+            display_tokens=1,
+            dtokens_pick=0,
+            refresh_per_second=2,
+            stop_signal=None,
+            tool_events_limit=2,
+            with_stats=True,
+        )
+
+        self.assertEqual(
+            captured,
+            [(tokenizer_tokens, tokenizer_special_tokens, [token])],
+        )
+
+    async def test_token_stream_reuses_tokenizer_config_per_stream(self):
+        first_token = Token(id=7, token="one")
+        second_token = Token(id=8, token="two")
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    yield first_token
+                    yield second_token
+
+                return gen()
+
+        class CountingLm:
+            model_id = "m"
+
+            def __init__(self) -> None:
+                self.config_reads = 0
+
+            @property
+            def tokenizer_config(self) -> object:
+                self.config_reads += 1
+                return SimpleNamespace(
+                    tokens=[f"token-{self.config_reads}"],
+                    special_tokens=[f"special-{self.config_reads}"],
+                )
+
+            def input_token_count(self, value: object) -> int:
+                _ = value
+                return 1
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+        captured: list[tuple[object, object]] = []
+
+        async def fake_tokens(*p, **kw):
+            _ = kw
+            captured.append((p[1], p[2]))
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+        lm = CountingLm()
+
+        for _ in range(2):
+            await model_cmds._token_stream(
+                args=args,
+                console=MagicMock(width=80),
+                live=MagicMock(),
+                group=None,
+                tokens_group_index=None,
+                theme=theme,
+                logger=MagicMock(),
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="i",
+                response=Resp(),
+                display_tokens=1,
+                dtokens_pick=0,
+                refresh_per_second=2,
+                stop_signal=None,
+                tool_events_limit=2,
+                with_stats=True,
+            )
+
+        self.assertEqual(lm.config_reads, 2)
+        self.assertEqual(
+            captured,
+            [
+                (["token-1"], ["special-1"]),
+                (["token-1"], ["special-1"]),
+                (["token-2"], ["special-2"]),
+                (["token-2"], ["special-2"]),
+            ],
+        )
+
+    async def test_token_stream_closes_unused_theme_frames(self):
+        async def token_gen():
+            yield Token(id=1, token="A")
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                return token_gen()
+
+        yielded: list[str] = []
+        closed = False
+
+        async def fake_frames(*_, **__):
+            nonlocal closed
+            try:
+                yielded.append("first")
+                yield (None, "frame1")
+                yielded.append("second")
+                yield (None, "frame2")
+            finally:
+                closed = True
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+
+        await model_cmds._token_stream(
+            args=args,
+            console=MagicMock(width=80),
+            live=MagicMock(),
+            group=None,
+            tokens_group_index=None,
+            theme=theme,
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(
+                model_id="m",
+                tokenizer_config=None,
+                input_token_count=lambda value: 1,
+            ),
+            input_string="i",
+            response=Resp(),
+            display_tokens=1,
+            dtokens_pick=1,
+            refresh_per_second=2,
+            stop_signal=None,
+            tool_events_limit=2,
+            with_stats=True,
+        )
+
+        self.assertEqual(yielded, ["first"])
+        self.assertTrue(closed)
+
+    async def test_token_stream_closes_theme_frames_on_pause_cancel(
+        self,
+    ):
+        async def token_gen():
+            yield Token(id=1, token="A")
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                return token_gen()
+
+        yielded: list[str] = []
+        closed = False
+
+        async def fake_frames(*_, **__):
+            nonlocal closed
+            try:
+                yielded.append("first")
+                yield (Token(id=1, token="A"), "frame1")
+                yielded.append("second")
+                yield (None, "frame2")
+            finally:
+                closed = True
+
+        async def cancellable_sleep(delay: float) -> None:
+            if delay == 0.01:
+                raise asyncio.CancelledError()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=10,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+        stop_signal = asyncio.Event()
+
+        with patch(
+            "avalan.cli.commands.model.sleep",
+            new=AsyncMock(side_effect=cancellable_sleep),
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                await model_cmds._token_stream(
+                    args=args,
+                    console=MagicMock(width=80),
+                    live=MagicMock(),
+                    group=None,
+                    tokens_group_index=None,
+                    theme=theme,
+                    logger=MagicMock(),
+                    orchestrator=None,
+                    event_stats=None,
+                    lm=SimpleNamespace(
+                        model_id="m",
+                        tokenizer_config=None,
+                        input_token_count=lambda value: 1,
+                    ),
+                    input_string="i",
+                    response=Resp(),
+                    display_tokens=1,
+                    dtokens_pick=1,
+                    refresh_per_second=2,
+                    stop_signal=stop_signal,
+                    tool_events_limit=2,
+                    with_stats=True,
+                )
+
+        self.assertEqual(yielded, ["first"])
+        self.assertTrue(closed)
+        self.assertTrue(stop_signal.is_set())
+
+    async def test_token_stream_accepts_empty_theme_frame_stream(self):
+        async def token_gen():
+            yield Token(id=1, token="A")
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                return token_gen()
+
+        async def fake_frames(*_, **__):
+            for frame in ():
+                yield frame
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+        live = MagicMock()
+
+        await model_cmds._token_stream(
+            args=args,
+            console=MagicMock(width=80),
+            live=live,
+            group=None,
+            tokens_group_index=None,
+            theme=theme,
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(
+                model_id="m",
+                tokenizer_config=None,
+                input_token_count=lambda value: 1,
+            ),
+            input_string="i",
+            response=Resp(),
+            display_tokens=1,
+            dtokens_pick=1,
+            refresh_per_second=2,
+            stop_signal=None,
+            tool_events_limit=2,
+            with_stats=True,
+        )
+
+        live.update.assert_not_called()
+
+    async def test_token_stream_consumes_probability_theme_frames(self):
+        async def token_gen():
+            yield Token(id=1, token="A")
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                return token_gen()
+
+        yielded: list[str] = []
+
+        async def fake_frames(*_, **__):
+            yielded.append("first")
+            yield (Token(id=1, token="A"), "frame1")
+            yielded.append("second")
+            yield (None, "frame2")
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=True,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_frames)
+
+        await model_cmds._token_stream(
+            args=args,
+            console=MagicMock(width=80),
+            live=MagicMock(),
+            group=None,
+            tokens_group_index=None,
+            theme=theme,
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(
+                model_id="m",
+                tokenizer_config=None,
+                input_token_count=lambda value: 1,
+            ),
+            input_string="i",
+            response=Resp(),
+            display_tokens=1,
+            dtokens_pick=1,
+            refresh_per_second=2,
+            stop_signal=None,
+            tool_events_limit=2,
+            with_stats=True,
+        )
+
+        self.assertEqual(yielded, ["first", "second"])
 
     async def test_token_generation_timing_pause(self):
         token = model_cmds.Token(id=0, token="a")
@@ -1598,9 +2373,42 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         theme.tokens.assert_called_once()
         live.update.assert_called_once_with("frame")
 
-    async def test_token_generation_stats_do_not_count_events(self):
-        token = model_cmds.Token(id=0, token="a")
-        event = model_cmds.Event(type=model_cmds.EventType.START)
+    async def test_token_generation_stats_do_not_count_control_items(self):
+        control = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        answer = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="a",
+        )
+        answer_done = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.ANSWER_DONE,
+            channel=StreamChannel.ANSWER,
+        )
+        terminal = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
 
         class Resp:
             input_token_count = 1
@@ -1612,8 +2420,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def g():
-                    yield event
-                    yield token
+                    yield control
+                    yield answer
+                    yield answer_done
+                    yield terminal
 
                 return g()
 
@@ -1673,16 +2483,14 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             with_stats=True,
         )
 
-        self.assertEqual([c["total_tokens"] for c in captured], [0, 1])
-        self.assertIsNone(captured[0]["ttft"])
-        self.assertIsNone(captured[0]["ttnt"])
-        self.assertIsNotNone(captured[1]["ttft"])
-        self.assertIsNotNone(captured[1]["ttnt"])
+        self.assertEqual([c["total_tokens"] for c in captured], [1])
+        self.assertIsNotNone(captured[0]["ttft"])
+        self.assertIsNotNone(captured[0]["ttnt"])
 
     async def test_token_generation_tool_call_tokens_do_not_count_as_output(
         self,
     ):
-        tool_token = model_cmds.ToolCallToken(token="TOOL")
+        tool_token = ToolCallToken(token="TOOL")
 
         class Resp:
             input_token_count = 0
@@ -1776,7 +2584,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         lm.input_token_count.assert_has_calls([call("i"), call("TOOL")])
 
     async def test_token_generation_empty_tool_call_token_counts_zero(self):
-        tool_token = model_cmds.ToolCallToken(token="")
+        tool_token = ToolCallToken(token="")
 
         class Resp:
             input_token_count = 0
@@ -1853,91 +2661,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
         lm.input_token_count.assert_called_once_with("i")
 
-    async def test_token_generation_tool_model_response_adds_payload_input(
-        self,
-    ):
-        async def inner_gen():
-            yield "x"
-
-        inner_response = model_cmds.TextGenerationResponse(
-            lambda: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-        )
-        messages = [Message(role=MessageRole.USER, content="hi")]
-        event = model_cmds.Event(
-            type=model_cmds.EventType.TOOL_MODEL_RESPONSE,
-            payload={"response": inner_response, "messages": messages},
-        )
-
-        class Resp:
-            input_token_count = 5
-            can_think = False
-            is_thinking = False
-
-            def set_thinking(self, value: bool) -> None:
-                self.is_thinking = value
-
-            def __aiter__(self):
-                async def g():
-                    yield event
-
-                return g()
-
-        args = Namespace(
-            skip_display_reasoning_time=False,
-            display_time_to_n_token=None,
-            display_pause=0,
-            start_thinking=False,
-            display_probabilities=False,
-            display_probabilities_maximum=0.0,
-            display_probabilities_sample_minimum=0.0,
-            record=False,
-        )
-
-        console = MagicMock()
-        console.width = 80
-        logger = MagicMock()
-        captured: list[int] = []
-
-        async def fake_tokens(*p, **kw):
-            captured.append(p[11])
-            yield (None, "frame")
-
-        theme = MagicMock()
-        theme.tokens = MagicMock(side_effect=fake_tokens)
-        live = MagicMock()
-        lm = SimpleNamespace(
-            model_id="m",
-            tokenizer_config=None,
-            input_token_count=MagicMock(return_value=42),
-        )
-
-        await model_cmds._token_stream(
-            args=args,
-            console=console,
-            live=live,
-            group=None,
-            tokens_group_index=None,
-            theme=theme,
-            logger=logger,
-            orchestrator=None,
-            event_stats=None,
-            lm=lm,
-            input_string="i",
-            response=Resp(),
-            display_tokens=0,
-            dtokens_pick=0,
-            refresh_per_second=2,
-            stop_signal=None,
-            tool_events_limit=2,
-            with_stats=True,
-        )
-
-        self.assertEqual(captured, [47])
-        lm.input_token_count.assert_called_once_with(messages)
-
-    async def test_token_generation_input_count_accumulates(self):
+    async def test_token_generation_rejects_model_response_event_item(self):
         async def inner_gen():
             yield "x"
 
@@ -1947,8 +2671,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             logger=getLogger(),
             use_async_generator=True,
         )
-        event = model_cmds.Event(
-            type=model_cmds.EventType.TOOL_MODEL_RESPONSE,
+        event = Event(
+            type=EventType.TOOL_MODEL_RESPONSE,
             payload={"response": inner_response},
         )
 
@@ -1980,14 +2704,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         console = MagicMock()
         console.width = 80
         logger = MagicMock()
-        captured: list[int] = []
-
-        async def fake_tokens(*p, **kw):
-            captured.append(p[11])
-            yield (None, "frame")
 
         theme = MagicMock()
-        theme.tokens = MagicMock(side_effect=fake_tokens)
         live = MagicMock()
         lm = SimpleNamespace(
             model_id="m",
@@ -1995,29 +2713,29 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             input_token_count=MagicMock(return_value=1),
         )
 
-        await model_cmds._token_stream(
-            args=args,
-            console=console,
-            live=live,
-            group=None,
-            tokens_group_index=None,
-            theme=theme,
-            logger=logger,
-            orchestrator=None,
-            event_stats=None,
-            lm=lm,
-            input_string="i",
-            response=Resp(),
-            display_tokens=0,
-            dtokens_pick=0,
-            refresh_per_second=2,
-            stop_signal=None,
-            tool_events_limit=2,
-            with_stats=True,
-        )
+        with self.assertRaises(StreamValidationError):
+            await model_cmds._token_stream(
+                args=args,
+                console=console,
+                live=live,
+                group=None,
+                tokens_group_index=None,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=lm,
+                input_string="i",
+                response=Resp(),
+                display_tokens=0,
+                dtokens_pick=0,
+                refresh_per_second=2,
+                stop_signal=None,
+                tool_events_limit=2,
+                with_stats=True,
+            )
 
-        self.assertEqual(captured, [13])
-        lm.input_token_count.assert_not_called()
+        theme.tokens.assert_not_called()
 
     async def test_token_generation_live_container_without_orchestrator(self):
         live = MagicMock(name="live")
@@ -2379,167 +3097,9 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(theme.tokens.call_args[0][11], 33)
         lm.input_token_count.assert_called_once_with("text")
 
-    async def test_token_generation_tool_events(self):
-        token_a = model_cmds.Token(id=0, token="a")
-        token_b = model_cmds.Token(id=1, token="b")
-        token_c = model_cmds.Token(id=2, token="c")
-
-        call = SimpleNamespace(id="c1", name="calc")
-
-        async def inner_gen():
-            yield "x"
-
-        inner_response = model_cmds.TextGenerationResponse(
-            lambda: inner_gen(),
-            inputs={"input_ids": [[1, 2, 3]]},
-            logger=getLogger(),
-            use_async_generator=True,
-        )
-
+    async def test_token_generation_rejects_tool_event_stream_item(self):
         events = [
-            model_cmds.Event(
-                type=model_cmds.EventType.TOOL_EXECUTE,
-                payload=[call],
-            ),
-            token_a,
-            model_cmds.Event(
-                type=model_cmds.EventType.TOOL_RESULT,
-                payload={"call": call},
-            ),
-            token_b,
-            model_cmds.Event(
-                type=model_cmds.EventType.TOOL_MODEL_RESPONSE,
-                payload={"response": inner_response},
-            ),
-            token_c,
-        ]
-
-        class Resp:
-            def __init__(self, items, count):
-                self._items = items
-                self.input_token_count = count
-                self.can_think = False
-                self.is_thinking = False
-
-            def set_thinking(self, value: bool) -> None:
-                self.is_thinking = value
-
-            def __aiter__(self):
-                async def gen():
-                    for i in self._items:
-                        yield i
-
-                return gen()
-
-        response = Resp(events, 1)
-
-        args = Namespace(
-            skip_display_reasoning_time=False,
-            display_time_to_n_token=None,
-            display_pause=0,
-            start_thinking=False,
-            display_probabilities=False,
-            display_probabilities_maximum=0.0,
-            display_probabilities_sample_minimum=0.0,
-            record=False,
-        )
-
-        console = MagicMock()
-        console.width = 80
-        logger = MagicMock()
-
-        call_args: list[dict] = []
-
-        async def fake_tokens(*p, **kw):
-            call_args.append(
-                {
-                    "text_tokens": list(p[7]) + list(p[9]),
-                    "tokens": list(p[10]) if p[10] else None,
-                    "tool_events": list(p[13]),
-                    "tool_event_calls": list(p[14]),
-                    "tool_event_results": list(p[15]),
-                    "spinner": p[16],
-                    "input_token_count": p[11],
-                }
-            )
-            yield (None, "frame")
-
-        theme = MagicMock()
-        theme.tokens = MagicMock(side_effect=fake_tokens)
-        theme.get_spinner.return_value = "dots"
-        theme._n = lambda s, p, n: s if n == 1 else p
-
-        live = MagicMock()
-        live.__enter__.return_value = live
-        live.__exit__.return_value = False
-
-        lm = SimpleNamespace(
-            model_id="m",
-            tokenizer_config=None,
-            input_token_count=MagicMock(),
-        )
-
-        with patch.object(model_cmds, "Live", return_value=live):
-            await model_cmds.token_generation(
-                args=args,
-                console=console,
-                theme=theme,
-                logger=logger,
-                orchestrator=None,
-                event_stats=None,
-                lm=lm,
-                input_string="text",
-                response=response,
-                display_tokens=0,
-                dtokens_pick=0,
-                with_stats=True,
-                tool_events_limit=2,
-                refresh_per_second=2,
-            )
-
-        self.assertEqual(len(call_args), len(events))
-
-        first = call_args[0]
-        self.assertEqual(first["text_tokens"], [])
-        self.assertIsNone(first["tokens"])
-        self.assertEqual(
-            first["tool_events"][0].type, model_cmds.EventType.TOOL_EXECUTE
-        )
-        self.assertEqual(
-            first["tool_event_calls"][0].type,
-            model_cmds.EventType.TOOL_EXECUTE,
-        )
-        self.assertIsNotNone(first["spinner"])
-
-        third = call_args[2]
-        self.assertEqual(
-            third["tool_event_results"][0].type,
-            model_cmds.EventType.TOOL_RESULT,
-        )
-        self.assertIsNone(third["spinner"])
-
-        fifth = call_args[4]
-        self.assertEqual(fifth["text_tokens"], [])
-        self.assertIsNone(fifth["tokens"])
-        self.assertEqual(
-            fifth["input_token_count"],
-            response.input_token_count + inner_response.input_token_count,
-        )
-
-    async def test_token_generation_tool_diagnostic_is_result_event(self):
-        diagnostic = ToolCallDiagnostic(
-            id="diag-model",
-            call_id="call-model",
-            requested_name="missing",
-            code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
-            stage=ToolCallDiagnosticStage.RESOLVE,
-            message="Unknown tool.",
-        )
-        events = [
-            model_cmds.Event(
-                type=model_cmds.EventType.TOOL_DIAGNOSTIC,
-                payload={"diagnostic": diagnostic},
-            ),
+            Event(type=EventType.TOOL_EXECUTE),
             model_cmds.Token(id=1, token="a"),
         ]
 
@@ -2572,20 +3132,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
         console = MagicMock()
         console.width = 80
-        captured: list[dict[str, object]] = []
-
-        async def fake_tokens(*p, **kw):
-            captured.append(
-                {
-                    "tool_event_calls": list(p[14]),
-                    "tool_event_results": list(p[15]),
-                    "spinner": p[16],
-                }
-            )
-            yield (None, "frame")
-
         theme = MagicMock()
-        theme.tokens = MagicMock(side_effect=fake_tokens)
         theme.get_spinner.return_value = "dots"
         theme._n = lambda s, p, n: s if n == 1 else p
         live = MagicMock()
@@ -2598,29 +3145,25 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
 
         with patch.object(model_cmds, "Live", return_value=live):
-            await model_cmds.token_generation(
-                args=args,
-                console=console,
-                theme=theme,
-                logger=MagicMock(),
-                orchestrator=None,
-                event_stats=None,
-                lm=lm,
-                input_string="text",
-                response=Resp(),
-                display_tokens=0,
-                dtokens_pick=0,
-                with_stats=True,
-                tool_events_limit=2,
-                refresh_per_second=2,
-            )
+            with self.assertRaises(StreamValidationError):
+                await model_cmds.token_generation(
+                    args=args,
+                    console=console,
+                    theme=theme,
+                    logger=MagicMock(),
+                    orchestrator=None,
+                    event_stats=None,
+                    lm=lm,
+                    input_string="text",
+                    response=Resp(),
+                    display_tokens=0,
+                    dtokens_pick=0,
+                    with_stats=True,
+                    tool_events_limit=2,
+                    refresh_per_second=2,
+                )
 
-        self.assertEqual(captured[0]["tool_event_calls"], [])
-        self.assertEqual(
-            captured[0]["tool_event_results"][0].type,
-            model_cmds.EventType.TOOL_DIAGNOSTIC,
-        )
-        self.assertIsNone(captured[0]["spinner"])
+        theme.tokens.assert_not_called()
 
     async def test_token_generation_display_options_combinations(self):
         combos = [
@@ -7165,6 +7708,67 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(rendered, ["latest"])
 
+    async def test_frame_rate_renderer_coalesces_fancy_theme_frames(self):
+        async def fancy_frame(answer: str) -> object:
+            stream = theme.tokens(
+                model_id="m",
+                added_tokens=None,
+                special_tokens=None,
+                display_token_size=None,
+                display_probabilities=False,
+                pick=0,
+                focus_on_token_when=None,
+                thinking_text_tokens=[],
+                tool_text_tokens=[],
+                answer_text_tokens=[answer],
+                tokens=None,
+                input_token_count=1,
+                total_tokens=1,
+                tool_events=None,
+                tool_event_calls=None,
+                tool_event_results=None,
+                tool_running_spinner=None,
+                ttft=0.0,
+                ttnt=None,
+                ttsr=None,
+                elapsed=1.0,
+                console_width=80,
+                logger=MagicMock(),
+                maximum_frames=1,
+            )
+            try:
+                _, frame = await stream.__anext__()
+            finally:
+                await stream.aclose()
+            return frame
+
+        theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
+        first_frame = await fancy_frame("first")
+        latest_frame = await fancy_frame("latest")
+        args = Namespace(skip_display_reasoning_time=False, record=False)
+        rendered: list[object] = []
+
+        def capture_render(*call_args: object) -> None:
+            rendered.append(call_args[3])
+
+        with patch.object(
+            model_cmds, "_render_frame", side_effect=capture_render
+        ):
+            renderer = model_cmds._FrameRateRenderer(
+                args,
+                MagicMock(),
+                MagicMock(),
+                None,
+                None,
+                refresh_per_second=10,
+            )
+            renderer.mark_dirty(first_frame)
+            renderer.mark_dirty(latest_frame)
+            await renderer.close()
+
+        self.assertEqual(len(rendered), 1)
+        self.assertIs(rendered[0], latest_frame)
+
     async def test_frame_rate_renderer_closes_without_dirty_frame(self):
         args = Namespace(skip_display_reasoning_time=False, record=False)
 
@@ -7612,7 +8216,7 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def gen():
-                    yield model_cmds.ToolCallToken(token="TOOL")
+                    yield ToolCallToken(token="TOOL")
                     yield model_cmds.Token(id=1, token="A")
 
                 return gen()
@@ -7719,6 +8323,37 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
                         run_id="r",
                         turn_id="t",
                         sequence=3,
+                        kind=StreamItemKind.TOOL_CALL_READY,
+                        channel=StreamChannel.TOOL_CALL,
+                        correlation=StreamItemCorrelation(
+                            tool_call_id="call-1"
+                        ),
+                        data={"name": "tool", "arguments": {}},
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=4,
+                        kind=StreamItemKind.TOOL_CALL_DONE,
+                        channel=StreamChannel.TOOL_CALL,
+                        correlation=StreamItemCorrelation(
+                            tool_call_id="call-1"
+                        ),
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=5,
+                        kind=StreamItemKind.REASONING_DONE,
+                        channel=StreamChannel.REASONING,
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=6,
                         kind=StreamItemKind.ANSWER_DELTA,
                         channel=StreamChannel.ANSWER,
                         text_delta="ANSWER",
@@ -7727,7 +8362,15 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
                         stream_session_id="s",
                         run_id="r",
                         turn_id="t",
-                        sequence=4,
+                        sequence=7,
+                        kind=StreamItemKind.ANSWER_DONE,
+                        channel=StreamChannel.ANSWER,
+                    )
+                    yield CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=8,
                         kind=StreamItemKind.STREAM_COMPLETED,
                         channel=StreamChannel.CONTROL,
                         usage={},
@@ -7793,7 +8436,7 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(captured[-1]["tool"], ["TOOL"])
         self.assertEqual(captured[-1]["answer"], ["ANSWER"])
 
-    async def test_tool_result_event_with_none_result_is_tracked(self):
+    async def test_tool_result_event_with_none_result_is_rejected(self):
         call_obj = ToolCall(id="call-none", name="tool", arguments={})
 
         class Resp:
@@ -7806,12 +8449,12 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def gen():
-                    yield model_cmds.Event(
-                        type=model_cmds.EventType.TOOL_PROCESS,
+                    yield Event(
+                        type=EventType.TOOL_PROCESS,
                         payload=[call_obj],
                     )
-                    yield model_cmds.Event(
-                        type=model_cmds.EventType.TOOL_RESULT,
+                    yield Event(
+                        type=EventType.TOOL_RESULT,
                         payload={"call": call_obj, "result": None},
                     )
                     yield model_cmds.Token(id=1, token="A")
@@ -7833,47 +8476,41 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
         console.width = 80
         logger = MagicMock()
         stop_signal = asyncio.Event()
-        captures: list[tuple[int, int, object | None]] = []
-
-        async def fake_tokens(*p, **kw):
-            captures.append((len(p[14]), len(p[15]), p[16]))
-            yield (None, "frame")
 
         theme = MagicMock()
-        theme.tokens = MagicMock(side_effect=fake_tokens)
         theme.get_spinner.return_value = "dots"
         theme._n.side_effect = lambda singular, plural, count: singular
 
         live = MagicMock()
         group = SimpleNamespace(renderables=[None])
 
-        await model_cmds._token_stream(
-            live=live,
-            group=group,
-            tokens_group_index=0,
-            args=args,
-            console=console,
-            theme=theme,
-            logger=logger,
-            orchestrator=None,
-            event_stats=None,
-            lm=SimpleNamespace(
-                model_id="m",
-                tokenizer_config=None,
-                input_token_count=lambda s: 1,
-            ),
-            input_string="text",
-            response=Resp(),
-            display_tokens=0,
-            dtokens_pick=0,
-            refresh_per_second=2,
-            stop_signal=stop_signal,
-            tool_events_limit=None,
-            with_stats=True,
-        )
+        with self.assertRaises(StreamValidationError):
+            await model_cmds._token_stream(
+                live=live,
+                group=group,
+                tokens_group_index=0,
+                args=args,
+                console=console,
+                theme=theme,
+                logger=logger,
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(
+                    model_id="m",
+                    tokenizer_config=None,
+                    input_token_count=lambda s: 1,
+                ),
+                input_string="text",
+                response=Resp(),
+                display_tokens=0,
+                dtokens_pick=0,
+                refresh_per_second=2,
+                stop_signal=stop_signal,
+                tool_events_limit=None,
+                with_stats=True,
+            )
 
-        self.assertEqual(captures[-1][:2], (1, 1))
-        self.assertIsNone(captures[-1][2])
+        theme.tokens.assert_not_called()
 
 
 class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):

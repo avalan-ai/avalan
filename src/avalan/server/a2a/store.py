@@ -1,5 +1,8 @@
 """In-memory bookkeeping for A2A tasks and events."""
 
+from ...model.stream import StreamRetentionPolicy
+from ...types import assert_optional_positive_number, assert_positive_int
+
 from asyncio import Lock
 from dataclasses import dataclass, field
 from json import dumps
@@ -31,7 +34,7 @@ class TaskStoreRetention:
         Retention configuration for the in-memory A2A store.
     """
 
-    max_tasks: int = 1024
+    max_tasks: int = StreamRetentionPolicy().a2a_task_record_item_limit
     max_task_age_seconds: float | None = None
     max_events_per_task: int = 4096
     max_messages_per_task: int = 256
@@ -42,17 +45,21 @@ class TaskStoreRetention:
     max_artifact_bytes: int = 1048576
 
     def __post_init__(self) -> None:
-        assert self.max_tasks > 0
-        assert (
-            self.max_task_age_seconds is None or self.max_task_age_seconds > 0
+        for field_name, value in (
+            ("max_tasks", self.max_tasks),
+            ("max_events_per_task", self.max_events_per_task),
+            ("max_messages_per_task", self.max_messages_per_task),
+            ("max_artifacts_per_task", self.max_artifacts_per_task),
+            ("max_message_chunks", self.max_message_chunks),
+            ("max_message_bytes", self.max_message_bytes),
+            ("max_artifact_items", self.max_artifact_items),
+            ("max_artifact_bytes", self.max_artifact_bytes),
+        ):
+            assert_positive_int(value, field_name)
+        assert_optional_positive_number(
+            self.max_task_age_seconds,
+            "max_task_age_seconds",
         )
-        assert self.max_events_per_task > 0
-        assert self.max_messages_per_task > 0
-        assert self.max_artifacts_per_task > 0
-        assert self.max_message_chunks > 0
-        assert self.max_message_bytes > 0
-        assert self.max_artifact_items > 0
-        assert self.max_artifact_bytes > 0
 
 
 @dataclass(slots=True)
