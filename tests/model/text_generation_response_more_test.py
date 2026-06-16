@@ -178,7 +178,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         await projections.aclose()
 
         self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
-        self.assertEqual(source.read_count, 1)
+        self.assertEqual(source.read_count, 0)
         self.assertEqual(source.cancel_count, 0)
         self.assertEqual(source.close_count, 1)
 

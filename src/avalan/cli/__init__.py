@@ -131,23 +131,22 @@ def get_input(
                 Padding(f"{full_prompt}{input_string}", pad=(1, 0, 1, 0))
             )
     elif prompt:
+        tty_context = None
+        if is_input_available and force_prompt:
+            try:
+                tty_context = open(tty_path)
+            except OSError:
+                return None
         if prefix_line and not is_quiet:
             console.print("")
         try:
-            with (
-                open(tty_path)
-                if is_input_available and force_prompt
-                else nullcontext()
-            ) as tty:
-                input_stream: TextIO | None = None
-                if is_input_available and force_prompt:
-                    input_stream = tty
-                if input_stream is not None:
+            if tty_context is not None:
+                with tty_context as input_stream:
                     input_string = PromptWithoutPrefix.ask(
                         full_prompt, stream=input_stream
                     )
-                else:
-                    input_string = PromptWithoutPrefix.ask(full_prompt)
+            else:
+                input_string = PromptWithoutPrefix.ask(full_prompt)
             if strip_prompt:
                 input_string = input_string.strip()
         except EOFError:

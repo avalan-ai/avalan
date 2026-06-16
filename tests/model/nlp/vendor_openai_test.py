@@ -5,6 +5,7 @@ from asyncio import CancelledError, Event, create_task, wait_for
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from json import loads
+from logging import getLogger
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -32,6 +33,7 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
+from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     StreamChannel,
     StreamItemKind,
@@ -1005,6 +1007,110 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(items[2].data, {"name": "pkg.search"})
         self.assertEqual(items[1].provider_payload, events[0])
+
+    async def test_response_uses_openai_canonical_stream_for_multiple_tools(
+        self,
+    ):
+        events = [
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="fc_1",
+                    name="math.calculator",
+                ),
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="fc_1",
+                delta='{"expression":"4 + 6"}',
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="fc_1",
+                    name="math.calculator",
+                    arguments='{"expression":"4 + 6"}',
+                ),
+            ),
+            SimpleNamespace(
+                type="response.output_item.added",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="fc_2",
+                    name="math.calculator",
+                ),
+            ),
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                item_id="fc_2",
+                delta='{"expression":"10 * 5 / 2"}',
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="function_call",
+                    id="fc_2",
+                    name="math.calculator",
+                    arguments='{"expression":"10 * 5 / 2"}',
+                ),
+            ),
+            SimpleNamespace(type="response.output_text.delta", delta="25"),
+            SimpleNamespace(type="response.output_text.done"),
+            SimpleNamespace(
+                type="response.completed",
+                response=SimpleNamespace(
+                    usage={
+                        "input_tokens": 1,
+                        "output_tokens": 2,
+                        "total_tokens": 3,
+                    }
+                ),
+            ),
+        ]
+        stream = self.mod.OpenAIStream(AsyncIter(events))
+        response = TextGenerationResponse(
+            stream,
+            logger=getLogger(),
+            use_async_generator=True,
+        )
+
+        items = [
+            item
+            async for item in response.canonical_stream(
+                stream_session_id="responses-stream",
+                run_id="run-1",
+                turn_id="turn-1",
+            )
+        ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        accumulator = accumulate_canonical_stream_items(items)
+        self.assertEqual(accumulator.answer_text, "25")
+        self.assertEqual(
+            accumulator.tool_call_arguments,
+            {
+                "fc_1": '{"expression":"4 + 6"}',
+                "fc_2": '{"expression":"10 * 5 / 2"}',
+            },
+        )
 
     async def test_canonical_stream_preserves_done_item_provider_payload(self):
         payload = {

@@ -332,6 +332,21 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                 )
             )
 
+        canonical_stream = getattr(self._output_fn, "canonical_stream", None)
+        if callable(canonical_stream):
+            self._reset_iteration_state()
+            self._final_text = None
+            self._output = cast(AsyncIterator[OutputItem], self._output_fn)
+            self._output_closed = False
+            return self._record_canonical_stream_final_text(
+                canonical_stream(
+                    stream_session_id=stream_session_id,
+                    run_id=run_id,
+                    turn_id=turn_id,
+                    close_after_terminal=close_after_terminal,
+                )
+            )
+
         return self._canonical_stream_from_output(
             stream_session_id=stream_session_id,
             run_id=run_id,
