@@ -85,6 +85,19 @@ def _dummy_response(async_gen: bool = True) -> TextGenerationResponse:
     )
 
 
+def _empty_response() -> TextGenerationResponse:
+    async def output_gen():
+        for token in ():
+            yield token
+
+    def output_fn():
+        return output_gen()
+
+    return TextGenerationResponse(
+        output_fn, logger=getLogger(), use_async_generator=True
+    )
+
+
 def _usage_response(text: str, usage: object) -> TextGenerationResponse:
     return TextGenerationResponse(
         TextGenerationSingleStream(text, usage=usage),
@@ -810,7 +823,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(),
+            _empty_response(),
             agent,
             operation,
             {},
@@ -915,7 +928,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         call = ToolCall(id=uuid4(), name="calc", arguments=None)
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(),
+            _empty_response(),
             agent,
             operation,
             {},
@@ -957,7 +970,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(),
+            _empty_response(),
             agent,
             operation,
             {},
@@ -978,7 +991,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         tool.is_empty = False
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(),
+            _empty_response(),
             agent,
             operation,
             {},
@@ -1002,7 +1015,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         event_manager.should_emit.return_value = True
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(),
+            _empty_response(),
             agent,
             operation,
             {},
@@ -1039,7 +1052,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         event_manager.should_emit.return_value = True
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(),
+            _empty_response(),
             agent,
             operation,
             {},
@@ -1100,7 +1113,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(),
+            _empty_response(),
             agent,
             operation,
             {},

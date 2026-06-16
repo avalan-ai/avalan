@@ -1125,6 +1125,114 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             canonical_items[7].correlation.model_continuation_id,
         )
 
+    async def test_iteration_drains_multi_tool_continuation_before_next_model(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        calls = [
+            ToolCall(
+                id="call1",
+                name="calc",
+                arguments={"expression": "4 + 6"},
+            ),
+            ToolCall(
+                id="call2",
+                name="calc",
+                arguments={"expression": "10 * 5"},
+            ),
+            ToolCall(
+                id="call3",
+                name="calc",
+                arguments={"expression": "50 / 2"},
+            ),
+        ]
+
+        async def outer_gen() -> AsyncIterator[ToolCallToken]:
+            yield ToolCallToken(token="", call=calls[0])
+
+        outer_response = TextGenerationResponse(
+            lambda **_: outer_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=GenerationSettings(),
+            settings=GenerationSettings(),
+        )
+
+        async def inner_gen() -> AsyncIterator[ToolCallToken]:
+            yield ToolCallToken(token="", call=calls[1])
+            yield ToolCallToken(token="", call=calls[2])
+
+        inner_response = TextGenerationResponse(
+            lambda **_: inner_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=GenerationSettings(),
+            settings=GenerationSettings(),
+        )
+        final_response = _string_response("25", async_gen=True)
+        agent.side_effect = [inner_response, final_response]
+
+        async def execute(
+            call: ToolCall,
+            _context: ToolCallContext,
+            **_kwargs: Any,
+        ) -> ToolCallResult:
+            return ToolCallResult(
+                id=f"result-{call.id}",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result=str(call.arguments),
+            )
+
+        tool = AsyncMock(spec=ToolManager, side_effect=execute)
+        tool.is_empty = False
+
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            outer_response,
+            agent,
+            operation,
+            {},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        items = [item async for item in response]
+
+        self.assertEqual(agent.await_count, 2)
+        self.assertEqual(tool.await_count, 3)
+        self.assertEqual(
+            "".join(item for item in items if isinstance(item, str)),
+            "25",
+        )
+        canonical_items = response.canonical_items
+        validate_canonical_stream_items(canonical_items)
+        validate_tool_lifecycle_items(canonical_items)
+        continuation_items = [
+            item
+            for item in canonical_items
+            if item.kind
+            in {
+                StreamItemKind.MODEL_CONTINUATION_STARTED,
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+                StreamItemKind.MODEL_CONTINUATION_ERROR,
+                StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+            }
+        ]
+        self.assertEqual(
+            [item.kind for item in continuation_items],
+            [
+                StreamItemKind.MODEL_CONTINUATION_STARTED,
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+                StreamItemKind.MODEL_CONTINUATION_STARTED,
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED,
+            ],
+        )
+
     async def test_iteration_records_live_tool_output_before_completion(
         self,
     ) -> None:

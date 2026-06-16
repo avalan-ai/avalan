@@ -73,6 +73,20 @@ class CliGetInputTestCase(TestCase):
             self.console.print.call_args_list, [call(""), call("")]
         )
 
+    def test_force_prompt_without_tty_returns_none(self):
+        with (
+            patch("avalan.cli.has_input", return_value=True),
+            patch("avalan.cli.open", side_effect=OSError("no tty")),
+            patch("avalan.cli.PromptWithoutPrefix.ask") as ask,
+        ):
+            result = get_input(
+                self.console, "p", force_prompt=True, tty_path="/dev/missing"
+            )
+
+        self.assertIsNone(result)
+        ask.assert_not_called()
+        self.console.print.assert_not_called()
+
     def test_prompt_eof_raises(self):
         with (
             patch("avalan.cli.has_input", return_value=False),

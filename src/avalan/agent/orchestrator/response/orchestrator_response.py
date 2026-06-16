@@ -299,6 +299,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _pending_tool_call_argument_text: str
     _pending_tool_call_unanchored_deltas: list[str]
     _active_model_continuation_id: str | None
+    _response_drained: bool
 
     def __init__(
         self,
@@ -373,6 +374,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._pending_tool_call_argument_text = ""
         self._pending_tool_call_unanchored_deltas = []
         self._active_model_continuation_id = None
+        self._response_drained = False
 
     @property
     def input_token_count(self) -> int:
@@ -700,6 +702,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._tool_process_events = self._make_staging_queue()
         self._tool_result_emit_events = self._make_staging_queue()
         self._tool_result_events = self._make_staging_queue()
+        self._response_drained = False
         self._pending_tool_call = None
         self._pending_tool_call_anonymous = False
         self._pending_tool_call_argument_text = ""
@@ -724,7 +727,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         if not self._tool_result_emit_events.empty():
             return self._tool_result_emit_events.get()
 
-        if not self._tool_process_events.empty():
+        if self._response_drained and not self._tool_process_events.empty():
             event = self._tool_process_events.get()
             assert event.type == EventType.TOOL_PROCESS
             self._put_staging_item(
@@ -734,7 +737,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             )
             return event
 
-        if not self._tool_call_events.empty():
+        if self._response_drained and not self._tool_call_events.empty():
             event = self._tool_call_events.get()
             assert event.type == EventType.TOOL_PROCESS
             if self._event_manager:
@@ -748,7 +751,10 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     self._append_canonical_tool_call_ready(call)
                     self._put_staging_item(self._calls, call, "tool call")
 
-        if not self._calls.empty():
+        if self._response_drained and not self._calls.empty():
+            self._finish_active_model_continuation(
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED
+            )
             calls = self._drain_tool_call_batch()
             outcomes = await self._execute_tool_call_batch(
                 calls,
@@ -941,6 +947,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     projection.legacy_tool_call_token
                 )
         except StopAsyncIteration:
+            self._response_drained = True
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
             )
@@ -1008,6 +1015,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                     "tool call event",
                 )
                 return event
+            if (
+                not self._tool_result_emit_events.empty()
+                or not self._tool_call_events.empty()
+                or not self._calls.empty()
+                or not self._tool_result_events.empty()
+            ):
+                return await self._next_item()
             if self._event_manager and not self._finished:
                 self._finished = True
                 await self._event_manager.trigger(Event(type=EventType.END))

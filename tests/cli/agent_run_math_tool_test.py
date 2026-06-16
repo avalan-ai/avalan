@@ -314,6 +314,61 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(any(isinstance(t, str) and "25" in t for t in tokens))
 
+    async def test_cli_conversation_with_piped_input_exits_without_tty(self):
+        args = make_args()
+        args.conversation = True
+        args.tty = "/dev/missing"
+        console = MagicMock()
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">", "agent_output": "<"}
+        theme.get_spinner.return_value = "sp"
+        theme.agent.return_value = "agent_panel"
+        theme.recent_messages.return_value = "recent_panel"
+        hub = MagicMock()
+        logger = MagicMock()
+        stdin_mock = MagicMock()
+        stdin_mock.read.return_value = (
+            "What is (4 + 6) and then that result times 5, divided by 2?"
+        )
+
+        orch = DummyOrchestrator()
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=orch),
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader, "from_file", new=AsyncMock()
+            ),
+            patch("avalan.cli.has_input", side_effect=[True, True]),
+            patch("avalan.cli.stdin", stdin_mock),
+            patch(
+                "avalan.cli.open", side_effect=OSError("no tty")
+            ) as open_patch,
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
+
+        tg_patch.assert_awaited_once()
+        open_patch.assert_called_once_with("/dev/missing")
+
     async def test_cli_run_math_tool_with_ds4_backend_uri(self):
         args = make_args()
         args.backend = "ds4"
