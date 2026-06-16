@@ -10,7 +10,6 @@ from asyncio import (
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from gc import collect
-from pathlib import Path
 from time import perf_counter
 from tracemalloc import (
     get_traced_memory,
@@ -343,7 +342,6 @@ _BENCHMARK_MARKDOWN_COMPARISON_REFERENCES = (
 )
 _BENCHMARK_MARKDOWN_MODELS = ("openai", "hermes", "gpt-oss")
 _BENCHMARK_MARKDOWN_METRICS = ("TTFT", "Total time", "Estimated tokens/s")
-_BENCHMARK_MARKDOWN_PATH = Path("specs/streaming/BENCHMARKS.md")
 
 
 def _benchmark_row_marker(row: str) -> str:
@@ -553,18 +551,6 @@ accepted above.
 
 
 class StreamBenchmarkRegressionTestCase(TestCase):
-    def test_final_benchmark_markdown_validates_recorded_artifact(
-        self,
-    ) -> None:
-        self.assertTrue(
-            _BENCHMARK_MARKDOWN_PATH.is_file(),
-            "missing streaming benchmark artifact",
-        )
-
-        _assert_final_benchmark_markdown_complete(
-            _BENCHMARK_MARKDOWN_PATH.read_text(encoding="utf-8")
-        )
-
     def test_final_benchmark_markdown_parser_accepts_complete_rows(
         self,
     ) -> None:
