@@ -11,9 +11,10 @@ from .stream_presenter import (
 from asyncio import Lock, to_thread
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import TracebackType
-from typing import Protocol
+from typing import Protocol, TypeAlias
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
@@ -25,6 +26,36 @@ _FRAME_ROLE_ORDER: tuple[StreamFrameRole, ...] = (
     "stream",
     "answer",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _PromptPauseIdle:
+    """Represent a coordinator with no active tool prompt."""
+
+
+@dataclass(frozen=True, slots=True)
+class _PromptPauseActive:
+    """Represent a coordinator paused for one tool prompt."""
+
+
+_PromptPauseState: TypeAlias = _PromptPauseIdle | _PromptPauseActive
+
+
+@dataclass(frozen=True, slots=True)
+class _LiveRefreshRunning:
+    """Represent live refresh running with no saved state."""
+
+
+@dataclass(frozen=True, slots=True)
+class _LiveRefreshPaused:
+    """Represent live refresh paused with its previous setting."""
+
+    auto_refresh: bool
+
+
+_LiveRefreshState: TypeAlias = _LiveRefreshRunning | _LiveRefreshPaused
+_PROMPT_PAUSE_IDLE = _PromptPauseIdle()
+_LIVE_REFRESH_RUNNING = _LiveRefreshRunning()
 
 
 class CliStreamLive(Protocol):
@@ -93,10 +124,11 @@ class CliStreamCoordinator:
             record_filename_factory or stream_recording_filename
         )
         self._live: CliStreamLive | None = None
-        self._live_auto_refresh: bool | None = None
+        self._live_refresh: _LiveRefreshState = _LIVE_REFRESH_RUNNING
         self._role_renderables: dict[StreamFrameRole, RenderableType] = {}
         self._pending_flush = False
-        self._pause_depth = 0
+        self._manual_pause_depth = 0
+        self._prompt_pause: _PromptPauseState = _PROMPT_PAUSE_IDLE
         self._closed = False
         self._lock = Lock()
 
@@ -139,7 +171,7 @@ class CliStreamCoordinator:
 
         self._role_renderables[frame.role] = frame.renderable
         self._pending_flush = True
-        if self._pause_depth > 0:
+        if self._is_paused():
             return
 
         try:
@@ -165,11 +197,12 @@ class CliStreamCoordinator:
         self._console.print(chunk.text, end="")
 
     async def pause(self) -> None:
-        """Pause live rendering for a prompt."""
+        """Pause live rendering manually."""
         async with self._lock:
             assert not self._closed
-            self._pause_depth += 1
-            if self._pause_depth == 1:
+            was_paused = self._is_paused()
+            self._manual_pause_depth += 1
+            if not was_paused:
                 self._pause_live_refresh()
 
     async def resume(self) -> None:
@@ -181,16 +214,16 @@ class CliStreamCoordinator:
         """Flush the latest queued live frame."""
         async with self._lock:
             assert not self._closed
-            if self._pause_depth > 0:
+            if self._is_paused():
                 return
             await self._flush_pending()
 
     async def _resume(self) -> None:
         assert not self._closed
-        if self._pause_depth == 0:
+        if self._manual_pause_depth == 0:
             return
-        self._pause_depth -= 1
-        if self._pause_depth > 0:
+        self._manual_pause_depth -= 1
+        if self._is_paused():
             return
 
         self._resume_live_refresh()
@@ -212,7 +245,7 @@ class CliStreamCoordinator:
         assert isinstance(tty_path, str)
         assert callable(prompt)
 
-        async with self.paused():
+        async with self._tool_prompt_paused():
             return await to_thread(
                 prompt,
                 self._console,
@@ -222,7 +255,7 @@ class CliStreamCoordinator:
 
     @asynccontextmanager
     async def paused(self) -> AsyncIterator[None]:
-        """Pause live rendering while awaiting a prompt result."""
+        """Pause live rendering within a manual async context."""
         await self.pause()
         try:
             yield
@@ -242,16 +275,21 @@ class CliStreamCoordinator:
         if self._closed:
             return
 
+        should_flush = flush and not self._is_prompt_paused()
         try:
-            if flush:
-                self._pause_depth = 0
+            if should_flush:
+                self._manual_pause_depth = 0
+                self._prompt_pause = _PROMPT_PAUSE_IDLE
                 self._resume_live_refresh()
                 await self._flush_pending()
         finally:
             self._closed = True
+            self._restore_live_refresh(refresh=False)
+            self._clear_pause_state()
             self._close_live()
 
     async def _flush_pending(self) -> None:
+        assert not self._is_paused()
         if not self._pending_flush or not self._role_renderables:
             return
 
@@ -289,21 +327,84 @@ class CliStreamCoordinator:
         self._live = live.__enter__()
         return self._live
 
+    @asynccontextmanager
+    async def _tool_prompt_paused(self) -> AsyncIterator[None]:
+        await self._pause_for_prompt()
+        try:
+            yield
+        except BaseException:
+            await self.aclose(flush=False)
+            raise
+        else:
+            try:
+                await self._resume_prompt()
+            except BaseException:
+                await self.aclose(flush=False)
+                raise
+
+    async def _pause_for_prompt(self) -> None:
+        async with self._lock:
+            assert not self._closed
+            self._start_prompt_pause()
+
+    async def _resume_prompt(self) -> None:
+        async with self._lock:
+            if self._closed:
+                return
+            assert isinstance(self._prompt_pause, _PromptPauseActive)
+            self._prompt_pause = _PROMPT_PAUSE_IDLE
+            if self._is_paused():
+                return
+
+            self._resume_live_refresh()
+            try:
+                await self._flush_pending()
+            except BaseException:
+                await self._aclose(flush=False)
+                raise
+
+    def _start_prompt_pause(self) -> None:
+        assert isinstance(self._prompt_pause, _PromptPauseIdle)
+        was_paused = self._is_paused()
+        self._prompt_pause = _PromptPauseActive()
+        if not was_paused:
+            self._pause_live_refresh()
+
+    def _is_paused(self) -> bool:
+        return self._manual_pause_depth > 0 or self._is_prompt_paused()
+
+    def _is_prompt_paused(self) -> bool:
+        return isinstance(self._prompt_pause, _PromptPauseActive)
+
     def _pause_live_refresh(self) -> None:
-        if self._live is None or self._live_auto_refresh is not None:
+        assert isinstance(self._live_refresh, _LiveRefreshRunning)
+        if self._live is None:
             return
 
-        self._live_auto_refresh = self._live.auto_refresh
+        self._live_refresh = _LiveRefreshPaused(
+            auto_refresh=self._live.auto_refresh
+        )
         self._live.auto_refresh = False
         self._live.refresh()
 
     def _resume_live_refresh(self) -> None:
-        if self._live is None or self._live_auto_refresh is None:
+        self._restore_live_refresh(refresh=True)
+
+    def _restore_live_refresh(self, *, refresh: bool) -> None:
+        state = self._live_refresh
+        if isinstance(state, _LiveRefreshRunning):
             return
 
-        self._live.auto_refresh = self._live_auto_refresh
-        self._live_auto_refresh = None
-        self._live.refresh()
+        if self._live is not None:
+            self._live.auto_refresh = state.auto_refresh
+            if refresh:
+                self._live.refresh()
+        self._live_refresh = _LIVE_REFRESH_RUNNING
+
+    def _clear_pause_state(self) -> None:
+        self._manual_pause_depth = 0
+        self._prompt_pause = _PROMPT_PAUSE_IDLE
+        self._live_refresh = _LIVE_REFRESH_RUNNING
 
     def _close_live(self) -> None:
         live = self._live
@@ -311,7 +412,6 @@ class CliStreamCoordinator:
             return
 
         self._live = None
-        self._live_auto_refresh = None
         live.__exit__(None, None, None)
 
 
