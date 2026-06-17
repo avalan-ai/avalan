@@ -2,6 +2,7 @@ import tomllib
 import unittest
 from argparse import Namespace
 from dataclasses import asdict, dataclass
+from io import StringIO
 from logging import getLogger
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from rich.syntax import Syntax
 from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
 from avalan.cli.commands import agent as agent_cmds
+from avalan.cli.display import CliStreamDisplayConfig
 from avalan.entities import (
     EngineMessage,
     EngineUri,
@@ -1602,7 +1604,8 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 return gen()
 
         with (
-            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch("avalan.cli.has_input", return_value=True),
+            patch("avalan.cli.stdin", StringIO("hi\n")),
             patch.object(
                 agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
             ),
@@ -1629,9 +1632,68 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             "hi", use_async_generator=True, tool_confirm=None
         )
         tg_patch.assert_awaited_once()
+        tg_kwargs = tg_patch.await_args.kwargs
+        display_config = tg_kwargs["display_config"]
+        self.assertIsInstance(display_config, CliStreamDisplayConfig)
+        self.assertFalse(display_config.show_stats)
+        self.assertFalse(tg_kwargs["with_stats"])
+        self.assertEqual(tg_kwargs["tool_events_limit"], 2)
         self.orch.memory.continue_session.assert_awaited()
         self.console.print.assert_any_call("agent_panel")
         self.console.print.assert_any_call("< ", end="")
+
+    async def test_run_non_interactive_suppresses_diagnostics(self):
+        self.console.is_terminal = False
+        self.args.stats = True
+        self.args.display_tools = True
+        self.args.display_events = True
+        self.args.record = True
+        self.orch.memory.has_recent_message = True
+        self.orch.memory.recent_message.is_empty = False
+        self.orch.memory.recent_message.data = ["m"]
+
+        class DummyOrchestratorResponse:
+            pass
+
+        with (
+            patch.object(
+                agent_cmds, "get_input", return_value="hi"
+            ) as get_input_patch,
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+            patch.object(
+                agent_cmds,
+                "OrchestratorResponse",
+                DummyOrchestratorResponse,
+            ),
+        ):
+            self.orch.return_value = DummyOrchestratorResponse()
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        tg_patch.assert_awaited_once()
+        display_config = tg_patch.await_args.kwargs["display_config"]
+        self.assertTrue(display_config.answer_stdout_only)
+        self.assertFalse(display_config.show_stats)
+        self.assertFalse(display_config.show_tools)
+        self.assertFalse(display_config.show_events)
+        get_input_patch.assert_called_once()
+        self.assertTrue(get_input_patch.call_args.kwargs["is_quiet"])
+        self.assertTrue(get_input_patch.call_args.kwargs["echo_stdin"])
+        self.console.status.assert_not_called()
+        self.theme.agent.assert_not_called()
+        self.theme.recent_messages.assert_not_called()
+        self.console.print.assert_not_called()
 
     async def test_run_with_tool_events(self):
         class DummyOrchestratorResponse:
@@ -1697,6 +1759,42 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             spinner=self.theme.get_spinner.return_value,
             refresh_per_second=1,
         )
+
+    async def test_run_display_tools_without_stats_passes_display_config(self):
+        self.args.display_tools = True
+        self.args.stats = False
+
+        class DummyOrchestratorResponse:
+            pass
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+            patch.object(
+                agent_cmds,
+                "OrchestratorResponse",
+                DummyOrchestratorResponse,
+            ),
+        ):
+            self.orch.return_value = DummyOrchestratorResponse()
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        display_config = tg_patch.await_args.kwargs["display_config"]
+        self.assertTrue(display_config.show_tools)
+        self.assertFalse(display_config.show_stats)
+        self.assertFalse(tg_patch.await_args.kwargs["with_stats"])
 
     async def test_run_from_settings(self):
         self.args.specifications_file = None

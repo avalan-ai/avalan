@@ -2,6 +2,7 @@ from ...agent import Specification
 from ...agent.orchestrator import Orchestrator
 from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
+from ...cli.display import CliStreamDisplayConfig, cli_stream_display_config
 from ...cli.theme import (
     Theme,
     TokenRenderDisplayToken,
@@ -508,6 +509,11 @@ async def model_run(
 ) -> None:
     assert args.model and args.device and args.max_new_tokens
     _, _i = theme._, theme.icons
+    display_config = cli_stream_display_config(
+        args,
+        refresh_per_second=refresh_per_second,
+        interactive=bool(getattr(console, "is_terminal", True)),
+    )
 
     with ModelManager(hub, logger) as manager:
         engine_uri = manager.parse_uri(args.model)
@@ -516,7 +522,7 @@ async def model_run(
         )
         modality = model_settings["modality"]
 
-        if not args.quiet:
+        if not display_config.answer_stdout_only:
             if engine_uri.is_local:
                 if is_ds4_backend_selected(args, engine_uri):
                     can_access = True
@@ -569,7 +575,7 @@ async def model_run(
                     console,
                     _i["user_input"] + " ",
                     echo_stdin=not args.no_repl,
-                    is_quiet=args.quiet,
+                    is_quiet=display_config.answer_stdout_only,
                     tty_path=tty_path,
                 )
                 if (
@@ -641,7 +647,7 @@ async def model_run(
                     event_stats=None,
                     lm=cast(TextGenerationModel, model),
                     input_string=input_string or "",
-                    refresh_per_second=refresh_per_second,
+                    refresh_per_second=display_config.refresh_per_second,
                     response=cast(TextGenerationResponse, output),
                     dtokens_pick=(
                         operation.parameters["text"].pick_tokens or 0
@@ -649,9 +655,10 @@ async def model_run(
                         and operation.parameters["text"]
                         else 0
                     ),
-                    display_tokens=args.display_tokens or 0,
-                    with_stats=not args.quiet,
-                    tool_events_limit=args.display_tools_events,
+                    display_tokens=display_config.display_tokens,
+                    with_stats=display_config.show_stats,
+                    tool_events_limit=display_config.display_tools_events,
+                    display_config=display_config,
                 )
 
             elif operation.modality == Modality.VISION_IMAGE_CLASSIFICATION:
@@ -791,30 +798,95 @@ async def token_generation(
     tool_events_limit: int | None,
     with_stats: bool = True,
     live_container: dict[str, Live | None] | None = None,
+    display_config: CliStreamDisplayConfig | None = None,
 ) -> None:
-    # If no statistics needed, return as early as possible
-    if not with_stats:
-        async for projection in _plain_stdout_projections(response):
-            if projection.kind is not StreamItemKind.ANSWER_DELTA:
-                continue
-            text_token = stream_projection_text_delta(projection)
-            assert text_token is not None
-            console.print(text_token, end="")
-            await sleep(0)
+    display_config = display_config or _legacy_stream_display_config(
+        args,
+        display_tokens=display_tokens,
+        refresh_per_second=refresh_per_second,
+        tool_events_limit=tool_events_limit,
+        with_stats=with_stats,
+    )
+    display_tokens = display_config.display_tokens
+    refresh_per_second = display_config.refresh_per_second
+    tool_events_limit = display_config.display_tools_events
+
+    if display_config.answer_stdout_only:
+        await _print_plain_stdout_response(console, response)
         return
 
     stop_signal = EventSignal()
     render_lock = Lock()
 
-    # From here on, display includes stats and may include token probabilities
+    if not display_config.show_stats:
+        if not orchestrator or (
+            not display_config.show_events and not display_config.show_tools
+        ):
+            await _print_plain_stdout_response(console, response)
+            return
+
+        empty = ""
+        group = Group(empty, empty)
+        events_group_index = 0
+        tools_group_index = 1
+
+        try:
+            with Live(
+                group,
+                refresh_per_second=refresh_per_second,
+                screen=display_config.record_enabled,
+                console=console,
+            ) as live:
+                if live_container is not None:
+                    live_container["live"] = live
+                event_task = create_task(
+                    _event_stream(
+                        args,
+                        console,
+                        live,
+                        group,
+                        events_group_index,
+                        tools_group_index,
+                        orchestrator,
+                        theme,
+                        events_height=6,
+                        tools_height=10,
+                        stop_signal=stop_signal,
+                        display_config=display_config,
+                    )
+                )
+                await sleep(0)
+                plain_error: BaseException | None = None
+                try:
+                    await _print_plain_stdout_response(console, response)
+                except BaseException as exc:
+                    plain_error = exc
+                    raise
+                finally:
+                    stop_signal.set()
+                    if not event_task.done():
+                        event_task.cancel()
+                    event_results = await gather(
+                        event_task, return_exceptions=True
+                    )
+                    if plain_error is None:
+                        for result in event_results:
+                            if isinstance(
+                                result, BaseException
+                            ) and not isinstance(result, CancelledError):
+                                raise result
+        finally:
+            if live_container is not None:
+                live_container["live"] = None
+        return
 
     if not orchestrator or (
-        not args.display_events and not args.display_tools
+        not display_config.show_events and not display_config.show_tools
     ):
         try:
             with Live(
                 refresh_per_second=refresh_per_second,
-                screen=args.record,
+                screen=display_config.record_enabled,
                 console=console,
             ) as live:
                 if live_container is not None:
@@ -839,6 +911,7 @@ async def token_generation(
                     tool_events_limit=tool_events_limit,
                     with_stats=with_stats,
                     render_lock=render_lock,
+                    display_config=display_config,
                 )
         finally:
             if live_container is not None:
@@ -856,7 +929,7 @@ async def token_generation(
             with Live(
                 group,
                 refresh_per_second=refresh_per_second,
-                screen=args.record,
+                screen=display_config.record_enabled,
                 console=console,
             ) as live:
                 if live_container is not None:
@@ -876,6 +949,7 @@ async def token_generation(
                         stop_signal=stop_signal,
                         refresh_per_second=refresh_per_second,
                         render_lock=render_lock,
+                        display_config=display_config,
                     )
                 )
                 token_task = create_task(
@@ -899,6 +973,7 @@ async def token_generation(
                         tool_events_limit=tool_events_limit,
                         with_stats=with_stats,
                         render_lock=render_lock,
+                        display_config=display_config,
                     )
                 )
                 token_error: BaseException | None = None
@@ -925,6 +1000,66 @@ async def token_generation(
                 live_container["live"] = None
 
 
+def _legacy_stream_display_config(
+    args: Namespace,
+    *,
+    display_tokens: int,
+    refresh_per_second: int,
+    tool_events_limit: int | None,
+    with_stats: bool,
+) -> CliStreamDisplayConfig:
+    if bool(getattr(args, "quiet", False)):
+        return cli_stream_display_config(
+            args,
+            refresh_per_second=refresh_per_second,
+            interactive=True,
+        )
+
+    return CliStreamDisplayConfig(
+        quiet=False,
+        stats=with_stats,
+        display_tools=bool(getattr(args, "display_tools", False)),
+        display_events=bool(getattr(args, "display_events", False)),
+        display_tools_events=tool_events_limit,
+        record=bool(getattr(args, "record", False)),
+        interactive=True,
+        refresh_per_second=refresh_per_second,
+        answer_height=int(getattr(args, "display_answer_height", 12)),
+        answer_height_expand=bool(
+            getattr(args, "display_answer_height_expand", False)
+        ),
+        display_tokens=display_tokens,
+        display_pause=int(getattr(args, "display_pause", None) or 0),
+        display_probabilities=bool(
+            getattr(args, "display_probabilities", False)
+        ),
+        display_probabilities_maximum=float(
+            getattr(args, "display_probabilities_maximum", 0.8)
+        ),
+        display_probabilities_sample_minimum=float(
+            getattr(args, "display_probabilities_sample_minimum", 0.1)
+        ),
+        display_time_to_n_token=getattr(args, "display_time_to_n_token", None),
+        display_reasoning_time=not bool(
+            getattr(args, "skip_display_reasoning_time", False)
+        ),
+    )
+
+
+async def _print_plain_stdout_response(
+    console: Console,
+    response: TextGenerationResponse | AsyncIterator[Any],
+) -> None:
+    async for token in _plain_stdout_projections(response):
+        if token.channel != StreamChannel.ANSWER:
+            continue
+        text_token = stream_projection_text_delta(token)
+        if text_token is None:
+            continue
+        console.print(text_token, end="")
+        await sleep(0)
+
+
 async def _event_stream(
     args: Namespace,
     console: Console,
@@ -940,10 +1075,17 @@ async def _event_stream(
     stop_signal: EventSignal,
     refresh_per_second: int = 12,
     render_lock: Lock | None = None,
+    display_config: CliStreamDisplayConfig | None = None,
 ) -> None:
+    display_config = display_config or cli_stream_display_config(
+        args,
+        refresh_per_second=refresh_per_second,
+        interactive=True,
+    )
+    refresh_per_second = display_config.refresh_per_second
     event_manager = orchestrator.event_manager
     if not event_manager or (
-        not args.display_events and not args.display_tools
+        not display_config.show_events and not display_config.show_tools
     ):
         return
 
@@ -957,7 +1099,7 @@ async def _event_stream(
             refresh_per_second=refresh_per_second,
             render_lock=render_lock,
         )
-        if args.display_events
+        if display_config.show_events
         else None
     )
     tools_renderer = (
@@ -970,20 +1112,22 @@ async def _event_stream(
             refresh_per_second=refresh_per_second,
             render_lock=render_lock,
         )
-        if args.display_tools
+        if display_config.show_tools
         else None
     )
     try:
         async for e in event_manager.listen(stop_signal=stop_signal):
             tool_view = _event_targets_tool_panel(e)
-            if (tool_view and not args.display_tools) or (
-                not tool_view and not args.display_events
+            if (tool_view and not display_config.show_tools) or (
+                not tool_view and not display_config.show_events
             ):
                 continue
 
             events_renderable = theme.events(
                 event_manager.history,
-                events_limit=6 if tool_view else 4,
+                events_limit=(
+                    display_config.display_tools_events if tool_view else 4
+                ),
                 height=tools_height if tool_view else events_height,
                 include_tokens=False,
                 include_tools=tool_view,
@@ -1073,16 +1217,62 @@ async def _token_stream(
     tool_events_limit: int | None,
     with_stats: bool = True,
     render_lock: Lock | None = None,
+    display_config: CliStreamDisplayConfig | None = None,
 ) -> None:
-    display_time_to_n_token = args.display_time_to_n_token
-    display_reasoning = getattr(args, "display_reasoning", False)
-    display_reasoning_time = not getattr(
-        args, "skip_display_reasoning_time", False
+    display_config = display_config or _legacy_stream_display_config(
+        args,
+        display_tokens=display_tokens,
+        refresh_per_second=refresh_per_second,
+        tool_events_limit=tool_events_limit,
+        with_stats=with_stats,
     )
+    display_tokens = display_config.display_tokens
+    refresh_per_second = display_config.refresh_per_second
+    tool_events_limit = display_config.display_tools_events
+    display_time_to_n_token = (
+        display_config.display_time_to_n_token
+        if display_config
+        else args.display_time_to_n_token
+    )
+    display_reasoning_time = (
+        display_config.display_reasoning_time
+        if display_config
+        else not getattr(args, "skip_display_reasoning_time")
+    )
+    display_reasoning = getattr(args, "display_reasoning", False)
     display_pause = (
-        args.display_pause
-        if args.display_pause and args.display_pause > 0
-        else 0
+        display_config.display_pause
+        if display_config
+        else (
+            args.display_pause
+            if args.display_pause and args.display_pause > 0
+            else 0
+        )
+    )
+    display_probabilities = (
+        display_config.show_probabilities
+        if display_config
+        else args.display_probabilities
+    )
+    display_probabilities_maximum = (
+        display_config.display_probabilities_maximum
+        if display_config
+        else args.display_probabilities_maximum
+    )
+    display_probabilities_sample_minimum = (
+        display_config.display_probabilities_sample_minimum
+        if display_config
+        else args.display_probabilities_sample_minimum
+    )
+    display_answer_height_expand = (
+        display_config.answer_height_expand
+        if display_config
+        else getattr(args, "display_answer_height_expand", False)
+    )
+    display_answer_height = (
+        display_config.answer_height
+        if display_config
+        else getattr(args, "display_answer_height", 12)
     )
     start_thinking = (
         args.start_thinking if hasattr(args, "start_thinking") else False
@@ -1135,10 +1325,8 @@ async def _token_stream(
     start = perf_counter()
     started_reasoning = perf_counter() if response.is_thinking else None
     reasoning_time = None
-    limit_answer_height = not getattr(
-        args, "display_answer_height_expand", False
-    )
-    answer_height = getattr(args, "display_answer_height", 12)
+    limit_answer_height = not display_answer_height_expand
+    answer_height = display_answer_height
     frame_renderer = _FrameRateRenderer(
         args,
         console,
@@ -1168,19 +1356,19 @@ async def _token_stream(
     ) -> bool:
         if (
             not display_tokens
-            or not args.display_probabilities
-            or args.display_probabilities_maximum <= 0
+            or not display_probabilities
+            or display_probabilities_maximum <= 0
         ):
             return False
         low_probability = (
             dtoken.probability is not None
-            and dtoken.probability < args.display_probabilities_maximum
+            and dtoken.probability < display_probabilities_maximum
         )
         sampled_alternative = any(
             candidate.id != dtoken.id
             and candidate.probability is not None
             and candidate.probability
-            >= args.display_probabilities_sample_minimum
+            >= display_probabilities_sample_minimum
             for candidate in dtoken.tokens
         )
         return low_probability or sampled_alternative
@@ -1261,7 +1449,7 @@ async def _token_stream(
                 special_tokens=render_snapshots.special_tokens(),
                 display_token_size=display_tokens or None,
                 display_probabilities=(
-                    args.display_probabilities if dtokens_pick > 0 else False
+                    display_probabilities if dtokens_pick > 0 else False
                 ),
                 pick=dtokens_pick,
                 focus_on_token_when=_focus_on_display_token,
@@ -1280,7 +1468,7 @@ async def _token_stream(
                     display_token_details
                 ),
                 display_reasoning=display_reasoning,
-                display_tools=getattr(args, "display_tools", False),
+                display_tools=display_config.show_tools,
                 input_token_count=display_input_token_count,
                 total_tokens=total_tokens,
                 tool_token_count=tool_tokens,

@@ -10,6 +10,7 @@ from avalan.agent import (
 )
 from avalan.agent.engine import EngineAgent
 from avalan.cli.commands import agent as agent_cmds
+from avalan.cli.commands import model as model_cmds
 from avalan.entities import (
     EngineUri,
     GenerationSettings,
@@ -35,7 +36,6 @@ from avalan.model.stream import (
 )
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.math import MathToolSet
-
 
 def _canonical_answer_response(*text_deltas: str) -> TextGenerationResponse:
     async def gen():
@@ -86,7 +86,7 @@ def _canonical_answer_response(*text_deltas: str) -> TextGenerationResponse:
     )
 
 
-def _legacy_fixture_tool_call_response() -> TextGenerationResponse:
+def _canonical_tool_call_response() -> TextGenerationResponse:
     call = ToolCall(
         id="cli_math_tool_call_1",
         name="math.calculator",
@@ -166,7 +166,7 @@ class DummyEngine:
     async def __call__(self, input, *, tool=None):
         DummyEngine.last_tool = tool
         if isinstance(input, Message):
-            return _legacy_fixture_tool_call_response()
+            return _canonical_tool_call_response()
         else:
             result = (
                 input[-1].content if isinstance(input, list) else str(input)
@@ -185,7 +185,7 @@ class DummyDs4Engine(DummyEngine):
     async def __call__(self, input, *, tool=None):
         DummyEngine.last_tool = tool
         if isinstance(input, Message):
-            return _legacy_fixture_tool_call_response()
+            return _canonical_tool_call_response()
         return await super().__call__(input, tool=tool)
 
 
@@ -308,6 +308,7 @@ def make_args() -> Namespace:
         load_recent_messages_limit=1,
         no_repl=False,
         quiet=False,
+        record=False,
         skip_hub_access_check=True,
         conversation=False,
         watch=False,
@@ -415,6 +416,79 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 for t in tokens
             )
         )
+
+    async def test_cli_run_math_tool_display_tools_without_stats(self):
+        args = make_args()
+        args.stats = False
+        args.display_events = False
+        args.display_tools = True
+        console = MagicMock()
+        console.width = 80
+        console.is_terminal = True
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+        live = MagicMock()
+        live_cm = MagicMock()
+        live_cm.__enter__.return_value = live
+        live_cm.__exit__.return_value = False
+
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">", "agent_output": "<"}
+        theme.get_spinner.return_value = "sp"
+        theme.agent.return_value = "agent_panel"
+        theme.recent_messages.return_value = "recent_panel"
+
+        def events_side_effect(*_args, **kwargs):
+            return "tool-panel" if kwargs["include_tools"] else None
+
+        theme.events.side_effect = events_side_effect
+        theme.token_frames.return_value = ()
+        hub = MagicMock()
+        logger = MagicMock()
+
+        orch = DummyOrchestrator()
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=orch),
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader, "from_file", new=AsyncMock()
+            ),
+            patch.object(
+                agent_cmds,
+                "get_input",
+                return_value=(
+                    "What is (4 + 6) and then that result times 5, divided"
+                    " by 2?"
+                ),
+            ),
+            patch.object(model_cmds, "Live", return_value=live_cm),
+        ):
+            await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
+
+        theme.events.assert_called()
+        self.assertTrue(
+            any(
+                call.kwargs["include_tools"]
+                for call in theme.events.call_args_list
+            )
+        )
+        theme.token_frames.assert_not_called()
+        live.refresh.assert_called()
+        console.print.assert_any_call("< ", end="")
 
     async def test_cli_conversation_with_piped_input_exits_without_tty(self):
         args = make_args()

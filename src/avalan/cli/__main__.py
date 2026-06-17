@@ -1145,9 +1145,15 @@ class CLI:
             "--display-events",
             action="store_true",
             help=(
-                "If --display-events is specified and there's an orchestrator"
-                " / agent involved, show the events panel."
+                "Show non-tool stream events when an orchestrator or agent is "
+                "involved."
             ),
+        )
+        model_inference_display_parser.add_argument(
+            "--stats",
+            action="store_true",
+            default=False,
+            help="Show token generation statistics for streaming output",
         )
         model_inference_display_parser.add_argument(
             "--display-pause",
@@ -1220,10 +1226,7 @@ class CLI:
         model_inference_display_parser.add_argument(
             "--display-tools",
             action="store_true",
-            help=(
-                "If --display-events is specified and there's an orchestrator"
-                " / agent involved, show the events panel."
-            ),
+            help="Show tool lifecycle details for agent or orchestrator runs.",
         )
         model_inference_display_parser.add_argument(
             "--display-tools-events",
@@ -1390,12 +1393,6 @@ class CLI:
             "--load-recent-messages-limit",
             type=int,
             help="If specified, load up to these many recent messages",
-        )
-        agent_run_parser.add_argument(
-            "--stats",
-            action="store_true",
-            default=False,
-            help="Show token generation statistics for agent output",
         )
         agent_run_parser.add_argument(
             "--sync",
@@ -3908,7 +3905,8 @@ class CLI:
             for data_key, style in theme.get_styles().items()
         }
         console = Console(
-            theme=RichTheme(styles=rich_theme_styles), record=args.record
+            theme=RichTheme(styles=rich_theme_styles),
+            record=args.record and not args.quiet,
         )
         self._abort_console = console
         self._abort_quiet = args.quiet
