@@ -1007,7 +1007,9 @@ class ThemeCommonEventFormattingTestCase(unittest.TestCase):
     def test_events_common_helper_keeps_fallback_summary_redacted(
         self,
     ) -> None:
-        with patch("avalan.cli.theme.dumps", side_effect=TypeError("bad")):
+        with patch(
+            "avalan.cli.display_safety.dumps", side_effect=TypeError("bad")
+        ):
             renderable = self.theme.events(
                 [
                     Event(
