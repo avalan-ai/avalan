@@ -18,6 +18,7 @@ from avalan.cli.__main__ import (
     _consume_task_input_field_args,
     _task_run_json_stdout,
 )
+from avalan.cli.theme_registry import DEFAULT_THEME_NAME
 from avalan.tool.shell import ShellToolSettings
 
 
@@ -97,7 +98,7 @@ class CliInitTestCase(TestCase):
         logger = MagicMock()
         with (
             patch.object(sys, "argv", ["prog"]),
-            patch("avalan.cli.__main__.FancyTheme") as theme_class,
+            patch("avalan.cli.__main__.create_theme") as theme_class,
         ):
             cli = CLI(logger)
             root_help = cli._parser.format_help()
@@ -1006,7 +1007,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=console),
@@ -1042,7 +1043,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
                     patch.object(sys, "argv", argv),
                     patch.object(sys, "stdout", stdout),
                     patch.object(CLI, "_get_translator") as translator_patch,
-                    patch("avalan.cli.__main__.FancyTheme") as theme_class,
+                    patch("avalan.cli.__main__.create_theme") as theme_class,
                     patch("avalan.cli.__main__.RichTheme") as rich_theme,
                     patch("avalan.cli.__main__.Console") as console_class,
                     patch.object(CLI, "_main", AsyncMock()) as main_mock,
@@ -1075,8 +1076,9 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             events.append("translation")
             return self.translator
 
-        def theme_side_effect(gettext, ngettext):
+        def theme_side_effect(name, gettext, ngettext):
             events.append("theme")
+            self.assertEqual(name, DEFAULT_THEME_NAME)
             self.assertEqual(gettext("hello"), "hello")
             self.assertEqual(ngettext("item", "items", 2), "items")
             return theme
@@ -1096,7 +1098,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
                 side_effect=translation_side_effect,
             ) as translation_patch,
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 side_effect=theme_side_effect,
             ) as theme_class,
             patch(
@@ -1126,7 +1128,11 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             ],
         )
         translation_patch.assert_called_once()
-        theme_class.assert_called_once()
+        theme_class.assert_called_once_with(
+            DEFAULT_THEME_NAME,
+            self.translator.gettext,
+            self.translator.ngettext,
+        )
         rich_theme_class.assert_called_once_with(
             styles={"model_id": "cyan", "warning": "bold red"}
         )
@@ -1142,7 +1148,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -1173,7 +1179,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ) as theme_class,
             patch(
@@ -1187,7 +1193,11 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             await self.cli()
 
         main_mock.assert_not_called()
-        theme_class.assert_called_once()
+        theme_class.assert_called_once_with(
+            DEFAULT_THEME_NAME,
+            self.translator.gettext,
+            self.translator.ngettext,
+        )
         console_class.assert_called_once()
         self.assertIn("theme", console_kwargs[0])
         self.assertIsNotNone(console_kwargs[0]["theme"])
@@ -1210,7 +1220,7 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme", return_value=theme
+                "avalan.cli.__main__.create_theme", return_value=theme
             ) as theme_class,
             patch(
                 "avalan.cli.__main__.RichTheme", return_value=rich_theme
@@ -1226,7 +1236,9 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             await self.cli()
 
         theme_class.assert_called_once_with(
-            self.translator.gettext, self.translator.ngettext
+            DEFAULT_THEME_NAME,
+            self.translator.gettext,
+            self.translator.ngettext,
         )
         rich_theme_class.assert_called_once_with(
             styles={"sentinel": "bold red"}
@@ -1263,7 +1275,7 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
             patch.object(sys, "argv", ["prog", "--version"]),
             patch("builtins.print") as print_patch,
             patch("avalan.cli.__main__.translation") as translation_patch,
-            patch("avalan.cli.__main__.FancyTheme") as theme_class,
+            patch("avalan.cli.__main__.create_theme") as theme_class,
             patch("avalan.cli.__main__.Console") as console_class,
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
             patch.object(CLI, "_help") as help_mock,
@@ -1303,7 +1315,7 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -1324,7 +1336,7 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -1345,7 +1357,7 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -1373,7 +1385,7 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -1401,7 +1413,7 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -1428,7 +1440,7 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -1458,7 +1470,7 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
                 "avalan.cli.__main__.translation", return_value=self.translator
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -1512,22 +1524,6 @@ class CliLazyUtilityTestCase(IsolatedAsyncioTestCase):
             hub.login()
         with self.assertRaises(NotImplementedError):
             hub.user()
-
-    def test_fancy_theme_loads_real_theme_lazily(self) -> None:
-        cli_module = sys.modules[CLI.__module__]
-
-        class LoadedTheme:
-            def __init__(self, *args, **kwargs):
-                self.args = args
-                self.kwargs = kwargs
-
-        module = SimpleNamespace(FancyTheme=LoadedTheme)
-        with patch.object(cli_module, "import_module", return_value=module):
-            result = cli_module.FancyTheme("gettext", key="value")
-
-        self.assertIsInstance(result, LoadedTheme)
-        self.assertEqual(result.args, ("gettext",))
-        self.assertEqual(result.kwargs, {"key": "value"})
 
     def test_load_command_imports_target_function(self) -> None:
         cli_module = sys.modules[CLI.__module__]
@@ -2363,7 +2359,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 side_effect=FileNotFoundError(),
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -2392,7 +2388,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 ),
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch(
@@ -2418,7 +2414,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 ),
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch(
@@ -2551,7 +2547,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 ),
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -2593,7 +2589,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                 ),
             ),
             patch(
-                "avalan.cli.__main__.FancyTheme",
+                "avalan.cli.__main__.create_theme",
                 return_value=MagicMock(get_styles=lambda: {}),
             ),
             patch("avalan.cli.__main__.Console", return_value=MagicMock()),
@@ -2637,7 +2633,7 @@ class CliMainAdditionalTestCase(IsolatedAsyncioTestCase):
                     ),
                 ),
                 patch(
-                    "avalan.cli.__main__.FancyTheme",
+                    "avalan.cli.__main__.create_theme",
                     return_value=MagicMock(get_styles=lambda: {}),
                 ),
                 patch(
