@@ -19,8 +19,8 @@ from ...event import Event, EventStats
 from ...memory.permanent import Memory as Memory
 from ...memory.permanent import PermanentMemoryPartition
 from ...model.stream import StreamChannel, StreamItemKind
+from ..download import DownloadCompleteColumn
 
-from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from datetime import datetime
@@ -38,6 +38,7 @@ from uuid import UUID
 
 from humanize import intcomma, intword, naturalsize, naturaltime
 from rich.console import RenderableType
+from rich.progress import BarColumn, SpinnerColumn, TimeElapsedColumn
 from rich.spinner import Spinner as RichSpinner
 
 if TYPE_CHECKING:
@@ -123,7 +124,7 @@ TokenRenderFrame: TypeAlias = tuple[
 ]
 
 
-class Theme(ABC):
+class Theme:
     _all_spinners: dict[Spinner, str | None]
     _all_stylers: Stylers
     _all_styles: dict[str, str]
@@ -136,7 +137,10 @@ class Theme(ABC):
 
     @property
     def icons(self) -> dict[Data, str]:
-        return {}
+        return {
+            "agent_output": "",
+            "user_input": "",
+        }
 
     @property
     def quantity_data(self) -> list[str]:
@@ -154,7 +158,6 @@ class Theme(ABC):
     def styles(self) -> dict[str, str]:
         return {}
 
-    @abstractmethod
     def action(
         self,
         name: str,
@@ -165,9 +168,16 @@ class Theme(ABC):
         highlight: bool,
         finished: bool,
     ) -> RenderableType:
-        raise NotImplementedError()
+        status = self._("finished") if finished else self._("running")
+        marker = "*" if highlight else "-"
+        return (
+            f"{marker} {name}: {description}\n"
+            f"{self._('Author')}: {author}\n"
+            f"{self._('Model')}: {model_id}\n"
+            f"{self._('Library')}: {library_name}\n"
+            f"{self._('Status')}: {status}"
+        )
 
-    @abstractmethod
     def agent(
         self,
         agent: Orchestrator,
@@ -176,41 +186,46 @@ class Theme(ABC):
         cans_access: bool | None = None,
         can_access: bool | None = None,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = args, agent, cans_access, can_access
+        model_ids = ", ".join(
+            model.id if isinstance(model, Model) else model for model in models
+        )
+        return self._("{agent}\n{models_label}: {models}").format(
+            agent=self._("Agent"),
+            models_label=self._("Models"),
+            models=model_ids or self._("none"),
+        )
 
-    @abstractmethod
     def ask_access_token(self) -> str:
-        raise NotImplementedError()
+        return self._("Enter your Huggingface access token")
 
-    @abstractmethod
     def ask_delete_paths(self) -> str:
-        raise NotImplementedError()
+        return self._("Delete selected paths?")
 
-    @abstractmethod
     def ask_login_to_hub(self) -> str:
-        raise NotImplementedError()
+        return self._("Login to huggingface?")
 
-    @abstractmethod
     def ask_secret_password(self, key: str) -> str:
-        raise NotImplementedError()
+        return self._("Enter secret for {key}").format(key=key)
 
-    @abstractmethod
     def ask_override_secret(self, key: str) -> str:
-        raise NotImplementedError()
+        return self._("Secret {key} exists, override?").format(key=key)
 
-    @abstractmethod
     def bye(self) -> RenderableType:
-        raise NotImplementedError()
+        return self._("bye :)")
 
-    @abstractmethod
     def cache_delete(
         self,
         cache_deletion: HubCacheDeletion | None,
         deleted: bool = False,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = cache_deletion
+        return (
+            self._("Deleted cache entry.")
+            if deleted
+            else self._("Cache entry selected.")
+        )
 
-    @abstractmethod
     def cache_list(
         self,
         cache_dir: str,
@@ -218,27 +233,46 @@ class Theme(ABC):
         display_models: list[str] | None = None,
         show_summary: bool = False,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = display_models, show_summary
+        model_ids = ", ".join(cache.model_id for cache in cached_models)
+        return self._("Cache: {cache_dir}\nModels: {models}").format(
+            cache_dir=cache_dir,
+            models=model_ids or self._("none"),
+        )
 
-    @abstractmethod
     def download_access_denied(
         self, model_id: str, model_url: str
     ) -> RenderableType:
-        raise NotImplementedError()
+        return self._(
+            "Access denied while downloading {model_id}: {model_url}"
+        ).format(model_id=model_id, model_url=model_url)
 
-    @abstractmethod
     def download_start(self, model_id: str) -> RenderableType:
-        raise NotImplementedError()
+        return self._("Downloading model {model_id}.").format(
+            model_id=model_id
+        )
 
-    @abstractmethod
     def download_progress(self) -> tuple[str | RenderableType, ...]:
-        raise NotImplementedError()
+        return (
+            cast(RenderableType, SpinnerColumn()),
+            (
+                "[progress.description]{task.description}"
+                "[progress.percentage]{task.percentage:>4.0f}%"
+            ),
+            cast(RenderableType, BarColumn(bar_width=None)),
+            "[",
+            cast(RenderableType, DownloadCompleteColumn()),
+            "-",
+            cast(RenderableType, TimeElapsedColumn()),
+            "]",
+        )
 
-    @abstractmethod
     def download_finished(self, model_id: str, path: str) -> RenderableType:
-        raise NotImplementedError()
+        return self._("Downloaded model {model_id} to {path}.").format(
+            model_id=model_id,
+            path=path,
+        )
 
-    @abstractmethod
     def events(
         self,
         events: list[Event],
@@ -251,13 +285,21 @@ class Theme(ABC):
         include_non_tools: bool = True,
         tool_view: bool = False,
     ) -> RenderableType | None:
-        raise NotImplementedError()
+        _ = (
+            events,
+            events_limit,
+            height,
+            include_tokens,
+            include_tool_detect,
+            include_tools,
+            include_non_tools,
+            tool_view,
+        )
+        return None
 
-    @abstractmethod
     def logging_in(self, domain: str) -> str:
-        raise NotImplementedError()
+        return self._("Logging in to {domain}...").format(domain=domain)
 
-    @abstractmethod
     def memory_embeddings(
         self,
         input_string: str,
@@ -276,33 +318,54 @@ class Theme(ABC):
         partition: int | None = None,
         total_partitions: int | None = None,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = (
+            embeddings,
+            args,
+            minv,
+            maxv,
+            meanv,
+            stdv,
+            normv,
+            embedding_peek,
+            horizontal,
+            input_string_peek,
+            show_stats,
+            partition,
+            total_partitions,
+        )
+        return self._("{input_string}\nTokens: {total_tokens}").format(
+            input_string=input_string,
+            total_tokens=total_tokens,
+        )
 
-    @abstractmethod
     def memory_embeddings_comparison(
         self, similarities: dict[str, Similarity], most_similar: str
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = similarities
+        return self._("Most similar: {most_similar}").format(
+            most_similar=most_similar
+        )
 
-    @abstractmethod
     def memory_embeddings_search(
         self,
         matches: list[SearchMatch],
         *args: object,
         match_preview_length: int = 300,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = args, match_preview_length
+        return "\n".join(match.match for match in matches)
 
-    @abstractmethod
     def memory_partitions(
         self,
         partitions: list[TextPartition],
         *args: object,
         display_partitions: int,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = args
+        return "\n".join(
+            partition.data for partition in partitions[:display_partitions]
+        )
 
-    @abstractmethod
     def model(
         self,
         model: Model,
@@ -311,9 +374,9 @@ class Theme(ABC):
         expand: bool = False,
         summary: bool = False,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = args, can_access, expand, summary
+        return model.id
 
-    @abstractmethod
     def model_display(
         self,
         model_config: ModelConfig | SentenceTransformerModelConfig | None,
@@ -322,48 +385,63 @@ class Theme(ABC):
         is_runnable: bool | None = None,
         summary: bool = False,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = tokenizer_config, args, is_runnable, summary
+        model_type = getattr(model_config, "model_type", None)
+        return self._("Model type: {model_type}").format(
+            model_type=model_type or self._("unknown")
+        )
 
-    @abstractmethod
     def recent_messages(
         self,
         participant_id: UUID,
         agent: Orchestrator,
         messages: list[EngineMessage],
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = agent
+        return self._("{participant_id}: {messages} recent messages").format(
+            participant_id=participant_id,
+            messages=len(messages),
+        )
 
-    @abstractmethod
     def saved_tokenizer_files(
         self,
         directory_path_or_total: str | int,
         total_files: int | None = None,
     ) -> RenderableType:
-        raise NotImplementedError()
+        total = (
+            total_files if total_files is not None else directory_path_or_total
+        )
+        return self._("Saved tokenizer files: {total}").format(total=total)
 
-    @abstractmethod
     def search_message_matches(
         self,
         participant_id: UUID,
         agent: Orchestrator,
         messages: list[EngineMessageScored],
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = agent
+        return self._("{participant_id}: {messages} message matches").format(
+            participant_id=participant_id,
+            messages=len(messages),
+        )
 
-    @abstractmethod
     def memory_search_matches(
         self,
         participant_id: UUID,
         namespace: str,
         memories: list[PermanentMemoryPartition],
     ) -> RenderableType:
-        raise NotImplementedError()
+        return self._(
+            "{participant_id}/{namespace}: {memories} memory matches"
+        ).format(
+            participant_id=participant_id,
+            namespace=namespace,
+            memories=len(memories),
+        )
 
-    @abstractmethod
     def tokenizer_config(self, config: TokenizerConfig) -> RenderableType:
-        raise NotImplementedError()
+        return config.name_or_path
 
-    @abstractmethod
     def tokenizer_tokens(
         self,
         dtokens: list[Token],
@@ -373,35 +451,48 @@ class Theme(ABC):
         current_dtoken: Token | None = None,
         dtokens_selected: list[Token] | None = None,
     ) -> RenderableType:
-        raise NotImplementedError()
+        _ = (
+            added_tokens,
+            special_tokens,
+            display_details,
+            current_dtoken,
+            dtokens_selected,
+        )
+        return "\n".join(dtoken.token for dtoken in dtokens)
 
-    @abstractmethod
     def display_image_entities(
         self, entities: list[ImageEntity], sort: bool
     ) -> RenderableType:
-        raise NotImplementedError()
+        sorted_entities = (
+            sorted(entities, key=lambda entity: entity.label)
+            if sort
+            else entities
+        )
+        return "\n".join(entity.label for entity in sorted_entities)
 
-    @abstractmethod
     def display_image_entity(
         self, image_entity: ImageEntity
     ) -> RenderableType:
-        raise NotImplementedError()
+        return image_entity.label
 
-    @abstractmethod
     def display_audio_labels(
         self, audio_labels: dict[str, float]
     ) -> RenderableType:
-        raise NotImplementedError()
+        return "\n".join(
+            f"{label}: {score}" for label, score in audio_labels.items()
+        )
 
-    @abstractmethod
     def display_image_labels(self, labels: list[str]) -> RenderableType:
-        raise NotImplementedError()
+        return "\n".join(labels)
 
-    @abstractmethod
     def display_token_labels(
         self, token_labels: list[dict[str, str]]
     ) -> RenderableType:
-        raise NotImplementedError()
+        return "\n".join(
+            f"{token}: {label}"
+            for token_label in token_labels
+            for token, label in token_label.items()
+        )
 
     def token_frames(
         self,
@@ -424,10 +515,28 @@ class Theme(ABC):
         limit_answer_height: bool = False,
         start_thinking: bool = False,
     ) -> tuple[TokenRenderFrame, ...]:
-        raise NotImplementedError()
+        _ = (
+            state,
+            console_width,
+            logger,
+            maximum_frames,
+            logits_count,
+            tool_events_limit,
+            think_height,
+            think_padding,
+            tool_height,
+            tool_padding,
+            height,
+            padding,
+            wrap_padding,
+            limit_think_height,
+            limit_tool_height,
+            limit_answer_height,
+            start_thinking,
+        )
+        return ()
 
-    @abstractmethod
-    def tokens(
+    async def tokens(
         self,
         state: TokenRenderState,
         *,
@@ -448,9 +557,27 @@ class Theme(ABC):
         limit_answer_height: bool = False,
         start_thinking: bool = False,
     ) -> AsyncGenerator[TokenRenderFrame, None]:
-        raise NotImplementedError()
+        for frame in self.token_frames(
+            state,
+            console_width=console_width,
+            logger=logger,
+            maximum_frames=maximum_frames,
+            logits_count=logits_count,
+            tool_events_limit=tool_events_limit,
+            think_height=think_height,
+            think_padding=think_padding,
+            tool_height=tool_height,
+            tool_padding=tool_padding,
+            height=height,
+            padding=padding,
+            wrap_padding=wrap_padding,
+            limit_think_height=limit_think_height,
+            limit_tool_height=limit_tool_height,
+            limit_answer_height=limit_answer_height,
+            start_thinking=start_thinking,
+        ):
+            yield frame
 
-    @abstractmethod
     def welcome(
         self,
         url: str,
@@ -459,7 +586,20 @@ class Theme(ABC):
         license: str,
         user: User | None,
     ) -> RenderableType:
-        raise NotImplementedError()
+        user_name = (
+            self._("\nUser: {user_name}").format(user_name=user.name)
+            if user
+            else ""
+        )
+        return self._(
+            "{name} {version}\n{url}\nLicense: {license}{user}"
+        ).format(
+            name=name,
+            version=version,
+            url=url,
+            license=license,
+            user=user_name,
+        )
 
     def __init__(
         self,

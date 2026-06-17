@@ -1,170 +1,76 @@
 import unittest
 from datetime import datetime
-from types import SimpleNamespace
+from logging import getLogger
 from uuid import UUID
 
 import numpy as np
 
+from avalan.cli.download import create_live_tqdm_class, tqdm_rich_progress
 from avalan.cli.theme import Theme, TokenRenderState
-from avalan.entities import Model
-from avalan.event import Event
+from avalan.cli.theme.fancy import FancyTheme
+from avalan.entities import (
+    HubCache,
+    HubCacheDeletion,
+    ImageEntity,
+    Model,
+    SearchMatch,
+    Similarity,
+    TextPartition,
+    Token,
+    TokenizerConfig,
+    User,
+)
 
 
-class DummyTheme(Theme):
-    def action(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def agent(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def ask_access_token(self) -> str:
-        raise NotImplementedError()
-
-    def ask_delete_paths(self) -> str:
-        raise NotImplementedError()
-
-    def ask_login_to_hub(self) -> str:
-        raise NotImplementedError()
-
-    def ask_secret_password(self, key: str) -> str:
-        raise NotImplementedError()
-
-    def ask_override_secret(self, key: str) -> str:
-        raise NotImplementedError()
-
-    def bye(self):
-        raise NotImplementedError()
-
-    def cache_delete(self, cache_deletion, deleted: bool = False):
-        raise NotImplementedError()
-
-    def cache_list(
-        self,
-        cache_dir: str,
-        cached_models,
-        display_models=None,
-        show_summary: bool = False,
-    ):
-        raise NotImplementedError()
-
-    def download_access_denied(self, model_id: str, model_url: str):
-        raise NotImplementedError()
-
-    def download_start(self, model_id: str):
-        raise NotImplementedError()
-
-    def download_progress(self):
-        raise NotImplementedError()
-
-    def download_finished(self, model_id: str, path: str):
-        raise NotImplementedError()
-
-    def events(
-        self,
-        events: list[Event],
-        *,
-        events_limit: int | None = None,
-    ):
-        raise NotImplementedError()
-
-    def logging_in(self, domain: str) -> str:
-        raise NotImplementedError()
-
-    def memory_embeddings(
-        self,
-        input_string: str,
-        embeddings,
-        *args,
-        total_tokens: int,
-        minv: float,
-        maxv: float,
-        meanv: float,
-        stdv: float,
-        normv: float,
-        embedding_peek: int = 3,
-        horizontal: bool = True,
-        input_string_peek: int = 40,
-        show_stats: bool = True,
-        partition=None,
-        total_partitions=None,
-    ):
-        raise NotImplementedError()
-
-    def memory_embeddings_comparison(self, similarities, most_similar: str):
-        raise NotImplementedError()
-
-    def memory_embeddings_search(
-        self, matches, *args, match_preview_length: int = 300
-    ):
-        raise NotImplementedError()
-
-    def memory_partitions(self, partitions, *args, display_partitions: int):
-        raise NotImplementedError()
-
-    def model(self, model: Model, *args, **kwargs):
-        raise NotImplementedError()
-
-    def model_display(self, model_config, tokenizer_config, *args, **kwargs):
-        raise NotImplementedError()
-
-    def recent_messages(self, participant_id, agent, messages):
-        raise NotImplementedError()
-
-    def saved_tokenizer_files(self, directory_path: str, total_files: int):
-        raise NotImplementedError()
-
-    def search_message_matches(self, participant_id, agent, messages):
-        raise NotImplementedError()
-
-    def memory_search_matches(self, participant_id, namespace: str, memories):
-        raise NotImplementedError()
-
-    def tokenizer_config(self, config):
-        raise NotImplementedError()
-
-    def tokenizer_tokens(
-        self,
-        dtokens,
-        added_tokens=None,
-        special_tokens=None,
-        current_dtoken=None,
-        dtokens_selected=None,
-    ):
-        raise NotImplementedError()
-
-    def display_image_entities(self, entities, sort: bool):
-        raise NotImplementedError()
-
-    def display_image_entity(self, entity):
-        raise NotImplementedError()
-
-    def display_audio_labels(self, audio_labels: dict[str, float]):
-        raise NotImplementedError()
-
-    def display_image_labels(self, labels):
-        raise NotImplementedError()
-
-    def display_token_labels(self, labels):
-        raise NotImplementedError()
-
-    async def tokens(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def welcome(self, url: str, name: str, version: str, license: str, user):
-        raise NotImplementedError()
+def _gettext(message: str) -> str:
+    return message
 
 
-class CallableTheme(DummyTheme):
-    def model(self, model: Model, *args, **kwargs):
-        return f"model:{model.id}"
+def _ngettext(singular: str, plural: str, n: int) -> str:
+    return singular if n == 1 else plural
+
+
+def _theme() -> Theme:
+    return Theme(_gettext, _ngettext)
+
+
+def _model() -> Model:
+    now = datetime(2024, 1, 1)
+    return Model(
+        id="model-id",
+        parameters=None,
+        parameter_types=None,
+        inference=None,
+        library_name=None,
+        license=None,
+        pipeline_tag=None,
+        tags=[],
+        architectures=None,
+        model_type=None,
+        auto_model=None,
+        processor=None,
+        gated=False,
+        private=False,
+        disabled=False,
+        last_downloads=0,
+        downloads=0,
+        likes=0,
+        ranking=None,
+        author="author",
+        created_at=now,
+        updated_at=now,
+    )
 
 
 class ThemePropertyTestCase(unittest.TestCase):
-    def setUp(self):
-        self.theme = DummyTheme(lambda s: s, lambda s, p, n: s)
+    def setUp(self) -> None:
+        self.theme = _theme()
 
-    def test_default_properties(self):
-        self.assertEqual(self.theme.icons, {})
+    def test_default_properties(self) -> None:
+        self.assertEqual(
+            self.theme.icons,
+            {"agent_output": "", "user_input": ""},
+        )
         self.assertEqual(self.theme.quantity_data, [])
         self.assertEqual(self.theme.spinners, {})
         self.assertEqual(self.theme.stylers, {})
@@ -172,10 +78,10 @@ class ThemePropertyTestCase(unittest.TestCase):
 
 
 class ThemeFlowProgressTestCase(unittest.TestCase):
-    def setUp(self):
-        self.theme = DummyTheme(lambda s: s, lambda s, p, n: s)
+    def setUp(self) -> None:
+        self.theme = _theme()
 
-    def test_flow_run_progress_messages_cover_node_events(self):
+    def test_flow_run_progress_messages_cover_node_events(self) -> None:
         cases = {
             "flow_node_started": "Running node_a (attempt 2).",
             "flow_node_retrying": "Retrying node_a after attempt 2.",
@@ -198,7 +104,7 @@ class ThemeFlowProgressTestCase(unittest.TestCase):
                     expected,
                 )
 
-    def test_flow_run_progress_messages_cover_flow_events(self):
+    def test_flow_run_progress_messages_cover_flow_events(self) -> None:
         cases = {
             "flow_started": "Flow run started.",
             "flow_completed": "Flow run completed.",
@@ -213,7 +119,7 @@ class ThemeFlowProgressTestCase(unittest.TestCase):
                     expected,
                 )
 
-    def test_flow_run_progress_message_omits_first_attempt(self):
+    def test_flow_run_progress_message_omits_first_attempt(self) -> None:
         self.assertEqual(
             self.theme.flow_run_progress_message(
                 "flow_node_started",
@@ -223,7 +129,7 @@ class ThemeFlowProgressTestCase(unittest.TestCase):
             "Running node_a.",
         )
 
-    def test_flow_run_progress_plain_renderable(self):
+    def test_flow_run_progress_plain_renderable(self) -> None:
         renderable = self.theme.flow_run_progress(
             "flowchart LR\n  node_a\n",
             node_states={"node_a": "running"},
@@ -239,213 +145,219 @@ class ThemeFlowProgressTestCase(unittest.TestCase):
         )
 
 
-class ThemeAbstractMethodsTestCase(unittest.TestCase):
-    def setUp(self):
-        self.theme = DummyTheme(lambda s: s, lambda s, p, n: s)
+class ThemeConcreteDefaultsTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.theme = _theme()
 
-    def test_all_methods_raise(self):
-        methods = [
-            lambda: self.theme.action("n", "d", "a", "id", "lib", True, False),
-            lambda: self.theme.agent(
-                SimpleNamespace(), models=[], cans_access=None
-            ),
-            self.theme.ask_access_token,
-            self.theme.ask_delete_paths,
-            self.theme.ask_login_to_hub,
-            lambda: self.theme.ask_secret_password("k"),
-            lambda: self.theme.ask_override_secret("k"),
-            self.theme.bye,
-            lambda: self.theme.cache_delete(None, False),
-            lambda: self.theme.cache_list("/c", []),
-            lambda: self.theme.download_access_denied("m", "u"),
-            lambda: self.theme.download_start("m"),
-            self.theme.download_progress,
-            lambda: self.theme.download_finished("m", "/p"),
-            lambda: self.theme.logging_in("domain"),
-            lambda: self.theme.memory_embeddings(
+    def test_theme_instantiates_directly(self) -> None:
+        self.assertIsInstance(self.theme, Theme)
+
+    def test_command_facing_defaults_do_not_raise(self) -> None:
+        cache = HubCache(
+            model_id="cached/model",
+            path="/cache/cached/model",
+            size_on_disk=1,
+            revisions=[],
+            files={},
+            total_files=0,
+            total_revisions=0,
+        )
+        cache_deletion = HubCacheDeletion(
+            model_id="cached/model",
+            revisions=[],
+            deletable_size_on_disk=1.0,
+            deletable_blobs=[],
+            deletable_refs=[],
+            deletable_repos=[],
+            deletable_snapshots=[],
+        )
+        participant_id = UUID(int=0)
+        token = Token(token="hello")
+        tokenizer_config = TokenizerConfig(
+            name_or_path="tokenizer",
+            tokens=[],
+            special_tokens=[],
+            tokenizer_model_max_length=128,
+        )
+        text_partition = TextPartition(
+            data="partition",
+            total_tokens=1,
+            embeddings=np.array([0.0]),
+        )
+
+        renderables = [
+            self.theme.action("n", "d", "a", "id", "lib", True, False),
+            self.theme.agent(object(), models=[_model(), "other/model"]),
+            self.theme.ask_access_token(),
+            self.theme.ask_delete_paths(),
+            self.theme.ask_login_to_hub(),
+            self.theme.ask_secret_password("k"),
+            self.theme.ask_override_secret("k"),
+            self.theme.bye(),
+            self.theme.cache_delete(cache_deletion, True),
+            self.theme.cache_delete(None, False),
+            self.theme.cache_list("/c", [cache]),
+            self.theme.download_access_denied("m", "u"),
+            self.theme.download_start("m"),
+            self.theme.download_finished("m", "/p"),
+            self.theme.logging_in("domain"),
+            self.theme.memory_embeddings(
                 "text",
                 np.array([0.0]),
-                total_tokens=0,
+                total_tokens=1,
                 minv=0.0,
                 maxv=0.0,
                 meanv=0.0,
                 stdv=0.0,
                 normv=0.0,
             ),
-            lambda: self.theme.memory_embeddings_comparison({}, "m"),
-            lambda: self.theme.memory_embeddings_search([]),
-            lambda: self.theme.memory_partitions([], display_partitions=0),
-            lambda: self.theme.model(SimpleNamespace()),
-            lambda: self.theme.model_display(None, None),
-            lambda: self.theme.recent_messages("id", SimpleNamespace(), []),
-            lambda: self.theme.saved_tokenizer_files("/d", 0),
-            lambda: self.theme.search_message_matches(
-                "id", SimpleNamespace(), []
+            self.theme.memory_embeddings_comparison(
+                {
+                    "a": Similarity(
+                        cosine_distance=0.0,
+                        inner_product=0.0,
+                        l1_distance=0.0,
+                        l2_distance=0.0,
+                        pearson=0.0,
+                    )
+                },
+                "a",
             ),
-            lambda: self.theme.memory_search_matches("id", "ns", []),
-            lambda: self.theme.tokenizer_config(None),
-            lambda: self.theme.tokenizer_tokens([]),
-            lambda: self.theme.token_frames(
+            self.theme.memory_embeddings_search(
+                [
+                    SearchMatch(
+                        query="query",
+                        match="match",
+                        l2_distance=0.0,
+                    )
+                ]
+            ),
+            self.theme.memory_partitions(
+                [text_partition],
+                display_partitions=1,
+            ),
+            self.theme.model(_model()),
+            self.theme.model_display(None, None),
+            self.theme.recent_messages(participant_id, object(), []),
+            self.theme.saved_tokenizer_files("/d", 0),
+            self.theme.search_message_matches(participant_id, object(), []),
+            self.theme.memory_search_matches(participant_id, "ns", []),
+            self.theme.tokenizer_config(tokenizer_config),
+            self.theme.tokenizer_tokens([token], None, None),
+            self.theme.display_image_entities(
+                [ImageEntity(label="dog"), ImageEntity(label="cat")],
+                True,
+            ),
+            self.theme.display_image_entity(ImageEntity(label="cat")),
+            self.theme.display_audio_labels({"label": 0.5}),
+            self.theme.display_image_labels(["cat", "dog"]),
+            self.theme.display_token_labels([{"hello": "GREETING"}]),
+            self.theme.welcome(
+                "https://example.test",
+                "avalan",
+                "1.0.0",
+                "MIT",
+                User(name="user"),
+            ),
+            self.theme.token_frames(
                 TokenRenderState(model_id="m"),
                 console_width=80,
-                logger=SimpleNamespace(),
+                logger=getLogger(__name__),
             ),
-            lambda: self.theme.display_image_entities([], False),
-            lambda: self.theme.display_image_entity(None),
-            lambda: self.theme.welcome("u", "n", "v", "lic", None),
         ]
-        for call in methods:
-            with self.assertRaises(NotImplementedError):
-                result = call()
-                if hasattr(result, "__await__"):
-                    # async method tokens returns awaitable
-                    self.theme.loop.run_until_complete(result)
 
-        async def run_tokens():
-            await self.theme.tokens(
+        for renderable in renderables:
+            with self.subTest(renderable=renderable):
+                self.assertIsNotNone(renderable)
+
+    def test_events_default_is_non_crashing_compatibility_noop(self) -> None:
+        self.assertIsNone(self.theme.events([]))
+
+    def test_download_progress_returns_live_tqdm_template(self) -> None:
+        progress = self.theme.download_progress()
+        LiveTqdm = create_live_tqdm_class(progress)
+
+        self.assertIsInstance(progress, tuple)
+        self.assertTrue(issubclass(LiveTqdm, tqdm_rich_progress))
+
+
+class ThemeTokensTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.theme = _theme()
+
+    async def test_tokens_default_defers_stream_presentation(self) -> None:
+        frames = [
+            frame
+            async for frame in self.theme.tokens(
+                TokenRenderState(
+                    model_id="m",
+                    reasoning_text_tokens=("thinking",),
+                    tool_text_tokens=("tool",),
+                    answer_text_tokens=("answer", " text"),
+                ),
+                console_width=80,
+                logger=getLogger(__name__),
+            )
+        ]
+
+        self.assertEqual(frames, [])
+
+    async def test_tokens_default_without_answer_text_yields_no_frames(
+        self,
+    ) -> None:
+        frames = [
+            frame
+            async for frame in self.theme.tokens(
                 TokenRenderState(model_id="m"),
                 console_width=80,
-                logger=SimpleNamespace(),
+                logger=getLogger(__name__),
             )
+        ]
 
-        with self.assertRaises(NotImplementedError):
-            import asyncio
-
-            asyncio.run(run_tokens())
+        self.assertEqual(frames, [])
 
 
 class ThemeMiscMethodsTestCase(unittest.TestCase):
-    def test_get_styles_and_spinner_and_call(self):
-        theme = CallableTheme(lambda s: s, lambda s, p, n: s)
+    def test_get_styles_and_spinner_and_call(self) -> None:
+        theme = _theme()
         styles = theme.get_styles()
+        model = _model()
+
         self.assertIn("id", styles)
         self.assertEqual(theme.get_spinner("thinking"), None)
-        model = Model(
-            id="i",
-            parameters=None,
-            parameter_types=None,
-            inference=None,
-            library_name=None,
-            license=None,
-            pipeline_tag=None,
-            tags=[],
-            architectures=None,
-            model_type=None,
-            auto_model=None,
-            processor=None,
-            gated=False,
-            private=False,
-            disabled=False,
-            last_downloads=0,
-            downloads=0,
-            likes=0,
-            ranking=None,
-            author="a",
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
-        )
-        self.assertEqual(theme(model), "model:i")
+        self.assertEqual(theme(model), "model-id")
         self.assertEqual(theme("x"), "x")
 
 
 class ThemeFormatTestCase(unittest.TestCase):
-    def test_custom_format_and_spinner(self):
-        theme = CallableTheme(
-            lambda s: s,
-            lambda s, p, n: s,
+    def test_custom_format_and_spinner(self) -> None:
+        theme = Theme(
+            _gettext,
+            _ngettext,
             icons={"id": ":robot:", "likes": ":heart:"},
             quantity_data=["likes"],
         )
 
         self.assertIsNone(theme.get_spinner("thinking"))
         self.assertEqual(theme._f("id", "test"), ":robot: [id]test[/id]")
+        self.assertEqual(theme._f("unknown", "value"), "value")
         likes_formatted = theme._f("likes", 1000)
         self.assertIn("thousand", likes_formatted)
 
 
-class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
-    def setUp(self) -> None:
-        self.theme = CallableTheme(lambda s: s, lambda s, p, n: s)
+class FancyThemeStabilityTestCase(unittest.TestCase):
+    def test_flow_run_progress_message_keeps_flow_defaults(self) -> None:
+        theme = FancyTheme(_gettext, _ngettext)
 
-    def test_base_methods_raise(self):
-        calls = [
-            lambda: Theme.action(
-                self.theme, "n", "d", "a", "id", "lib", True, False
-            ),
-            lambda: Theme.agent(
-                self.theme, SimpleNamespace(), models=[], cans_access=None
-            ),
-            lambda: Theme.events(self.theme, []),
-            lambda: Theme.ask_access_token(self.theme),
-            lambda: Theme.ask_delete_paths(self.theme),
-            lambda: Theme.ask_login_to_hub(self.theme),
-            lambda: Theme.ask_secret_password(self.theme, "k"),
-            lambda: Theme.ask_override_secret(self.theme, "k"),
-            lambda: Theme.bye(self.theme),
-            lambda: Theme.cache_delete(self.theme, None, False),
-            lambda: Theme.cache_list(self.theme, "/c", []),
-            lambda: Theme.download_access_denied(self.theme, "m", "u"),
-            lambda: Theme.download_start(self.theme, "m"),
-            lambda: Theme.download_progress(self.theme),
-            lambda: Theme.download_finished(self.theme, "m", "/p"),
-            lambda: Theme.logging_in(self.theme, "domain"),
-            lambda: Theme.memory_embeddings(
-                self.theme,
-                "text",
-                np.array([0.0]),
-                total_tokens=0,
-                minv=0.0,
-                maxv=0.0,
-                meanv=0.0,
-                stdv=0.0,
-                normv=0.0,
-            ),
-            lambda: Theme.memory_embeddings_comparison(self.theme, {}, "m"),
-            lambda: Theme.memory_embeddings_search(self.theme, []),
-            lambda: Theme.memory_partitions(
-                self.theme, [], display_partitions=0
-            ),
-            lambda: Theme.model(self.theme, SimpleNamespace()),
-            lambda: Theme.model_display(self.theme, None, None),
-            lambda: Theme.recent_messages(
-                self.theme, "id", SimpleNamespace(), []
-            ),
-            lambda: Theme.saved_tokenizer_files("/d", 0),
-            lambda: Theme.search_message_matches(
-                self.theme, "id", SimpleNamespace(), []
-            ),
-            lambda: Theme.memory_search_matches(
-                self.theme, UUID(int=0), "ns", []
-            ),
-            lambda: Theme.tokenizer_config(self.theme, None),
-            lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
-            lambda: Theme.token_frames(
-                self.theme,
-                TokenRenderState(model_id="m"),
-                console_width=80,
-                logger=SimpleNamespace(),
-            ),
-            lambda: Theme.display_image_entities(self.theme, [], False),
-            lambda: Theme.display_image_entity(self.theme, None),
-            lambda: Theme.display_audio_labels(self.theme, {}),
-            lambda: Theme.display_image_labels(self.theme, []),
-            lambda: Theme.display_token_labels(self.theme, []),
-            lambda: Theme.welcome(self.theme, "u", "n", "v", "lic", None),
-        ]
+        cases = {
+            "flow_started": "Flow run started.",
+            "flow_completed": "Flow run completed.",
+            "unknown": "Flow run is active.",
+        }
 
-        for call in calls:
-            with self.assertRaises(NotImplementedError):
-                call()
-
-        async def run_tokens():
-            await Theme.tokens(
-                self.theme,
-                TokenRenderState(model_id="m"),
-                console_width=80,
-                logger=SimpleNamespace(),
-            )
-
-        with self.assertRaises(NotImplementedError):
-            import asyncio
-
-            asyncio.run(run_tokens())
+        for event_type, expected in cases.items():
+            with self.subTest(event_type=event_type):
+                self.assertEqual(
+                    theme.flow_run_progress_message(event_type),
+                    expected,
+                )

@@ -76,14 +76,16 @@ class ThemeRegistryTestCase(TestCase):
         self.assertIs(theme.gettext, gettext)
         self.assertIs(theme.ngettext, ngettext)
 
-    def test_basic_theme_is_transitional_fancy_subclass(self) -> None:
+    def test_basic_theme_is_concrete_common_theme(self) -> None:
+        from avalan.cli.theme import Theme
         from avalan.cli.theme.basic import BasicTheme
         from avalan.cli.theme.fancy import FancyTheme
 
         theme = create_theme("basic", gettext, ngettext)
 
         self.assertIsInstance(theme, BasicTheme)
-        self.assertIsInstance(theme, FancyTheme)
+        self.assertIsInstance(theme, Theme)
+        self.assertNotIsInstance(theme, FancyTheme)
         self.assertEqual(theme._("message"), "translated:message")
         self.assertEqual(theme._n("one", "many", 2), "many")
 
