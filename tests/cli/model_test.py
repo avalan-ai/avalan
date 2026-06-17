@@ -4,6 +4,8 @@ from base64 import b64encode
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from gc import collect
+from io import StringIO
 from logging import getLogger
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -67,6 +69,7 @@ from avalan.model.stream import (
     StreamTerminalOutcome,
     StreamValidationError,
     project_canonical_stream_item,
+    stream_channel_for_kind,
 )
 from avalan.tool.parser import ToolCallParser
 
@@ -799,6 +802,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         display_events: bool = False,
         display_tools: bool = False,
         display_tools_events: int | None = 2,
+        interactive: bool = True,
+        record: bool = False,
         stats: bool = False,
     ) -> CliStreamDisplayConfig:
         return CliStreamDisplayConfig(
@@ -807,8 +812,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             display_tools=display_tools,
             display_events=display_events,
             display_tools_events=display_tools_events,
-            record=False,
-            interactive=True,
+            record=record,
+            interactive=interactive,
             refresh_per_second=2,
             answer_height=12,
             answer_height_expand=False,
@@ -820,6 +825,233 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             display_time_to_n_token=None,
             display_reasoning_time=True,
         )
+
+    def _empty_response(self) -> object:
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    await asyncio.sleep(0)
+                    if False:
+                        yield ""
+
+                return gen()
+
+        return Response()
+
+    def _answer_response(self, text: str = "answer") -> object:
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    yield text
+
+                return gen()
+
+        return Response()
+
+    def _theme(self) -> MagicMock:
+        async def fake_tokens(*_args, **_kwargs):
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+        return theme
+
+    def _event_manager(
+        self,
+        *events: Event,
+        started: asyncio.Event | None = None,
+        error: BaseException | None = None,
+    ) -> object:
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                if started is not None:
+                    started.set()
+                await asyncio.sleep(0)
+                if error is not None:
+                    raise error
+                for event in events:
+                    yield event
+                while not stop_signal.is_set():
+                    await asyncio.sleep(0)
+
+        return EventManager()
+
+    def _live_update_renderables(self, live: MagicMock) -> list[object]:
+        renderables: list[object] = []
+        for update_call in live.update.call_args_list:
+            renderable = update_call.args[0]
+            if isinstance(renderable, model_cmds.Group):
+                renderables.extend(renderable.renderables)
+            else:
+                renderables.append(renderable)
+        return renderables
+
+    def test_stream_presenter_context_normalizes_flags(
+        self,
+    ):
+        class Response:
+            input_token_count = 0
+            can_think = True
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+        response = Response()
+        context = model_cmds._stream_presenter_context(
+            Namespace(start_thinking=True, model="args-model"),
+            MagicMock(width=72),
+            SimpleNamespace(input_token_count=9),
+            SimpleNamespace(
+                model_id="",
+                tokenizer_config=SimpleNamespace(
+                    tokens="answer",
+                    special_tokens={"<eos>": 2},
+                ),
+            ),
+            "input",
+            response,
+            display_config=self._display_config(),
+            dtokens_pick=1,
+        )
+
+        self.assertTrue(response.is_thinking)
+        self.assertEqual(context.model_id, "args-model")
+        self.assertEqual(context.console_width, 72)
+        self.assertEqual(context.input_token_count, 9)
+        self.assertEqual(context.tokenizer_tokens, ("answer",))
+        self.assertEqual(context.tokenizer_special_tokens, ("<eos>",))
+        self.assertTrue(context.start_thinking)
+
+    def test_stream_tokenizer_tuple_edge_cases(self):
+        self.assertIsNone(model_cmds._stream_tokenizer_tuple(None))
+        self.assertIsNone(model_cmds._stream_tokenizer_tuple(7))
+
+    async def test_print_plain_stdout_response_filters_channels(
+        self,
+    ):
+        async def gen():
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="stream",
+                    run_id="run",
+                    turn_id="turn",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="stream",
+                    run_id="run",
+                    turn_id="turn",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="answer",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="stream",
+                    run_id="run",
+                    turn_id="turn",
+                    sequence=2,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="stream",
+                    run_id="run",
+                    turn_id="turn",
+                    sequence=3,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
+
+        console = MagicMock()
+        with patch(
+            "avalan.cli.commands.model.sleep",
+            new_callable=AsyncMock,
+        ) as sleep_patch:
+            await model_cmds._print_plain_stdout_response(console, gen())
+
+        console.print.assert_called_once_with("answer", end="")
+        sleep_patch.assert_awaited_once_with(0)
+
+    async def test_plain_stdout_projections_validates_public_stream(
+        self,
+    ):
+        class Response:
+            def consumer_projections(self, **_kwargs: object):
+                async def gen():
+                    for item in (
+                        CanonicalStreamItem(
+                            stream_session_id="stream",
+                            run_id="run",
+                            turn_id="turn",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="stream",
+                            run_id="run",
+                            turn_id="turn",
+                            sequence=1,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="answer",
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="stream",
+                            run_id="run",
+                            turn_id="turn",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="stream",
+                            run_id="run",
+                            turn_id="turn",
+                            sequence=3,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            usage={},
+                            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                        ),
+                    ):
+                        yield project_canonical_stream_item(item)
+
+                return gen()
+
+        projections = [
+            projection
+            async for projection in model_cmds._plain_stdout_projections(
+                Response()
+            )
+        ]
+
+        self.assertEqual(
+            [projection.sequence for projection in projections], [0, 1, 2, 3]
+        )
+        self.assertEqual(projections[1].text_delta, "answer")
 
     async def test_token_generation_no_stats(self):
         async def gen():
@@ -1197,21 +1429,18 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             skip_display_reasoning_time=False,
         )
 
-        with patch.object(
-            model_cmds,
-            "_print_plain_stdout_response",
-            new_callable=AsyncMock,
-        ) as plain_stdout:
+        console = MagicMock()
+        with patch("avalan.cli.stream_coordinator.Live") as live:
             await model_cmds.token_generation(
                 args=args,
-                console=MagicMock(),
+                console=console,
                 theme=MagicMock(),
                 logger=MagicMock(),
                 orchestrator=None,
                 event_stats=None,
                 lm=MagicMock(),
                 input_string="i",
-                response=MagicMock(),
+                response=self._answer_response("answer"),
                 display_tokens=0,
                 dtokens_pick=0,
                 with_stats=False,
@@ -1220,7 +1449,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 display_config=self._display_config(display_events=True),
             )
 
-        plain_stdout.assert_awaited_once()
+        console.print.assert_called_once_with("answer", end="")
+        live.assert_not_called()
 
     async def test_token_generation_display_tools_without_stats_starts_events(
         self,
@@ -1234,61 +1464,38 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             record=False,
             skip_display_reasoning_time=False,
         )
-        live = MagicMock()
-        live_cm = MagicMock()
-        live_cm.__enter__.return_value = live
-        live_cm.__exit__.return_value = False
-        orchestrator = SimpleNamespace(event_manager=MagicMock())
         event_started = asyncio.Event()
-
-        async def wait_for_cancel(*_args, **_kwargs):
-            event_started.set()
-            await asyncio.Event().wait()
-
-        live_container: dict[str, MagicMock | None] = {}
-        with (
-            patch.object(model_cmds, "Live", return_value=live_cm),
-            patch.object(
-                model_cmds,
-                "_event_stream",
-                new_callable=AsyncMock,
-            ) as event_stream,
-            patch.object(
-                model_cmds,
-                "_token_stream",
-                new_callable=AsyncMock,
-            ) as token_stream,
-            patch.object(
-                model_cmds,
-                "_print_plain_stdout_response",
-                new_callable=AsyncMock,
-            ) as plain_stdout,
-        ):
-            event_stream.side_effect = wait_for_cancel
-            await model_cmds.token_generation(
-                args=args,
-                console=MagicMock(),
-                theme=MagicMock(),
-                logger=MagicMock(),
-                orchestrator=orchestrator,
-                event_stats=None,
-                lm=MagicMock(),
-                input_string="i",
-                response=MagicMock(),
-                display_tokens=0,
-                dtokens_pick=0,
-                with_stats=False,
-                tool_events_limit=2,
-                refresh_per_second=2,
-                live_container=live_container,
-                display_config=self._display_config(display_tools=True),
+        orchestrator = SimpleNamespace(
+            event_manager=self._event_manager(
+                Event(type=EventType.TOOL_PROCESS, payload=[]),
+                started=event_started,
             )
+        )
 
-        event_stream.assert_awaited_once()
-        plain_stdout.assert_awaited_once()
-        token_stream.assert_not_called()
+        coordinator_container: dict[str, object | None] = {}
+        console = MagicMock()
+        await model_cmds.token_generation(
+            args=args,
+            console=console,
+            theme=MagicMock(),
+            logger=MagicMock(),
+            orchestrator=orchestrator,
+            event_stats=None,
+            lm=MagicMock(),
+            input_string="i",
+            response=self._answer_response("answer"),
+            display_tokens=0,
+            dtokens_pick=0,
+            with_stats=False,
+            tool_events_limit=2,
+            refresh_per_second=2,
+            coordinator_container=coordinator_container,
+            display_config=self._display_config(display_tools=True),
+        )
+
+        console.print.assert_called_once_with("answer", end="")
         self.assertTrue(event_started.is_set())
-        self.assertIsNone(live_container["live"])
+        self.assertIsNone(coordinator_container["coordinator"])
 
     async def test_token_generation_display_tools_plain_error_cleans_live(
         self,
@@ -1302,50 +1509,46 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             record=False,
             skip_display_reasoning_time=False,
         )
-        live_cm = MagicMock()
-        live_cm.__enter__.return_value = MagicMock()
-        live_cm.__exit__.return_value = False
-        live_container: dict[str, MagicMock | None] = {}
+        coordinator_container: dict[str, object | None] = {}
 
-        async def wait_for_cancel(*_args, **_kwargs):
-            await asyncio.Event().wait()
+        class FailingResponse:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
 
-        with (
-            patch.object(model_cmds, "Live", return_value=live_cm),
-            patch.object(
-                model_cmds,
-                "_event_stream",
-                new_callable=AsyncMock,
-            ) as event_stream,
-            patch.object(
-                model_cmds,
-                "_print_plain_stdout_response",
-                new_callable=AsyncMock,
-                side_effect=ValueError("plain failed"),
-            ),
-        ):
-            event_stream.side_effect = wait_for_cancel
-            with self.assertRaisesRegex(ValueError, "plain failed"):
-                await model_cmds.token_generation(
-                    args=args,
-                    console=MagicMock(),
-                    theme=MagicMock(),
-                    logger=MagicMock(),
-                    orchestrator=SimpleNamespace(event_manager=MagicMock()),
-                    event_stats=None,
-                    lm=MagicMock(),
-                    input_string="i",
-                    response=MagicMock(),
-                    display_tokens=0,
-                    dtokens_pick=0,
-                    with_stats=False,
-                    tool_events_limit=2,
-                    refresh_per_second=2,
-                    live_container=live_container,
-                    display_config=self._display_config(display_tools=True),
-                )
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
 
-        self.assertIsNone(live_container["live"])
+            def __aiter__(self):
+                async def gen():
+                    raise ValueError("plain failed")
+                    yield ""
+
+                return gen()
+
+        with self.assertRaisesRegex(ValueError, "plain failed"):
+            await model_cmds.token_generation(
+                args=args,
+                console=MagicMock(),
+                theme=MagicMock(),
+                logger=MagicMock(),
+                orchestrator=SimpleNamespace(
+                    event_manager=self._event_manager()
+                ),
+                event_stats=None,
+                lm=MagicMock(),
+                input_string="i",
+                response=FailingResponse(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                coordinator_container=coordinator_container,
+                display_config=self._display_config(display_tools=True),
+            )
+
+        self.assertIsNone(coordinator_container["coordinator"])
 
     async def test_token_generation_display_tools_raises_event_error(self):
         args = Namespace(
@@ -1357,45 +1560,28 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             record=False,
             skip_display_reasoning_time=False,
         )
-        live_cm = MagicMock()
-        live_cm.__enter__.return_value = MagicMock()
-        live_cm.__exit__.return_value = False
-
-        async def fail_event_stream(*_args, **_kwargs):
-            raise RuntimeError("event failed")
-
-        with (
-            patch.object(model_cmds, "Live", return_value=live_cm),
-            patch.object(
-                model_cmds,
-                "_event_stream",
-                new_callable=AsyncMock,
-            ) as event_stream,
-            patch.object(
-                model_cmds,
-                "_print_plain_stdout_response",
-                new_callable=AsyncMock,
-            ),
-        ):
-            event_stream.side_effect = fail_event_stream
-            with self.assertRaisesRegex(RuntimeError, "event failed"):
-                await model_cmds.token_generation(
-                    args=args,
-                    console=MagicMock(),
-                    theme=MagicMock(),
-                    logger=MagicMock(),
-                    orchestrator=SimpleNamespace(event_manager=MagicMock()),
-                    event_stats=None,
-                    lm=MagicMock(),
-                    input_string="i",
-                    response=MagicMock(),
-                    display_tokens=0,
-                    dtokens_pick=0,
-                    with_stats=False,
-                    tool_events_limit=2,
-                    refresh_per_second=2,
-                    display_config=self._display_config(display_tools=True),
-                )
+        with self.assertRaisesRegex(RuntimeError, "event failed"):
+            await model_cmds.token_generation(
+                args=args,
+                console=MagicMock(),
+                theme=MagicMock(),
+                logger=MagicMock(),
+                orchestrator=SimpleNamespace(
+                    event_manager=self._event_manager(
+                        error=RuntimeError("event failed")
+                    )
+                ),
+                event_stats=None,
+                lm=MagicMock(),
+                input_string="i",
+                response=self._empty_response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(display_tools=True),
+            )
 
     async def test_token_generation_quiet_all_flags_stays_answer_clean(self):
         async def gen():
@@ -1481,7 +1667,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         console = MagicMock()
 
         with (
-            patch.object(model_cmds, "Live") as live,
+            patch("avalan.cli.stream_coordinator.Live") as live,
             patch.object(
                 model_cmds,
                 "_event_stream",
@@ -1514,6 +1700,237 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         live.assert_not_called()
         event_stream.assert_not_called()
         token_stream.assert_not_called()
+
+    async def test_token_generation_non_interactive_record_stays_answer_clean(
+        self,
+    ) -> None:
+        args = Namespace(
+            quiet=False,
+            stats=True,
+            display_events=True,
+            display_tools=True,
+            display_tools_events=3,
+            record=True,
+            display_tokens=4,
+            display_pause=100,
+            display_probabilities=True,
+            display_probabilities_maximum=1.0,
+            display_probabilities_sample_minimum=0.0,
+            display_time_to_n_token=2,
+            skip_display_reasoning_time=False,
+        )
+        console = MagicMock()
+
+        with patch("avalan.cli.stream_coordinator.Live") as live:
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=MagicMock(),
+                logger=MagicMock(),
+                orchestrator=SimpleNamespace(event_manager=MagicMock()),
+                event_stats=None,
+                lm=MagicMock(),
+                input_string="i",
+                response=self._answer_response("answer"),
+                display_tokens=4,
+                dtokens_pick=4,
+                with_stats=True,
+                tool_events_limit=3,
+                refresh_per_second=2,
+                display_config=self._display_config(
+                    display_events=True,
+                    display_tools=True,
+                    display_tools_events=3,
+                    interactive=False,
+                    record=True,
+                    stats=True,
+                ),
+            )
+
+        console.print.assert_called_once_with("answer", end="")
+        live.assert_not_called()
+        console.save_svg.assert_not_called()
+
+    async def test_token_generation_mixed_live_frames_record_once_owner(
+        self,
+    ) -> None:
+        tool_call_id = "call-1"
+
+        def item(
+            sequence: int,
+            kind: StreamItemKind,
+            *,
+            text_delta: str | None = None,
+            data: dict[str, object] | None = None,
+            usage: dict[str, object] | None = None,
+            terminal_outcome: StreamTerminalOutcome | None = None,
+            tool_call: bool = False,
+        ) -> CanonicalStreamItem:
+            return CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=kind,
+                channel=stream_channel_for_kind(kind),
+                correlation=(
+                    StreamItemCorrelation(tool_call_id=tool_call_id)
+                    if tool_call
+                    else StreamItemCorrelation()
+                ),
+                text_delta=text_delta,
+                data=data,
+                usage=usage,
+                terminal_outcome=terminal_outcome,
+            )
+
+        items = [
+            item(0, StreamItemKind.STREAM_STARTED),
+            item(
+                1,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                text_delta='{"x": 2}',
+                tool_call=True,
+            ),
+            item(
+                2,
+                StreamItemKind.TOOL_CALL_READY,
+                data={"name": "calc"},
+                tool_call=True,
+            ),
+            item(3, StreamItemKind.TOOL_CALL_DONE, tool_call=True),
+            item(
+                4,
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                data={"name": "calc"},
+                tool_call=True,
+            ),
+            item(
+                5,
+                StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                text_delta="4",
+                data={"name": "calc"},
+                tool_call=True,
+            ),
+            item(
+                6,
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                data={"name": "calc", "result": 4},
+                tool_call=True,
+            ),
+            item(
+                7,
+                StreamItemKind.FLOW_EVENT,
+                data={"node": "math"},
+            ),
+            item(8, StreamItemKind.ANSWER_DELTA, text_delta="done"),
+            item(9, StreamItemKind.ANSWER_DONE),
+            item(
+                10,
+                StreamItemKind.STREAM_COMPLETED,
+                usage={
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                },
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+
+        class MixedResponse:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+                async def gen() -> AsyncIterator[CanonicalStreamItem]:
+                    for stream_item in items:
+                        yield stream_item
+                        await asyncio.sleep(0)
+
+                return gen()
+
+        token_frames: list[dict[str, object]] = []
+
+        def fake_token_frames(
+            state: object,
+            **kwargs: object,
+        ) -> tuple[tuple[None, object], ...]:
+            token_frames.append({"state": state, **kwargs})
+            return ((None, f"stream-frame-{len(token_frames)}"),)
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=True,
+        )
+        console = MagicMock()
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        theme = MagicMock()
+        theme.token_frames = MagicMock(side_effect=fake_token_frames)
+        display_config = self._display_config(
+            display_events=True,
+            display_tools=True,
+            record=True,
+            stats=True,
+        )
+
+        with patch(
+            "avalan.cli.stream_coordinator.Live", return_value=live
+        ) as live_patch:
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=MixedResponse(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=display_config,
+            )
+
+        live_patch.assert_called_once_with(
+            None,
+            console=console,
+            refresh_per_second=2,
+            screen=True,
+        )
+        live.__enter__.assert_called_once_with()
+        live.__exit__.assert_called_once_with(None, None, None)
+        self.assertEqual(console.save_svg.call_count, live.update.call_count)
+        self.assertGreater(live.update.call_count, 0)
+
+        renderables = self._live_update_renderables(live)
+        rendered_text = "\n".join(
+            str(renderable) for renderable in renderables
+        )
+        self.assertIn("completed tool calc", rendered_text)
+        self.assertIn("tool result calc", rendered_text)
+        self.assertIn("event flow.event", rendered_text)
+        self.assertIn("usage stream.completed", rendered_text)
+        self.assertTrue(
+            any(
+                str(renderable).startswith("stream-frame-")
+                for renderable in renderables
+            )
+        )
 
     async def test_stream_render_projections_projects_canonical_items(
         self,
@@ -2361,16 +2778,6 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         console.print.assert_not_called()
 
     async def test_token_generation_raises_event_stream_error(self):
-        class DummyLive:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc_value, traceback):
-                return False
-
         args = Namespace(
             display_events=True,
             display_tools=False,
@@ -2378,32 +2785,311 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             skip_display_reasoning_time=False,
         )
 
-        with (
-            patch.object(model_cmds, "Live", DummyLive),
-            patch.object(
-                model_cmds,
-                "_event_stream",
-                AsyncMock(side_effect=ValueError("event stream failed")),
-            ),
-            patch.object(model_cmds, "_token_stream", AsyncMock()),
+        with self.assertRaisesRegex(ValueError, "event stream failed"):
+            await model_cmds.token_generation(
+                args=args,
+                console=MagicMock(width=80),
+                theme=self._theme(),
+                logger=MagicMock(),
+                orchestrator=SimpleNamespace(
+                    event_manager=self._event_manager(
+                        error=ValueError("event stream failed")
+                    )
+                ),
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=self._empty_response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+            )
+
+    async def test_token_generation_startup_cancel_cleans_supervised_tasks(
+        self,
+    ):
+        args = Namespace(skip_display_reasoning_time=False)
+        coordinator_container: dict[str, object | None] = {}
+        response_closed = asyncio.Event()
+        event_closed = asyncio.Event()
+        never = asyncio.Event()
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    try:
+                        await never.wait()
+                        yield "answer"
+                    finally:
+                        response_closed.set()
+
+                return gen()
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                _ = stop_signal
+                try:
+                    await never.wait()
+                    if False:
+                        yield Event(type=EventType.AGENT, payload={})
+                finally:
+                    event_closed.set()
+
+        async def cancel_startup(delay: float) -> None:
+            self.assertEqual(delay, 0)
+            await asyncio.sleep(0)
+            raise asyncio.CancelledError()
+
+        with patch(
+            "avalan.cli.commands.model.sleep",
+            new=AsyncMock(side_effect=cancel_startup),
         ):
-            with self.assertRaisesRegex(ValueError, "event stream failed"):
+            with self.assertRaises(asyncio.CancelledError):
                 await model_cmds.token_generation(
                     args=args,
-                    console=MagicMock(),
-                    theme=MagicMock(),
+                    console=MagicMock(width=80),
+                    theme=self._theme(),
                     logger=MagicMock(),
-                    orchestrator=MagicMock(),
+                    orchestrator=SimpleNamespace(event_manager=EventManager()),
                     event_stats=None,
-                    lm=MagicMock(),
+                    lm=SimpleNamespace(model_id="m", tokenizer_config=None),
                     input_string="i",
-                    response=MagicMock(),
+                    response=Response(),
                     display_tokens=0,
                     dtokens_pick=0,
                     with_stats=True,
                     tool_events_limit=2,
                     refresh_per_second=2,
+                    coordinator_container=coordinator_container,
+                    display_config=self._display_config(display_events=True),
                 )
+
+        self.assertIsNone(coordinator_container["coordinator"])
+        self.assertTrue(response_closed.is_set())
+        self.assertTrue(event_closed.is_set())
+
+    async def test_token_generation_startup_cancel_consumes_done_failures(
+        self,
+    ):
+        args = Namespace(skip_display_reasoning_time=False)
+        loop = asyncio.get_running_loop()
+        exception_contexts: list[dict[str, object]] = []
+        old_handler = loop.get_exception_handler()
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    raise ValueError("response failed")
+                    yield "answer"
+
+                return gen()
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                _ = stop_signal
+                raise RuntimeError("event failed")
+                yield Event(type=EventType.AGENT, payload={})
+
+        async def cancel_startup(delay: float) -> None:
+            self.assertEqual(delay, 0)
+            await asyncio.sleep(0)
+            raise asyncio.CancelledError()
+
+        loop.set_exception_handler(
+            lambda _loop, context: exception_contexts.append(context)
+        )
+        try:
+            with patch(
+                "avalan.cli.commands.model.sleep",
+                new=AsyncMock(side_effect=cancel_startup),
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await model_cmds.token_generation(
+                        args=args,
+                        console=MagicMock(width=80),
+                        theme=self._theme(),
+                        logger=MagicMock(),
+                        orchestrator=SimpleNamespace(
+                            event_manager=EventManager()
+                        ),
+                        event_stats=None,
+                        lm=SimpleNamespace(
+                            model_id="m",
+                            tokenizer_config=None,
+                        ),
+                        input_string="i",
+                        response=Response(),
+                        display_tokens=0,
+                        dtokens_pick=0,
+                        with_stats=True,
+                        tool_events_limit=2,
+                        refresh_per_second=2,
+                        display_config=self._display_config(
+                            display_events=True
+                        ),
+                    )
+            collect()
+            await asyncio.sleep(0)
+        finally:
+            loop.set_exception_handler(old_handler)
+
+        self.assertEqual(exception_contexts, [])
+
+    async def test_token_generation_failure_stops_cooperative_event_listener(
+        self,
+    ):
+        args = Namespace(skip_display_reasoning_time=False)
+        event_stopped = asyncio.Event()
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    raise ValueError("response failed")
+                    yield "answer"
+
+                return gen()
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                try:
+                    await asyncio.Event().wait()
+                    if False:
+                        yield Event(type=EventType.AGENT, payload={})
+                except asyncio.CancelledError:
+                    while not stop_signal.is_set():
+                        await asyncio.sleep(0)
+                    event_stopped.set()
+                    return
+
+        with self.assertRaisesRegex(ValueError, "response failed"):
+            await asyncio.wait_for(
+                model_cmds.token_generation(
+                    args=args,
+                    console=MagicMock(width=80),
+                    theme=self._theme(),
+                    logger=MagicMock(),
+                    orchestrator=SimpleNamespace(event_manager=EventManager()),
+                    event_stats=None,
+                    lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                    input_string="i",
+                    response=Response(),
+                    display_tokens=0,
+                    dtokens_pick=0,
+                    with_stats=True,
+                    tool_events_limit=2,
+                    refresh_per_second=2,
+                    display_config=self._display_config(display_events=True),
+                ),
+                timeout=1,
+            )
+
+        self.assertTrue(event_stopped.is_set())
+
+    async def test_token_generation_response_done_raises_event_cleanup_error(
+        self,
+    ):
+        args = Namespace(skip_display_reasoning_time=False)
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                _ = stop_signal
+                try:
+                    await asyncio.Event().wait()
+                    if False:
+                        yield Event(type=EventType.AGENT, payload={})
+                except asyncio.CancelledError:
+                    raise RuntimeError("event cleanup failed")
+
+        with self.assertRaisesRegex(RuntimeError, "event cleanup failed"):
+            await model_cmds.token_generation(
+                args=args,
+                console=MagicMock(width=80),
+                theme=self._theme(),
+                logger=MagicMock(),
+                orchestrator=SimpleNamespace(event_manager=EventManager()),
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=self._answer_response("answer"),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(display_events=True),
+            )
+
+    async def test_token_generation_groups_simultaneous_stream_failures(self):
+        args = Namespace(skip_display_reasoning_time=False)
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    raise ValueError("response failed")
+                    yield "answer"
+
+                return gen()
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                _ = stop_signal
+                raise RuntimeError("event failed")
+                yield Event(type=EventType.AGENT, payload={})
+
+        with self.assertRaises(BaseExceptionGroup) as raised:
+            await model_cmds.token_generation(
+                args=args,
+                console=MagicMock(width=80),
+                theme=self._theme(),
+                logger=MagicMock(),
+                orchestrator=SimpleNamespace(event_manager=EventManager()),
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(display_events=True),
+            )
+
+        failure_messages = {str(exc) for exc in raised.exception.exceptions}
+        self.assertEqual(
+            failure_messages,
+            {"event failed", "response failed"},
+        )
 
     async def test_token_generation_with_stats_uses_canonical_projection(
         self,
@@ -3565,7 +4251,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         args = Namespace(
             skip_display_reasoning_time=False,
             display_time_to_n_token=1,
-            display_pause=0,
+            display_pause=1,
             start_thinking=False,
             display_probabilities=True,
             display_probabilities_maximum=1.0,
@@ -3575,32 +4261,39 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         theme = MagicMock()
         theme.token_frames = MagicMock(side_effect=fake_frames)
 
-        await model_cmds._token_stream(
-            args=args,
-            console=MagicMock(width=80),
-            live=MagicMock(),
-            group=None,
-            tokens_group_index=None,
-            theme=theme,
-            logger=MagicMock(),
-            orchestrator=None,
-            event_stats=None,
-            lm=SimpleNamespace(
-                model_id="m",
-                tokenizer_config=None,
-                input_token_count=lambda value: 1,
-            ),
-            input_string="i",
-            response=Resp(),
-            display_tokens=1,
-            dtokens_pick=1,
-            refresh_per_second=2,
-            stop_signal=None,
-            tool_events_limit=2,
-            with_stats=True,
-        )
+        with patch(
+            "avalan.cli.commands.model.sleep",
+            new_callable=AsyncMock,
+        ) as sleep_patch:
+            await model_cmds._token_stream(
+                args=args,
+                console=MagicMock(width=80),
+                live=MagicMock(),
+                group=None,
+                tokens_group_index=None,
+                theme=theme,
+                logger=MagicMock(),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(
+                    model_id="m",
+                    tokenizer_config=None,
+                    input_token_count=lambda value: 1,
+                ),
+                input_string="i",
+                response=Resp(),
+                display_tokens=1,
+                dtokens_pick=1,
+                refresh_per_second=2,
+                stop_signal=None,
+                tool_events_limit=2,
+                with_stats=True,
+            )
 
         self.assertEqual(yielded, ["first", "second"])
+        self.assertIn(call(0.001), sleep_patch.await_args_list)
+        self.assertIn(call(0.1), sleep_patch.await_args_list)
+        self.assertIn(call(0), sleep_patch.await_args_list)
 
     async def test_token_generation_timing_pause(self):
         frame_token = model_cmds.TokenRenderDisplayToken(
@@ -3657,7 +4350,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         lm = SimpleNamespace(model_id="m", tokenizer_config=None)
 
-        with patch.object(model_cmds, "Live", return_value=live):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             await model_cmds.token_generation(
                 args=args,
                 console=console,
@@ -3676,8 +4369,9 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
 
         theme.token_frames.assert_called()
-        live.update.assert_any_call("frame1")
-        live.update.assert_any_call("frame2")
+        renderables = self._live_update_renderables(live)
+        self.assertIn("frame1", renderables)
+        self.assertIn("frame2", renderables)
 
     async def test_token_generation_ttnt_metric(self):
         stream_delta = _canonical_answer_delta("a", token_id=0)
@@ -3724,7 +4418,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         lm = SimpleNamespace(model_id="m", tokenizer_config=None)
 
-        with patch.object(model_cmds, "Live", return_value=live):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             await model_cmds.token_generation(
                 args=args,
                 console=console,
@@ -3743,7 +4437,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
 
         theme.token_frames.assert_called_once()
-        live.update.assert_called_once_with("frame")
+        self.assertIn("frame", self._live_update_renderables(live))
 
     async def test_token_generation_stats_do_not_count_control_items(self):
         control = CanonicalStreamItem(
@@ -4123,12 +4817,9 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         theme.token_frames.assert_not_called()
 
-    async def test_token_generation_live_container_without_orchestrator(self):
-        live = MagicMock(name="live")
-        live_cm = MagicMock()
-        live_cm.__enter__.return_value = live
-        live_cm.__exit__.return_value = False
-
+    async def test_token_generation_coordinator_container_without_orchestrator(
+        self,
+    ):
         args = Namespace(
             skip_display_reasoning_time=False,
             display_events=False,
@@ -4136,20 +4827,109 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             record=False,
         )
 
-        live_container: dict[str, MagicMock | None] = {}
-        observed: list[MagicMock | None] = []
+        coordinator_container: dict[str, object | None] = {}
+        observed: list[object | None] = []
 
-        async def fake_token_stream(*_args, **_kwargs):
-            observed.append(live_container.get("live"))
+        async def fake_tokens(*_args, **_kwargs):
+            observed.append(coordinator_container.get("coordinator"))
+            yield (None, "frame")
 
-        with (
-            patch.object(model_cmds, "Live", return_value=live_cm),
-            patch.object(
-                model_cmds,
-                "_token_stream",
-                AsyncMock(side_effect=fake_token_stream),
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        await model_cmds.token_generation(
+            args=args,
+            console=MagicMock(width=80),
+            theme=theme,
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+            input_string="prompt",
+            response=self._answer_response("answer"),
+            display_tokens=0,
+            dtokens_pick=0,
+            refresh_per_second=1,
+            tool_events_limit=0,
+            coordinator_container=coordinator_container,
+        )
+
+        self.assertTrue(observed)
+        self.assertIsNotNone(observed[0])
+        self.assertIsNone(coordinator_container.get("coordinator"))
+
+    async def test_token_generation_coordinator_container_with_orchestrator(
+        self,
+    ):
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=True,
+            display_tools=False,
+            record=False,
+        )
+
+        coordinator_container: dict[str, object | None] = {}
+        observed: list[object | None] = []
+
+        async def fake_tokens(*_args, **_kwargs):
+            observed.append(coordinator_container.get("coordinator"))
+            yield (None, "frame")
+
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        await model_cmds.token_generation(
+            args=args,
+            console=MagicMock(width=80),
+            theme=theme,
+            logger=MagicMock(),
+            orchestrator=SimpleNamespace(
+                event_manager=self._event_manager(
+                    Event(type=EventType.START, payload={})
+                )
             ),
-        ):
+            event_stats=None,
+            lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+            input_string="prompt",
+            response=self._answer_response("answer"),
+            display_tokens=0,
+            dtokens_pick=0,
+            refresh_per_second=1,
+            tool_events_limit=0,
+            coordinator_container=coordinator_container,
+        )
+
+        self.assertTrue(observed)
+        self.assertIsNotNone(observed[0])
+        self.assertIsNone(coordinator_container.get("coordinator"))
+
+    async def test_token_generation_coordinator_container_cleared_on_interrupt(
+        self,
+    ):
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=False,
+            display_tools=False,
+            record=False,
+        )
+        coordinator_container: dict[str, object | None] = {}
+
+        class InterruptResponse:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    raise KeyboardInterrupt()
+                    yield ""
+
+                return gen()
+
+        with self.assertRaises(KeyboardInterrupt):
             await model_cmds.token_generation(
                 args=args,
                 console=MagicMock(),
@@ -4159,120 +4939,15 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 event_stats=None,
                 lm=MagicMock(),
                 input_string="prompt",
-                response=MagicMock(),
+                response=InterruptResponse(),
                 display_tokens=0,
                 dtokens_pick=0,
                 refresh_per_second=1,
                 tool_events_limit=0,
-                live_container=live_container,
+                coordinator_container=coordinator_container,
             )
 
-        self.assertEqual(observed, [live])
-        self.assertEqual(live_container.get("live"), None)
-
-    async def test_token_generation_live_container_with_orchestrator(self):
-        live = MagicMock(name="live")
-        live_cm = MagicMock()
-        live_cm.__enter__.return_value = live
-        live_cm.__exit__.return_value = False
-
-        args = Namespace(
-            skip_display_reasoning_time=False,
-            display_events=True,
-            display_tools=False,
-            record=False,
-        )
-
-        live_container: dict[str, MagicMock | None] = {}
-        observed_event: list[MagicMock | None] = []
-        observed_token: list[MagicMock | None] = []
-
-        async def fake_event_stream(*_args, **_kwargs):
-            observed_event.append(live_container.get("live"))
-
-        async def fake_token_stream(*_args, **_kwargs):
-            observed_token.append(live_container.get("live"))
-
-        with (
-            patch.object(model_cmds, "Live", return_value=live_cm),
-            patch.object(
-                model_cmds,
-                "_event_stream",
-                AsyncMock(side_effect=fake_event_stream),
-            ),
-            patch.object(
-                model_cmds,
-                "_token_stream",
-                AsyncMock(side_effect=fake_token_stream),
-            ),
-        ):
-            await model_cmds.token_generation(
-                args=args,
-                console=MagicMock(),
-                theme=MagicMock(),
-                logger=MagicMock(),
-                orchestrator=MagicMock(),
-                event_stats=None,
-                lm=MagicMock(),
-                input_string="prompt",
-                response=MagicMock(),
-                display_tokens=0,
-                dtokens_pick=0,
-                refresh_per_second=1,
-                tool_events_limit=0,
-                live_container=live_container,
-            )
-
-        self.assertEqual(observed_event, [live])
-        self.assertEqual(observed_token, [live])
-        self.assertEqual(live_container.get("live"), None)
-
-    async def test_token_generation_live_container_cleared_on_interrupt(
-        self,
-    ):
-        live = MagicMock(name="live")
-        live_cm = MagicMock()
-        live_cm.__enter__.return_value = live
-        live_cm.__exit__.return_value = False
-
-        args = Namespace(
-            skip_display_reasoning_time=False,
-            display_events=False,
-            display_tools=False,
-            record=False,
-        )
-        live_container: dict[str, MagicMock | None] = {}
-
-        async def fake_token_stream(*_args, **_kwargs):
-            raise KeyboardInterrupt()
-
-        with (
-            patch.object(model_cmds, "Live", return_value=live_cm),
-            patch.object(
-                model_cmds,
-                "_token_stream",
-                AsyncMock(side_effect=fake_token_stream),
-            ),
-        ):
-            with self.assertRaises(KeyboardInterrupt):
-                await model_cmds.token_generation(
-                    args=args,
-                    console=MagicMock(),
-                    theme=MagicMock(),
-                    logger=MagicMock(),
-                    orchestrator=None,
-                    event_stats=None,
-                    lm=MagicMock(),
-                    input_string="prompt",
-                    response=MagicMock(),
-                    display_tokens=0,
-                    dtokens_pick=0,
-                    refresh_per_second=1,
-                    tool_events_limit=0,
-                    live_container=live_container,
-                )
-
-        self.assertEqual(live_container.get("live"), None)
+        self.assertIsNone(coordinator_container.get("coordinator"))
 
     async def test_token_generation_with_stats(self):
         frame_token = model_cmds.TokenRenderDisplayToken(
@@ -4346,7 +5021,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             model_id="m", tokenizer_config=None, input_token_count=MagicMock()
         )
 
-        with patch.object(model_cmds, "Live", return_value=live):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             await model_cmds.token_generation(
                 args=args,
                 console=console,
@@ -4367,7 +5042,9 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         theme.token_frames.assert_called_once()
         self.assertEqual(captured["text_tokens"], ["a"])
         self.assertEqual(captured["input_token_count"], 1)
-        live.update.assert_called_once_with("frame2")
+        renderables = self._live_update_renderables(live)
+        self.assertIn("frame1", renderables)
+        self.assertIn("frame2", renderables)
         lm.input_token_count.assert_not_called()
 
     async def test_token_generation_input_count_fallback(self):
@@ -4427,7 +5104,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         live.__enter__.return_value = live
         live.__exit__.return_value = False
 
-        with patch.object(model_cmds, "Live", return_value=live):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             await model_cmds.token_generation(
                 args=args,
                 console=console,
@@ -4453,7 +5130,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         response_zero = Resp([stream_delta], count=0)
         theme.token_frames.reset_mock()
 
-        with patch.object(model_cmds, "Live", return_value=live):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             await model_cmds.token_generation(
                 args=args,
                 console=console,
@@ -4478,7 +5155,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         theme.token_frames.reset_mock()
         lm.input_token_count.reset_mock()
 
-        with patch.object(model_cmds, "Live", return_value=live):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             await model_cmds.token_generation(
                 args=args,
                 console=console,
@@ -4547,7 +5224,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             input_token_count=MagicMock(return_value=1),
         )
 
-        with patch.object(model_cmds, "Live", return_value=live):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             with self.assertRaises(StreamValidationError):
                 await model_cmds.token_generation(
                     args=args,
@@ -4570,13 +5247,13 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_generation_display_options_combinations(self):
         combos = [
-            (False, False, 0),
-            (True, False, 1),
-            (False, True, 1),
-            (True, True, 1),
+            (False, False, False),
+            (True, False, True),
+            (False, True, True),
+            (True, True, True),
         ]
 
-        for display_events, display_tools, expected_event_calls in combos:
+        for display_events, display_tools, expected_event_started in combos:
             args = Namespace(
                 skip_display_reasoning_time=False,
                 display_time_to_n_token=None,
@@ -4590,45 +5267,33 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 record=False,
             )
 
-            console = MagicMock()
-            live = MagicMock()
-            live.__enter__.return_value = live
-            live.__exit__.return_value = False
-
-            orchestrator = SimpleNamespace(event_manager=MagicMock())
+            event_started = asyncio.Event()
+            orchestrator = SimpleNamespace(
+                event_manager=self._event_manager(
+                    Event(type=EventType.START, payload={}),
+                    started=event_started,
+                )
+            )
             lm = SimpleNamespace(model_id="m", tokenizer_config=None)
 
-            with (
-                patch.object(model_cmds, "Live", return_value=live),
-                patch.object(
-                    model_cmds, "_token_stream", new=AsyncMock()
-                ) as ts_patch,
-                patch.object(
-                    model_cmds, "_event_stream", new=AsyncMock()
-                ) as es_patch,
-            ):
-                await model_cmds.token_generation(
-                    args=args,
-                    console=console,
-                    theme=MagicMock(),
-                    logger=MagicMock(),
-                    orchestrator=orchestrator,
-                    event_stats=None,
-                    lm=lm,
-                    input_string="i",
-                    response=MagicMock(),
-                    display_tokens=0,
-                    dtokens_pick=0,
-                    tool_events_limit=None,
-                    refresh_per_second=2,
-                    with_stats=True,
-                )
+            await model_cmds.token_generation(
+                args=args,
+                console=MagicMock(width=80),
+                theme=self._theme(),
+                logger=MagicMock(),
+                orchestrator=orchestrator,
+                event_stats=None,
+                lm=lm,
+                input_string="i",
+                response=self._answer_response("answer"),
+                display_tokens=0,
+                dtokens_pick=0,
+                tool_events_limit=None,
+                refresh_per_second=2,
+                with_stats=True,
+            )
 
-            ts_patch.assert_awaited_once()
-            if expected_event_calls:
-                es_patch.assert_awaited_once()
-            else:
-                es_patch.assert_not_called()
+            self.assertEqual(event_started.is_set(), expected_event_started)
 
 
 class CliModelRunTestCase(IsolatedAsyncioTestCase):
@@ -9655,24 +10320,41 @@ class CliRecordOptionTestCase(IsolatedAsyncioTestCase):
         live.__enter__.return_value = live
         live.__exit__.return_value = False
 
-        lm = SimpleNamespace(model_id="m", tokenizer_config=None)
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
 
-        with (
-            patch.object(model_cmds, "Live", return_value=live) as live_patch,
-            patch.object(
-                model_cmds, "_token_stream", new=AsyncMock()
-            ) as ts_patch,
-        ):
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    yield "answer"
+
+                return gen()
+
+        async def fake_tokens(**kwargs):
+            _ = kwargs
+            yield (None, "frame")
+
+        lm = SimpleNamespace(model_id="m", tokenizer_config=None)
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+
+        with patch(
+            "avalan.cli.stream_coordinator.Live", return_value=live
+        ) as live_patch:
             await model_cmds.token_generation(
                 args=args,
                 console=console,
-                theme=MagicMock(),
+                theme=theme,
                 logger=MagicMock(),
                 orchestrator=None,
                 event_stats=None,
                 lm=lm,
                 input_string="text",
-                response=MagicMock(),
+                response=Resp(),
                 display_tokens=0,
                 dtokens_pick=0,
                 tool_events_limit=None,
@@ -9681,9 +10363,13 @@ class CliRecordOptionTestCase(IsolatedAsyncioTestCase):
             )
 
         live_patch.assert_called_once_with(
-            refresh_per_second=3, screen=True, console=console
+            None,
+            refresh_per_second=3,
+            screen=True,
+            console=console,
         )
-        ts_patch.assert_awaited_once()
+        live.update.assert_called()
+        console.save_svg.assert_called_once()
 
 
 class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
@@ -9829,19 +10515,16 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
                 refresh_per_second=0,
             )
 
-    def test_render_frame_saves_svg_when_recording(self):
+    def test_render_frame_rejects_recording_bypass(self):
         args = Namespace(skip_display_reasoning_time=False, record=True)
         console = MagicMock()
         live = MagicMock()
-        dt_value = datetime(2024, 1, 2, 3, 4, 5, 123456, tzinfo=timezone.utc)
 
-        with patch.object(model_cmds, "datetime") as dt_patch:
-            dt_patch.now.return_value = dt_value
+        with self.assertRaises(AssertionError):
             model_cmds._render_frame(args, console, live, "frame")
 
-        expected = "avalan-screenshot-20240102030405-123.svg"
-        console.save_svg.assert_called_once_with(expected, clear=True)
-        live.update.assert_called_once_with("frame")
+        console.save_svg.assert_not_called()
+        live.update.assert_not_called()
 
     def test_render_frame_no_record(self):
         args = Namespace(skip_display_reasoning_time=False, record=False)
@@ -10220,7 +10903,7 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
         live.__enter__.return_value = live
         live.__exit__.return_value = False
 
-        with patch.object(model_cmds, "Live", return_value=live):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             await model_cmds.token_generation(
                 args=args,
                 console=console,

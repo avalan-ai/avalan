@@ -7,6 +7,7 @@ _WATCHED_CLI_MODULES = (
     "avalan.cli.display",
     "avalan.cli.display_reducer",
     "avalan.cli.display_snapshot",
+    "avalan.cli.stream_coordinator",
     "avalan.cli.stream_presenter",
     "avalan.cli.theme",
     "avalan.cli.theme.basic",
@@ -31,6 +32,7 @@ _WATCHED_PRESENTER_FORBIDDEN_MODULES = (
     "avalan.cli.commands.task",
     "avalan.cli.commands.tokenizer",
 )
+_WATCHED_COORDINATOR_FORBIDDEN_MODULES = _WATCHED_PRESENTER_FORBIDDEN_MODULES
 
 
 class StreamImportBoundaryTestCase(TestCase):
@@ -79,6 +81,28 @@ class StreamImportBoundaryTestCase(TestCase):
             import_module("avalan.cli.stream_presenter")
 
             for name in _WATCHED_PRESENTER_FORBIDDEN_MODULES:
+                self.assertNotIn(name, modules)
+        finally:
+            for name in watched:
+                modules.pop(name, None)
+            modules.update(saved_modules)
+
+    def test_stream_coordinator_does_not_import_theme_or_command_modules(
+        self,
+    ) -> None:
+        watched = (
+            "avalan.cli.stream_coordinator",
+            *_WATCHED_COORDINATOR_FORBIDDEN_MODULES,
+        )
+        saved_modules = self._saved_modules_for(watched)
+
+        try:
+            for name in watched:
+                modules.pop(name, None)
+
+            import_module("avalan.cli.stream_coordinator")
+
+            for name in _WATCHED_COORDINATOR_FORBIDDEN_MODULES:
                 self.assertNotIn(name, modules)
         finally:
             for name in watched:

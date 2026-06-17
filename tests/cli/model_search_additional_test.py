@@ -93,15 +93,16 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
 
 
 class CliRenderFrameTestCase(TestCase):
-    def test_render_frame_group_and_record(self):
+    def test_render_frame_group_rejects_recording_bypass(self):
         args = Namespace(record=True)
         console = MagicMock()
         live = MagicMock()
         group = Group("x", "y")
-        model_cmds._render_frame(args, console, live, "frame", group, 1)
-        self.assertEqual(group.renderables[1], "frame")
-        live.refresh.assert_called_once()
-        console.save_svg.assert_called_once()
+        with self.assertRaises(AssertionError):
+            model_cmds._render_frame(args, console, live, "frame", group, 1)
+        self.assertEqual(group.renderables[1], "y")
+        live.refresh.assert_not_called()
+        console.save_svg.assert_not_called()
 
 
 class CliModelRunUnsupportedTestCase(IsolatedAsyncioTestCase):
