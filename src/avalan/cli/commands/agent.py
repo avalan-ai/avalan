@@ -5,6 +5,7 @@ from ...agent.orchestrator.response.orchestrator_response import (
 )
 from ...cli import confirm_tool_call, get_input, has_input
 from ...cli.commands.model import token_generation
+from ...cli.display import cli_stream_display_config
 from ...cli.theme import Theme
 from ...entities import (
     Backend,
@@ -612,6 +613,11 @@ async def agent_run(
     refresh_per_second: int,
 ) -> None:
     _, _i = theme._, theme.icons
+    display_config = cli_stream_display_config(
+        args,
+        refresh_per_second=refresh_per_second,
+        interactive=bool(getattr(console, "is_terminal", True)),
+    )
 
     specs_path = args.specifications_file
     engine_uri = getattr(args, "engine_uri", None)
@@ -622,9 +628,9 @@ async def agent_run(
         specs_path or engine_uri
     ), "specifications file or --engine-uri must be specified"
     use_async_generator = not args.use_sync_generator
-    display_tokens = args.display_tokens or 0
+    display_tokens = display_config.display_tokens
     dtokens_pick = 10 if display_tokens > 0 else 0
-    with_stats = args.stats and not args.quiet
+    with_stats = display_config.show_stats
     agent_id = args.id
     participant_id = args.participant
     session_id = args.session if not args.no_session else None
@@ -749,7 +755,7 @@ async def agent_run(
             ),
         )
 
-        if not args.quiet:
+        if not display_config.answer_stdout_only:
             assert orchestrator.engine_agent
             assert orchestrator.engine and orchestrator.engine.model_id
 
@@ -785,7 +791,7 @@ async def agent_run(
         if (
             load_recent_messages
             and orchestrator.memory.has_recent_message
-            and not args.quiet
+            and not display_config.answer_stdout_only
         ):
             recent_message = orchestrator.memory.recent_message
             assert recent_message is not None
@@ -802,12 +808,15 @@ async def agent_run(
         return orchestrator
 
     async with AsyncExitStack() as stack:
-        with console.status(
-            _("Loading agent..."),
-            spinner=theme.get_spinner("agent_loading") or "dots",
-            refresh_per_second=refresh_per_second,
-        ):
+        if display_config.answer_stdout_only:
             orchestrator = await _init_orchestrator()
+        else:
+            with console.status(
+                _("Loading agent..."),
+                spinner=theme.get_spinner("agent_loading") or "dots",
+                refresh_per_second=display_config.refresh_per_second,
+            ):
+                orchestrator = await _init_orchestrator()
 
         watch_spec = bool(specs_path and args.conversation and args.watch)
         if watch_spec:
@@ -837,7 +846,7 @@ async def agent_run(
                 _i["user_input"] + " ",
                 echo_stdin=not args.no_repl,
                 force_prompt=in_conversation,
-                is_quiet=args.quiet,
+                is_quiet=display_config.answer_stdout_only,
                 tty_path=tty_path,
             )
             if not input_string:
@@ -851,7 +860,10 @@ async def agent_run(
                 tool_confirm=_confirm_call if args.tools_confirm else None,
             )
 
-            if not args.quiet and not args.stats:
+            if (
+                not display_config.answer_stdout_only
+                and not display_config.show_stats
+            ):
                 console.print(_i["agent_output"] + " ", end="")
 
             if args.quiet:
@@ -872,13 +884,14 @@ async def agent_run(
                 event_stats=event_stats,
                 lm=text_engine,
                 input_string=input_string,
-                refresh_per_second=refresh_per_second,
+                refresh_per_second=display_config.refresh_per_second,
                 response=text_output,
                 dtokens_pick=dtokens_pick,
                 display_tokens=display_tokens,
-                tool_events_limit=args.display_tools_events,
+                tool_events_limit=display_config.display_tools_events,
                 with_stats=with_stats,
                 live_container=live_container,
+                display_config=display_config,
             )
 
             if args.conversation:
