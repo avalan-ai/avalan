@@ -8,7 +8,6 @@ from ...cli.stream_coordinator import CliStreamCoordinator
 from ...cli.stream_presenter import (
     CliStreamPresenterContext,
     CliStreamPresenterRequest,
-    LegacyThemeStreamPresenter,
     StreamPresenterMode,
 )
 from ...cli.theme import (
@@ -822,9 +821,15 @@ async def token_generation(
     stop_signal = EventSignal()
     render_lock = Lock()
     reducer = CliStreamSnapshotReducer(display_config)
-    presenter = LegacyThemeStreamPresenter(
+    stream_logger = (
+        logger if isinstance(logger, Logger) else getLogger(__name__)
+    )
+    stream_presenter_factory = getattr(type(theme), "stream_presenter", None)
+    if not callable(stream_presenter_factory):
+        stream_presenter_factory = Theme.stream_presenter
+    presenter = stream_presenter_factory(
         theme,
-        logger if isinstance(logger, Logger) else getLogger(__name__),
+        stream_logger,
         event_stats=event_stats,
     )
     presenter_context = _stream_presenter_context(
@@ -837,14 +842,7 @@ async def token_generation(
         display_config=display_config,
         dtokens_pick=dtokens_pick,
     )
-    presenter_mode: StreamPresenterMode = (
-        "answer" if display_config.answer_stdout_only else "live"
-    )
-    coordinator = CliStreamCoordinator(console, display_config)
     event_listen: Any = None
-    side_channel_events_enabled = True
-    snapshot_revision = 0
-    presented_snapshot_revision = -1
     if orchestrator is not None and (
         display_config.show_events or display_config.show_tools
     ):
@@ -852,6 +850,20 @@ async def token_generation(
         listen = getattr(event_manager, "listen", None)
         if callable(listen):
             event_listen = listen
+    live_diagnostics_enabled = display_config.live_enabled and (
+        display_config.show_stats
+        or display_config.show_tools
+        or display_config.show_events
+    )
+    presenter_mode: StreamPresenterMode = (
+        "answer"
+        if display_config.answer_stdout_only or not live_diagnostics_enabled
+        else "live"
+    )
+    coordinator = CliStreamCoordinator(console, display_config)
+    side_channel_events_enabled = True
+    snapshot_revision = 0
+    presented_snapshot_revision = -1
 
     async def render_snapshot() -> None:
         nonlocal presented_snapshot_revision

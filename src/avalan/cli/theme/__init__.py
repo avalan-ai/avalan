@@ -27,6 +27,10 @@ from ..display_safety import safe_summary as _safe_summary
 from ..display_safety import safe_text as _safe_text
 from ..display_safety import value_from as _value_from
 from ..download import DownloadCompleteColumn
+from .stream_presenter import (
+    CliStreamPresenter,
+    CliStreamSnapshotPresenter,
+)
 
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
@@ -1080,6 +1084,14 @@ class Theme:
             for token_label in token_labels
             for token, label in token_label.items()
         )
+
+    def stream_presenter(
+        self,
+        logger: Logger,
+        *,
+        event_stats: EventStats | None = None,
+    ) -> CliStreamPresenter:
+        return CliStreamSnapshotPresenter(logger, event_stats=event_stats)
 
     def token_frames(
         self,

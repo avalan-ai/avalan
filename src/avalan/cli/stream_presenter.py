@@ -203,6 +203,54 @@ class CliStreamAnswerPresenter:
         yield CliStreamAnswerTextChunk(text=text)
 
 
+class CliStreamSnapshotPresenter:
+    """Present snapshots without theme token-frame animation."""
+
+    def __init__(
+        self,
+        logger: Logger,
+        *,
+        event_stats: EventStats | None = None,
+    ) -> None:
+        assert isinstance(logger, Logger)
+        assert event_stats is None or isinstance(event_stats, EventStats)
+        self._answer_presenter = CliStreamAnswerPresenter()
+        self._event_stats = event_stats
+        self._logger = logger
+
+    def reset(self) -> None:
+        """Forget answer text emitted by this presenter."""
+        self._answer_presenter.reset()
+
+    async def present(
+        self,
+        request: CliStreamPresenterRequest,
+    ) -> AsyncIterator[CliStreamPresenterItem]:
+        """Yield renderable frames or plain answer chunks."""
+        assert isinstance(request, CliStreamPresenterRequest)
+        _ = self._event_stats, self._logger
+        if request.mode == "answer":
+            async for chunk in self._answer_presenter.present(
+                _answer_request(request)
+            ):
+                yield chunk
+            return
+
+        for frame in _snapshot_diagnostic_frames(request):
+            yield frame
+        if not request.display_config.show_stats:
+            async for chunk in self._answer_presenter.present(
+                _answer_request(request)
+            ):
+                yield chunk
+            return
+        if request.snapshot.answer_text:
+            yield CliStreamRenderableFrame(
+                renderable=request.snapshot.answer_text,
+                role="answer",
+            )
+
+
 class LegacyThemeStreamPresenter:
     """Adapt immutable snapshots to a theme token-frame renderer."""
 

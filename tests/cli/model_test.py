@@ -31,7 +31,13 @@ from avalan.cli.commands import (
 )
 from avalan.cli.display import CliStreamDisplayConfig
 from avalan.cli.theme import TokenRenderState
+from avalan.cli.theme.basic import BasicTheme
 from avalan.cli.theme.fancy import FancyTheme
+from avalan.cli.theme.stream_presenter import (
+    CliStreamAnswerTextChunk,
+    CliStreamPresenterRequest,
+    LegacyThemeStreamPresenter,
+)
 from avalan.entities import (
     GenerationCacheStrategy,
     GenerationSettings,
@@ -335,6 +341,29 @@ def _disable_mlx_model_import(test_case):
     )
     mlx_model_patch.start()
     test_case.addCleanup(mlx_model_patch.stop)
+
+
+def _legacy_adapter_theme(token_side_effect: object) -> object:
+    class LegacyAdapterTheme:
+        def __init__(self) -> None:
+            self.token_frames = MagicMock(side_effect=token_side_effect)
+
+        def stream_presenter(
+            self,
+            logger: Any,
+            *,
+            event_stats: Any | None = None,
+        ) -> LegacyThemeStreamPresenter:
+            return LegacyThemeStreamPresenter(
+                self,
+                logger,
+                event_stats=event_stats,
+            )
+
+        def tokens(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("tokens should not be called")
+
+    return LegacyAdapterTheme()
 
 
 class CliModelTestCase(TestCase):
@@ -862,10 +891,42 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         return Response()
 
-    def _theme(self) -> MagicMock:
-        theme = MagicMock()
-        theme.token_frames = MagicMock(return_value=((None, "frame"),))
-        return theme
+    def _theme(self) -> object:
+        def fake_token_frames(*_args: object, **_kwargs: object):
+            return ((None, "frame"),)
+
+        return self._legacy_theme(fake_token_frames)
+
+    def _legacy_theme(self, token_side_effect: object) -> object:
+        return _legacy_adapter_theme(token_side_effect)
+
+    def _coordinator_observer_theme(
+        self,
+        observed: list[object | None],
+        coordinator_container: dict[str, object | None],
+    ) -> object:
+        class RecordingPresenter:
+            async def present(self, request: CliStreamPresenterRequest):
+                observed.append(coordinator_container.get("coordinator"))
+                if request.snapshot.answer_text:
+                    yield CliStreamAnswerTextChunk(
+                        text=request.snapshot.answer_text
+                    )
+
+        class RecordingTheme:
+            def stream_presenter(
+                self,
+                logger: object,
+                *,
+                event_stats: object | None = None,
+            ) -> RecordingPresenter:
+                _ = logger, event_stats
+                return RecordingPresenter()
+
+            def tokens(self, *_args: object, **_kwargs: object) -> object:
+                raise AssertionError("tokens should not be called")
+
+        return RecordingTheme()
 
     def _event_manager(
         self,
@@ -937,6 +998,75 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
     def test_stream_tokenizer_tuple_edge_cases(self):
         self.assertIsNone(model_cmds._stream_tokenizer_tuple(None))
         self.assertIsNone(model_cmds._stream_tokenizer_tuple(7))
+
+    async def test_token_generation_uses_theme_stream_presenter(self) -> None:
+        class RecordingPresenter:
+            def __init__(self) -> None:
+                self.requests: list[CliStreamPresenterRequest] = []
+
+            async def present(self, request: CliStreamPresenterRequest):
+                self.requests.append(request)
+                if request.snapshot.answer_text:
+                    yield CliStreamAnswerTextChunk(
+                        text=request.snapshot.answer_text
+                    )
+
+        class RecordingTheme:
+            def __init__(self, presenter: RecordingPresenter) -> None:
+                self.presenter = presenter
+                self.stream_presenter_calls: list[dict[str, object]] = []
+                self.tokens_called = False
+
+            def stream_presenter(
+                self,
+                logger: object,
+                *,
+                event_stats: object | None = None,
+            ) -> RecordingPresenter:
+                self.stream_presenter_calls.append(
+                    {
+                        "logger": logger,
+                        "event_stats": event_stats,
+                    }
+                )
+                return self.presenter
+
+            def tokens(self, *_args: object, **_kwargs: object) -> object:
+                self.tokens_called = True
+                raise AssertionError("tokens should not be called")
+
+        presenter = RecordingPresenter()
+        theme = RecordingTheme(presenter)
+        console = MagicMock()
+        display_config = self._display_config(interactive=False)
+
+        await model_cmds.token_generation(
+            args=Namespace(skip_display_reasoning_time=False),
+            console=console,
+            theme=theme,  # type: ignore[arg-type]
+            logger=getLogger(__name__),
+            orchestrator=None,
+            event_stats=None,
+            lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+            input_string="i",
+            response=self._answer_response("answer"),
+            display_tokens=0,
+            dtokens_pick=0,
+            with_stats=False,
+            tool_events_limit=2,
+            refresh_per_second=2,
+            display_config=display_config,
+        )
+
+        self.assertFalse(theme.tokens_called)
+        self.assertEqual(len(theme.stream_presenter_calls), 1)
+        self.assertEqual(len(presenter.requests), 1)
+        request = presenter.requests[0]
+        self.assertIs(request.display_config, display_config)
+        self.assertEqual(request.context.model_id, "m")
+        self.assertEqual(request.mode, "answer")
+        self.assertEqual(request.snapshot.answer_text, "answer")
+        console.print.assert_called_once_with("answer", end="")
 
     async def test_print_plain_stdout_response_filters_channels(
         self,
@@ -1356,6 +1486,389 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             [call("answer ", end=""), call("text", end="")],
         )
 
+    async def test_token_generation_no_stats_display_tools_renders_live(
+        self,
+    ) -> None:
+        event_reduced = asyncio.Event()
+        tool_call = {
+            "id": "tool-1",
+            "name": "search",
+            "arguments": {"query": "weather"},
+        }
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                yield Event(
+                    type=EventType.TOOL_PROCESS,
+                    payload=[tool_call],
+                )
+                event_reduced.set()
+                while not stop_signal.is_set():
+                    await asyncio.sleep(0)
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[str]:
+                async def gen() -> AsyncIterator[str]:
+                    await event_reduced.wait()
+                    yield "answer"
+
+                return gen()
+
+        async def fail_tokens(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("tokens should not be called")
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        theme = self._legacy_theme(fail_tokens)
+
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=SimpleNamespace(event_manager=EventManager()),
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(display_tools=True),
+            )
+
+        console.print.assert_called_once_with("answer", end="")
+        theme.tokens.assert_not_called()
+        renderables = self._live_update_renderables(live)
+        self.assertTrue(
+            any(
+                "tool event tool_process: search" in str(renderable)
+                for renderable in renderables
+            )
+        )
+
+    async def test_token_generation_no_stats_display_events_renders_live(
+        self,
+    ) -> None:
+        event_reduced = asyncio.Event()
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                yield Event(type=EventType.START, payload={"value": "ok"})
+                event_reduced.set()
+                while not stop_signal.is_set():
+                    await asyncio.sleep(0)
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[str]:
+                async def gen() -> AsyncIterator[str]:
+                    await event_reduced.wait()
+                    yield "answer"
+
+                return gen()
+
+        async def fail_tokens(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("tokens should not be called")
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        theme = self._legacy_theme(fail_tokens)
+
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=SimpleNamespace(event_manager=EventManager()),
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(display_events=True),
+            )
+
+        console.print.assert_called_once_with("answer", end="")
+        theme.tokens.assert_not_called()
+        renderables = self._live_update_renderables(live)
+        self.assertTrue(
+            any(
+                str(renderable).startswith("event start:")
+                for renderable in renderables
+            )
+        )
+
+    async def test_token_generation_basic_no_stats_tools_keep_stdout(
+        self,
+    ) -> None:
+        event_reduced = asyncio.Event()
+        tool_call = {
+            "id": "tool-1",
+            "name": "search",
+            "arguments": {"query": "weather"},
+        }
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                yield Event(
+                    type=EventType.TOOL_PROCESS,
+                    payload=[tool_call],
+                )
+                event_reduced.set()
+                while not stop_signal.is_set():
+                    await asyncio.sleep(0)
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[str]:
+                async def gen() -> AsyncIterator[str]:
+                    await event_reduced.wait()
+                    yield "answer"
+
+                return gen()
+
+        class LazyTokenizerLm:
+            model_id = "m"
+
+            @property
+            def tokenizer_config(self) -> object:
+                raise AssertionError("tokenizer config should be opt-in")
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with (
+            patch("avalan.cli.stream_coordinator.Live", return_value=live),
+            patch.object(
+                BasicTheme,
+                "tokens",
+                side_effect=AssertionError("tokens should not be called"),
+            ) as tokens,
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=SimpleNamespace(event_manager=EventManager()),
+                event_stats=None,
+                lm=LazyTokenizerLm(),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(display_tools=True),
+            )
+
+        tokens.assert_not_called()
+        console.print.assert_called_once_with("answer", end="")
+        renderables = self._live_update_renderables(live)
+        self.assertTrue(
+            any(
+                "tool event tool_process: search" in str(renderable)
+                for renderable in renderables
+            )
+        )
+
+    async def test_token_generation_basic_no_stats_events_keep_stdout(
+        self,
+    ) -> None:
+        event_reduced = asyncio.Event()
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                yield Event(type=EventType.START, payload={"value": "ok"})
+                event_reduced.set()
+                while not stop_signal.is_set():
+                    await asyncio.sleep(0)
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[str]:
+                async def gen() -> AsyncIterator[str]:
+                    await event_reduced.wait()
+                    yield "answer"
+
+                return gen()
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=SimpleNamespace(event_manager=EventManager()),
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(display_events=True),
+            )
+
+        console.print.assert_called_once_with("answer", end="")
+        renderables = self._live_update_renderables(live)
+        self.assertTrue(
+            any(
+                str(renderable).startswith("event start:")
+                for renderable in renderables
+            )
+        )
+
+    async def test_token_generation_display_events_uses_response_projection(
+        self,
+    ) -> None:
+        def item(
+            sequence: int,
+            kind: StreamItemKind,
+            *,
+            text_delta: str | None = None,
+            data: dict[str, object] | None = None,
+            terminal_outcome: StreamTerminalOutcome | None = None,
+            usage: dict[str, object] | None = None,
+        ) -> CanonicalStreamItem:
+            return CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=kind,
+                channel=stream_channel_for_kind(kind),
+                text_delta=text_delta,
+                data=data,
+                terminal_outcome=terminal_outcome,
+                usage=usage,
+            )
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def consumer_projections(
+                self,
+                **_kwargs: object,
+            ) -> AsyncIterator[StreamConsumerProjection]:
+                async def gen() -> AsyncIterator[StreamConsumerProjection]:
+                    for stream_item in (
+                        item(0, StreamItemKind.STREAM_STARTED),
+                        item(
+                            1,
+                            StreamItemKind.FLOW_EVENT,
+                            data={"stage": "projection"},
+                        ),
+                        item(
+                            2,
+                            StreamItemKind.ANSWER_DELTA,
+                            text_delta="answer",
+                        ),
+                        item(3, StreamItemKind.ANSWER_DONE),
+                        item(
+                            4,
+                            StreamItemKind.STREAM_COMPLETED,
+                            usage={},
+                            terminal_outcome=(StreamTerminalOutcome.COMPLETED),
+                        ),
+                    ):
+                        yield project_canonical_stream_item(stream_item)
+
+                return gen()
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(display_events=True),
+            )
+
+        console.print.assert_called_once_with("answer", end="")
+        renderables = self._live_update_renderables(live)
+        rendered_text = "\n".join(
+            str(renderable) for renderable in renderables
+        )
+        self.assertIn("event flow.event:", rendered_text)
+        self.assertIn("projection", rendered_text)
+
     async def test_token_generation_no_stats_rejects_late_projection(self):
         async def gen():
             for item in (
@@ -1469,12 +1982,16 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
         )
 
+        async def fail_tokens(*_args: object, **_kwargs: object) -> None:
+            raise AssertionError("tokens should not be called")
+
         coordinator_container: dict[str, object | None] = {}
         console = MagicMock()
+        theme = self._legacy_theme(fail_tokens)
         await model_cmds.token_generation(
             args=args,
             console=console,
-            theme=MagicMock(),
+            theme=theme,
             logger=MagicMock(),
             orchestrator=orchestrator,
             event_stats=None,
@@ -1491,6 +2008,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
 
         console.print.assert_called_once_with("answer", end="")
+        theme.tokens.assert_not_called()
         self.assertTrue(event_started.is_set())
         self.assertIsNone(coordinator_container["coordinator"])
 
@@ -1873,8 +2391,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         live = MagicMock()
         live.__enter__.return_value = live
         live.__exit__.return_value = False
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=fake_token_frames)
+        theme = self._legacy_theme(fake_token_frames)
         display_config = self._display_config(
             display_events=True,
             display_tools=True,
@@ -2059,8 +2576,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         live = MagicMock()
         live.__enter__.return_value = live
         live.__exit__.return_value = False
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=fake_token_frames)
+        theme = self._legacy_theme(fake_token_frames)
         display_config = self._display_config(
             display_events=True,
             display_tools=True,
@@ -2285,8 +2801,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         live = MagicMock()
         live.__enter__.return_value = live
         live.__exit__.return_value = False
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=fake_token_frames)
+        theme = self._legacy_theme(fake_token_frames)
 
         with (
             patch(
@@ -2431,8 +2946,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         live = MagicMock()
         live.__enter__.return_value = live
         live.__exit__.return_value = False
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=fake_token_frames)
+        theme = self._legacy_theme(fake_token_frames)
 
         with (
             patch.object(model_cmds, "Lock", RaceLock),
@@ -4963,8 +5477,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         def fake_token_frames(*_: object, **__: object):
             return ((frame_token, "frame1"), (None, "frame2"))
 
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=fake_token_frames)
+        theme = self._legacy_theme(fake_token_frames)
 
         live = MagicMock()
         console = MagicMock()
@@ -5032,8 +5545,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         def fake_token_frames(*_: object, **__: object):
             return ((None, "frame"),)
 
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=fake_token_frames)
+        theme = self._legacy_theme(fake_token_frames)
 
         live = MagicMock()
         live.__enter__.return_value = live
@@ -5453,12 +5965,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         coordinator_container: dict[str, object | None] = {}
         observed: list[object | None] = []
 
-        async def fake_tokens(*_args, **_kwargs):
-            observed.append(coordinator_container.get("coordinator"))
-            yield (None, "frame")
-
-        theme = MagicMock()
-        theme.tokens = MagicMock(side_effect=fake_tokens)
+        theme = self._coordinator_observer_theme(
+            observed,
+            coordinator_container,
+        )
 
         await model_cmds.token_generation(
             args=args,
@@ -5494,12 +6004,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         coordinator_container: dict[str, object | None] = {}
         observed: list[object | None] = []
 
-        async def fake_tokens(*_args, **_kwargs):
-            observed.append(coordinator_container.get("coordinator"))
-            yield (None, "frame")
-
-        theme = MagicMock()
-        theme.tokens = MagicMock(side_effect=fake_tokens)
+        theme = self._coordinator_observer_theme(
+            observed,
+            coordinator_container,
+        )
 
         await model_cmds.token_generation(
             args=args,
@@ -6289,8 +6797,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             captured["input_token_count"] = state.input_token_count
             return ((frame_token, "frame1"), (None, "frame2"))
 
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=fake_token_frames)
+        theme = self._legacy_theme(fake_token_frames)
 
         live = MagicMock()
         live.__enter__.return_value = live
@@ -6367,8 +6874,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             _ = a, k
             return ((None, "frame"),)
 
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=gen_frame)
+        theme = self._legacy_theme(gen_frame)
 
         lm = MagicMock()
         lm.model_id = "m"
@@ -12175,8 +12681,7 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
             )
             yield (None, "frame")
 
-        theme = MagicMock()
-        theme.token_frames = MagicMock(side_effect=fake_tokens)
+        theme = _legacy_adapter_theme(fake_tokens)
 
         live = MagicMock()
         live.__enter__.return_value = live
