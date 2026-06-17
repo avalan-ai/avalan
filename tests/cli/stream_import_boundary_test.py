@@ -1,4 +1,5 @@
 from importlib import import_module
+from logging import getLogger
 from sys import modules
 from types import ModuleType
 from unittest import TestCase
@@ -21,7 +22,11 @@ _WATCHED_THEME_MODULES = (
     "avalan.cli.theme_registry",
 )
 _WATCHED_PRESENTER_FORBIDDEN_MODULES = (
-    *_WATCHED_THEME_MODULES,
+    "avalan.cli.theme",
+    "avalan.cli.theme.stream_presenter",
+    "avalan.cli.theme.basic",
+    "avalan.cli.theme.fancy",
+    "avalan.cli.theme_registry",
     "avalan.cli.commands",
     "avalan.cli.commands.agent",
     "avalan.cli.commands.cache",
@@ -65,10 +70,11 @@ class StreamImportBoundaryTestCase(TestCase):
                 modules.pop(name, None)
             modules.update(saved_modules)
 
-    def test_stream_presenter_does_not_import_theme_or_command_modules(
+    def test_stream_presenter_avoids_concrete_themes_and_commands(
         self,
     ) -> None:
         watched = (
+            "avalan.cli._stream_presenter",
             "avalan.cli.stream_presenter",
             *_WATCHED_PRESENTER_FORBIDDEN_MODULES,
         )
@@ -87,7 +93,7 @@ class StreamImportBoundaryTestCase(TestCase):
                 modules.pop(name, None)
             modules.update(saved_modules)
 
-    def test_stream_coordinator_does_not_import_theme_or_command_modules(
+    def test_stream_coordinator_avoids_concrete_themes_and_commands(
         self,
     ) -> None:
         watched = (
@@ -104,6 +110,34 @@ class StreamImportBoundaryTestCase(TestCase):
 
             for name in _WATCHED_COORDINATOR_FORBIDDEN_MODULES:
                 self.assertNotIn(name, modules)
+        finally:
+            for name in watched:
+                modules.pop(name, None)
+            modules.update(saved_modules)
+
+    def test_basic_theme_stream_presenter_does_not_import_fancy(self) -> None:
+        watched = (
+            "avalan.cli.theme.basic",
+            "avalan.cli.theme.fancy",
+            "avalan.cli.theme.stream_presenter",
+        )
+        saved_modules = self._saved_modules_for(watched)
+
+        try:
+            for name in watched:
+                modules.pop(name, None)
+
+            module = import_module("avalan.cli.theme.basic")
+            theme = module.BasicTheme(
+                lambda message: message, lambda s, p, n: s
+            )
+            presenter = theme.stream_presenter(getLogger(__name__))
+
+            self.assertEqual(
+                type(presenter).__name__,
+                "CliStreamSnapshotPresenter",
+            )
+            self.assertNotIn("avalan.cli.theme.fancy", modules)
         finally:
             for name in watched:
                 modules.pop(name, None)

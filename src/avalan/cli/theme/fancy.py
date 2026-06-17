@@ -9,6 +9,10 @@ from ...cli.theme import (
     TokenRenderFrame,
     TokenRenderState,
 )
+from ...cli.theme.stream_presenter import (
+    CliStreamPresenter,
+    LegacyThemeStreamPresenter,
+)
 from ...entities import (
     EngineMessage,
     EngineMessageScored,
@@ -122,6 +126,16 @@ class FancyTheme(Theme):
         "model.continuation.",
         "model_continuation.",
     )
+
+    def stream_presenter(
+        self,
+        logger: Logger,
+        *,
+        event_stats: EventStats | None = None,
+    ) -> CliStreamPresenter:
+        return LegacyThemeStreamPresenter(
+            self, logger, event_stats=event_stats
+        )
 
     @property
     def icons(self) -> dict[Data, str]:

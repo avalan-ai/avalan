@@ -20,8 +20,10 @@ from avalan.cli.stream_presenter import (
     CliStreamPresenterContext,
     CliStreamPresenterRequest,
     CliStreamRenderableFrame,
+    CliStreamSnapshotPresenter,
     LegacyThemeStreamPresenter,
 )
+from avalan.cli.theme import Theme
 from avalan.cli.theme.fancy import FancyTheme
 from avalan.entities import Token, TokenDetail
 from avalan.model.stream import (
@@ -222,6 +224,11 @@ class InvalidTheme:
     pass
 
 
+class NoTokenTheme(Theme):
+    def tokens(self, *_args: object, **_kwargs: object) -> object:
+        raise AssertionError("tokens should not be called")
+
+
 class FakeClock:
     def __init__(self, *values: float) -> None:
         self._values = list(values)
@@ -418,6 +425,172 @@ class StreamAnswerPresenterTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(items, [])
+
+
+class SnapshotStreamPresenterTestCase(IsolatedAsyncioTestCase):
+    async def test_theme_default_presenter_emits_answer_chunks(self) -> None:
+        config = _config()
+        theme = NoTokenTheme(lambda message: message, lambda s, p, n: s)
+        presenter = theme.stream_presenter(getLogger(__name__))
+
+        first = await _collect(
+            presenter,
+            _request(config, _snapshot(config, answer="he"), mode="answer"),
+        )
+        second = await _collect(
+            presenter,
+            _request(config, _snapshot(config, answer="hello"), mode="answer"),
+        )
+
+        self.assertIsInstance(presenter, CliStreamSnapshotPresenter)
+        self.assertEqual(
+            [
+                item.text
+                for item in (*first, *second)
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ["he", "llo"],
+        )
+
+        presenter.reset()
+        reset_items = await _collect(
+            presenter,
+            _request(config, _snapshot(config, answer="hello"), mode="answer"),
+        )
+        self.assertEqual(
+            [
+                item.text
+                for item in reset_items
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ["hello"],
+        )
+
+    async def test_theme_default_presenter_emits_live_frame_roles(
+        self,
+    ) -> None:
+        config = _config(stats=False)
+        theme = NoTokenTheme(lambda message: message, lambda s, p, n: s)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("answer")
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="calc",
+            arguments={"x": 1},
+        )
+        builder.add_event_summary(
+            event_type="flow_node_started",
+            payload={"node": "math"},
+        )
+
+        items = await _collect(
+            theme.stream_presenter(getLogger(__name__)),
+            _request(config, builder.snapshot(), mode="live"),
+        )
+
+        self.assertEqual(
+            [
+                item.role
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+            ["tools", "events"],
+        )
+        self.assertEqual(
+            [
+                item.text
+                for item in items
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ["answer"],
+        )
+
+    async def test_theme_default_presenter_renders_answer_with_stats(
+        self,
+    ) -> None:
+        config = _config(stats=True)
+        theme = NoTokenTheme(lambda message: message, lambda s, p, n: s)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("answer")
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="calc",
+            arguments={"x": 1},
+        )
+        builder.add_event_summary(
+            event_type="flow_node_started",
+            payload={"node": "math"},
+        )
+
+        items = await _collect(
+            theme.stream_presenter(getLogger(__name__)),
+            _request(config, builder.snapshot(), mode="live"),
+        )
+
+        self.assertEqual(
+            [
+                item.role
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+            ["tools", "events", "answer"],
+        )
+
+    async def test_theme_default_presenter_honors_disabled_flags(
+        self,
+    ) -> None:
+        config = _config(
+            stats=False,
+            display_events=False,
+            display_tools=False,
+        )
+        theme = NoTokenTheme(lambda message: message, lambda s, p, n: s)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("answer")
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="calc",
+            arguments={"x": 1},
+        )
+        builder.add_event_summary(
+            event_type="flow_node_started",
+            payload={"node": "math"},
+        )
+
+        items = await _collect(
+            theme.stream_presenter(getLogger(__name__)),
+            _request(config, builder.snapshot(), mode="live"),
+        )
+
+        self.assertEqual(
+            [
+                item.role
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+            [],
+        )
+        self.assertEqual(
+            [
+                item.text
+                for item in items
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ["answer"],
+        )
+
+    async def test_snapshot_presenter_rejects_non_request(self) -> None:
+        presenter = CliStreamSnapshotPresenter(getLogger(__name__))
+
+        with self.assertRaises(AssertionError):
+            await _collect(presenter, object())  # type: ignore[arg-type]
+
+    def test_fancy_presenter_factory_uses_legacy_adapter(self) -> None:
+        theme = FancyTheme(lambda message: message, lambda s, p, n: s)
+
+        presenter = theme.stream_presenter(getLogger(__name__))
+
+        self.assertIsInstance(presenter, LegacyThemeStreamPresenter)
 
 
 class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
@@ -696,6 +869,68 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(tokens[0], TokenDetail)
         self.assertEqual(tokens[0].id, "main-token")
         self.assertEqual(tokens[0].tokens[0].id, "alt-token")
+
+    async def test_live_adapter_isolates_mutable_legacy_token_inputs(
+        self,
+    ) -> None:
+        config = _config()
+        candidate = CliDisplayTokenCandidateSnapshot(
+            token_id=2,
+            text="candidate",
+            probability=0.2,
+        )
+        token_snapshot = CliDisplayTokenSnapshot(
+            sequence=1,
+            token_id=1,
+            text="answer",
+            probability=0.9,
+            candidates=(candidate,),
+        )
+        snapshot = replace(
+            _snapshot(config),
+            display_tokens=(token_snapshot,),
+        )
+        context = _context()
+        request = _request(config, snapshot, context=context)
+
+        async def mutate_theme_inputs(
+            **kwargs: object,
+        ) -> AsyncIterator[tuple[Token | None, str]]:
+            added_tokens = kwargs["added_tokens"]
+            special_tokens = kwargs["special_tokens"]
+            display_tokens = kwargs["tokens"]
+            assert isinstance(added_tokens, list)
+            assert isinstance(special_tokens, list)
+            assert isinstance(display_tokens, list)
+
+            token = display_tokens[0]
+            assert isinstance(token, TokenDetail)
+            assert token.tokens is not None
+            added_tokens.append("mutated")
+            special_tokens.append("<mutated>")
+            token.tokens.append(Token(id=3, token="mutated"))
+            yield None, "frame"
+
+        class MutatingTheme:
+            def tokens(
+                self,
+                **kwargs: object,
+            ) -> AsyncIterator[tuple[Token | None, str]]:
+                return mutate_theme_inputs(**kwargs)
+
+        items = await _collect(
+            LegacyThemeStreamPresenter(
+                MutatingTheme(),
+                getLogger(__name__),
+            ),
+            request,
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(context.tokenizer_tokens, ("a", "b"))
+        self.assertEqual(context.tokenizer_special_tokens, ("<eos>",))
+        self.assertEqual(snapshot.display_tokens, (token_snapshot,))
+        self.assertEqual(snapshot.display_tokens[0].candidates, (candidate,))
 
     async def test_live_adapter_uses_output_usage_for_total_tokens(
         self,
