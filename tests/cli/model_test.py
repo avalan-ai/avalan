@@ -983,6 +983,121 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             ]
         )
 
+    async def test_token_generation_no_stats_prints_only_answer_channel(self):
+        tool_call_id = "call-1"
+
+        def item(
+            sequence: int,
+            kind: StreamItemKind,
+            channel: StreamChannel,
+            *,
+            text_delta: str | None = None,
+        ) -> CanonicalStreamItem:
+            return CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence,
+                kind=kind,
+                channel=channel,
+                correlation=(
+                    StreamItemCorrelation(tool_call_id=tool_call_id)
+                    if channel is StreamChannel.TOOL_CALL
+                    else StreamItemCorrelation()
+                ),
+                text_delta=text_delta,
+                usage=(
+                    {} if kind is StreamItemKind.STREAM_COMPLETED else None
+                ),
+                terminal_outcome=(
+                    StreamTerminalOutcome.COMPLETED
+                    if kind is StreamItemKind.STREAM_COMPLETED
+                    else None
+                ),
+            )
+
+        async def gen():
+            yield item(0, StreamItemKind.STREAM_STARTED, StreamChannel.CONTROL)
+            yield project_canonical_stream_item(
+                item(
+                    1,
+                    StreamItemKind.REASONING_DELTA,
+                    StreamChannel.REASONING,
+                    text_delta="reasoning",
+                )
+            )
+            yield item(
+                2,
+                StreamItemKind.REASONING_DONE,
+                StreamChannel.REASONING,
+            )
+            yield project_canonical_stream_item(
+                item(
+                    3,
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    StreamChannel.TOOL_CALL,
+                    text_delta="tool",
+                )
+            )
+            yield item(
+                4,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamChannel.TOOL_CALL,
+            )
+            yield project_canonical_stream_item(
+                item(
+                    5,
+                    StreamItemKind.TOOL_CALL_DONE,
+                    StreamChannel.TOOL_CALL,
+                )
+            )
+            yield item(
+                6,
+                StreamItemKind.ANSWER_DELTA,
+                StreamChannel.ANSWER,
+                text_delta="answer ",
+            )
+            yield project_canonical_stream_item(
+                item(
+                    7,
+                    StreamItemKind.ANSWER_DELTA,
+                    StreamChannel.ANSWER,
+                    text_delta="text",
+                )
+            )
+            yield item(8, StreamItemKind.ANSWER_DONE, StreamChannel.ANSWER)
+            yield project_canonical_stream_item(
+                item(
+                    9,
+                    StreamItemKind.STREAM_COMPLETED,
+                    StreamChannel.CONTROL,
+                )
+            )
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        await model_cmds.token_generation(
+            args=args,
+            console=console,
+            theme=MagicMock(),
+            logger=MagicMock(),
+            orchestrator=None,
+            event_stats=None,
+            lm=MagicMock(),
+            input_string="i",
+            response=gen(),
+            display_tokens=0,
+            dtokens_pick=0,
+            with_stats=False,
+            tool_events_limit=2,
+            refresh_per_second=2,
+        )
+
+        self.assertEqual(
+            console.print.call_args_list,
+            [call("answer ", end=""), call("text", end="")],
+        )
+
     async def test_token_generation_no_stats_rejects_late_projection(self):
         async def gen():
             for item in (
@@ -4488,6 +4603,84 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         )
         lm.assert_awaited_once()
         tg_patch.assert_awaited_once()
+
+    async def test_run_remote_model_quiet_uses_answer_clean_stream(self):
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            model="id",
+            device="cpu",
+            max_new_tokens=1,
+            quiet=True,
+            skip_hub_access_check=False,
+            no_repl=True,
+            do_sample=False,
+            enable_gradient_calculation=False,
+            min_p=None,
+            repetition_penalty=1.0,
+            temperature=1.0,
+            top_k=1,
+            top_p=1.0,
+            use_cache=True,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=True,
+            display_tools=True,
+            display_tools_events=0,
+        )
+        console = MagicMock()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=False)
+        lm = AsyncMock(return_value="resp")
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        with (
+            patch.object(model_cmds, "ModelManager", return_value=manager),
+            patch(
+                "avalan.cli.commands.model.ModelManager."
+                "get_operation_from_arguments",
+                new=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
+            ),
+            patch.object(model_cmds, "get_input", return_value="hi"),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        theme.model.assert_not_called()
+        console.print.assert_not_called()
+        lm.assert_awaited_once()
+        tg_patch.assert_awaited_once()
+        self.assertFalse(tg_patch.await_args.kwargs["with_stats"])
+        self.assertEqual(tg_patch.await_args.kwargs["tool_events_limit"], 0)
 
     async def test_run_remote_model_with_input_file_and_no_prompt(self):
         with NamedTemporaryFile(suffix=".pdf") as tmp:
