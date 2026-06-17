@@ -1,5 +1,5 @@
-from .fancy import FancyTheme
+from . import Theme
 
 
-class BasicTheme(FancyTheme):
-    """Provide the transitional basic theme using Fancy behavior."""
+class BasicTheme(Theme):
+    """Provide a low-clutter theme using common display defaults."""
