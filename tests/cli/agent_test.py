@@ -2025,6 +2025,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_quiet_prints_output(self):
         self.args.quiet = True
+        self.orch.memory.has_recent_message = True
+        self.orch.memory.recent_message.is_empty = False
+        self.orch.memory.recent_message.data = ["m"]
         output = AsyncMock()
         output.to_str = AsyncMock(return_value="out")
         self.orch.return_value = output
@@ -2047,7 +2050,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             )
         tg_patch.assert_not_called()
         output.to_str.assert_awaited_once()
-        self.console.print.assert_any_call("out")
+        self.theme.agent.assert_not_called()
+        self.theme.recent_messages.assert_not_called()
+        self.console.print.assert_called_once_with("out")
 
     async def test_run_conversation_prints_blank(self):
         self.args.conversation = True

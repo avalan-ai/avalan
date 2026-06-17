@@ -3,6 +3,7 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from contextlib import ExitStack
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event as ThreadEvent
@@ -91,6 +92,25 @@ class CliInitTestCase(TestCase):
         )
         args = cli._parser.parse_args(["--help-full"])
         self.assertTrue(hasattr(args, "help_full"))
+
+    def test_help_formatting_does_not_construct_theme(self):
+        logger = MagicMock()
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch("avalan.cli.__main__.FancyTheme") as theme_class,
+        ):
+            cli = CLI(logger)
+            root_help = cli._parser.format_help()
+            model_run_help = _find_parser_with_suffix(
+                cli._parser, "model run"
+            ).format_help()
+
+        theme_class.assert_not_called()
+        self.assertIn("--quiet", root_help)
+        self.assertIn("--record", root_help)
+        self.assertIn("--display-events", model_run_help)
+        self.assertIn("--display-tools", model_run_help)
+        self.assertIn("--display-tools-events", model_run_help)
 
 
 class CliParallelOptionTestCase(TestCase):
@@ -999,6 +1019,122 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         main_mock.assert_awaited_once()
         help_mock.assert_not_called()
 
+    async def test_ordinary_help_exits_before_theme_construction(self):
+        cases = [
+            (
+                ["prog", "--help"],
+                ["--quiet", "--record", "--version"],
+            ),
+            (
+                ["prog", "agent", "run", "--help"],
+                ["--display-tools", "--display-answer-height", "--stats"],
+            ),
+            (
+                ["prog", "model", "run", "--help"],
+                ["--display-tools", "--display-answer-height", "model"],
+            ),
+        ]
+
+        for argv, expected_fragments in cases:
+            with self.subTest(argv=argv):
+                stdout = StringIO()
+                with (
+                    patch.object(sys, "argv", argv),
+                    patch.object(sys, "stdout", stdout),
+                    patch.object(CLI, "_get_translator") as translator_patch,
+                    patch("avalan.cli.__main__.FancyTheme") as theme_class,
+                    patch("avalan.cli.__main__.RichTheme") as rich_theme,
+                    patch("avalan.cli.__main__.Console") as console_class,
+                    patch.object(CLI, "_main", AsyncMock()) as main_mock,
+                ):
+                    with self.assertRaises(SystemExit) as exit_context:
+                        await self.cli()
+
+                self.assertEqual(exit_context.exception.code, 0)
+                output = stdout.getvalue()
+                for fragment in expected_fragments:
+                    self.assertIn(fragment, output)
+                translator_patch.assert_not_called()
+                theme_class.assert_not_called()
+                rich_theme.assert_not_called()
+                console_class.assert_not_called()
+                main_mock.assert_not_called()
+
+    async def test_call_resolves_locale_before_default_theme_and_console(self):
+        events: list[object] = []
+        console = MagicMock(export_text=lambda: "")
+        rich_theme = object()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.get_styles.return_value = {
+            "model_id": "cyan",
+            "warning": "bold red",
+        }
+
+        def translation_side_effect(*_args, **_kwargs):
+            events.append("translation")
+            return self.translator
+
+        def theme_side_effect(gettext, ngettext):
+            events.append("theme")
+            self.assertEqual(gettext("hello"), "hello")
+            self.assertEqual(ngettext("item", "items", 2), "items")
+            return theme
+
+        def rich_theme_side_effect(*, styles):
+            events.append(("rich_theme", styles))
+            return rich_theme
+
+        def console_side_effect(*, theme, record):
+            events.append(("console", theme, record))
+            return console
+
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch(
+                "avalan.cli.__main__.translation",
+                side_effect=translation_side_effect,
+            ) as translation_patch,
+            patch(
+                "avalan.cli.__main__.FancyTheme",
+                side_effect=theme_side_effect,
+            ) as theme_class,
+            patch(
+                "avalan.cli.__main__.RichTheme",
+                side_effect=rich_theme_side_effect,
+            ) as rich_theme_class,
+            patch(
+                "avalan.cli.__main__.Console",
+                side_effect=console_side_effect,
+            ) as console_class,
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
+            patch.object(CLI, "_main", AsyncMock()) as main_mock,
+        ):
+            await self.cli()
+
+        self.assertEqual(
+            events,
+            [
+                "translation",
+                "theme",
+                (
+                    "rich_theme",
+                    {"model_id": "cyan", "warning": "bold red"},
+                ),
+                ("console", rich_theme, False),
+            ],
+        )
+        translation_patch.assert_called_once()
+        theme_class.assert_called_once()
+        rich_theme_class.assert_called_once_with(
+            styles={"model_id": "cyan", "warning": "bold red"}
+        )
+        console_class.assert_called_once_with(theme=rich_theme, record=False)
+        main_mock.assert_awaited_once()
+        self.assertIs(main_mock.await_args.args[1], theme)
+        self.assertIs(main_mock.await_args.args[2], console)
+
     async def test_call_raises_when_huggingface_hub_is_missing(self):
         with (
             patch.object(sys, "argv", ["prog"]),
@@ -1021,8 +1157,10 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_help_full_outputs_all_commands(self):
         records_console = None
+        console_kwargs = []
 
         def create_console(*args, **kwargs):
+            console_kwargs.append(kwargs)
             nonlocal records_console
             from rich.console import Console
 
@@ -1037,8 +1175,10 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             patch(
                 "avalan.cli.__main__.FancyTheme",
                 return_value=MagicMock(get_styles=lambda: {}),
-            ),
-            patch("avalan.cli.__main__.Console", side_effect=create_console),
+            ) as theme_class,
+            patch(
+                "avalan.cli.__main__.Console", side_effect=create_console
+            ) as console_class,
             patch.object(CLI, "_needs_hf_token", return_value=False),
             patch("avalan.cli.__main__._huggingface_hub_class"),
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
@@ -1047,12 +1187,55 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             await self.cli()
 
         main_mock.assert_not_called()
+        theme_class.assert_called_once()
+        console_class.assert_called_once()
+        self.assertIn("theme", console_kwargs[0])
+        self.assertIsNotNone(console_kwargs[0]["theme"])
         self.assertEqual(
             help_mock.call_count, len(_collect_progs(self.cli._parser))
         )
         output = records_console.export_text()
         for prog in _collect_progs(self.cli._parser):
             self.assertIn(prog, output)
+
+    async def test_call_help_full_uses_themed_console_and_skips_dispatch(self):
+        console = MagicMock()
+        rich_theme = object()
+        theme = MagicMock()
+        theme.get_styles.return_value = {"sentinel": "bold red"}
+
+        with (
+            patch.object(sys, "argv", ["prog", "--help-full"]),
+            patch(
+                "avalan.cli.__main__.translation", return_value=self.translator
+            ),
+            patch(
+                "avalan.cli.__main__.FancyTheme", return_value=theme
+            ) as theme_class,
+            patch(
+                "avalan.cli.__main__.RichTheme", return_value=rich_theme
+            ) as rich_theme_class,
+            patch(
+                "avalan.cli.__main__.Console", return_value=console
+            ) as console_class,
+            patch.object(CLI, "_needs_hf_token", AsyncMock()) as needs_token,
+            patch("avalan.cli.__main__._huggingface_hub_class") as hub_class,
+            patch.object(CLI, "_main", AsyncMock()) as main_mock,
+            patch.object(CLI, "_help") as help_mock,
+        ):
+            await self.cli()
+
+        theme_class.assert_called_once_with(
+            self.translator.gettext, self.translator.ngettext
+        )
+        rich_theme_class.assert_called_once_with(
+            styles={"sentinel": "bold red"}
+        )
+        console_class.assert_called_once_with(theme=rich_theme, record=False)
+        help_mock.assert_called_once_with(console, self.cli._parser)
+        needs_token.assert_not_called()
+        hub_class.assert_not_called()
+        main_mock.assert_not_called()
 
 
 class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
@@ -1079,6 +1262,9 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
         with (
             patch.object(sys, "argv", ["prog", "--version"]),
             patch("builtins.print") as print_patch,
+            patch("avalan.cli.__main__.translation") as translation_patch,
+            patch("avalan.cli.__main__.FancyTheme") as theme_class,
+            patch("avalan.cli.__main__.Console") as console_class,
             patch.object(CLI, "_main", AsyncMock()) as main_mock,
             patch.object(CLI, "_help") as help_mock,
         ):
@@ -1087,6 +1273,9 @@ class CliModuleUtilitiesTestCase(IsolatedAsyncioTestCase):
         print_patch.assert_called_once_with(
             f"{self.cli._name} {self.cli._version}"
         )
+        translation_patch.assert_not_called()
+        theme_class.assert_not_called()
+        console_class.assert_not_called()
         main_mock.assert_not_called()
         help_mock.assert_not_called()
 
