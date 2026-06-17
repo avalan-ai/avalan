@@ -1294,6 +1294,28 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             return_value=self.orch
         )
 
+    def _callback_stack(self):
+        class CallbackStack:
+            def __init__(self, orchestrator):
+                self.callbacks = []
+                self.orchestrator = orchestrator
+                self.enter_async_context = AsyncMock(return_value=orchestrator)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_value, traceback):
+                _ = (exc_type, exc_value, traceback)
+                for callback, args, kwargs in reversed(self.callbacks):
+                    callback(*args, **kwargs)
+                return False
+
+            def callback(self, callback, *args, **kwargs):
+                self.callbacks.append((callback, args, kwargs))
+                return callback
+
+        return CallbackStack(self.orch)
+
     async def test_returns_when_no_input(self):
         with (
             patch.object(agent_cmds, "get_input", return_value=None),
@@ -2375,6 +2397,68 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.orch.event_manager.add_ui_listener.assert_called_once()
         self.orch.event_manager.add_listener.assert_not_called()
         self.assertIn("fn", captured)
+
+    async def test_event_listener_removed_on_stack_exit(self):
+        captured = {}
+        stack = self._callback_stack()
+        self.orch.event_manager.remove_listener = MagicMock()
+
+        def add_listener(fn):
+            captured["fn"] = fn
+
+        self.orch.event_manager.add_listener.side_effect = add_listener
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(agent_cmds, "AsyncExitStack", return_value=stack),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.assertIn("fn", captured)
+        self.orch.event_manager.remove_listener.assert_called_once_with(
+            captured["fn"]
+        )
+
+    async def test_ui_event_listener_removed_on_stack_exit(self):
+        captured = {}
+        stack = self._callback_stack()
+        self.orch.event_manager.remove_listener = MagicMock()
+
+        def add_ui_listener(fn):
+            captured["fn"] = fn
+
+        self.orch.event_manager.add_ui_listener = MagicMock(
+            side_effect=add_ui_listener
+        )
+        with (
+            patch.object(agent_cmds, "get_input", return_value=None),
+            patch.object(agent_cmds, "AsyncExitStack", return_value=stack),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ),
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        self.assertIn("fn", captured)
+        self.orch.event_manager.remove_listener.assert_called_once_with(
+            captured["fn"]
+        )
 
     async def test_run_tools_confirm_calls_callback(self):
         self.args.tools_confirm = True

@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import perf_counter
 from types import TracebackType
 from typing import Protocol, TypeAlias
 
@@ -91,6 +92,7 @@ class CliStreamLiveFactory(Protocol):
 
 
 RecordFilenameFactory = Callable[[], str]
+CliStreamClock = Callable[[], float]
 
 
 class ToolConfirmationPrompt(Protocol):
@@ -115,14 +117,19 @@ class CliStreamCoordinator:
         *,
         live_factory: CliStreamLiveFactory | None = None,
         record_filename_factory: RecordFilenameFactory | None = None,
+        clock: CliStreamClock | None = None,
     ) -> None:
         assert isinstance(display_config, CliStreamDisplayConfig)
+        assert clock is None or callable(clock)
         self._console = console
         self._display_config = display_config
         self._live_factory = live_factory or _default_live_factory
         self._record_filename_factory = (
             record_filename_factory or stream_recording_filename
         )
+        self._clock = clock or perf_counter
+        self._flush_interval = 1 / display_config.refresh_per_second
+        self._last_flush_at: float | None = None
         self._live: CliStreamLive | None = None
         self._live_refresh: _LiveRefreshState = _LIVE_REFRESH_RUNNING
         self._role_renderables: dict[StreamFrameRole, RenderableType] = {}
@@ -216,7 +223,7 @@ class CliStreamCoordinator:
             assert not self._closed
             if self._is_paused():
                 return
-            await self._flush_pending()
+            await self._flush_pending(force=True)
 
     async def _resume(self) -> None:
         assert not self._closed
@@ -228,7 +235,7 @@ class CliStreamCoordinator:
 
         self._resume_live_refresh()
         try:
-            await self._flush_pending()
+            await self._flush_pending(force=True)
         except BaseException:
             await self._aclose(flush=False)
             raise
@@ -275,33 +282,41 @@ class CliStreamCoordinator:
         if self._closed:
             return
 
-        should_flush = flush and not self._is_prompt_paused()
+        should_flush = flush
         try:
             if should_flush:
                 self._manual_pause_depth = 0
                 self._prompt_pause = _PROMPT_PAUSE_IDLE
                 self._resume_live_refresh()
-                await self._flush_pending()
+                await self._flush_pending(force=True)
         finally:
             self._closed = True
             self._restore_live_refresh(refresh=False)
             self._clear_pause_state()
             self._close_live()
 
-    async def _flush_pending(self) -> None:
+    async def _flush_pending(self, *, force: bool = False) -> None:
         assert not self._is_paused()
         if not self._pending_flush or not self._role_renderables:
+            return
+        if not force and not self._flush_gate_due():
             return
 
         renderable = self._current_renderable()
         live = self._ensure_live()
         live.update(renderable)
+        self._last_flush_at = self._clock()
         self._pending_flush = False
         if self._display_config.record_enabled:
             self._console.save_svg(
                 self._record_filename_factory(),
                 clear=True,
             )
+
+    def _flush_gate_due(self) -> bool:
+        if self._last_flush_at is None:
+            return True
+        return self._clock() - self._last_flush_at >= self._flush_interval
 
     def _current_renderable(self) -> RenderableType:
         renderables = [
@@ -358,7 +373,7 @@ class CliStreamCoordinator:
 
             self._resume_live_refresh()
             try:
-                await self._flush_pending()
+                await self._flush_pending(force=True)
             except BaseException:
                 await self._aclose(flush=False)
                 raise

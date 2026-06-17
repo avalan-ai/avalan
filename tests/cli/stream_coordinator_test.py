@@ -188,6 +188,129 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
             ["event", "tool", "stats", "token"],
         )
 
+    async def test_gate_coalesces_mixed_roles_and_records_flushes(
+        self,
+    ) -> None:
+        fake_live = _FakeLive()
+        console = MagicMock()
+        now = 0.0
+
+        def clock() -> float:
+            return now
+
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(
+                display_tools=True,
+                display_events=True,
+                record=True,
+            ),
+            live_factory=MagicMock(return_value=fake_live),
+            record_filename_factory=lambda: "frame.svg",
+            clock=clock,
+        )
+
+        async with coordinator:
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="stream-1", role="stream")
+            )
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="event-1", role="events")
+            )
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="stats-1", role="stats")
+            )
+
+            self.assertEqual(fake_live.updates, ["stream-1"])
+            console.save_svg.assert_called_once_with("frame.svg", clear=True)
+
+            now = 0.1
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="tool-1", role="tools")
+            )
+            self.assertEqual(fake_live.updates, ["stream-1"])
+
+            now = 0.2
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="stream-2", role="stream")
+            )
+
+            self.assertEqual(len(fake_live.updates), 2)
+            self.assertIsInstance(fake_live.updates[-1], Group)
+            self.assertEqual(
+                list(cast(Group, fake_live.updates[-1]).renderables),
+                ["event-1", "tool-1", "stats-1", "stream-2"],
+            )
+            self.assertEqual(console.save_svg.call_count, 2)
+
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="event-2", role="events")
+            )
+            self.assertEqual(len(fake_live.updates), 2)
+
+            await coordinator.flush()
+
+        self.assertEqual(len(fake_live.updates), 3)
+        self.assertEqual(console.save_svg.call_count, 3)
+        self.assertIsInstance(fake_live.updates[-1], Group)
+        self.assertEqual(
+            list(cast(Group, fake_live.updates[-1]).renderables),
+            ["event-2", "tool-1", "stats-1", "stream-2"],
+        )
+
+    async def test_close_force_flushes_pending_frame_inside_gate(self) -> None:
+        fake_live = _FakeLive()
+        now = 0.0
+
+        def clock() -> float:
+            return now
+
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            clock=clock,
+        )
+
+        async with coordinator:
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="first")
+            )
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="final")
+            )
+
+        self.assertEqual(fake_live.updates, ["first", "final"])
+
+    async def test_close_without_flush_drops_pending_frame_inside_gate(
+        self,
+    ) -> None:
+        fake_live = _FakeLive()
+        console = MagicMock()
+        now = 0.0
+
+        def clock() -> float:
+            return now
+
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(record=True),
+            live_factory=MagicMock(return_value=fake_live),
+            record_filename_factory=lambda: "frame.svg",
+            clock=clock,
+        )
+
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="first")
+        )
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="pending")
+        )
+        await coordinator.aclose(flush=False)
+
+        self.assertEqual(fake_live.updates, ["first"])
+        console.save_svg.assert_called_once_with("frame.svg", clear=True)
+
     async def test_answer_only_prints_without_live(self) -> None:
         console = MagicMock()
         live_factory = MagicMock()

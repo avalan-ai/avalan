@@ -25,7 +25,7 @@ from ...entities import (
     Modality,
     Model,
 )
-from ...event import TOOL_TYPES, Event, EventStats
+from ...event import TOOL_TYPES, Event, EventStats, EventType
 from ...model.call import ModelCall, ModelCallContext
 from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.input import input_files
@@ -67,7 +67,6 @@ from asyncio import (
 )
 from collections.abc import AsyncIterable, Iterable, Mapping
 from dataclasses import replace
-from datetime import datetime, timezone
 from functools import partial
 from logging import Logger, getLogger
 from time import perf_counter
@@ -843,6 +842,9 @@ async def token_generation(
     )
     coordinator = CliStreamCoordinator(console, display_config)
     event_listen: Any = None
+    side_channel_events_enabled = True
+    snapshot_revision = 0
+    presented_snapshot_revision = -1
     if orchestrator is not None and (
         display_config.show_events or display_config.show_tools
     ):
@@ -852,25 +854,41 @@ async def token_generation(
             event_listen = listen
 
     async def render_snapshot() -> None:
+        nonlocal presented_snapshot_revision
+        if presented_snapshot_revision == snapshot_revision:
+            return
+        snapshot = reducer.snapshot()
         request = CliStreamPresenterRequest(
-            snapshot=reducer.snapshot(),
+            snapshot=snapshot,
             display_config=display_config,
             context=presenter_context,
             mode=presenter_mode,
         )
         async for item in presenter.present(request):
             await coordinator.handle_item(item)
+        presented_snapshot_revision = snapshot_revision
 
     async def reduce_projection(
         projection: StreamConsumerProjection,
     ) -> None:
+        nonlocal side_channel_events_enabled, snapshot_revision
         async with render_lock:
             reducer.reduce_projection(projection)
+            if projection.terminal_outcome is not None:
+                side_channel_events_enabled = False
+                stop_signal.set()
+            snapshot_revision += 1
             await render_snapshot()
 
     async def reduce_event(event: Event) -> None:
+        nonlocal snapshot_revision
         async with render_lock:
+            if not side_channel_events_enabled:
+                return
             reducer.reduce_event(event)
+            if _stream_event_type(event) == EventType.TOKEN_GENERATED.value:
+                return
+            snapshot_revision += 1
             await render_snapshot()
 
     async def event_stream() -> None:
@@ -879,15 +897,24 @@ async def token_generation(
             await reduce_event(event)
 
     async def response_stream() -> None:
-        async for projection in _stream_render_projections(
-            response,
-            stream_session_id="cli-render-stream",
-            run_id="cli-render-run",
-            turn_id="cli-render-turn",
-        ):
-            await reduce_projection(projection)
-        async with render_lock:
-            await coordinator.flush()
+        nonlocal side_channel_events_enabled
+        try:
+            async for projection in _stream_render_projections(
+                response,
+                stream_session_id="cli-render-stream",
+                run_id="cli-render-run",
+                turn_id="cli-render-turn",
+            ):
+                await reduce_projection(projection)
+        except BaseException:
+            stop_signal.set()
+            raise
+        else:
+            side_channel_events_enabled = False
+            stop_signal.set()
+            async with render_lock:
+                await render_snapshot()
+                await coordinator.flush()
 
     if coordinator_container is not None:
         coordinator_container["coordinator"] = None
@@ -898,6 +925,9 @@ async def token_generation(
                 coordinator_container["coordinator"] = coordinator
             try:
                 await response_stream()
+            except (CancelledError, KeyboardInterrupt, StreamValidationError):
+                stop_signal.set()
+                raise
             finally:
                 if coordinator_container is not None:
                     coordinator_container["coordinator"] = None
@@ -971,6 +1001,9 @@ async def token_generation(
                             ) and not isinstance(result, CancelledError):
                                 raise result
                     return
+        except (CancelledError, KeyboardInterrupt, StreamValidationError):
+            stop_signal.set()
+            raise
         finally:
             stop_signal.set()
             if coordinator_container is not None:
@@ -1709,6 +1742,14 @@ def _stream_text(
 ) -> str | None:
     assert isinstance(token, StreamConsumerProjection)
     return stream_projection_text_delta(token)
+
+
+def _stream_event_type(event: Event) -> str:
+    assert isinstance(event, Event)
+    event_type = event.type
+    if isinstance(event_type, EventType):
+        return event_type.value
+    return str(event_type)
 
 
 def _is_reasoning_stream_item(token: object) -> bool:

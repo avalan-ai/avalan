@@ -732,14 +732,29 @@ async def agent_run(
                     event_manager_mode=EventManagerMode.CLI,
                 )
         event_manager = orchestrator.event_manager
-        add_ui_listener = getattr(event_manager, "add_ui_listener", None)
-        has_ui_listener = callable(
-            getattr(type(event_manager), "add_ui_listener", None)
-        ) or "add_ui_listener" in getattr(event_manager, "__dict__", {})
-        if has_ui_listener and callable(add_ui_listener):
+
+        def event_manager_method(name: str) -> Any | None:
+            method = getattr(event_manager, name, None)
+            has_method = callable(
+                getattr(type(event_manager), name, None)
+            ) or name in getattr(event_manager, "__dict__", {})
+            return method if has_method and callable(method) else None
+
+        add_ui_listener = event_manager_method("add_ui_listener")
+        if add_ui_listener is not None:
             add_ui_listener(_event_listener)
         else:
-            event_manager.add_listener(_event_listener)
+            add_listener = event_manager_method("add_listener")
+            assert callable(add_listener)
+            add_listener(_event_listener)
+        remove_listener = event_manager_method("remove_listener")
+        register_cleanup = getattr(stack, "callback", None)
+        has_cleanup = callable(
+            getattr(type(stack), "callback", None)
+        ) or "callback" in getattr(stack, "__dict__", {})
+        if remove_listener is not None and has_cleanup:
+            assert callable(register_cleanup)
+            register_cleanup(remove_listener, _event_listener)
 
         orchestrator = await stack.enter_async_context(orchestrator)
 
