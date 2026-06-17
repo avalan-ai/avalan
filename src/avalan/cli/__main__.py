@@ -1,7 +1,11 @@
 from .. import license, name, site, version
 from ..cli import CommandAbortException, has_input
 from ..cli.commands import is_ds4_backend_selected
-from ..cli.theme_registry import DEFAULT_THEME_NAME, create_theme
+from ..cli.theme_registry import (
+    DEFAULT_THEME_NAME,
+    SUPPORTED_THEME_NAMES,
+    create_theme,
+)
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -33,6 +37,7 @@ from ..utils import logger_replace
 import gettext
 import sys
 from argparse import (
+    SUPPRESS,
     ArgumentParser,
     ArgumentTypeError,
     Namespace,
@@ -911,6 +916,12 @@ class CLI:
             type=str,
             default=default_locale,
             help=f"Language to use (defaults to {default_locale})",
+        )
+        global_parser.add_argument(
+            "--theme",
+            choices=SUPPORTED_THEME_NAMES,
+            default=SUPPRESS,
+            help="Theme to use (default is fancy)",
         )
         global_parser.add_argument(
             "--loader-class",
@@ -3885,8 +3896,9 @@ class CLI:
 
         assert self._logger is not None and isinstance(self._logger, Logger)
 
+        theme_name = getattr(args, "theme", DEFAULT_THEME_NAME)
         theme = create_theme(
-            DEFAULT_THEME_NAME,
+            theme_name,
             translator.gettext,
             translator.ngettext,
         )

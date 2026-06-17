@@ -109,9 +109,117 @@ class CliInitTestCase(TestCase):
         theme_class.assert_not_called()
         self.assertIn("--quiet", root_help)
         self.assertIn("--record", root_help)
+        self.assertIn("--theme {fancy,basic}", root_help)
+        self.assertIn("default is fancy", root_help)
+        self.assertIn("--theme {fancy,basic}", model_run_help)
+        self.assertIn("default is fancy", model_run_help)
         self.assertIn("--display-events", model_run_help)
         self.assertIn("--display-tools", model_run_help)
         self.assertIn("--display-tools-events", model_run_help)
+
+
+class CliThemeOptionTestCase(TestCase):
+    def _cli(self) -> CLI:
+        logger = MagicMock()
+        with patch.object(sys, "argv", ["prog"]):
+            return CLI(logger)
+
+    def test_no_theme_is_absent_from_parsed_namespace(self) -> None:
+        cli = self._cli()
+        cases = [
+            [],
+            ["agent", "run"],
+            ["model", "run", "ai://openai/gpt-4o-mini"],
+            ["flow", "run", "flow.toml"],
+        ]
+
+        for argv in cases:
+            with self.subTest(argv=argv):
+                args = cli._parser.parse_args(argv)
+
+            self.assertFalse(hasattr(args, "theme"))
+
+    def test_root_position_theme_argument(self) -> None:
+        cli = self._cli()
+
+        for theme in ("fancy", "basic"):
+            with self.subTest(theme=theme):
+                args = cli._parser.parse_args(["--theme", theme])
+
+            self.assertEqual(args.theme, theme)
+
+    def test_leaf_position_theme_argument(self) -> None:
+        cli = self._cli()
+        cases = [
+            ["agent", "run", "--theme", "basic"],
+            ["model", "run", "ai://openai/gpt-4o-mini", "--theme", "basic"],
+            ["flow", "run", "flow.toml", "--theme", "basic"],
+        ]
+
+        for argv in cases:
+            with self.subTest(argv=argv):
+                args = cli._parser.parse_args(argv)
+
+            self.assertEqual(args.theme, "basic")
+
+    def test_leaf_position_theme_overrides_root_theme(self) -> None:
+        cli = self._cli()
+        cases = [
+            ["--theme", "fancy", "agent", "run", "--theme", "basic"],
+            [
+                "--theme",
+                "basic",
+                "model",
+                "run",
+                "ai://openai/gpt-4o-mini",
+                "--theme",
+                "fancy",
+            ],
+        ]
+
+        for argv in cases:
+            with self.subTest(argv=argv):
+                args = cli._parser.parse_args(argv)
+
+            self.assertEqual(args.theme, argv[-1])
+
+    def test_root_position_theme_is_not_overwritten_by_nested_parser(
+        self,
+    ) -> None:
+        cli = self._cli()
+        cases = [
+            ["--theme", "basic", "agent", "run"],
+            [
+                "--theme",
+                "basic",
+                "model",
+                "run",
+                "ai://openai/gpt-4o-mini",
+            ],
+            ["--theme", "basic", "flow", "run", "flow.toml"],
+        ]
+
+        for argv in cases:
+            with self.subTest(argv=argv):
+                args = cli._parser.parse_args(argv)
+
+            self.assertEqual(args.theme, "basic")
+
+    def test_invalid_theme_exits_through_argparse_choices(self) -> None:
+        cli = self._cli()
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "stderr", stderr),
+            self.assertRaises(SystemExit) as exit_context,
+        ):
+            cli._parser.parse_args(["--theme", "plain"])
+
+        self.assertEqual(exit_context.exception.code, 2)
+        output = stderr.getvalue()
+        self.assertIn("invalid choice", output)
+        self.assertIn("fancy", output)
+        self.assertIn("basic", output)
 
 
 class CliParallelOptionTestCase(TestCase):
@@ -1024,15 +1132,33 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         cases = [
             (
                 ["prog", "--help"],
-                ["--quiet", "--record", "--version"],
+                [
+                    "--quiet",
+                    "--record",
+                    "--theme {fancy,basic}",
+                    "default is fancy",
+                    "--version",
+                ],
             ),
             (
                 ["prog", "agent", "run", "--help"],
-                ["--display-tools", "--display-answer-height", "--stats"],
+                [
+                    "--display-tools",
+                    "--display-answer-height",
+                    "--stats",
+                    "--theme {fancy,basic}",
+                    "default is fancy",
+                ],
             ),
             (
                 ["prog", "model", "run", "--help"],
-                ["--display-tools", "--display-answer-height", "model"],
+                [
+                    "--display-tools",
+                    "--display-answer-height",
+                    "model",
+                    "--theme {fancy,basic}",
+                    "default is fancy",
+                ],
             ),
         ]
 
@@ -1138,6 +1264,56 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         )
         console_class.assert_called_once_with(theme=rich_theme, record=False)
         main_mock.assert_awaited_once()
+        self.assertIs(main_mock.await_args.args[1], theme)
+        self.assertIs(main_mock.await_args.args[2], console)
+
+    async def test_call_uses_explicit_basic_theme_for_console_and_main(
+        self,
+    ) -> None:
+        console = MagicMock(export_text=lambda: "")
+        rich_theme = object()
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.get_styles.return_value = {
+            "selected_theme": "bold green",
+            "warning": "yellow",
+        }
+
+        with (
+            patch.object(sys, "argv", ["prog", "--theme", "basic"]),
+            patch(
+                "avalan.cli.__main__.translation",
+                return_value=self.translator,
+            ),
+            patch(
+                "avalan.cli.__main__.create_theme",
+                return_value=theme,
+            ) as theme_class,
+            patch(
+                "avalan.cli.__main__.RichTheme",
+                return_value=rich_theme,
+            ) as rich_theme_class,
+            patch(
+                "avalan.cli.__main__.Console",
+                return_value=console,
+            ) as console_class,
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch("avalan.cli.__main__._huggingface_hub_class"),
+            patch.object(CLI, "_main", AsyncMock()) as main_mock,
+        ):
+            await self.cli()
+
+        theme_class.assert_called_once_with(
+            "basic",
+            self.translator.gettext,
+            self.translator.ngettext,
+        )
+        rich_theme_class.assert_called_once_with(
+            styles={"selected_theme": "bold green", "warning": "yellow"}
+        )
+        console_class.assert_called_once_with(theme=rich_theme, record=False)
+        main_mock.assert_awaited_once()
+        self.assertEqual(main_mock.await_args.args[0].theme, "basic")
         self.assertIs(main_mock.await_args.args[1], theme)
         self.assertIs(main_mock.await_args.args[2], console)
 
