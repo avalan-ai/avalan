@@ -21,14 +21,17 @@ from ...event import Event, EventStats, EventType
 from ...memory.permanent import Memory as Memory
 from ...memory.permanent import PermanentMemoryPartition
 from ...model.stream import StreamChannel, StreamItemKind
+from ..display_safety import MAX_SUMMARY_ITEMS as _MAX_SUMMARY_ITEMS
+from ..display_safety import event_type_value as _event_type_value
+from ..display_safety import safe_summary as _safe_summary
+from ..display_safety import safe_text as _safe_text
+from ..display_safety import value_from as _value_from
 from ..download import DownloadCompleteColumn
 
 from collections.abc import Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
-from json import dumps
 from logging import Logger
-from re import sub
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -42,7 +45,6 @@ from uuid import UUID
 
 from humanize import intcomma, intword, naturalsize, naturaltime
 from rich.console import RenderableType
-from rich.markup import escape
 from rich.progress import BarColumn, SpinnerColumn, TimeElapsedColumn
 from rich.spinner import Spinner as RichSpinner
 
@@ -69,177 +71,6 @@ Data = str
 DataValue = datetime | float | int | str | UUID | None
 Styler: TypeAlias = Callable[[Data, DataValue, str | None, bool | str], str]
 Stylers = dict[Data, Styler]
-
-_MAX_SUMMARY_CHARS = 300
-_MAX_SUMMARY_DEPTH = 5
-_MAX_SUMMARY_ITEMS = 6
-_MAX_TEXT_CHARS = 120
-_ANSI_CONTROL_STRING_PATTERN = (
-    r"(?:\x1b\][\s\S]*?(?:\x07|\x1b\\|$)"
-    r"|\x9d[\s\S]*?(?:\x07|\x1b\\|\x9c|$)"
-    r"|\x1b[PX^_][\s\S]*?(?:\x1b\\|$)"
-    r"|[\x90\x98\x9e\x9f][\s\S]*?(?:\x1b\\|\x9c|$))"
-)
-_ANSI_CSI_PATTERN = r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"
-_ANSI_ESCAPE_PATTERN = r"\x1b[ -/]*[0-~]"
-_REDACTED = "<redacted>"
-_SENSITIVE_KEY_PARTS = frozenset(
-    {
-        "api_key",
-        "apikey",
-        "authorization",
-        "password",
-        "secret",
-        "token",
-    }
-)
-
-
-def _truncate_text(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    if limit <= 3:
-        return text[:limit]
-    return text[: limit - 3] + "..."
-
-
-def _strip_terminal_controls(text: str) -> str:
-    text = sub(_ANSI_CONTROL_STRING_PATTERN, "", text)
-    text = sub(_ANSI_CSI_PATTERN, "", text)
-    return sub(_ANSI_ESCAPE_PATTERN, "", text)
-
-
-def _safe_text(value: object, *, limit: int = _MAX_TEXT_CHARS) -> str:
-    try:
-        text = str(value)
-    except Exception:
-        text = f"<unrepresentable {type(value).__name__}>"
-    text = _strip_terminal_controls(text)
-    text = text.replace("\r", "\\r").replace("\n", "\\n")
-    text = text.replace("\t", "\\t")
-    text = sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
-    return escape(_truncate_text(text, limit))
-
-
-def _is_sensitive_key(key: object) -> bool:
-    try:
-        key_text = _strip_terminal_controls(str(key)).lower()
-    except Exception:
-        return False
-    key_text = sub(r"\[/?[^\]]+\]", "", key_text)
-    compact_key = sub(r"[^a-z0-9]", "", key_text)
-    return any(
-        sensitive in key_text or sensitive.replace("_", "") in compact_key
-        for sensitive in _SENSITIVE_KEY_PARTS
-    )
-
-
-def _safe_data(
-    value: object,
-    *,
-    key: object | None = None,
-    depth: int = 0,
-    seen: set[int] | None = None,
-) -> object:
-    if key is not None and _is_sensitive_key(key):
-        return _REDACTED
-    if value is None or isinstance(value, bool | int | float):
-        return value
-    if isinstance(value, datetime | UUID):
-        return _safe_text(value)
-    if isinstance(value, str):
-        return _safe_text(value)
-    if isinstance(value, bytes):
-        return f"<bytes {len(value)}>"
-    if depth >= _MAX_SUMMARY_DEPTH:
-        return f"<{type(value).__name__}>"
-
-    seen = seen if seen is not None else set()
-    tracks_identity = isinstance(
-        value, Mapping | list | tuple | set | frozenset
-    ) or (is_dataclass(value) and not isinstance(value, type))
-    if tracks_identity:
-        value_id = id(value)
-        if value_id in seen:
-            return "<cycle>"
-        seen.add(value_id)
-    try:
-        if isinstance(value, Mapping):
-            safe_mapping: dict[str, object] = {}
-            try:
-                items = value.items()
-                for index, (child_key, child_value) in enumerate(items):
-                    if index >= _MAX_SUMMARY_ITEMS:
-                        safe_mapping["..."] = "truncated"
-                        break
-                    safe_mapping[_safe_text(child_key)] = _safe_data(
-                        child_value,
-                        key=child_key,
-                        depth=depth + 1,
-                        seen=seen,
-                    )
-            except Exception:
-                return f"<unreadable {type(value).__name__}>"
-            return safe_mapping
-        if isinstance(value, list | tuple | set | frozenset):
-            safe_sequence: list[object] = []
-            for index, item in enumerate(value):
-                if index >= _MAX_SUMMARY_ITEMS:
-                    safe_sequence.append("truncated")
-                    break
-                safe_sequence.append(
-                    _safe_data(item, depth=depth + 1, seen=seen)
-                )
-            return safe_sequence
-        if is_dataclass(value) and not isinstance(value, type):
-            safe_object: dict[str, object] = {}
-            for index, field in enumerate(fields(value)):
-                if index >= _MAX_SUMMARY_ITEMS:
-                    safe_object["..."] = "truncated"
-                    break
-                try:
-                    field_value = getattr(value, field.name)
-                except Exception:
-                    field_value = f"<unreadable {field.name}>"
-                safe_object[field.name] = _safe_data(
-                    field_value,
-                    key=field.name,
-                    depth=depth + 1,
-                    seen=seen,
-                )
-            return safe_object
-    finally:
-        if tracks_identity:
-            seen.remove(id(value))
-    return _safe_text(value)
-
-
-def _safe_summary(
-    value: object,
-    *,
-    limit: int = _MAX_SUMMARY_CHARS,
-) -> str:
-    safe_value = _safe_data(value)
-    try:
-        text = dumps(safe_value, ensure_ascii=True, sort_keys=True)
-    except Exception:
-        text = _safe_text(safe_value)
-    return _truncate_text(text, limit)
-
-
-def _value_from(value: object, name: str) -> object | None:
-    if isinstance(value, Mapping):
-        return value.get(name)
-    try:
-        return cast(object, getattr(value, name))
-    except Exception:
-        return None
-
-
-def _event_type_value(event_type: EventType | str) -> str:
-    return (
-        event_type.value if isinstance(event_type, EventType) else event_type
-    )
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
