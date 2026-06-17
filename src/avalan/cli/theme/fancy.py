@@ -1974,7 +1974,7 @@ class FancyTheme(Theme):
         limit_answer_height: bool = False,
         start_thinking: bool = False,
     ) -> Iterator[TokenRenderFrame]:
-        assert isinstance(state, TokenRenderState)
+        assert hasattr(state, "model_id")
         _ = logits_count, tool_events_limit, start_thinking
         _, _n, _f, _l = self._, self._n, self._f, logger.debug
         model_id = state.model_id

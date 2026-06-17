@@ -10,7 +10,6 @@ from avalan.agent import (
 )
 from avalan.agent.engine import EngineAgent
 from avalan.cli.commands import agent as agent_cmds
-from avalan.cli.commands import model as model_cmds
 from avalan.entities import (
     EngineUri,
     GenerationSettings,
@@ -475,19 +474,20 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                     " by 2?"
                 ),
             ),
-            patch.object(model_cmds, "Live", return_value=live_cm),
+            patch("avalan.cli.stream_coordinator.Live", return_value=live_cm),
         ):
             await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
 
-        theme.events.assert_called()
+        theme.events.assert_not_called()
+        theme.tokens.assert_not_called()
+        live.update.assert_called()
         self.assertTrue(
             any(
-                call.kwargs["include_tools"]
-                for call in theme.events.call_args_list
+                "tool" in str(call.args[0])
+                for call in live.update.call_args_list
             )
         )
         theme.token_frames.assert_not_called()
-        live.refresh.assert_called()
         console.print.assert_any_call("< ", end="")
 
     async def test_cli_conversation_with_piped_input_exits_without_tty(self):

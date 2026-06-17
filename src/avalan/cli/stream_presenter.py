@@ -1,6 +1,7 @@
 """Define CLI stream presenter contracts."""
 
-from ..entities import ProbabilityDistribution, Token, TokenDetail
+from ..event import EventStats
+from ..model.stream import StreamChannel, StreamItemKind
 from .display import CliStreamDisplayConfig
 from .display_snapshot import (
     CliDisplayTokenCandidateSnapshot,
@@ -9,7 +10,7 @@ from .display_snapshot import (
     CliStreamSnapshot,
 )
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from inspect import isawaitable
 from logging import Logger
@@ -20,19 +21,64 @@ from rich.console import RenderableType
 StreamPresenterMode = Literal["live", "answer"]
 StreamFrameRole = Literal["stream", "events", "tools", "stats", "answer"]
 TokenFrameStream: TypeAlias = AsyncIterator[
-    tuple[Token | None, RenderableType]
+    tuple["_ThemeTokenRenderDisplayToken | None", RenderableType]
 ]
 TokenFrameStreamFactory: TypeAlias = Callable[
-    ..., TokenFrameStream | Awaitable[TokenFrameStream]
+    ..., object
 ]
 
-_PROBABILITY_DISTRIBUTIONS: tuple[ProbabilityDistribution, ...] = (
-    "entmax",
-    "gumbel_softmax",
-    "log_softmax",
-    "sparsemax",
-    "softmax",
-)
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _ThemeTokenRenderDisplayTokenCandidate:
+    token: str
+    id: int | str | None = None
+    probability: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _ThemeTokenRenderDisplayToken:
+    sequence: int
+    kind: StreamItemKind
+    channel: StreamChannel
+    token: str
+    id: int | str | None = None
+    probability: float | None = None
+    step: int | None = None
+    probability_distribution: str | None = None
+    tokens: tuple[_ThemeTokenRenderDisplayTokenCandidate, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _ThemeTokenRenderState:
+    model_id: str
+    projection_sequence: int | None = None
+    projection_kind: StreamItemKind | None = None
+    projection_channel: StreamChannel | None = None
+    added_tokens: tuple[str, ...] | None = None
+    special_tokens: tuple[str, ...] | None = None
+    display_token_size: int | None = None
+    display_probabilities: bool = False
+    pick: int = 0
+    focus_on_token_when: Callable[
+        [_ThemeTokenRenderDisplayToken], bool
+    ] | None = None
+    reasoning_text_tokens: tuple[str, ...] = ()
+    tool_text_tokens: tuple[str, ...] = ()
+    answer_text_tokens: tuple[str, ...] = ()
+    display_tokens: tuple[_ThemeTokenRenderDisplayToken, ...] = ()
+    display_reasoning: bool = False
+    display_tools: bool = False
+    input_token_count: int = 0
+    total_tokens: int = 0
+    tool_token_count: int = 0
+    tool_running: bool = False
+    tool_running_spinner: object | None = None
+    ttft: float | None = None
+    ttnt: float | None = None
+    ttsr: float | None = None
+    elapsed: float = 0.0
+    event_stats: EventStats | None = None
+    start_thinking: bool = False
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -158,13 +204,21 @@ class CliStreamAnswerPresenter:
 
 
 class LegacyThemeStreamPresenter:
-    """Adapt immutable snapshots to the temporary legacy theme stream API."""
+    """Adapt immutable snapshots to a theme token-frame renderer."""
 
-    def __init__(self, theme: object, logger: Logger) -> None:
-        token_frame_stream_factory = getattr(theme, "tokens", None)
+    def __init__(
+        self,
+        theme: object,
+        logger: Logger,
+        *,
+        event_stats: EventStats | None = None,
+    ) -> None:
+        token_frame_stream_factory = getattr(theme, "token_frames", None)
         assert callable(token_frame_stream_factory)
         assert isinstance(logger, Logger)
+        assert event_stats is None or isinstance(event_stats, EventStats)
         self._answer_presenter = CliStreamAnswerPresenter()
+        self._event_stats = event_stats
         self._logger = logger
         self._token_frame_stream_factory = cast(
             TokenFrameStreamFactory, token_frame_stream_factory
@@ -202,7 +256,7 @@ class LegacyThemeStreamPresenter:
             async for token, renderable in token_frame_stream:
                 yield CliStreamRenderableFrame(
                     renderable=renderable,
-                    current_token=_display_token_from_token(token),
+                    current_token=_display_token_from_render_token(token),
                 )
         finally:
             await _close_token_frame_stream(token_frame_stream)
@@ -218,71 +272,21 @@ class LegacyThemeStreamPresenter:
             display_config.show_probabilities
             and context.token_probability_pick > 0
         )
+        state = _theme_token_render_state(
+            request,
+            display_probabilities=display_probabilities,
+            focus_on_token_when=_focus_on_display_token(
+                _last_display_token(snapshot),
+                display_config,
+                display_probabilities=display_probabilities,
+            ),
+            event_stats=self._event_stats,
+        )
         return await _coerce_token_frame_stream(
             self._token_frame_stream_factory(
-                model_id=context.model_id,
-                added_tokens=(
-                    list(context.tokenizer_tokens)
-                    if context.tokenizer_tokens is not None
-                    else None
-                ),
-                special_tokens=(
-                    list(context.tokenizer_special_tokens)
-                    if context.tokenizer_special_tokens is not None
-                    else None
-                ),
-                display_token_size=display_config.display_tokens,
-                display_probabilities=display_probabilities,
-                pick=context.token_probability_pick,
-                focus_on_token_when=_focus_on_display_token(
-                    _last_display_token(snapshot),
-                    display_config,
-                    display_probabilities=display_probabilities,
-                ),
-                thinking_text_tokens=(
-                    [snapshot.reasoning_text]
-                    if snapshot.reasoning_text
-                    else []
-                ),
-                tool_text_tokens=(
-                    [snapshot.tool_call_request_text]
-                    if snapshot.tool_call_request_text
-                    else []
-                ),
-                answer_text_tokens=(
-                    [snapshot.answer_text] if snapshot.answer_text else []
-                ),
-                tokens=[
-                    _token_from_display_snapshot(display_token)
-                    for display_token in snapshot.display_tokens
-                ]
-                or None,
-                input_token_count=(
-                    snapshot.token_counts.input_tokens
-                    if snapshot.token_counts.input_tokens is not None
-                    else context.input_token_count
-                ),
-                total_tokens=_legacy_output_token_count(snapshot),
-                tool_events=[],
-                tool_event_calls=[],
-                tool_event_results=[],
-                tool_running_spinner=None,
-                ttft=snapshot.timing.first_token_seconds,
-                ttnt=(
-                    snapshot.timing.time_to_n_token_seconds
-                    if display_config.display_time_to_n_token is not None
-                    else None
-                ),
-                ttsr=(
-                    snapshot.timing.reasoning_seconds
-                    if display_config.display_reasoning_time
-                    else None
-                ),
-                elapsed=_snapshot_elapsed_seconds(snapshot),
+                state,
                 console_width=context.console_width,
                 logger=self._logger,
-                event_stats=None,
-                tool_token_count=snapshot.token_counts.tool_call_tokens,
                 maximum_frames=1,
                 logits_count=None,
                 tool_events_limit=display_config.display_tools_events,
@@ -378,7 +382,7 @@ def _projection_summary_text(
     return projection.data_summary or projection.metadata_summary or ""
 
 
-def _legacy_output_token_count(snapshot: CliStreamSnapshot) -> int:
+def _output_token_count(snapshot: CliStreamSnapshot) -> int:
     return (
         snapshot.token_counts.output_tokens
         if snapshot.token_counts.output_tokens is not None
@@ -413,13 +417,94 @@ def _answer_request(
     )
 
 
+def _theme_token_render_state(
+    request: CliStreamPresenterRequest,
+    *,
+    display_probabilities: bool,
+    focus_on_token_when: Callable[
+        [_ThemeTokenRenderDisplayToken], bool
+    ] | None,
+    event_stats: EventStats | None,
+) -> _ThemeTokenRenderState:
+    snapshot = request.snapshot
+    context = request.context
+    display_config = request.display_config
+    return _ThemeTokenRenderState(
+        model_id=context.model_id,
+        added_tokens=context.tokenizer_tokens,
+        special_tokens=context.tokenizer_special_tokens,
+        display_token_size=display_config.display_tokens or None,
+        display_probabilities=display_probabilities,
+        pick=context.token_probability_pick,
+        focus_on_token_when=focus_on_token_when,
+        reasoning_text_tokens=(
+            (snapshot.reasoning_text,) if snapshot.reasoning_text else ()
+        ),
+        tool_text_tokens=(
+            (snapshot.tool_call_request_text,)
+            if snapshot.tool_call_request_text
+            else ()
+        ),
+        answer_text_tokens=(
+            (snapshot.answer_text,) if snapshot.answer_text else ()
+        ),
+        display_tokens=tuple(
+            _render_token_from_display_snapshot(display_token)
+            for display_token in snapshot.display_tokens
+        ),
+        display_reasoning=bool(snapshot.reasoning_text),
+        display_tools=display_config.show_tools,
+        input_token_count=(
+            snapshot.token_counts.input_tokens
+            if snapshot.token_counts.input_tokens is not None
+            else context.input_token_count
+        ),
+        total_tokens=_output_token_count(snapshot),
+        tool_token_count=snapshot.token_counts.tool_call_tokens,
+        ttft=snapshot.timing.first_token_seconds,
+        ttnt=(
+            snapshot.timing.time_to_n_token_seconds
+            if display_config.display_time_to_n_token is not None
+            else None
+        ),
+        ttsr=(
+            snapshot.timing.reasoning_seconds
+            if display_config.display_reasoning_time
+            else None
+        ),
+        elapsed=_snapshot_elapsed_seconds(snapshot),
+        event_stats=event_stats,
+        start_thinking=context.start_thinking,
+    )
+
+
 async def _coerce_token_frame_stream(
-    result: TokenFrameStream | Awaitable[TokenFrameStream],
+    result: object,
 ) -> TokenFrameStream:
     if isawaitable(result):
         result = await result
-    assert hasattr(result, "__aiter__")
-    return result
+    if isinstance(result, AsyncIterable):
+        return cast(TokenFrameStream, result.__aiter__())
+    if isinstance(result, tuple) or isinstance(result, list):
+        return _iter_token_frame_stream(result)
+    if hasattr(result, "__iter__"):
+        return _iter_token_frame_stream(tuple(cast(Any, result)))
+    raise AssertionError("theme token_frames must return frame iterable")
+
+
+async def _iter_token_frame_stream(
+    frames: tuple[object, ...] | list[object],
+) -> TokenFrameStream:
+    for frame in frames:
+        assert isinstance(frame, tuple) and len(frame) == 2
+        current_token, renderable = frame
+        assert current_token is None or isinstance(
+            current_token, _ThemeTokenRenderDisplayToken
+        )
+        yield cast(
+            tuple[_ThemeTokenRenderDisplayToken | None, RenderableType],
+            frame,
+        )
 
 
 async def _close_token_frame_stream(stream: TokenFrameStream) -> None:
@@ -441,7 +526,7 @@ def _focus_on_display_token(
     config: CliStreamDisplayConfig,
     *,
     display_probabilities: bool,
-) -> Callable[[Token], bool] | None:
+) -> Callable[[_ThemeTokenRenderDisplayToken], bool] | None:
     if (
         current is None
         or not display_probabilities
@@ -449,13 +534,13 @@ def _focus_on_display_token(
     ):
         return None
 
-    def token_is_focused(token: Token) -> bool:
+    def token_is_focused(token: _ThemeTokenRenderDisplayToken) -> bool:
         if (
             token.probability is not None
             and token.probability < config.display_probabilities_maximum
         ):
             return True
-        if not isinstance(token, TokenDetail) or not token.tokens:
+        if not token.tokens:
             return False
         for candidate in token.tokens:
             if (
@@ -470,64 +555,49 @@ def _focus_on_display_token(
     return token_is_focused
 
 
-def _token_from_display_snapshot(
+def _render_token_from_display_snapshot(
     token: CliDisplayTokenSnapshot,
-) -> Token:
-    candidates = [
-        Token(
-            id=cast(Any, _token_id(candidate.token_id)),
-            token=candidate.text,
-            probability=candidate.probability,
-        )
-        for candidate in token.candidates
-    ]
-    probability_distribution = _probability_distribution(
-        token.probability_distribution
-    )
-    if candidates or token.step is not None or probability_distribution:
-        return TokenDetail(
-            id=cast(Any, _token_id(token.token_id)),
-            token=token.text,
-            probability=token.probability,
-            step=token.step,
-            probability_distribution=probability_distribution,
-            tokens=candidates or None,
-        )
-    return Token(
-        id=cast(Any, _token_id(token.token_id)),
+) -> _ThemeTokenRenderDisplayToken:
+    return _ThemeTokenRenderDisplayToken(
+        sequence=token.sequence if token.sequence is not None else 0,
+        kind=StreamItemKind.ANSWER_DELTA,
+        channel=StreamChannel.ANSWER,
         token=token.text,
+        id=_token_id(token.token_id),
         probability=token.probability,
+        step=token.step,
+        probability_distribution=token.probability_distribution,
+        tokens=tuple(
+            _ThemeTokenRenderDisplayTokenCandidate(
+                id=_token_id(candidate.token_id),
+                token=candidate.text,
+                probability=candidate.probability,
+            )
+            for candidate in token.candidates
+        )
     )
 
 
-def _display_token_from_token(
-    token: Token | None,
+def _display_token_from_render_token(
+    token: _ThemeTokenRenderDisplayToken | None,
 ) -> CliDisplayTokenSnapshot | None:
     if token is None:
         return None
-    candidates = (
-        tuple(
-            CliDisplayTokenCandidateSnapshot(
-                token_id=_display_token_id(candidate.id),
-                text=candidate.token,
-                probability=candidate.probability,
-            )
-            for candidate in token.tokens
+    candidates = tuple(
+        CliDisplayTokenCandidateSnapshot(
+            token_id=_display_token_id(candidate.id),
+            text=candidate.token,
+            probability=candidate.probability,
         )
-        if isinstance(token, TokenDetail) and token.tokens
-        else ()
+        for candidate in token.tokens
     )
     return CliDisplayTokenSnapshot(
-        sequence=None,
+        sequence=token.sequence,
         token_id=_display_token_id(token.id),
         text=token.token,
         probability=token.probability,
-        step=token.step if isinstance(token, TokenDetail) else None,
-        probability_distribution=(
-            token.probability_distribution
-            if isinstance(token, TokenDetail)
-            else None
-        ),
+        step=token.step,
+        probability_distribution=token.probability_distribution,
         candidates=candidates,
     )
 
@@ -544,11 +614,3 @@ def _display_token_id(token_id: object) -> int | str | None:
     if token_id is None or isinstance(token_id, int | str):
         return token_id
     return str(token_id)
-
-
-def _probability_distribution(
-    value: str | None,
-) -> ProbabilityDistribution | None:
-    if value in _PROBABILITY_DISTRIBUTIONS:
-        return value
-    return None

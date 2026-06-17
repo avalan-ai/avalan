@@ -1,11 +1,13 @@
 import tomllib
 import unittest
 from argparse import Namespace
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from io import StringIO
 from logging import getLogger
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
@@ -2126,7 +2128,11 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.orch.memory.has_recent_message = True
         self.orch.memory.recent_message.is_empty = False
         self.orch.memory.recent_message.data = ["m"]
-        output = AsyncMock()
+
+        class DummyOrchestratorResponse:
+            pass
+
+        output = DummyOrchestratorResponse()
         output.to_str = AsyncMock(return_value="out")
         self.orch.return_value = output
         with (
@@ -2142,15 +2148,18 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds, "token_generation", new_callable=AsyncMock
             ) as tg_patch,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
         ):
             await agent_cmds.agent_run(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
-        tg_patch.assert_not_called()
-        output.to_str.assert_awaited_once()
+        tg_patch.assert_awaited_once()
+        output.to_str.assert_not_called()
         self.theme.agent.assert_not_called()
         self.theme.recent_messages.assert_not_called()
-        self.console.print.assert_called_once_with("out")
+        self.console.print.assert_not_called()
 
     async def test_run_conversation_prints_blank(self):
         self.args.conversation = True
@@ -2377,7 +2386,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         async def orch_call(*args, tool_confirm=None, **kwargs):
             self.assertIsNotNone(tool_confirm)
-            self.callback_result = tool_confirm(call_obj)
+            self.callback_result = await tool_confirm(call_obj)
             return DummyOrchestratorResponse()
 
         self.orch.side_effect = orch_call
@@ -2399,7 +2408,9 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
             ),
             patch.object(
-                agent_cmds, "confirm_tool_call", return_value="y"
+                agent_cmds.CliStreamCoordinator,
+                "confirm_tool_call",
+                new=AsyncMock(return_value="y"),
             ) as ctc,
         ):
             await agent_cmds.agent_run(
@@ -2410,9 +2421,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             "hi", use_async_generator=True, tool_confirm=unittest.mock.ANY
         )
         tg.assert_awaited_once()
-        ctc.assert_called_once_with(
-            self.console, call_obj, tty_path="/tmp/tty", live=None
-        )
+        ctc.assert_awaited_once_with(call_obj, tty_path="/tmp/tty")
         self.assertEqual(self.callback_result, "y")
 
     async def test_run_tools_confirm_stdin_not_tty(self):
@@ -2426,7 +2435,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         async def orch_call(*args, tool_confirm=None, **kwargs):
             self.assertIsNotNone(tool_confirm)
-            self.callback_result = tool_confirm(call_obj)
+            self.callback_result = await tool_confirm(call_obj)
             return DummyOrchestratorResponse()
 
         self.orch.side_effect = orch_call
@@ -2456,6 +2465,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             patch("avalan.cli.stdin", stdin_mock),
             patch("avalan.cli.open", return_value=ctx) as open_patch,
             patch("avalan.cli.Prompt.ask", return_value="y") as ask,
+            patch("avalan.cli.stream_coordinator.Live") as live_patch,
         ):
             await agent_cmds.agent_run(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
@@ -2476,6 +2486,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         )
         tg.assert_awaited_once()
         self.assertEqual(self.callback_result, "y")
+        live_patch.assert_not_called()
 
     async def test_run_tools_confirm_with_display_tools(self):
         self.args.tools_confirm = True
@@ -2489,7 +2500,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         async def orch_call(*args, tool_confirm=None, **kwargs):
             self.assertIsNotNone(tool_confirm)
-            self.callback_result = tool_confirm(call_obj)
+            self.callback_result = await tool_confirm(call_obj)
             return DummyOrchestratorResponse()
 
         self.orch.side_effect = orch_call
@@ -2511,18 +2522,93 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
             ),
             patch.object(
-                agent_cmds, "confirm_tool_call", return_value="y"
+                agent_cmds.CliStreamCoordinator,
+                "confirm_tool_call",
+                new=AsyncMock(return_value="y"),
             ) as ctc,
         ):
             await agent_cmds.agent_run(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
 
-        ctc.assert_called_once_with(
-            self.console, call_obj, tty_path="/tmp/tty", live=None
-        )
+        ctc.assert_awaited_once_with(call_obj, tty_path="/tmp/tty")
         tg.assert_awaited_once()
         self.assertEqual(self.callback_result, "y")
+
+    async def test_run_tools_confirm_uses_active_stream_coordinator(self):
+        self.args.tools_confirm = True
+        self.args.display_tools = True
+        self.args.tty = "/tmp/tty"
+        self.orch.tool = MagicMock(is_empty=False)
+        call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
+        callbacks: list[Callable[[ToolCall], Awaitable[str]]] = []
+        results: list[str] = []
+
+        class DummyOrchestratorResponse:
+            pass
+
+        async def orch_call(
+            *_args: object,
+            tool_confirm: Callable[[ToolCall], Awaitable[str]] | None = None,
+            **_kwargs: object,
+        ) -> DummyOrchestratorResponse:
+            self.assertIsNotNone(tool_confirm)
+            callbacks.append(tool_confirm)
+            return DummyOrchestratorResponse()
+
+        confirm_tool_call = AsyncMock(return_value="a")
+        active_coordinator = SimpleNamespace(
+            confirm_tool_call=confirm_tool_call
+        )
+
+        async def fake_token_generation(
+            **kwargs: object,
+        ) -> None:
+            coordinator_container = kwargs["coordinator_container"]
+            assert isinstance(coordinator_container, dict)
+            coordinator_container["coordinator"] = active_coordinator
+            callback = callbacks[0]
+            results.append(await callback(call_obj))
+            coordinator_container["coordinator"] = None
+
+        self.orch.side_effect = orch_call
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds,
+                "token_generation",
+                new=AsyncMock(side_effect=fake_token_generation),
+            ) as tg,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+            patch.object(agent_cmds, "CliStreamCoordinator") as fallback,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        tg.assert_awaited_once()
+        self.assertEqual(results, ["a"])
+        confirm_tool_call.assert_awaited_once_with(
+            call_obj,
+            tty_path="/tmp/tty",
+        )
+        fallback.assert_not_called()
+        coordinator_container = cast(
+            dict[str, object | None],
+            tg.await_args.kwargs["coordinator_container"],
+        )
+        self.assertIsNone(coordinator_container["coordinator"])
 
     async def test_run_passes_tool_manager_to_model_call(self):
         self.args.tool = ["math"]
@@ -2953,7 +3039,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 **getattr(self.orch, "_call_options", {}),
                 **engine_args,
             }
-            return SimpleNamespace(to_str=AsyncMock(return_value="resp"))
+            return MagicMock(spec=agent_cmds.OrchestratorResponse)
 
         self.orch.side_effect = orch_call
 
@@ -3023,7 +3109,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 **getattr(self.orch, "_call_options", {}),
                 **engine_args,
             }
-            return SimpleNamespace(to_str=AsyncMock(return_value="resp"))
+            return MagicMock(spec=agent_cmds.OrchestratorResponse)
 
         self.orch.side_effect = orch_call
 

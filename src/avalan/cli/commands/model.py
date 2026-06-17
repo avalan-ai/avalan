@@ -3,6 +3,14 @@ from ...agent.orchestrator import Orchestrator
 from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
 from ...cli.display import CliStreamDisplayConfig, cli_stream_display_config
+from ...cli.display_reducer import CliStreamSnapshotReducer
+from ...cli.stream_coordinator import CliStreamCoordinator
+from ...cli.stream_presenter import (
+    CliStreamPresenterContext,
+    CliStreamPresenterRequest,
+    LegacyThemeStreamPresenter,
+    StreamPresenterMode,
+)
 from ...cli.theme import (
     Theme,
     TokenRenderDisplayToken,
@@ -40,13 +48,16 @@ from . import ModelSettings, get_model_settings, is_ds4_backend_selected
 
 from argparse import Namespace
 from asyncio import (
+    FIRST_COMPLETED,
     CancelledError,
     Lock,
+    Task,
     as_completed,
     create_task,
     gather,
     sleep,
     to_thread,
+    wait,
 )
 from asyncio import (
     Event as EventSignal,
@@ -54,11 +65,11 @@ from asyncio import (
 from asyncio import (
     run as asyncio_run,
 )
-from collections.abc import AsyncIterable, Mapping
+from collections.abc import AsyncIterable, Iterable, Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from functools import partial
-from logging import Logger
+from logging import Logger, getLogger
 from time import perf_counter
 from typing import (
     TYPE_CHECKING,
@@ -797,7 +808,9 @@ async def token_generation(
     refresh_per_second: int,
     tool_events_limit: int | None,
     with_stats: bool = True,
-    live_container: dict[str, Live | None] | None = None,
+    coordinator_container: (
+        dict[str, CliStreamCoordinator | None] | None
+    ) = None,
     display_config: CliStreamDisplayConfig | None = None,
 ) -> None:
     display_config = display_config or _legacy_stream_display_config(
@@ -807,197 +820,287 @@ async def token_generation(
         tool_events_limit=tool_events_limit,
         with_stats=with_stats,
     )
-    display_tokens = display_config.display_tokens
-    refresh_per_second = display_config.refresh_per_second
-    tool_events_limit = display_config.display_tools_events
-
-    if display_config.answer_stdout_only:
-        await _print_plain_stdout_response(console, response)
-        return
-
     stop_signal = EventSignal()
     render_lock = Lock()
+    reducer = CliStreamSnapshotReducer(display_config)
+    presenter = LegacyThemeStreamPresenter(
+        theme,
+        logger if isinstance(logger, Logger) else getLogger(__name__),
+        event_stats=event_stats,
+    )
+    presenter_context = _stream_presenter_context(
+        args,
+        console,
+        orchestrator,
+        lm,
+        input_string,
+        response,
+        display_config=display_config,
+        dtokens_pick=dtokens_pick,
+    )
+    presenter_mode: StreamPresenterMode = (
+        "answer" if display_config.answer_stdout_only else "live"
+    )
+    coordinator = CliStreamCoordinator(console, display_config)
+    event_listen: Any = None
+    if orchestrator is not None and (
+        display_config.show_events or display_config.show_tools
+    ):
+        event_manager = getattr(orchestrator, "event_manager", None)
+        listen = getattr(event_manager, "listen", None)
+        if callable(listen):
+            event_listen = listen
 
-    if not display_config.show_stats:
-        if not orchestrator or (
-            not display_config.show_events and not display_config.show_tools
+    async def render_snapshot() -> None:
+        request = CliStreamPresenterRequest(
+            snapshot=reducer.snapshot(),
+            display_config=display_config,
+            context=presenter_context,
+            mode=presenter_mode,
+        )
+        async for item in presenter.present(request):
+            await coordinator.handle_item(item)
+
+    async def reduce_projection(
+        projection: StreamConsumerProjection,
+    ) -> None:
+        async with render_lock:
+            reducer.reduce_projection(projection)
+            await render_snapshot()
+
+    async def reduce_event(event: Event) -> None:
+        async with render_lock:
+            reducer.reduce_event(event)
+            await render_snapshot()
+
+    async def event_stream() -> None:
+        async for event in event_listen(stop_signal=stop_signal):
+            assert isinstance(event, Event)
+            await reduce_event(event)
+
+    async def response_stream() -> None:
+        async for projection in _stream_render_projections(
+            response,
+            stream_session_id="cli-render-stream",
+            run_id="cli-render-run",
+            turn_id="cli-render-turn",
         ):
-            await _print_plain_stdout_response(console, response)
+            await reduce_projection(projection)
+        async with render_lock:
+            await coordinator.flush()
+
+    if coordinator_container is not None:
+        coordinator_container["coordinator"] = None
+
+    async with coordinator:
+        if not callable(event_listen):
+            if coordinator_container is not None:
+                coordinator_container["coordinator"] = coordinator
+            try:
+                await response_stream()
+            finally:
+                if coordinator_container is not None:
+                    coordinator_container["coordinator"] = None
             return
 
-        empty = ""
-        group = Group(empty, empty)
-        events_group_index = 0
-        tools_group_index = 1
+        event_task = create_task(event_stream())
+        response_task = create_task(response_stream())
+
+        def _completed_task_failures(
+            done_tasks: set[Task[None]],
+        ) -> list[BaseException]:
+            failures: list[BaseException] = []
+            for task in (event_task, response_task):
+                if task not in done_tasks:
+                    continue
+                if task.cancelled():
+                    failures.append(CancelledError())
+                    continue
+                exc = task.exception()
+                if exc is not None:
+                    failures.append(exc)
+            return failures
+
+        def _raise_stream_failures(
+            failures: list[BaseException],
+        ) -> None:
+            if len(failures) == 1:
+                raise failures[0]
+            raise BaseExceptionGroup("CLI stream tasks failed", failures)
 
         try:
-            with Live(
-                group,
-                refresh_per_second=refresh_per_second,
-                screen=display_config.record_enabled,
-                console=console,
-            ) as live:
-                if live_container is not None:
-                    live_container["live"] = live
-                event_task = create_task(
-                    _event_stream(
-                        args,
-                        console,
-                        live,
-                        group,
-                        events_group_index,
-                        tools_group_index,
-                        orchestrator,
-                        theme,
-                        events_height=6,
-                        tools_height=10,
-                        stop_signal=stop_signal,
-                        display_config=display_config,
-                    )
-                )
+            if coordinator_container is not None:
+                coordinator_container["coordinator"] = coordinator
+            if display_config.show_events or display_config.show_tools:
                 await sleep(0)
-                plain_error: BaseException | None = None
-                try:
-                    await _print_plain_stdout_response(console, response)
-                except BaseException as exc:
-                    plain_error = exc
-                    raise
-                finally:
+
+            pending: set[Task[None]] = {event_task, response_task}
+            while pending:
+                done, pending = await wait(
+                    pending,
+                    return_when=FIRST_COMPLETED,
+                )
+                failures = _completed_task_failures(done)
+                if failures:
                     stop_signal.set()
-                    if not event_task.done():
-                        event_task.cancel()
-                    event_results = await gather(
-                        event_task, return_exceptions=True
+                    for pending_task in pending:
+                        pending_task.cancel()
+                    pending_results = await gather(
+                        *pending,
+                        return_exceptions=True,
                     )
-                    if plain_error is None:
+                    failures.extend(
+                        result
+                        for result in pending_results
+                        if isinstance(result, BaseException)
+                        and not isinstance(result, CancelledError)
+                    )
+                    _raise_stream_failures(failures)
+
+                if response_task in done:
+                    stop_signal.set()
+                    if event_task in pending:
+                        event_task.cancel()
+                        event_results = await gather(
+                            event_task,
+                            return_exceptions=True,
+                        )
                         for result in event_results:
                             if isinstance(
                                 result, BaseException
                             ) and not isinstance(result, CancelledError):
                                 raise result
+                    return
         finally:
-            if live_container is not None:
-                live_container["live"] = None
-        return
+            stop_signal.set()
+            if coordinator_container is not None:
+                coordinator_container["coordinator"] = None
+            for task in (event_task, response_task):
+                if not task.done():
+                    task.cancel()
+            await gather(event_task, response_task, return_exceptions=True)
 
-    if not orchestrator or (
-        not display_config.show_events and not display_config.show_tools
+
+def _stream_presenter_context(
+    args: Namespace,
+    console: Console,
+    orchestrator: Orchestrator | None,
+    lm: TextGenerationModel,
+    input_string: str,
+    response: TextGenerationResponse,
+    *,
+    display_config: CliStreamDisplayConfig,
+    dtokens_pick: int,
+) -> CliStreamPresenterContext:
+    start_thinking = bool(getattr(args, "start_thinking", False))
+    if (
+        start_thinking
+        and bool(getattr(response, "can_think", False))
+        and not bool(getattr(response, "is_thinking", False))
     ):
-        try:
-            with Live(
-                refresh_per_second=refresh_per_second,
-                screen=display_config.record_enabled,
-                console=console,
-            ) as live:
-                if live_container is not None:
-                    live_container["live"] = live
-                await _token_stream(
-                    args,
-                    console,
-                    live,
-                    None,
-                    None,
-                    theme,
-                    logger,
-                    orchestrator,
-                    event_stats,
-                    lm,
-                    input_string,
-                    response,
-                    display_tokens=display_tokens,
-                    dtokens_pick=dtokens_pick,
-                    refresh_per_second=refresh_per_second,
-                    stop_signal=stop_signal,
-                    tool_events_limit=tool_events_limit,
-                    with_stats=with_stats,
-                    render_lock=render_lock,
-                    display_config=display_config,
-                )
-        finally:
-            if live_container is not None:
-                live_container["live"] = None
-    else:
-        events_height = 6
-        tools_height = 10
-        empty = ""
-        group = Group(empty, empty, empty)
-        events_group_index = 0
-        tools_group_index = 1
-        tokens_group_index = 2
+        set_thinking = getattr(response, "set_thinking", None)
+        assert callable(set_thinking)
+        set_thinking(start_thinking)
 
-        try:
-            with Live(
-                group,
-                refresh_per_second=refresh_per_second,
-                screen=display_config.record_enabled,
-                console=console,
-            ) as live:
-                if live_container is not None:
-                    live_container["live"] = live
-                event_task = create_task(
-                    _event_stream(
-                        args,
-                        console,
-                        live,
-                        group,
-                        events_group_index,
-                        tools_group_index,
-                        orchestrator,
-                        theme,
-                        events_height=events_height,
-                        tools_height=tools_height,
-                        stop_signal=stop_signal,
-                        refresh_per_second=refresh_per_second,
-                        render_lock=render_lock,
-                        display_config=display_config,
-                    )
-                )
-                token_task = create_task(
-                    _token_stream(
-                        args,
-                        console,
-                        live,
-                        group,
-                        tokens_group_index,
-                        theme,
-                        logger,
-                        orchestrator,
-                        event_stats,
-                        lm,
-                        input_string,
-                        response,
-                        display_tokens=display_tokens,
-                        dtokens_pick=dtokens_pick,
-                        refresh_per_second=refresh_per_second,
-                        stop_signal=stop_signal,
-                        tool_events_limit=tool_events_limit,
-                        with_stats=with_stats,
-                        render_lock=render_lock,
-                        display_config=display_config,
-                    )
-                )
-                token_error: BaseException | None = None
-                try:
-                    await token_task
-                except BaseException as exc:
-                    token_error = exc
-                    raise
-                finally:
-                    stop_signal.set()
-                    if not event_task.done():
-                        event_task.cancel()
-                    event_results = await gather(
-                        event_task, return_exceptions=True
-                    )
-                    if token_error is None:
-                        for result in event_results:
-                            if isinstance(
-                                result, BaseException
-                            ) and not isinstance(result, CancelledError):
-                                raise result
-        finally:
-            if live_container is not None:
-                live_container["live"] = None
+    tokenizer_tokens: tuple[str, ...] | None = None
+    tokenizer_special_tokens: tuple[str, ...] | None = None
+    if display_config.show_token_details or dtokens_pick > 0:
+        tokenizer_config = getattr(lm, "tokenizer_config", None)
+        if tokenizer_config is not None:
+            tokenizer_tokens = _stream_tokenizer_tuple(
+                getattr(tokenizer_config, "tokens", None)
+            )
+            tokenizer_special_tokens = _stream_tokenizer_tuple(
+                getattr(tokenizer_config, "special_tokens", None)
+            )
+
+    return CliStreamPresenterContext(
+        model_id=_stream_model_id(args, lm),
+        console_width=_stream_console_width(console),
+        input_token_count=_stream_input_token_count(
+            orchestrator,
+            lm,
+            input_string,
+            response,
+        ),
+        tokenizer_tokens=tokenizer_tokens,
+        tokenizer_special_tokens=tokenizer_special_tokens,
+        token_probability_pick=dtokens_pick,
+        start_thinking=start_thinking,
+    )
+
+
+def _stream_model_id(args: Namespace, lm: TextGenerationModel) -> str:
+    model_id = getattr(lm, "model_id", None)
+    if isinstance(model_id, str) and model_id.strip():
+        return model_id
+
+    args_model = getattr(args, "model", None)
+    if isinstance(args_model, str) and args_model.strip():
+        return args_model
+
+    return "model"
+
+
+def _stream_console_width(console: Console) -> int:
+    width = getattr(console, "width", 80)
+    if isinstance(width, bool) or not isinstance(width, int) or width <= 0:
+        return 80
+    return width
+
+
+def _stream_input_token_count(
+    orchestrator: Orchestrator | None,
+    lm: TextGenerationModel,
+    input_string: str,
+    response: TextGenerationResponse,
+) -> int:
+    response_count = _stream_nonzero_int(
+        getattr(response, "input_token_count", None)
+    )
+    if response_count is not None:
+        return response_count
+
+    orchestrator_count = _stream_nonzero_int(
+        getattr(orchestrator, "input_token_count", None)
+        if orchestrator is not None
+        else None
+    )
+    if orchestrator_count is not None:
+        return orchestrator_count
+
+    input_token_count = getattr(lm, "input_token_count", None)
+    if callable(input_token_count):
+        counted = input_token_count(input_string)
+        lm_count = _stream_nonzero_int(counted)
+        if lm_count is not None:
+            return lm_count
+
+    return 0
+
+
+def _stream_nonzero_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _stream_tokenizer_tuple(value: object) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, Mapping):
+        values: Iterable[object] = value.keys()
+    elif isinstance(value, Iterable):
+        values = value
+    else:
+        return None
+
+    tokens = tuple(str(token) for token in values if isinstance(token, str))
+    return tokens or None
 
 
 def _legacy_stream_display_config(
@@ -1644,15 +1747,9 @@ def _render_frame(
     group: Group | None = None,
     group_index: int | None = None,
 ) -> None:
+    assert not getattr(args, "record", False)
     if group and group_index is not None:
         group.renderables[group_index] = frame
         live.refresh()
     else:
         live.update(frame)
-
-    if args.record:
-        now = datetime.now(timezone.utc)
-        ts = now.strftime("%Y%m%d%H%M%S")
-        ms = now.microsecond // 1000
-        filename = f"avalan-screenshot-{ts}-{ms:03d}.svg"
-        console.save_svg(filename, clear=True)

@@ -3,9 +3,10 @@ from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
-from ...cli import confirm_tool_call, get_input, has_input
+from ...cli import get_input, has_input
 from ...cli.commands.model import token_generation
 from ...cli.display import cli_stream_display_config
+from ...cli.stream_coordinator import CliStreamCoordinator
 from ...cli.theme import Theme
 from ...entities import (
     Backend,
@@ -42,7 +43,6 @@ from uuid import UUID, uuid4
 
 from jinja2 import Environment, FileSystemLoader
 from rich.console import Console
-from rich.live import Live
 from rich.prompt import Confirm, Prompt
 from rich.syntax import Syntax
 
@@ -641,12 +641,22 @@ async def agent_run(
 
     event_stats = EventStats()
     tty_path = getattr(args, "tty", "/dev/tty") or "/dev/tty"
-    live_container: dict[str, Live | None] = {"live": None}
+    coordinator_container: dict[str, CliStreamCoordinator | None] = {
+        "coordinator": None
+    }
 
-    def _confirm_call(call: ToolCall) -> str:
-        return confirm_tool_call(
-            console, call, tty_path=tty_path, live=live_container["live"]
-        )
+    async def _confirm_call(call: ToolCall) -> str:
+        coordinator = coordinator_container["coordinator"]
+        if coordinator is None:
+            async with CliStreamCoordinator(
+                console,
+                display_config,
+            ) as fallback_coordinator:
+                return await fallback_coordinator.confirm_tool_call(
+                    call,
+                    tty_path=tty_path,
+                )
+        return await coordinator.confirm_tool_call(call, tty_path=tty_path)
 
     async def _event_listener(event: object) -> None:
         nonlocal event_stats
@@ -866,10 +876,6 @@ async def agent_run(
             ):
                 console.print(_i["agent_output"] + " ", end="")
 
-            if args.quiet:
-                console.print(await output.to_str())
-                return
-
             assert isinstance(output, OrchestratorResponse)
             assert orchestrator.engine is not None
             text_output = cast(TextGenerationResponse, output)
@@ -890,7 +896,7 @@ async def agent_run(
                 display_tokens=display_tokens,
                 tool_events_limit=display_config.display_tools_events,
                 with_stats=with_stats,
-                live_container=live_container,
+                coordinator_container=coordinator_container,
                 display_config=display_config,
             )
 
