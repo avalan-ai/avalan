@@ -3,6 +3,7 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from contextlib import ExitStack
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,6 +13,8 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+from rich.console import Console
+
 from avalan.cli import CommandAbortException
 from avalan.cli.__main__ import (
     CLI,
@@ -19,6 +22,7 @@ from avalan.cli.__main__ import (
     _task_run_json_stdout,
 )
 from avalan.cli.theme_registry import DEFAULT_THEME_NAME
+from avalan.entities import Model
 from avalan.tool.shell import ShellToolSettings
 
 
@@ -1316,6 +1320,171 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(main_mock.await_args.args[0].theme, "basic")
         self.assertIs(main_mock.await_args.args[1], theme)
         self.assertIs(main_mock.await_args.args[2], console)
+
+    async def test_call_dispatches_cache_list_with_theme_flags(
+        self,
+    ) -> None:
+        outputs: dict[str, str] = {}
+
+        for theme_name in ("basic", "fancy"):
+            with self.subTest(theme_name=theme_name):
+                consoles: list[Console] = []
+                hub = MagicMock()
+                hub.cache_dir = "/cache"
+                hub.cache_scan.return_value = []
+                hub_class = MagicMock(return_value=hub)
+
+                def create_console(*args: object, **kwargs: object) -> Console:
+                    _ = args
+                    console = Console(
+                        theme=kwargs["theme"],
+                        record=True,
+                        file=StringIO(),
+                        width=100,
+                    )
+                    consoles.append(console)
+                    return console
+
+                with (
+                    patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "prog",
+                            "--quiet",
+                            "--theme",
+                            theme_name,
+                            "cache",
+                            "list",
+                        ],
+                    ),
+                    patch(
+                        "avalan.cli.__main__.translation",
+                        return_value=self.translator,
+                    ),
+                    patch(
+                        "avalan.cli.__main__.Console",
+                        side_effect=create_console,
+                    ),
+                    patch.object(CLI, "_needs_hf_token", return_value=False),
+                    patch(
+                        "avalan.cli.__main__._huggingface_hub_class",
+                        return_value=hub_class,
+                    ),
+                ):
+                    await self.cli()
+
+                hub_class.assert_called_once()
+                hub.cache_scan.assert_called_once_with()
+                self.assertEqual(len(consoles), 1)
+                outputs[theme_name] = consoles[0].export_text()
+
+        self.assertIn("Cache: /cache", outputs["basic"])
+        self.assertIn("Models: none", outputs["basic"])
+        self.assertIn("Model", outputs["fancy"])
+        self.assertIn("Size on disk", outputs["fancy"])
+
+    async def test_call_dispatches_model_display_with_theme_flags(
+        self,
+    ) -> None:
+        outputs: dict[str, str] = {}
+        model_id = "display-model"
+        now = datetime(2024, 1, 1)
+        model = Model(
+            id=model_id,
+            parameters=1_500,
+            parameter_types=None,
+            inference=None,
+            library_name="transformers",
+            license=None,
+            pipeline_tag=None,
+            tags=[],
+            architectures=None,
+            model_type="causal-lm",
+            auto_model=None,
+            processor=None,
+            gated=False,
+            private=False,
+            disabled=False,
+            last_downloads=0,
+            downloads=12,
+            likes=3,
+            ranking=None,
+            author="author",
+            created_at=now,
+            updated_at=now,
+        )
+
+        for theme_name in ("basic", "fancy"):
+            with self.subTest(theme_name=theme_name):
+                consoles: list[Console] = []
+                hub = MagicMock()
+                hub.can_access.return_value = True
+                hub.model.return_value = model
+                hub_class = MagicMock(return_value=hub)
+                manager = MagicMock()
+                manager.__enter__.return_value = manager
+                manager.__exit__.return_value = False
+                manager.parse_uri.return_value = SimpleNamespace(
+                    is_local=False
+                )
+
+                def create_console(*args: object, **kwargs: object) -> Console:
+                    _ = args
+                    console = Console(
+                        theme=kwargs["theme"],
+                        record=True,
+                        file=StringIO(),
+                        width=100,
+                    )
+                    consoles.append(console)
+                    return console
+
+                with (
+                    patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "prog",
+                            "--quiet",
+                            "--theme",
+                            theme_name,
+                            "model",
+                            "display",
+                            model_id,
+                        ],
+                    ),
+                    patch(
+                        "avalan.cli.__main__.translation",
+                        return_value=self.translator,
+                    ),
+                    patch(
+                        "avalan.cli.__main__.Console",
+                        side_effect=create_console,
+                    ),
+                    patch.object(CLI, "_needs_hf_token", return_value=False),
+                    patch(
+                        "avalan.cli.__main__._huggingface_hub_class",
+                        return_value=hub_class,
+                    ),
+                    patch(
+                        "avalan.cli.commands.model.ModelManager",
+                        return_value=manager,
+                    ) as manager_class,
+                ):
+                    await self.cli()
+
+                hub_class.assert_called_once()
+                manager_class.assert_called_once()
+                hub.can_access.assert_called_once_with(model_id)
+                hub.model.assert_called_once_with(model_id)
+                self.assertEqual(len(consoles), 1)
+                outputs[theme_name] = consoles[0].export_text()
+
+        self.assertIn(f"Model: {model_id}", outputs["basic"])
+        self.assertIn("Access: yes", outputs["basic"])
+        self.assertIn(model_id, outputs["fancy"])
+        self.assertIn("access granted", outputs["fancy"])
 
     async def test_call_raises_when_huggingface_hub_is_missing(self):
         with (

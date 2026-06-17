@@ -13,7 +13,8 @@ from avalan.cli.download import tqdm_rich_progress
 from avalan.cli.theme import Theme
 from avalan.cli.theme.basic import BasicTheme
 from avalan.cli.theme.fancy import FancyTheme
-from avalan.entities import Model
+from avalan.entities import Model, TokenizerConfig, ToolCall
+from avalan.event import Event, EventType
 
 
 def _gettext(message: str) -> str:
@@ -100,6 +101,37 @@ class BasicThemeTestCase(unittest.TestCase):
             "Flow run started.\n\nflowchart LR\n",
         )
         self.assertIsInstance(theme.download_progress(), tuple)
+
+    def test_basic_theme_inherits_low_clutter_domain_outputs(self) -> None:
+        theme = BasicTheme(_gettext, _ngettext)
+        tool_call = ToolCall(
+            id="call-1",
+            name="calc[red]",
+            arguments={"password": "hidden", "x": 1},
+        )
+
+        events = theme.events(
+            [Event(type=EventType.TOOL_EXECUTE, payload={"call": tool_call})]
+        )
+        tokenizer = theme.tokenizer_config(
+            TokenizerConfig(
+                name_or_path="tok[red]",
+                tokens=None,
+                special_tokens=None,
+                tokenizer_model_max_length=128,
+            )
+        )
+        model = theme.model(_model(), can_access=True, summary=True)
+
+        assert events is not None
+        self.assertIn(r"calc\[red]", events)
+        self.assertIn("<redacted>", events)
+        self.assertNotIn("hidden", events)
+        self.assertIn(r"translated:Tokenizer: tok\[red]", tokenizer)
+        self.assertIn("translated:Fast: translated:no", tokenizer)
+        self.assertIn("translated:Model: model-id", model)
+        self.assertIn("translated:Access: translated:yes", model)
+        self.assertNotIn("translated:Downloads", model)
 
     def test_cache_list_command_renders_with_basic_theme(self) -> None:
         theme = BasicTheme(_gettext, _ngettext)
