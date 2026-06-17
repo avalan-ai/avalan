@@ -7,6 +7,7 @@ _WATCHED_CLI_MODULES = (
     "avalan.cli.display",
     "avalan.cli.display_reducer",
     "avalan.cli.display_snapshot",
+    "avalan.cli.stream_presenter",
     "avalan.cli.theme",
     "avalan.cli.theme.basic",
     "avalan.cli.theme.fancy",
@@ -17,6 +18,18 @@ _WATCHED_THEME_MODULES = (
     "avalan.cli.theme.basic",
     "avalan.cli.theme.fancy",
     "avalan.cli.theme_registry",
+)
+_WATCHED_PRESENTER_FORBIDDEN_MODULES = (
+    *_WATCHED_THEME_MODULES,
+    "avalan.cli.commands",
+    "avalan.cli.commands.agent",
+    "avalan.cli.commands.cache",
+    "avalan.cli.commands.deploy",
+    "avalan.cli.commands.flow",
+    "avalan.cli.commands.memory",
+    "avalan.cli.commands.model",
+    "avalan.cli.commands.task",
+    "avalan.cli.commands.tokenizer",
 )
 
 
@@ -44,6 +57,28 @@ class StreamImportBoundaryTestCase(TestCase):
             import_module("avalan.cli.display_reducer")
 
             for name in _WATCHED_THEME_MODULES:
+                self.assertNotIn(name, modules)
+        finally:
+            for name in watched:
+                modules.pop(name, None)
+            modules.update(saved_modules)
+
+    def test_stream_presenter_does_not_import_theme_or_command_modules(
+        self,
+    ) -> None:
+        watched = (
+            "avalan.cli.stream_presenter",
+            *_WATCHED_PRESENTER_FORBIDDEN_MODULES,
+        )
+        saved_modules = self._saved_modules_for(watched)
+
+        try:
+            for name in watched:
+                modules.pop(name, None)
+
+            import_module("avalan.cli.stream_presenter")
+
+            for name in _WATCHED_PRESENTER_FORBIDDEN_MODULES:
                 self.assertNotIn(name, modules)
         finally:
             for name in watched:
