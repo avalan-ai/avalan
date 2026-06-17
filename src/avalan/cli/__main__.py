@@ -1,6 +1,7 @@
 from .. import license, name, site, version
 from ..cli import CommandAbortException, has_input
 from ..cli.commands import is_ds4_backend_selected
+from ..cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from ..entities import (
     AttentionImplementation,
     Backend,
@@ -370,15 +371,6 @@ def is_torch_flex_attn_available() -> bool:
 def _huggingface_hub_class() -> type[Any]:
     module = import_module("avalan.model.hubs.huggingface")
     return cast(type[Any], getattr(module, "HuggingfaceHub"))
-
-
-class FancyTheme:
-    """Create the default CLI theme lazily."""
-
-    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
-        module = import_module("avalan.cli.theme.fancy")
-        theme_class = cast(type[Any], getattr(module, "FancyTheme"))
-        return theme_class(*args, **kwargs)
 
 
 def _load_command(module_name: str, function_name: str) -> Callable[..., Any]:
@@ -3893,8 +3885,10 @@ class CLI:
 
         assert self._logger is not None and isinstance(self._logger, Logger)
 
-        theme = cast(
-            Theme, FancyTheme(translator.gettext, translator.ngettext)
+        theme = create_theme(
+            DEFAULT_THEME_NAME,
+            translator.gettext,
+            translator.ngettext,
         )
         _ = theme._
         rich_theme_styles = {
