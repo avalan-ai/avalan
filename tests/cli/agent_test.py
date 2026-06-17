@@ -1,13 +1,14 @@
 import tomllib
 import unittest
 from argparse import Namespace
+from asyncio import CancelledError
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from io import StringIO
 from logging import getLogger
 from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
@@ -2424,6 +2425,68 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         ctc.assert_awaited_once_with(call_obj, tty_path="/tmp/tty")
         self.assertEqual(self.callback_result, "y")
 
+    async def test_run_tools_confirm_fallback_rejects_live_kwarg(self):
+        self.args.tools_confirm = True
+        self.args.tty = "/tmp/tty"
+        self.orch.tool = MagicMock(is_empty=False)
+        call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
+
+        class DummyOrchestratorResponse:
+            pass
+
+        async def orch_call(
+            *_args: object,
+            tool_confirm: Callable[[ToolCall], Awaitable[str]] | None = None,
+            **_kwargs: object,
+        ) -> DummyOrchestratorResponse:
+            self.assertIsNotNone(tool_confirm)
+            callback = cast(Callable[[ToolCall], Awaitable[str]], tool_confirm)
+            with self.assertRaises(TypeError):
+                await cast(Any, callback)(call_obj, live=MagicMock())
+            self.callback_result = await callback(call_obj)
+            return DummyOrchestratorResponse()
+
+        async def strict_confirm(
+            call: ToolCall,
+            *,
+            tty_path: str,
+        ) -> str:
+            self.assertIs(call, call_obj)
+            self.assertEqual(tty_path, "/tmp/tty")
+            return "y"
+
+        self.orch.side_effect = orch_call
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+            patch.object(
+                agent_cmds.CliStreamCoordinator,
+                "confirm_tool_call",
+                new=AsyncMock(side_effect=strict_confirm),
+            ) as ctc,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        ctc.assert_awaited_once_with(call_obj, tty_path="/tmp/tty")
+        tg.assert_awaited_once()
+        self.assertEqual(self.callback_result, "y")
+
     async def test_run_tools_confirm_stdin_not_tty(self):
         self.args.tools_confirm = True
         self.args.tty = "/tmp/tty"
@@ -2609,6 +2672,245 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             tg.await_args.kwargs["coordinator_container"],
         )
         self.assertIsNone(coordinator_container["coordinator"])
+
+    async def test_run_tools_confirm_active_rejects_live_kwarg(self):
+        self.args.tools_confirm = True
+        self.args.display_tools = True
+        self.args.tty = "/tmp/tty"
+        self.orch.tool = MagicMock(is_empty=False)
+        call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
+        callbacks: list[Callable[[ToolCall], Awaitable[str]]] = []
+        results: list[str] = []
+
+        class DummyOrchestratorResponse:
+            pass
+
+        async def orch_call(
+            *_args: object,
+            tool_confirm: Callable[[ToolCall], Awaitable[str]] | None = None,
+            **_kwargs: object,
+        ) -> DummyOrchestratorResponse:
+            self.assertIsNotNone(tool_confirm)
+            callbacks.append(
+                cast(Callable[[ToolCall], Awaitable[str]], tool_confirm)
+            )
+            return DummyOrchestratorResponse()
+
+        async def strict_confirm(
+            call: ToolCall,
+            *,
+            tty_path: str,
+        ) -> str:
+            self.assertIs(call, call_obj)
+            self.assertEqual(tty_path, "/tmp/tty")
+            return "a"
+
+        confirm_tool_call = AsyncMock(side_effect=strict_confirm)
+        active_coordinator = SimpleNamespace(
+            confirm_tool_call=confirm_tool_call
+        )
+
+        async def fake_token_generation(
+            **kwargs: object,
+        ) -> None:
+            coordinator_container = kwargs["coordinator_container"]
+            assert isinstance(coordinator_container, dict)
+            coordinator_container["coordinator"] = active_coordinator
+            callback = callbacks[0]
+            with self.assertRaises(TypeError):
+                await cast(Any, callback)(call_obj, live=MagicMock())
+            results.append(await callback(call_obj))
+            coordinator_container["coordinator"] = None
+
+        self.orch.side_effect = orch_call
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds,
+                "token_generation",
+                new=AsyncMock(side_effect=fake_token_generation),
+            ) as tg,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+            patch.object(agent_cmds, "CliStreamCoordinator") as fallback,
+        ):
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        tg.assert_awaited_once()
+        self.assertEqual(results, ["a"])
+        confirm_tool_call.assert_awaited_once_with(
+            call_obj,
+            tty_path="/tmp/tty",
+        )
+        fallback.assert_not_called()
+
+    async def test_run_tools_confirm_active_prompt_error_propagates(self):
+        self.args.tools_confirm = True
+        self.args.display_tools = True
+        self.args.tty = "/tmp/tty"
+        self.orch.tool = MagicMock(is_empty=False)
+        call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
+        callbacks: list[Callable[[ToolCall], Awaitable[str]]] = []
+
+        class DummyOrchestratorResponse:
+            pass
+
+        async def orch_call(
+            *_args: object,
+            tool_confirm: Callable[[ToolCall], Awaitable[str]] | None = None,
+            **_kwargs: object,
+        ) -> DummyOrchestratorResponse:
+            self.assertIsNotNone(tool_confirm)
+            callbacks.append(
+                cast(Callable[[ToolCall], Awaitable[str]], tool_confirm)
+            )
+            return DummyOrchestratorResponse()
+
+        confirm_tool_call = AsyncMock(
+            side_effect=RuntimeError("prompt failed")
+        )
+        active_coordinator = SimpleNamespace(
+            confirm_tool_call=confirm_tool_call
+        )
+
+        async def fake_token_generation(
+            **kwargs: object,
+        ) -> None:
+            coordinator_container = kwargs["coordinator_container"]
+            assert isinstance(coordinator_container, dict)
+            coordinator_container["coordinator"] = active_coordinator
+            try:
+                await callbacks[0](call_obj)
+            finally:
+                coordinator_container["coordinator"] = None
+
+        self.orch.side_effect = orch_call
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds,
+                "token_generation",
+                new=AsyncMock(side_effect=fake_token_generation),
+            ) as tg,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+            patch.object(agent_cmds, "CliStreamCoordinator") as fallback,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "prompt failed"):
+                await agent_cmds.agent_run(
+                    self.args,
+                    self.console,
+                    self.theme,
+                    self.hub,
+                    self.logger,
+                    1,
+                )
+
+        tg.assert_awaited_once()
+        confirm_tool_call.assert_awaited_once_with(
+            call_obj,
+            tty_path="/tmp/tty",
+        )
+        fallback.assert_not_called()
+
+    async def test_run_tools_confirm_active_prompt_cancel_propagates(self):
+        self.args.tools_confirm = True
+        self.args.display_tools = True
+        self.args.tty = "/tmp/tty"
+        self.orch.tool = MagicMock(is_empty=False)
+        call_obj = ToolCall(id=uuid4(), name="calc", arguments={"a": 1})
+        callbacks: list[Callable[[ToolCall], Awaitable[str]]] = []
+
+        class DummyOrchestratorResponse:
+            pass
+
+        async def orch_call(
+            *_args: object,
+            tool_confirm: Callable[[ToolCall], Awaitable[str]] | None = None,
+            **_kwargs: object,
+        ) -> DummyOrchestratorResponse:
+            self.assertIsNotNone(tool_confirm)
+            callbacks.append(
+                cast(Callable[[ToolCall], Awaitable[str]], tool_confirm)
+            )
+            return DummyOrchestratorResponse()
+
+        confirm_tool_call = AsyncMock(side_effect=CancelledError)
+        active_coordinator = SimpleNamespace(
+            confirm_tool_call=confirm_tool_call
+        )
+
+        async def fake_token_generation(
+            **kwargs: object,
+        ) -> None:
+            coordinator_container = kwargs["coordinator_container"]
+            assert isinstance(coordinator_container, dict)
+            coordinator_container["coordinator"] = active_coordinator
+            try:
+                await callbacks[0](call_obj)
+            finally:
+                coordinator_container["coordinator"] = None
+
+        self.orch.side_effect = orch_call
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds,
+                "token_generation",
+                new=AsyncMock(side_effect=fake_token_generation),
+            ) as tg,
+            patch.object(
+                agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
+            ),
+            patch.object(agent_cmds, "CliStreamCoordinator") as fallback,
+        ):
+            with self.assertRaises(CancelledError):
+                await agent_cmds.agent_run(
+                    self.args,
+                    self.console,
+                    self.theme,
+                    self.hub,
+                    self.logger,
+                    1,
+                )
+
+        tg.assert_awaited_once()
+        confirm_tool_call.assert_awaited_once_with(
+            call_obj,
+            tty_path="/tmp/tty",
+        )
+        fallback.assert_not_called()
 
     async def test_run_passes_tool_manager_to_model_call(self):
         self.args.tool = ["math"]
