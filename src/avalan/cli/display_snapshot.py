@@ -21,7 +21,7 @@ from .display_safety import (
 )
 
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Generic, Literal, TypeVar
 
@@ -114,6 +114,22 @@ class CliBoundedHistoryBuffer(Generic[HistoryItem]):
             self._items.popleft()
             self._dropped_count += 1
         self._items.append(item)
+
+    def remove_matching(
+        self,
+        predicate: Callable[[HistoryItem], bool],
+    ) -> int:
+        """Remove retained items matching predicate."""
+        assert callable(predicate)
+        kept: deque[HistoryItem] = deque()
+        removed = 0
+        for item in self._items:
+            if predicate(item):
+                removed += 1
+            else:
+                kept.append(item)
+        self._items = kept
+        return removed
 
     def snapshot(self) -> tuple[HistoryItem, ...]:
         """Return an immutable view of retained history."""
@@ -257,6 +273,19 @@ class CliToolDiagnosticSummarySnapshot:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class CliToolEventSummarySnapshot:
+    event_type: str
+    tool_call_id: str | None = None
+    name: str | None = None
+    payload_summary: str | None = None
+    observability_summary: str | None = None
+    sequence: int | None = None
+    started: float | None = None
+    finished: float | None = None
+    elapsed: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class CliEventSummarySnapshot:
     event_type: str
     payload_summary: str | None = None
@@ -301,6 +330,7 @@ class CliStreamBuildStatsSnapshot:
     retained_completed_tools: int
     retained_tool_results: int
     retained_tool_diagnostics: int
+    retained_tool_events: int
     retained_events: int
     retained_display_tokens: int
     retained_usage_summaries: int
@@ -308,6 +338,7 @@ class CliStreamBuildStatsSnapshot:
     dropped_completed_tools: int
     dropped_tool_results: int
     dropped_tool_diagnostics: int
+    dropped_tool_events: int
     dropped_events: int
     dropped_display_tokens: int
     dropped_usage_summaries: int
@@ -328,6 +359,7 @@ class CliStreamSnapshot:
     completed_tools: tuple[CliToolExecutionSummarySnapshot, ...]
     tool_results: tuple[CliToolResultSummarySnapshot, ...]
     tool_diagnostics: tuple[CliToolDiagnosticSummarySnapshot, ...]
+    tool_events: tuple[CliToolEventSummarySnapshot, ...]
     events: tuple[CliEventSummarySnapshot, ...]
     display_tokens: tuple[CliDisplayTokenSnapshot, ...]
     usage_summaries: tuple[CliUsageSummarySnapshot, ...]
@@ -490,6 +522,9 @@ class CliStreamSnapshotBuilder:
         ](tool_limit)
         self._tool_diagnostics = CliBoundedHistoryBuffer[
             CliToolDiagnosticSummarySnapshot
+        ](tool_limit)
+        self._tool_events = CliBoundedHistoryBuffer[
+            CliToolEventSummarySnapshot
         ](tool_limit)
         self._events = CliBoundedHistoryBuffer[CliEventSummarySnapshot](
             self.retention.event_history_limit
@@ -685,6 +720,40 @@ class CliStreamSnapshotBuilder:
             started_at=started_at,
         )
 
+    def update_active_tool(
+        self,
+        *,
+        tool_call_id: object,
+        name: object | None = None,
+        arguments: object | None = None,
+        provider_name: object | None = None,
+        sequence: int | None = None,
+        updated_at: float | None = None,
+    ) -> None:
+        """Update retained active tool execution details."""
+        if not self.display.show_tools:
+            return
+        tool_id = _safe_string_id(tool_call_id)
+        active = self._active_tools.get(tool_id)
+        if active is None:
+            return
+        self._active_tools[tool_id] = replace(
+            active,
+            name=active.name if name is None else safe_text(name),
+            arguments_summary=(
+                active.arguments_summary
+                if arguments is None
+                else safe_summary(arguments)
+            ),
+            provider_name=(
+                active.provider_name
+                if provider_name is None
+                else safe_text(provider_name)
+            ),
+            sequence=active.sequence if sequence is None else sequence,
+            updated_at=active.updated_at if updated_at is None else updated_at,
+        )
+
     def complete_tool(
         self,
         *,
@@ -748,6 +817,35 @@ class CliStreamSnapshotBuilder:
             )
         )
 
+    def add_tool_result_summary(
+        self,
+        *,
+        tool_call_id: object,
+        name: object,
+        status: ToolResultStatus,
+        result: object,
+        arguments_count: int,
+        sequence: int | None = None,
+        elapsed_seconds: float | None = None,
+    ) -> None:
+        """Add a safe tool result summary from canonical stream data."""
+        assert status in ("result", "error")
+        assert isinstance(arguments_count, int)
+        assert arguments_count >= 0
+        if self.retention.internal_tool_history_limit == 0:
+            return
+        self._tool_results.append(
+            CliToolResultSummarySnapshot(
+                tool_call_id=_safe_string_id(tool_call_id),
+                name=safe_text(name),
+                status=status,
+                result_summary=safe_summary(result),
+                arguments_count=arguments_count,
+                sequence=sequence,
+                elapsed_seconds=elapsed_seconds,
+            )
+        )
+
     def add_tool_diagnostic(
         self,
         diagnostic: ToolCallDiagnostic,
@@ -793,6 +891,53 @@ class CliStreamSnapshotBuilder:
                     else float(diagnostic.duration_ms)
                 ),
             )
+        )
+
+    def add_tool_event(
+        self,
+        event: Event,
+        *,
+        tool_call_id: object | None = None,
+        name: object | None = None,
+        sequence: int | None = None,
+    ) -> None:
+        """Add a safe CLI-only tool event summary."""
+        assert isinstance(event, Event)
+        event_type = event_type_value(event.type)
+        if not self.display.show_tools or not event_type.startswith("tool_"):
+            return
+        self._tool_events.append(
+            CliToolEventSummarySnapshot(
+                event_type=event_type,
+                tool_call_id=(
+                    None
+                    if tool_call_id is None
+                    else _safe_string_id(tool_call_id)
+                ),
+                name=None if name is None else safe_text(name),
+                payload_summary=(
+                    None
+                    if event.payload is None
+                    else safe_summary(event.payload)
+                ),
+                observability_summary=safe_summary(
+                    event.observability.to_dict()
+                ),
+                sequence=sequence,
+                started=event.started,
+                finished=event.finished,
+                elapsed=event.elapsed,
+            )
+        )
+
+    def remove_tool_events_for_tool_call(
+        self,
+        tool_call_id: object,
+    ) -> int:
+        """Remove CLI-only tool events superseded by canonical data."""
+        tool_id = _safe_string_id(tool_call_id)
+        return self._tool_events.remove_matching(
+            lambda event: event.tool_call_id == tool_id
         )
 
     def add_event(
@@ -927,6 +1072,7 @@ class CliStreamSnapshotBuilder:
         completed_tools = self._completed_tools.snapshot()
         tool_results = self._tool_results.snapshot()
         tool_diagnostics = self._tool_diagnostics.snapshot()
+        tool_events = self._tool_events.snapshot()
         events = self._events.snapshot()
         display_tokens = self._display_tokens.snapshot()
         usage_summaries = self._usage_summaries.snapshot()
@@ -935,6 +1081,7 @@ class CliStreamSnapshotBuilder:
             completed_tools=completed_tools,
             tool_results=tool_results,
             tool_diagnostics=tool_diagnostics,
+            tool_events=tool_events,
             events=events,
             display_tokens=display_tokens,
             usage_summaries=usage_summaries,
@@ -955,6 +1102,7 @@ class CliStreamSnapshotBuilder:
             completed_tools=completed_tools,
             tool_results=tool_results,
             tool_diagnostics=tool_diagnostics,
+            tool_events=tool_events,
             events=events,
             display_tokens=display_tokens,
             usage_summaries=usage_summaries,
@@ -968,6 +1116,7 @@ class CliStreamSnapshotBuilder:
         completed_tools: tuple[CliToolExecutionSummarySnapshot, ...],
         tool_results: tuple[CliToolResultSummarySnapshot, ...],
         tool_diagnostics: tuple[CliToolDiagnosticSummarySnapshot, ...],
+        tool_events: tuple[CliToolEventSummarySnapshot, ...],
         events: tuple[CliEventSummarySnapshot, ...],
         display_tokens: tuple[CliDisplayTokenSnapshot, ...],
         usage_summaries: tuple[CliUsageSummarySnapshot, ...],
@@ -982,6 +1131,7 @@ class CliStreamSnapshotBuilder:
             self._completed_tools.materialization_count
             + self._tool_results.materialization_count
             + self._tool_diagnostics.materialization_count
+            + self._tool_events.materialization_count
             + self._events.materialization_count
             + self._display_tokens.materialization_count
             + self._usage_summaries.materialization_count
@@ -1003,6 +1153,7 @@ class CliStreamSnapshotBuilder:
             retained_completed_tools=len(completed_tools),
             retained_tool_results=len(tool_results),
             retained_tool_diagnostics=len(tool_diagnostics),
+            retained_tool_events=len(tool_events),
             retained_events=len(events),
             retained_display_tokens=len(display_tokens),
             retained_usage_summaries=len(usage_summaries),
@@ -1010,6 +1161,7 @@ class CliStreamSnapshotBuilder:
             dropped_completed_tools=self._completed_tools.dropped_count,
             dropped_tool_results=self._tool_results.dropped_count,
             dropped_tool_diagnostics=self._tool_diagnostics.dropped_count,
+            dropped_tool_events=self._tool_events.dropped_count,
             dropped_events=self._events.dropped_count,
             dropped_display_tokens=self._display_tokens.dropped_count,
             dropped_usage_summaries=self._usage_summaries.dropped_count,
