@@ -319,7 +319,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.build_stats.snapshots_built, 1)
         self.assertEqual(snapshot.build_stats.answer_chunks, 2)
         self.assertEqual(snapshot.build_stats.text_materializations, 3)
-        self.assertEqual(snapshot.build_stats.history_materializations, 7)
+        self.assertEqual(snapshot.build_stats.history_materializations, 8)
         self.assertEqual(snapshot.build_stats.retained_display_tokens, 2)
 
         with self.assertRaises(FrozenInstanceError):
@@ -474,6 +474,45 @@ class DisplaySnapshotBuilderTestCase(TestCase):
             final_snapshot.completed_tools[0].elapsed_seconds, 0.5
         )
 
+    def test_active_tool_snapshots_are_isolated_after_updates(self) -> None:
+        builder = CliStreamSnapshotBuilder(
+            _config(display_tools=True, display_tools_events=2)
+        )
+
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="search",
+            arguments={"query": "first"},
+            provider_name="provider-a",
+            sequence=1,
+            started_at=1.0,
+        )
+        first = builder.snapshot()
+        builder.update_active_tool(
+            tool_call_id="call-1",
+            name="lookup",
+            arguments={"api_key": "secret", "query": "second"},
+            provider_name="provider-b",
+            sequence=2,
+            updated_at=2.0,
+        )
+        second = builder.snapshot()
+
+        self.assertEqual(first.active_tools[0].name, "search")
+        self.assertEqual(first.active_tools[0].provider_name, "provider-a")
+        self.assertEqual(first.active_tools[0].sequence, 1)
+        self.assertIn("first", first.active_tools[0].arguments_summary or "")
+        self.assertNotIn(
+            "second", first.active_tools[0].arguments_summary or ""
+        )
+        self.assertEqual(second.active_tools[0].name, "lookup")
+        self.assertEqual(second.active_tools[0].provider_name, "provider-b")
+        self.assertEqual(second.active_tools[0].sequence, 2)
+        self.assertEqual(second.active_tools[0].updated_at, 2.0)
+        self.assertIn(
+            "<redacted>", second.active_tools[0].arguments_summary or ""
+        )
+
     def test_retention_disables_unrequested_tool_event_and_stats_history(
         self,
     ) -> None:
@@ -514,6 +553,46 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.usage_summaries, ())
         self.assertEqual(snapshot.projection_metadata_summaries, ())
         self.assertEqual(snapshot.display_tokens, ())
+
+    def test_custom_zero_history_limits_drop_enabled_histories(self) -> None:
+        builder = CliStreamSnapshotBuilder(
+            _config(
+                stats=True,
+                display_tools=True,
+                display_events=True,
+                display_tokens=1,
+            ),
+            event_history_limit=0,
+            projection_summary_limit=0,
+        )
+        projection = StreamConsumerProjection(
+            stream_session_id="session",
+            run_id="run",
+            turn_id="turn",
+            sequence=1,
+            kind=StreamItemKind.USAGE_UPDATE,
+            channel=StreamChannel.USAGE,
+            correlation=StreamItemCorrelation(),
+            usage={"input_tokens": 1},
+            data={"provider_payload": {"token": "secret"}},
+            metadata={"authorization": "secret"},
+        )
+
+        builder.complete_tool(tool_call_id="call-1", name="search")
+        builder.add_event(Event(type=EventType.START, payload={"ok": True}))
+        builder.add_projection_summary(projection)
+        builder.add_display_token(Token(id=1, token="x", probability=0.2))
+        snapshot = builder.snapshot()
+
+        self.assertTrue(snapshot.display.show_events)
+        self.assertTrue(snapshot.display.show_stats)
+        self.assertEqual(snapshot.retention.event_history_limit, 0)
+        self.assertEqual(snapshot.retention.usage_summary_history_limit, 0)
+        self.assertEqual(snapshot.completed_tools[0].tool_call_id, "call-1")
+        self.assertEqual(snapshot.events, ())
+        self.assertEqual(snapshot.usage_summaries, ())
+        self.assertEqual(snapshot.projection_metadata_summaries, ())
+        self.assertEqual(snapshot.display_tokens[0].token_id, 1)
 
     def test_display_tools_events_zero_keeps_only_active_tools(self) -> None:
         builder = CliStreamSnapshotBuilder(
@@ -561,6 +640,47 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.timing.first_token_seconds, 0.2)
         self.assertEqual(snapshot.timing.reasoning_seconds, 0.4)
 
+    def test_projection_display_token_metadata_is_sanitized(self) -> None:
+        builder = CliStreamSnapshotBuilder(
+            _config(
+                stats=True,
+                display_tokens=1,
+                display_probabilities=True,
+            )
+        )
+
+        builder.add_display_token_from_projection(
+            _answer_projection(
+                sequence=3,
+                text="\x1b[31manswer",
+                metadata={
+                    "token_id": 9,
+                    "probability": 0.4,
+                    "tokens": [
+                        {
+                            "token_id": 10,
+                            "token": "candidate\x1b[0m",
+                            "probability": 0.2,
+                        },
+                        {"token": 7, "probability": 0.8},
+                        "invalid",
+                    ],
+                },
+            )
+        )
+        snapshot = builder.snapshot()
+
+        self.assertEqual(snapshot.display_tokens[0].sequence, 3)
+        self.assertEqual(snapshot.display_tokens[0].text, "answer")
+        self.assertEqual(snapshot.display_tokens[0].probability, 0.4)
+        self.assertEqual(len(snapshot.display_tokens[0].candidates), 1)
+        self.assertEqual(
+            snapshot.display_tokens[0].candidates[0].text, "candidate"
+        )
+        self.assertEqual(
+            snapshot.display_tokens[0].candidates[0].probability, 0.2
+        )
+
     def test_repeated_appends_materialize_once_per_snapshot_and_bound_history(
         self,
     ) -> None:
@@ -597,7 +717,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.build_stats.answer_chunks, 50)
         self.assertEqual(snapshot.build_stats.answer_characters, 50)
         self.assertEqual(snapshot.build_stats.text_materializations, 3)
-        self.assertEqual(snapshot.build_stats.history_materializations, 7)
+        self.assertEqual(snapshot.build_stats.history_materializations, 8)
         self.assertEqual(snapshot.build_stats.retained_completed_tools, 2)
         self.assertEqual(snapshot.build_stats.retained_events, 4)
         self.assertEqual(snapshot.build_stats.retained_display_tokens, 2)
