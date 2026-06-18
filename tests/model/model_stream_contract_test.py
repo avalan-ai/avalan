@@ -49,6 +49,7 @@ from avalan.model.provider import ProviderFamily
 from avalan.model.stream import (
     CanonicalStreamAccumulator,
     CanonicalStreamItem,
+    LocalTextStreamEventParser,
     StreamBackpressurePolicy,
     StreamCancellationDrainPolicy,
     StreamCancellationPropagation,
@@ -109,6 +110,7 @@ from avalan.model.stream import (
     stream_projection_is_tool_call,
     stream_projection_text_delta,
     stream_terminal_outcome_for_kind,
+    stream_token_metadata,
     validate_canonical_stream_items,
     validate_stream_runtime_contract,
     validate_tool_lifecycle_items,
@@ -322,7 +324,6 @@ _LEGACY_CLASSIFIER_STRING_SITES = {
         "avalan.model.nlp.text.vendor.openai",
         "OpenAIClient._non_stream_response_content",
     ),
-    ("avalan.model.nlp.text.vllm", "VllmModel._stream_generator"),
     ("avalan.model.response.text", "_text_from_non_stream_result"),
     ("avalan.model.response.text", "TextGenerationResponse.__aiter__"),
     ("avalan.model.response.text", "TextGenerationResponse.__anext__"),
@@ -393,33 +394,12 @@ _PHASE_1_1_LEGACY_CLASSIFIER_DEBT_CEILING = {
         "flow_event_is_projectable",
     ): frozenset({StreamLegacySurface.EVENT}),
     (
-        "avalan.model.nlp.text.ds4",
-        "Ds4Worker._generate_dsml_tool_chunks",
-    ): frozenset({StreamLegacySurface.TOKEN_DETAIL}),
-    (
-        "avalan.model.nlp.text.ds4",
-        "Ds4Worker._generate_text_chunks",
-    ): frozenset({StreamLegacySurface.TOKEN_DETAIL}),
-    (
-        "avalan.model.nlp.text.ds4",
-        "Ds4Worker.generate_string_async",
-    ): frozenset(
-        {
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        }
-    ),
-    (
         "avalan.model.nlp.text.vendor.anthropic",
         "AnthropicClient._non_stream_response_content",
     ): frozenset({StreamLegacySurface.STRING}),
     (
         "avalan.model.nlp.text.vendor.openai",
         "OpenAIClient._non_stream_response_content",
-    ): frozenset({StreamLegacySurface.STRING}),
-    (
-        "avalan.model.nlp.text.vllm",
-        "VllmModel._stream_generator",
     ): frozenset({StreamLegacySurface.STRING}),
     (
         "avalan.model.response.text",
@@ -561,51 +541,6 @@ _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING = {
     ("avalan.model.__init__", "OutputFunction", "alias"): frozenset(
         {"OutputGenerator"}
     ),
-    (
-        "avalan.model.nlp.text.ds4",
-        "Ds4Worker.stream",
-        "return",
-    ): frozenset({"TokenDetail", "ToolCallToken", "str"}),
-    (
-        "avalan.model.nlp.text.ds4",
-        "Ds4Worker._generate_chunks",
-        "return",
-    ): frozenset({"TokenDetail", "ToolCallToken", "str"}),
-    (
-        "avalan.model.nlp.text.ds4",
-        "Ds4Worker._generate_dsml_tool_chunks",
-        "return",
-    ): frozenset({"ToolCallToken", "str"}),
-    (
-        "avalan.model.nlp.text.ds4",
-        "Ds4Worker._generate_text_chunks",
-        "return",
-    ): frozenset({"TokenDetail", "str"}),
-    (
-        "avalan.model.nlp.text.ds4",
-        "Ds4Model._generation_stream",
-        "return",
-    ): frozenset({"TokenDetail", "ToolCallToken", "str"}),
-    (
-        "avalan.model.nlp.text.generation",
-        "TextGenerationModel._stream_generator",
-        "return",
-    ): frozenset({"str"}),
-    (
-        "avalan.model.nlp.text.generation",
-        "TextGenerationModel._token_generator",
-        "return",
-    ): frozenset({"Token", "TokenDetail"}),
-    (
-        "avalan.model.nlp.text.vllm",
-        "VllmModel._stream_generator",
-        "return",
-    ): frozenset({"str"}),
-    (
-        "avalan.model.nlp.text.vllm",
-        "VllmModel.__call__",
-        "return",
-    ): frozenset({"str"}),
     (
         "avalan.model.response.text",
         "OutputGenerator",
@@ -7481,6 +7416,75 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(tokens.read_count, 3)
         self.assertFalse(tokens.closed)
 
+    def test_local_text_event_parser_preserves_split_semantics(self) -> None:
+        parser = LocalTextStreamEventParser()
+
+        events = (
+            *parser.push("a<think>r"),
+            *parser.push('</think><tool_call name="lookup">{"q"'),
+            *parser.push(':"v"}</tool_call>b'),
+            *parser.flush(),
+        )
+
+        self.assertEqual(
+            [(event.kind, event.text_delta) for event in events],
+            [
+                (StreamItemKind.ANSWER_DELTA, "a"),
+                (StreamItemKind.REASONING_DELTA, "r"),
+                (StreamItemKind.REASONING_DONE, None),
+                (StreamItemKind.TOOL_CALL_ARGUMENT_DELTA, '{"q"'),
+                (StreamItemKind.TOOL_CALL_ARGUMENT_DELTA, ':"v"}'),
+                (StreamItemKind.TOOL_CALL_READY, None),
+                (StreamItemKind.TOOL_CALL_DONE, None),
+                (StreamItemKind.ANSWER_DELTA, "b"),
+            ],
+        )
+        tool_call_ids = {
+            event.correlation.tool_call_id
+            for event in events
+            if event.kind
+            in {
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+            }
+        }
+        self.assertEqual(tool_call_ids, {"local-tool-call-1"})
+        ready = next(
+            event
+            for event in events
+            if event.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(
+            ready.data,
+            {"name": "lookup", "arguments": {"q": "v"}},
+        )
+
+    def test_stream_token_metadata_is_metadata_only_enrichment(self) -> None:
+        metadata = stream_token_metadata(
+            token_id=7,
+            probability=0.25,
+            step=3,
+            probability_distribution="softmax",
+            candidates=(("A", 7, 0.25), ("B", None, None)),
+            provider_name="ds4",
+        )
+
+        self.assertEqual(
+            metadata,
+            {
+                "token_id": 7,
+                "probability": 0.25,
+                "step": 3,
+                "probability_distribution": "softmax",
+                "tokens": [
+                    {"token": "A", "token_id": 7, "probability": 0.25},
+                    {"token": "B"},
+                ],
+                "provider_name": "ds4",
+            },
+        )
+
     def test_provider_and_local_streams_wait_for_slow_consumers(
         self,
     ) -> None:
@@ -8159,18 +8163,6 @@ class StreamContractTestCase(TestCase):
 
         expected_boundaries = {
             ("avalan.model.vendor", "TextGenerationVendor.__call__"),
-            (
-                "avalan.model.nlp.text.ds4",
-                "Ds4Worker.stream",
-            ),
-            (
-                "avalan.model.nlp.text.ds4",
-                "Ds4Model._generation_stream",
-            ),
-            (
-                "avalan.model.nlp.text.generation",
-                "TextGenerationModel._stream_generator",
-            ),
             ("avalan.model.stream", "_normalize_local_stream"),
             ("avalan.model.stream", "stream_consumer_projection_from_token"),
             ("avalan.model.stream", "project_stream_consumer_item"),
@@ -8255,15 +8247,6 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(expected_boundaries, inventory_keys)
 
         boundary_expectations = {
-            ("avalan.model.nlp.text.ds4", "Ds4Worker.stream"): (
-                (
-                    StreamLegacySurface.STRING,
-                    StreamLegacySurface.TOKEN_DETAIL,
-                    StreamLegacySurface.TOOL_CALL_TOKEN,
-                ),
-                StreamLegacyBoundaryCategory.PRODUCER,
-                (StreamLegacyBoundaryDirection.EMITS,),
-            ),
             (
                 "avalan.model.response.text",
                 "TextGenerationResponse.__anext__",

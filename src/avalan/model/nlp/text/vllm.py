@@ -7,13 +7,16 @@ from ....model.nlp.text.generation import TextGenerationModel
 from ....model.provider import provider_family_value
 from ....model.stream import (
     CanonicalStreamItem,
+    LocalTextStreamEventParser,
     StreamItemKind,
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
+    stream_token_metadata,
 )
 from ....model.vendor import TextGenerationVendorStream
 from ....tool.manager import ToolManager
+from ....types import LooseJsonValue
 
 from asyncio import to_thread
 from dataclasses import asdict, replace
@@ -23,7 +26,6 @@ from typing import (
     Any,
     AsyncGenerator,
     AsyncIterator,
-    Awaitable,
     Callable,
     Iterator,
     cast,
@@ -61,13 +63,18 @@ def _sampling_params_class() -> Any:
 
 
 class VllmStream(TextGenerationVendorStream):
+    _SENTINEL = object()
+
+    _cumulative_text: bool
     _iterator: Iterator[Any] | None
     _stream: AsyncIterator[Any]
+    _supports_cancellation: bool
 
     def __init__(
         self,
-        generator: Iterator[Any] | AsyncGenerator[Any, None],
+        generator: Iterator[Any] | AsyncIterator[Any],
         *,
+        cumulative_text: bool = False,
         provider_family: str = "vllm",
     ) -> None:
         async def empty_generator() -> (
@@ -76,9 +83,11 @@ class VllmStream(TextGenerationVendorStream):
             if False:
                 yield cast(CanonicalStreamItem, None)
 
+        self._cumulative_text = cumulative_text
         if hasattr(generator, "__anext__"):
+            self._supports_cancellation = True
             self._iterator = None
-            self._stream = cast(AsyncGenerator[Any, None], generator)
+            self._stream = cast(AsyncIterator[Any], generator)
             super().__init__(
                 empty_generator(),
                 provider_family=provider_family,
@@ -86,6 +95,7 @@ class VllmStream(TextGenerationVendorStream):
             )
             return
 
+        self._supports_cancellation = False
         self._iterator = generator
         self._stream = self._async_generator_from_iterator(generator)
         super().__init__(
@@ -117,7 +127,7 @@ class VllmStream(TextGenerationVendorStream):
             or StreamProviderCapabilities(
                 backend=StreamProducerBackend.LOCAL,
                 provider_family=self._provider_family,
-                supports_cancellation=True,
+                supports_cancellation=self._supports_cancellation,
             ),
             close_after_terminal=close_after_terminal,
         )
@@ -125,22 +135,141 @@ class VllmStream(TextGenerationVendorStream):
     async def _provider_events(
         self,
     ) -> AsyncGenerator[StreamProviderEvent, None]:
+        parser = LocalTextStreamEventParser()
+        previous_text = ""
         async for chunk in self._stream:
-            yield StreamProviderEvent(
-                kind=StreamItemKind.ANSWER_DELTA,
-                text_delta=self._chunk_text(chunk),
-                provider_event_type="vllm.delta",
-            )
+            if isinstance(chunk, BaseException):
+                raise chunk
+            text, metadata = self._chunk_text_and_metadata(chunk)
+            if text is None:
+                continue
+            if self._cumulative_text:
+                if text.startswith(previous_text):
+                    delta = text[len(previous_text) :]
+                else:
+                    delta = text
+                previous_text = text
+                text = delta
+            if not text:
+                continue
+            for event in parser.push(text):
+                yield self._event_with_metadata(
+                    event,
+                    metadata,
+                    provider_event_type="vllm.delta",
+                )
+        for event in parser.flush():
+            yield event
 
     @staticmethod
-    def _chunk_text(chunk: object) -> str:
+    def _event_with_metadata(
+        event: StreamProviderEvent,
+        metadata: dict[str, LooseJsonValue],
+        *,
+        provider_event_type: str,
+    ) -> StreamProviderEvent:
+        if event.kind is StreamItemKind.ANSWER_DELTA:
+            event_metadata = {**event.metadata, **metadata}
+        else:
+            event_metadata = event.metadata
+        return replace(
+            event,
+            metadata=event_metadata,
+            provider_event_type=event.provider_event_type
+            or provider_event_type,
+        )
+
+    @classmethod
+    def _chunk_text(cls, chunk: object) -> str:
+        text, _ = cls._chunk_text_and_metadata(chunk)
+        return text if text is not None else str(chunk)
+
+    @staticmethod
+    def _chunk_text_and_metadata(
+        chunk: object,
+    ) -> tuple[str | None, dict[str, LooseJsonValue]]:
         if isinstance(chunk, str):
-            return chunk
+            return chunk, {}
         token = getattr(chunk, "token", None)
         if isinstance(token, str):
-            return token
+            return token, VllmStream._chunk_metadata(chunk)
+        outputs = getattr(chunk, "outputs", None)
+        if (
+            isinstance(outputs, list)
+            and outputs
+            and (output_text := getattr(outputs[0], "text", None)) is not None
+        ):
+            return (
+                (
+                    output_text
+                    if isinstance(output_text, str)
+                    else str(output_text)
+                ),
+                VllmStream._chunk_metadata(chunk),
+            )
         text = getattr(chunk, "text", None)
-        return text if isinstance(text, str) else str(chunk)
+        if isinstance(text, str):
+            return text, VllmStream._chunk_metadata(chunk)
+        return str(chunk), VllmStream._chunk_metadata(chunk)
+
+    @staticmethod
+    def _chunk_metadata(chunk: object) -> dict[str, LooseJsonValue]:
+        probability = getattr(chunk, "probability", None)
+        if isinstance(probability, bool) or not isinstance(
+            probability, (int, float)
+        ):
+            probability = None
+
+        probability_distribution = getattr(
+            chunk, "probability_distribution", None
+        )
+        if not isinstance(probability_distribution, str):
+            probability_distribution = None
+
+        candidates = getattr(chunk, "tokens", None)
+        candidate_metadata = (
+            tuple(
+                candidate
+                for item in candidates
+                if (candidate := VllmStream._candidate_metadata(item))
+            )
+            if isinstance(candidates, list)
+            else None
+        )
+
+        return stream_token_metadata(
+            token_id=VllmStream._non_negative_int(getattr(chunk, "id", None)),
+            probability=probability,
+            step=VllmStream._non_negative_int(getattr(chunk, "step", None)),
+            probability_distribution=probability_distribution,
+            candidates=candidate_metadata,
+        )
+
+    @staticmethod
+    def _candidate_metadata(
+        candidate: object,
+    ) -> tuple[str, int | None, float | None] | None:
+        text = getattr(candidate, "token", None)
+        if not isinstance(text, str) or not text:
+            return None
+        probability = getattr(candidate, "probability", None)
+        if isinstance(probability, bool) or not isinstance(
+            probability, (int, float)
+        ):
+            probability = None
+        return (
+            text,
+            VllmStream._non_negative_int(getattr(candidate, "id", None)),
+            probability,
+        )
+
+    @staticmethod
+    def _non_negative_int(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value >= 0 else None
+        return None
 
     @staticmethod
     async def _async_generator_from_iterator(
@@ -148,11 +277,14 @@ class VllmStream(TextGenerationVendorStream):
     ) -> AsyncGenerator[Any, None]:
         while True:
             chunk = await to_thread(
-                cast(Callable[[], Any], lambda: next(iterator, None))
+                cast(
+                    Callable[[], Any],
+                    lambda: next(iterator, VllmStream._SENTINEL),
+                )
             )
-            if chunk is None:
+            if chunk is VllmStream._SENTINEL:
                 return
-            yield str(chunk)
+            yield chunk
 
 
 class VllmModel(TextGenerationModel):
@@ -219,28 +351,15 @@ class VllmModel(TextGenerationModel):
             tokenizer.decode(input_ids[0], skip_special_tokens=False),
         )
 
-    async def _stream_generator(
+    def _stream_generator(
         self,
         prompt: str,
         settings: GenerationSettings,
-    ) -> AsyncGenerator[str, None]:
+    ) -> TextGenerationVendorStream:
         params = self._build_sampling_params(settings)
         model = cast(Any, self._model)
         iterator = iter(model.generate([prompt], params, stream=True))
-
-        def _next(default: Any = None) -> Any:
-            return next(iterator, default)
-
-        while True:
-            chunk = await to_thread(lambda: _next(None))
-            if chunk is None:
-                return
-            if isinstance(chunk, str):
-                yield chunk
-            else:
-                text = getattr(chunk.outputs[0], "text", "")
-                if text:
-                    yield str(text)
+        return VllmStream(iterator, cumulative_text=True)
 
     def _string_output(
         self,
@@ -261,7 +380,7 @@ class VllmModel(TextGenerationModel):
         *,
         instructions: str | None = None,
         tool: ToolManager | None = None,
-    ) -> TextGenerationVendorStream | str | AsyncGenerator[str, None]:
+    ) -> TextGenerationVendorStream | str:
         settings = settings or GenerationSettings()
         prompt = self._prompt(
             input,
@@ -273,16 +392,5 @@ class VllmModel(TextGenerationModel):
         )
         generation_settings = replace(settings, do_sample=False)
         if settings.use_async_generator:
-            stream = self._stream_generator(prompt, generation_settings)
-            if isinstance(stream, Awaitable):
-                resolved_stream = await stream
-                if isinstance(resolved_stream, str):
-                    return resolved_stream
-                return cast(
-                    TextGenerationVendorStream
-                    | str
-                    | AsyncGenerator[str, None],
-                    VllmStream(resolved_stream),
-                )
-            return VllmStream(stream)
+            return self._stream_generator(prompt, generation_settings)
         return self._string_output(prompt, generation_settings)

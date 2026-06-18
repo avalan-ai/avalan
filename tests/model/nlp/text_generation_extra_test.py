@@ -15,6 +15,7 @@ from avalan.entities import (
     TransformerEngineSettings,
 )
 from avalan.model.nlp.text.generation import TextGenerationModel
+from avalan.model.stream import StreamItemKind
 
 
 class TokenGeneratorPickTestCase(IsolatedAsyncioTestCase):
@@ -63,9 +64,14 @@ class TokenGeneratorPickTestCase(IsolatedAsyncioTestCase):
             ):
                 result.append(t)
 
-        self.assertEqual(len(result), 2)
-        self.assertEqual([t.id for t in result], [1, 2])
-        self.assertTrue(all(t.tokens is not None for t in result))
+        deltas = [
+            item for item in result if item.kind is StreamItemKind.ANSWER_DELTA
+        ]
+        self.assertEqual(len(deltas), 2)
+        self.assertEqual(
+            [item.metadata["token_id"] for item in deltas], [1, 2]
+        )
+        self.assertTrue(all("tokens" in item.metadata for item in deltas))
 
 
 class TokenizeInputPrefixTestCase(TestCase):

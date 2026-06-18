@@ -5,6 +5,7 @@ import pytest
 
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.ds4 import Ds4Model
+from avalan.model.stream import StreamItemKind
 from avalan.model.transformer import TransformerModel
 
 DS4_SMOKE_PROMPT = "Write a short greeting."
@@ -99,7 +100,10 @@ async def stream_chunks(
         ),
     )
     chunks: list[str] = []
-    async for chunk in response:
-        if chunk:
-            chunks.append(str(chunk))
+    async for item in response:
+        if (
+            item.kind is StreamItemKind.ANSWER_DELTA
+            and item.text_delta is not None
+        ):
+            chunks.append(item.text_delta)
     return chunks

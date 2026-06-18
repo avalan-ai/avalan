@@ -54,7 +54,6 @@ from avalan.entities import (
     ToolCall,
     ToolCallContext,
     ToolCallResult,
-    ToolCallToken,
     ToolFormat,
     ToolManagerSettings,
     TransformerEngineSettings,
@@ -66,6 +65,13 @@ from avalan.model.nlp.text.ds4 import (
     _combine_instructions,
     _Ds4DiskKvCache,
     _Ds4GenerationPlan,
+)
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamProviderEvent,
+    StreamTerminalOutcome,
 )
 from avalan.tool.dsml import DsmlParseResult, DsmlPromptMessage
 from avalan.tool.manager import ToolManager
@@ -758,6 +764,91 @@ def _worker_options(model_path: Path) -> EngineOptions:
     return EngineOptions(
         model_path=str(model_path), backend=Ds4NativeBackend.METAL
     )
+
+
+def _answer_deltas(items: Iterable[CanonicalStreamItem]) -> list[str]:
+    return [
+        item.text_delta or ""
+        for item in items
+        if item.kind is StreamItemKind.ANSWER_DELTA
+    ]
+
+
+def _answer_text(items: Iterable[CanonicalStreamItem]) -> str:
+    return "".join(_answer_deltas(items))
+
+
+def _items_of_kind(
+    items: Iterable[CanonicalStreamItem],
+    kind: StreamItemKind,
+) -> list[CanonicalStreamItem]:
+    return [item for item in items if item.kind is kind]
+
+
+def _terminal_item(
+    items: Iterable[CanonicalStreamItem],
+) -> CanonicalStreamItem:
+    terminals = [
+        item
+        for item in items
+        if item.kind
+        in {
+            StreamItemKind.STREAM_COMPLETED,
+            StreamItemKind.STREAM_ERRORED,
+            StreamItemKind.STREAM_CANCELLED,
+        }
+    ]
+    assert len(terminals) == 1
+    return terminals[0]
+
+
+def _usage_payload(items: Iterable[CanonicalStreamItem]) -> dict[str, object]:
+    usage_items = _items_of_kind(items, StreamItemKind.USAGE_COMPLETED)
+    assert len(usage_items) == 1
+    usage = usage_items[0].usage
+    assert isinstance(usage, dict)
+    return usage
+
+
+def _tool_argument_deltas(items: Iterable[CanonicalStreamItem]) -> list[str]:
+    return [
+        item.text_delta or ""
+        for item in items
+        if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+    ]
+
+
+def _ready_tool_calls(
+    items: Iterable[CanonicalStreamItem],
+) -> list[ToolCall]:
+    calls: list[ToolCall] = []
+    for item in items:
+        if item.kind is not StreamItemKind.TOOL_CALL_READY:
+            continue
+        data = item.data
+        assert isinstance(data, dict)
+        tool_call_id = item.correlation.tool_call_id
+        assert tool_call_id is not None
+        name = data.get("name")
+        arguments = data.get("arguments")
+        assert isinstance(name, str)
+        assert isinstance(arguments, dict)
+        calls.append(
+            ToolCall(
+                id=tool_call_id,
+                name=name,
+                arguments=cast(dict[str, Any], arguments),
+            )
+        )
+    return calls
+
+
+def _assert_closed_success(items: list[CanonicalStreamItem]) -> None:
+    assert items[0].kind is StreamItemKind.STREAM_STARTED
+    terminal = _terminal_item(items)
+    assert terminal.kind is StreamItemKind.STREAM_COMPLETED
+    assert terminal.terminal_outcome is StreamTerminalOutcome.COMPLETED
+    assert items[-1].kind is StreamItemKind.STREAM_CLOSED
 
 
 def _latest_fake_engine() -> FakeNativeEngine:
@@ -1714,7 +1805,7 @@ def test_ds4_generation_stream_returns_plain_strings_without_token_details(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> list[object]:
+    async def run_case() -> list[CanonicalStreamItem]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101]
@@ -1728,15 +1819,117 @@ def test_ds4_generation_stream_returns_plain_strings_without_token_details(
                 use_async_generator=True,
             ),
         )
-        chunks: list[object] = [chunk async for chunk in response]
+        chunks = [chunk async for chunk in response]
         model.close()
         return chunks
 
-    chunks = run(run_case())
+    items = run(run_case())
 
-    assert chunks == ["A"]
-    assert all(isinstance(chunk, str) for chunk in chunks)
-    assert not any(isinstance(chunk, TokenDetail) for chunk in chunks)
+    _assert_closed_success(items)
+    assert _answer_deltas(items) == ["A"]
+    assert _usage_payload(items) == {
+        "input_tokens": 4,
+        "output_tokens": 1,
+        "total_tokens": 5,
+    }
+    assert all(isinstance(item, CanonicalStreamItem) for item in items)
+    assert not any(isinstance(item, TokenDetail) for item in items)
+
+
+def test_ds4_generation_stream_flushes_pending_text_suffix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[CanonicalStreamItem]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101]
+        fake.token_text_map = {101: b"<"}
+        response = await model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    items = run(run_case())
+
+    _assert_closed_success(items)
+    assert _answer_deltas(items) == ["<"]
+
+
+def test_ds4_generation_stream_reports_usage_for_stop_string(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[CanonicalStreamItem]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101, 102, 103]
+        fake.token_text_map = {101: b"hello ", 102: b"STOP", 103: b"after"}
+        response = await model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=3,
+                stop_strings="STOP",
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    items = run(run_case())
+
+    _assert_closed_success(items)
+    assert _answer_text(items) == "hello "
+    assert _usage_payload(items) == {
+        "input_tokens": 4,
+        "output_tokens": 2,
+        "total_tokens": 6,
+    }
+
+
+def test_ds4_generation_stream_reports_usage_for_immediate_eos(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[CanonicalStreamItem]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [fake.eos_token_id]
+        fake.token_text_map = {fake.eos_token_id: b"EOS"}
+        response = await model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=3,
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    items = run(run_case())
+
+    _assert_closed_success(items)
+    assert _answer_deltas(items) == []
+    assert _usage_payload(items) == {
+        "input_tokens": 4,
+        "output_tokens": 0,
+        "total_tokens": 4,
+    }
 
 
 def test_ds4_generation_stream_parses_dsml_tool_call_tokens(
@@ -1744,7 +1937,7 @@ def test_ds4_generation_stream_parses_dsml_tool_call_tokens(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> list[object]:
+    async def run_case() -> list[CanonicalStreamItem]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         dsml = (
@@ -1778,40 +1971,162 @@ def test_ds4_generation_stream_parses_dsml_tool_call_tokens(
                 use_async_generator=True,
             ),
         )
-        chunks: list[object] = [chunk async for chunk in response]
+        chunks = [chunk async for chunk in response]
         model.close()
         return chunks
 
-    chunks = run(run_case())
+    items = run(run_case())
 
-    assert chunks[0] == "I will calculate."
-    tool_deltas = [
-        chunk.token
-        for chunk in chunks
-        if isinstance(chunk, ToolCallToken) and chunk.call is None
-    ]
-    assert tool_deltas == ["2 + 2", "2"]
-    final_calls = [
-        chunk
-        for chunk in chunks
-        if isinstance(chunk, ToolCallToken) and chunk.call is not None
-    ]
+    _assert_closed_success(items)
+    assert _answer_text(items) == "I will calculate."
+    assert _usage_payload(items) == {
+        "input_tokens": 2,
+        "output_tokens": 1,
+        "total_tokens": 3,
+    }
+    assert _tool_argument_deltas(items) == ["2 + 2", "2"]
+    final_calls = _ready_tool_calls(items)
     assert len(final_calls) == 1
-    assert final_calls[0].token == ""
-    assert final_calls[0].call is not None
-    assert final_calls[0].call.name == "math.calculator"
-    assert final_calls[0].call.arguments == {
+    assert final_calls[0].name == "math.calculator"
+    assert final_calls[0].arguments == {
         "expression": "2 + 2",
         "precision": 2,
     }
-    assert (
-        "".join(
-            str(chunk)
-            for chunk in chunks
-            if not isinstance(chunk, ToolCallToken)
+    tool_call_ids = {
+        item.correlation.tool_call_id
+        for item in items
+        if item.kind
+        in {
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            StreamItemKind.TOOL_CALL_READY,
+            StreamItemKind.TOOL_CALL_DONE,
+        }
+    }
+    assert tool_call_ids == {str(final_calls[0].id)}
+
+
+def test_ds4_generation_stream_correlates_multi_call_dsml_arguments(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[CanonicalStreamItem]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        dsml = (
+            "I will calculate.\n\n"
+            "<｜DSML｜tool_calls>\n"
+            '<｜DSML｜invoke name="math.calculator">\n'
+            '<｜DSML｜parameter name="expression" string="true">'
+            "1 + 1"
+            "</｜DSML｜parameter>\n"
+            "</｜DSML｜invoke>\n"
+            '<｜DSML｜invoke name="math.calculator">\n'
+            '<｜DSML｜parameter name="expression" string="true">'
+            "2 + 2"
+            "</｜DSML｜parameter>\n"
+            "</｜DSML｜invoke>\n"
+            "</｜DSML｜tool_calls>"
         )
-        == "I will calculate."
+        fake.argmax_script = [101]
+        fake.token_text_map = {101: dsml.encode()}
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    items = run(run_case())
+
+    _assert_closed_success(items)
+    final_calls = _ready_tool_calls(items)
+    assert [call.arguments for call in final_calls] == [
+        {"expression": "1 + 1"},
+        {"expression": "2 + 2"},
+    ]
+    argument_items = _items_of_kind(
+        items, StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
     )
+    assert [item.text_delta for item in argument_items] == ["1 + 1", "2 + 2"]
+    assert [item.correlation.tool_call_id for item in argument_items] == [
+        str(call.id) for call in final_calls
+    ]
+    assert len({str(call.id) for call in final_calls}) == 2
+
+
+def test_ds4_generation_stream_correlates_split_multi_call_dsml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[CanonicalStreamItem]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101, 102, 103, 104]
+        fake.token_text_map = {
+            101: (
+                b"I will calculate.\n\n"
+                b"<\xef\xbd\x9cDSML\xef\xbd\x9ctool_calls>\n"
+                b"<\xef\xbd\x9cDSML\xef\xbd\x9cinvoke "
+                b'name="math.calculator">\n'
+                b"<\xef\xbd\x9cDSML\xef\xbd\x9cparameter "
+                b'name="expression" string="true">1 + 1'
+                b"</\xef\xbd\x9cDSML\xef\xbd\x9cparameter>\n"
+                b"</\xef\xbd\x9cDSML\xef\xbd\x9cinvoke>\n"
+            ),
+            102: (
+                b"<\xef\xbd\x9cDSML\xef\xbd\x9cinvoke "
+                b'name="math.calculator">\n'
+                b"<\xef\xbd\x9cDSML\xef\xbd\x9cparameter "
+                b'name="expression" string="true">'
+            ),
+            103: b"2 + 2",
+            104: (
+                b"</\xef\xbd\x9cDSML\xef\xbd\x9cparameter>\n"
+                b"</\xef\xbd\x9cDSML\xef\xbd\x9cinvoke>\n"
+                b"</\xef\xbd\x9cDSML\xef\xbd\x9ctool_calls>"
+            ),
+        }
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=4,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    items = run(run_case())
+
+    _assert_closed_success(items)
+    final_calls = _ready_tool_calls(items)
+    argument_items = _items_of_kind(
+        items, StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+    )
+    assert [item.text_delta for item in argument_items] == ["1 + 1", "2 + 2"]
+    assert [item.correlation.tool_call_id for item in argument_items] == [
+        str(call.id) for call in final_calls
+    ]
+    assert len({str(call.id) for call in final_calls}) == 2
 
 
 def test_ds4_generation_stream_emits_split_dsml_argument_deltas(
@@ -1819,7 +2134,7 @@ def test_ds4_generation_stream_emits_split_dsml_argument_deltas(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> list[object]:
+    async def run_case() -> list[CanonicalStreamItem]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101, 102, 103, 104, 105]
@@ -1853,33 +2168,23 @@ def test_ds4_generation_stream_emits_split_dsml_argument_deltas(
                 use_async_generator=True,
             ),
         )
-        chunks: list[object] = [chunk async for chunk in response]
+        chunks = [chunk async for chunk in response]
         model.close()
         return chunks
 
-    chunks = run(run_case())
+    items = run(run_case())
 
-    assert [
-        chunk.token
-        for chunk in chunks
-        if isinstance(chunk, ToolCallToken) and chunk.call is None
-    ] == ["2 + 2"]
-    assert (
-        "".join(
-            str(chunk)
-            for chunk in chunks
-            if not isinstance(chunk, ToolCallToken)
-        )
-        == "I will calculate."
-    )
-    final_calls = [
-        chunk.call
-        for chunk in chunks
-        if isinstance(chunk, ToolCallToken) and chunk.call is not None
-    ]
+    _assert_closed_success(items)
+    assert _tool_argument_deltas(items) == ["2 + 2"]
+    assert _answer_text(items) == "I will calculate."
+    final_calls = _ready_tool_calls(items)
     assert len(final_calls) == 1
-    assert final_calls[0] is not None
     assert final_calls[0].arguments == {"expression": "2 + 2"}
+    assert {
+        item.correlation.tool_call_id
+        for item in items
+        if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+    } == {str(final_calls[0].id)}
 
 
 def test_ds4_tool_mode_streams_plain_content_incrementally(
@@ -1887,7 +2192,7 @@ def test_ds4_tool_mode_streams_plain_content_incrementally(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> tuple[object, list[int]]:
+    async def run_case() -> tuple[CanonicalStreamItem, list[int]]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101, 102, 103]
@@ -1908,6 +2213,8 @@ def test_ds4_tool_mode_streams_plain_content_incrementally(
 
         iterator = aiter(response)
         first = await anext(iterator)
+        while first.kind is not StreamItemKind.ANSWER_DELTA:
+            first = await anext(iterator)
         eval_calls = list(fake.sessions[0].eval_calls)
         _ = [chunk async for chunk in iterator]
         model.close()
@@ -1915,7 +2222,7 @@ def test_ds4_tool_mode_streams_plain_content_incrementally(
 
     first, eval_calls = run(run_case())
 
-    assert first == "A"
+    assert first.text_delta == "A"
     assert eval_calls == [101]
 
 
@@ -1924,7 +2231,7 @@ def test_ds4_tool_mode_holds_only_potential_dsml_start_suffix(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> list[object]:
+    async def run_case() -> list[CanonicalStreamItem]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101, 102, 103, 104]
@@ -1951,9 +2258,53 @@ def test_ds4_tool_mode_holds_only_potential_dsml_start_suffix(
         model.close()
         return chunks
 
-    chunks = run(run_case())
+    items = run(run_case())
 
-    assert chunks == ["Answer", "\n\n<not a tool call", "."]
+    _assert_closed_success(items)
+    assert _answer_deltas(items) == ["Answer", "\n\n<not a tool call", "."]
+
+
+def test_ds4_tool_mode_flushes_pending_reasoning_before_dsml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[CanonicalStreamItem]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        dsml = (
+            "<｜DSML｜tool_calls>\n"
+            '<｜DSML｜invoke name="math.calculator">\n'
+            '<｜DSML｜parameter name="expression" string="true">'
+            "2 + 2"
+            "</｜DSML｜parameter>\n"
+            "</｜DSML｜invoke>\n"
+            "</｜DSML｜tool_calls>"
+        )
+        fake.argmax_script = [101]
+        fake.token_text_map = {101: f"<thi{dsml}".encode()}
+        manager = ToolManager.create_instance(
+            available_toolsets=[MathToolSet(namespace="math")]
+        )
+        response = await model(
+            "hello",
+            tool=manager,
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                reasoning=ReasoningSettings(enabled=False),
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        chunks = [chunk async for chunk in response]
+        model.close()
+        return chunks
+
+    items = run(run_case())
+
+    _assert_closed_success(items)
+    assert _answer_deltas(items) == ["<thi"]
+    assert _tool_argument_deltas(items) == ["2 + 2"]
 
 
 def test_ds4_generated_tool_call_round_trips_through_tool_manager(
@@ -1989,11 +2340,7 @@ def test_ds4_generated_tool_call_round_trips_through_tool_manager(
             ),
         )
         chunks = [chunk async for chunk in response]
-        calls = [
-            chunk.call
-            for chunk in chunks
-            if isinstance(chunk, ToolCallToken) and chunk.call is not None
-        ]
+        calls = _ready_tool_calls(chunks)
         assert len(calls) == 1
         result = await manager(calls[0], ToolCallContext(calls=calls))
         model.close()
@@ -2071,14 +2418,9 @@ def test_ds4_tool_history_replays_exact_sampled_dsml(
             ),
         )
         chunks = [chunk async for chunk in first]
-        call_tokens = [
-            chunk
-            for chunk in chunks
-            if isinstance(chunk, ToolCallToken) and chunk.call is not None
-        ]
-        assert len(call_tokens) == 1
-        call = call_tokens[0].call
-        assert call is not None
+        calls = _ready_tool_calls(chunks)
+        assert len(calls) == 1
+        call = calls[0]
 
         await model(
             [
@@ -2151,7 +2493,7 @@ def test_ds4_generation_stream_rejects_malformed_dsml(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> None:
+    async def run_case() -> list[CanonicalStreamItem]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101]
@@ -2171,11 +2513,18 @@ def test_ds4_generation_stream_rejects_malformed_dsml(
                 use_async_generator=True,
             ),
         )
-        with pytest.raises(Ds4GenerationError, match="malformed DSML"):
-            _ = [chunk async for chunk in response]
+        items = [chunk async for chunk in response]
         model.close()
+        return items
 
-    run(run_case())
+    items = run(run_case())
+    terminal = _terminal_item(items)
+    assert terminal.kind is StreamItemKind.STREAM_ERRORED
+    assert terminal.terminal_outcome is StreamTerminalOutcome.ERRORED
+    assert isinstance(terminal.data, dict)
+    assert terminal.data["error_type"] == "Ds4GenerationError"
+    assert "malformed DSML" in str(terminal.data["message"])
+    assert items[-1].kind is StreamItemKind.STREAM_CLOSED
 
 
 def test_ds4_generation_stream_flushes_unsafe_non_dsml_suffix(
@@ -2185,8 +2534,10 @@ def test_ds4_generation_stream_flushes_unsafe_non_dsml_suffix(
         self: Ds4Worker,
         session: object,
         generation_plan: _Ds4GenerationPlan,
+        usage: object | None = None,
     ):
-        yield "<"
+        _ = usage
+        yield ds4_module._Ds4GeneratedChunk("<", {})
 
     monkeypatch.setattr(
         Ds4Worker, "_generate_text_chunks", generate_text_chunks
@@ -2200,15 +2551,58 @@ def test_ds4_generation_stream_flushes_unsafe_non_dsml_suffix(
         parse_dsml_tools=True,
     )
 
-    async def run_case() -> list[object]:
+    async def run_case() -> list[StreamProviderEvent]:
         return [
-            chunk
-            async for chunk in worker._generate_dsml_tool_chunks(
-                object(), plan
+            event
+            async for event in worker._generate_dsml_tool_events(
+                object(), plan, ds4_module._Ds4Usage(input_tokens=0)
             )
         ]
 
-    assert run(run_case()) == ["<"]
+    events = run(run_case())
+    assert [(event.kind, event.text_delta) for event in events] == [
+        (StreamItemKind.ANSWER_DELTA, "<")
+    ]
+
+
+def test_ds4_generation_stream_flushes_plain_dsml_mode_start_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def generate_text_chunks(
+        self: Ds4Worker,
+        session: object,
+        generation_plan: _Ds4GenerationPlan,
+        usage: object | None = None,
+    ):
+        _ = usage
+        yield ds4_module._Ds4GeneratedChunk("A\n\n<｜DSML", {})
+
+    monkeypatch.setattr(
+        Ds4Worker, "_generate_text_chunks", generate_text_chunks
+    )
+    worker = object.__new__(Ds4Worker)
+    plan = _Ds4GenerationPlan(
+        max_new_tokens=1,
+        sampling_options=SamplingOptions(),
+        stop_strings=(),
+        use_sampling=False,
+        parse_dsml_tools=True,
+    )
+
+    async def run_case() -> list[StreamProviderEvent]:
+        return [
+            event
+            async for event in worker._generate_dsml_tool_events(
+                object(), plan, ds4_module._Ds4Usage(input_tokens=0)
+            )
+        ]
+
+    events = run(run_case())
+
+    assert [(event.kind, event.text_delta) for event in events] == [
+        (StreamItemKind.ANSWER_DELTA, "A"),
+        (StreamItemKind.ANSWER_DELTA, "\n\n<｜DSML"),
+    ]
 
 
 def test_ds4_generation_stream_returns_token_details_when_requested(
@@ -2223,7 +2617,7 @@ def test_ds4_generation_stream_returns_token_details_when_requested(
         ),
     )
 
-    async def run_case() -> tuple[list[object], FakeNativeEngine]:
+    async def run_case() -> tuple[list[CanonicalStreamItem], FakeNativeEngine]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101]
@@ -2240,23 +2634,24 @@ def test_ds4_generation_stream_returns_token_details_when_requested(
             manual_sampling=True,
             pick=2,
         )
-        chunks: list[object] = [chunk async for chunk in response]
+        chunks = [chunk async for chunk in response]
         model.close()
         return chunks, fake
 
-    chunks, fake = run(run_case())
+    items, fake = run(run_case())
 
-    assert len(chunks) == 1
-    detail = chunks[0]
-    assert isinstance(detail, TokenDetail)
-    assert detail.id == 101
-    assert detail.token == "A"
-    assert detail.step == 0
-    assert detail.probability == pytest.approx(exp(-0.1))
-    assert detail.probability_distribution == "log_softmax"
-    assert detail.tokens == [
-        Token(id=101, token="A", probability=exp(-0.1)),
-        Token(id=102, token="B", probability=exp(-1.5)),
+    _assert_closed_success(items)
+    answer_items = _items_of_kind(items, StreamItemKind.ANSWER_DELTA)
+    assert len(answer_items) == 1
+    detail = answer_items[0]
+    assert detail.text_delta == "A"
+    assert detail.metadata["token_id"] == 101
+    assert detail.metadata["step"] == 0
+    assert detail.metadata["probability"] == pytest.approx(exp(-0.1))
+    assert detail.metadata["probability_distribution"] == "log_softmax"
+    assert detail.metadata["tokens"] == [
+        {"token": "A", "token_id": 101, "probability": exp(-0.1)},
+        {"token": "B", "token_id": 102, "probability": exp(-1.5)},
     ]
     assert fake.sessions[0].next_token_score_options == [
         FakeNativeGenerationScoreOptions(
@@ -2269,6 +2664,108 @@ def test_ds4_generation_stream_returns_token_details_when_requested(
     assert fake.sessions[0].eval_calls == [101]
 
 
+def test_ds4_stream_token_metadata_drops_invalid_token_ids() -> None:
+    metadata = Ds4Worker._metadata_from_token_detail(
+        TokenDetail(
+            id=True,
+            token="A",
+            probability=0.25,
+            probability_distribution="log_softmax",
+            step=0,
+            tokens=[
+                Token(id=True, token="A", probability=0.25),
+                Token(id=2, token="B", probability=0.1),
+            ],
+        )
+    )
+
+    assert "token_id" not in metadata
+    assert metadata["tokens"] == [
+        {"token": "A", "probability": 0.25},
+        {"token": "B", "token_id": 2, "probability": 0.1},
+    ]
+
+
+def test_ds4_terminal_exception_mapping_edges() -> None:
+    def terminal_item(
+        kind: StreamItemKind,
+        data: dict[str, object],
+    ) -> CanonicalStreamItem:
+        outcome = (
+            StreamTerminalOutcome.CANCELLED
+            if kind is StreamItemKind.STREAM_CANCELLED
+            else StreamTerminalOutcome.ERRORED
+        )
+        return CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=0,
+            kind=kind,
+            channel=StreamChannel.CONTROL,
+            data=data,
+            terminal_outcome=outcome,
+        )
+
+    cancelled = Ds4Worker._exception_from_terminal_item(
+        terminal_item(
+            StreamItemKind.STREAM_CANCELLED,
+            {"message": "cancelled"},
+        )
+    )
+    invalid = Ds4Worker._exception_from_terminal_item(
+        terminal_item(
+            StreamItemKind.STREAM_ERRORED,
+            {"error_type": "Ds4InvalidModel", "message": "invalid"},
+        )
+    )
+    unavailable = Ds4Worker._exception_from_terminal_item(
+        terminal_item(
+            StreamItemKind.STREAM_ERRORED,
+            {"error_type": "Ds4BackendUnavailable", "message": "unavailable"},
+        )
+    )
+
+    assert isinstance(cancelled, asyncio.CancelledError)
+    assert str(cancelled) == "cancelled"
+    assert isinstance(invalid, Ds4InvalidModel)
+    assert str(invalid) == "invalid"
+    assert isinstance(unavailable, Ds4BackendUnavailable)
+    assert str(unavailable) == "unavailable"
+
+
+def test_ds4_model_generation_stream_wrapper_emits_canonical_items(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_binding(monkeypatch, _fake_binding())
+
+    async def run_case() -> list[CanonicalStreamItem]:
+        model = Ds4Model(str(_model_file(tmp_path)))
+        fake = _latest_fake_engine()
+        fake.argmax_script = [101]
+        fake.token_text_map = {101: b"A"}
+        settings = GenerationSettings(max_new_tokens=1, temperature=0.0)
+        generation_plan = model._generation_plan(settings, 1)
+        chunks = [
+            chunk
+            async for chunk in model._generation_stream(
+                [11], generation_plan, settings
+            )
+        ]
+        model.close()
+        return chunks
+
+    items = run(run_case())
+
+    _assert_closed_success(items)
+    assert _answer_deltas(items) == ["A"]
+    assert _usage_payload(items) == {
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "total_tokens": 2,
+    }
+
+
 def test_ds4_generation_stream_accepts_real_pyds4_score_types(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2279,7 +2776,7 @@ def test_ds4_generation_stream_accepts_real_pyds4_score_types(
     monkeypatch.setattr(pyds4, "AsyncEngine", fake_async_engine)
     FakeNativeEngine.instances.clear()
 
-    async def run_case() -> tuple[list[object], FakeNativeEngine]:
+    async def run_case() -> tuple[list[CanonicalStreamItem], FakeNativeEngine]:
         model = Ds4Model(
             str(_model_file(tmp_path)),
             TransformerEngineSettings(
@@ -2306,21 +2803,22 @@ def test_ds4_generation_stream_accepts_real_pyds4_score_types(
             manual_sampling=True,
             pick=2,
         )
-        chunks: list[object] = [chunk async for chunk in response]
+        chunks = [chunk async for chunk in response]
         model.close()
         return chunks, fake
 
-    chunks, fake = run(run_case())
+    items, fake = run(run_case())
 
-    assert len(chunks) == 1
-    detail = chunks[0]
-    assert isinstance(detail, TokenDetail)
-    assert detail.id == 101
-    assert detail.token == "A"
-    assert detail.probability == pytest.approx(exp(-0.25))
-    assert detail.tokens == [
-        Token(id=101, token="A", probability=exp(-0.25)),
-        Token(id=102, token="B", probability=exp(-1.25)),
+    _assert_closed_success(items)
+    answer_items = _items_of_kind(items, StreamItemKind.ANSWER_DELTA)
+    assert len(answer_items) == 1
+    detail = answer_items[0]
+    assert detail.text_delta == "A"
+    assert detail.metadata["token_id"] == 101
+    assert detail.metadata["probability"] == pytest.approx(exp(-0.25))
+    assert detail.metadata["tokens"] == [
+        {"token": "A", "token_id": 101, "probability": exp(-0.25)},
+        {"token": "B", "token_id": 102, "probability": exp(-1.25)},
     ]
     score_options = fake.sessions[0].next_token_score_options
     assert len(score_options) == 1
@@ -2377,8 +2875,22 @@ def test_ds4_token_details_require_native_logprob_support(
         )
     )
 
-    with pytest.raises(NotImplementedError, match="token logprobs"):
-        run(response.to_str())
+    async def collect() -> list[CanonicalStreamItem]:
+        return [
+            item
+            async for item in response.canonical_stream(
+                stream_session_id="ds4-test",
+                run_id="run",
+                turn_id="turn",
+            )
+        ]
+
+    items = run(collect())
+    terminal = _terminal_item(items)
+    assert terminal.kind is StreamItemKind.STREAM_ERRORED
+    assert isinstance(terminal.data, dict)
+    assert terminal.data["error_type"] == "NotImplementedError"
+    assert "token logprobs" in str(terminal.data["message"])
     model.close()
 
 
@@ -2949,7 +3461,9 @@ def test_ds4_streaming_response_yields_fake_token_text_in_order(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> tuple[list[str], FakeNativeEngine, int]:
+    async def run_case() -> (
+        tuple[list[CanonicalStreamItem], FakeNativeEngine, int]
+    ):
         main_thread_id = get_ident()
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
@@ -2964,13 +3478,20 @@ def test_ds4_streaming_response_yields_fake_token_text_in_order(
                 use_async_generator=True,
             ),
         )
-        chunks = [cast(str, chunk) async for chunk in response]
+        chunks = [chunk async for chunk in response]
         model.close()
         return chunks, fake, main_thread_id
 
-    chunks, fake, main_thread_id = run(run_case())
+    items, fake, main_thread_id = run(run_case())
 
-    assert chunks == ["A", "B"]
+    _assert_closed_success(items)
+    assert _answer_deltas(items) == ["A", "B"]
+    assert _usage_payload(items) == {
+        "input_tokens": 4,
+        "output_tokens": 2,
+        "total_tokens": 6,
+    }
+    assert all(isinstance(item, CanonicalStreamItem) for item in items)
     assert fake.sessions[0].eval_calls == [101, 102]
     assert fake.thread_ids
     assert all(thread_id != main_thread_id for thread_id in fake.thread_ids)
@@ -3021,7 +3542,7 @@ def test_ds4_worker_serializes_concurrent_streaming_generations(
                     use_async_generator=True,
                 ),
             )
-            return [cast(str, chunk) async for chunk in response]
+            return _answer_deltas([item async for item in response])
 
         results = await asyncio.gather(collect("one"), collect("two"))
         model.close()
@@ -3055,9 +3576,12 @@ def test_ds4_worker_exception_surfaces_when_stream_is_consumed(
             ),
         )
 
-        with pytest.raises(Ds4GenerationError, match="eval failed"):
-            async for _ in response:
-                pass
+        items = [item async for item in response]
+        terminal = _terminal_item(items)
+        assert terminal.kind is StreamItemKind.STREAM_ERRORED
+        assert isinstance(terminal.data, dict)
+        assert terminal.data["error_type"] == "Ds4GenerationError"
+        assert "eval failed" in str(terminal.data["message"])
 
         model.close()
         return fake
@@ -3117,12 +3641,16 @@ def test_ds4_stream_cancellation_invalidates_session(
 ) -> None:
     _install_binding(monkeypatch, _fake_binding())
 
-    async def run_case() -> tuple[list[str], FakeNativeEngine]:
+    async def run_case() -> tuple[
+        list[CanonicalStreamItem],
+        list[CanonicalStreamItem],
+        FakeNativeEngine,
+    ]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
-        fake.argmax_script = [101, 102]
+        fake.argmax_script = [101, 102, 201]
         fake.block_argmax_after_calls = 1
-        fake.token_text_map = {101: b"A", 102: b"B"}
+        fake.token_text_map = {101: b"A", 102: b"B", 201: b"C"}
         response = await model(
             "hello",
             settings=GenerationSettings(
@@ -3131,35 +3659,44 @@ def test_ds4_stream_cancellation_invalidates_session(
                 use_async_generator=True,
             ),
         )
-        chunks: list[str] = []
+        chunks: list[CanonicalStreamItem] = []
 
         async def consume() -> None:
             async for chunk in response:
-                chunks.append(cast(str, chunk))
+                chunks.append(chunk)
 
         task = asyncio.create_task(consume())
-        while not chunks:
+        while not _answer_deltas(chunks):
             await asyncio.sleep(0.01)
 
         assert await asyncio.to_thread(fake.argmax_block_started.wait, 1.0)
         task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
         fake.argmax_release.set()
+        await task
+
         assert await asyncio.to_thread(fake.invalidate_event.wait, 1.0)
-        for _ in range(100):
-            if len(fake.sessions) == 2:
-                break
-            await asyncio.sleep(0.01)
+        second_response = await model(
+            "hello",
+            settings=GenerationSettings(
+                max_new_tokens=1,
+                temperature=0.0,
+                use_async_generator=True,
+            ),
+        )
+        second_chunks = [chunk async for chunk in second_response]
         model.close()
-        return chunks, fake
+        return chunks, second_chunks, fake
 
-    chunks, fake = run(run_case())
+    items, second_items, fake = run(run_case())
 
-    assert chunks == ["A"]
+    assert _answer_deltas(items) == ["A"]
+    terminal = _terminal_item(items)
+    assert terminal.kind is StreamItemKind.STREAM_CANCELLED
+    assert terminal.terminal_outcome is StreamTerminalOutcome.CANCELLED
     assert fake.sessions[0].invalidate_calls == 1
     assert len(fake.sessions) == 2
+    _assert_closed_success(second_items)
+    assert _answer_deltas(second_items) == ["C"]
 
 
 def test_ds4_stream_cancellation_restores_snapshot_when_available(
@@ -3174,7 +3711,7 @@ def test_ds4_stream_cancellation_restores_snapshot_when_available(
         ),
     )
 
-    async def run_case() -> tuple[list[str], FakeNativeEngine]:
+    async def run_case() -> tuple[list[CanonicalStreamItem], FakeNativeEngine]:
         model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101, 102]
@@ -3188,29 +3725,31 @@ def test_ds4_stream_cancellation_restores_snapshot_when_available(
                 use_async_generator=True,
             ),
         )
-        chunks: list[str] = []
+        chunks: list[CanonicalStreamItem] = []
 
         async def consume() -> None:
             async for chunk in response:
-                chunks.append(cast(str, chunk))
+                chunks.append(chunk)
 
         task = asyncio.create_task(consume())
-        while not chunks:
+        while not _answer_deltas(chunks):
             await asyncio.sleep(0.01)
 
         assert await asyncio.to_thread(fake.argmax_block_started.wait, 1.0)
         task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
         fake.argmax_release.set()
+        await task
+
         assert await asyncio.to_thread(fake.snapshot_loaded_event.wait, 1.0)
         model.close()
         return chunks, fake
 
-    chunks, fake = run(run_case())
+    items, fake = run(run_case())
 
-    assert chunks == ["A"]
+    assert _answer_deltas(items) == ["A"]
+    terminal = _terminal_item(items)
+    assert terminal.kind is StreamItemKind.STREAM_CANCELLED
+    assert terminal.terminal_outcome is StreamTerminalOutcome.CANCELLED
     assert fake.sessions[0].save_snapshot_calls == 1
     assert fake.sessions[0].load_snapshot_calls == 1
     assert fake.sessions[0].invalidate_calls == 0
@@ -3245,7 +3784,9 @@ def test_ds4_stream_queue_backpressure_does_not_deadlock_event_loop(
         chunks: list[str] = []
         eval_counts_during_slow_consumer: list[list[int]] = []
         async for chunk in response:
-            chunks.append(cast(str, chunk))
+            if chunk.kind is not StreamItemKind.ANSWER_DELTA:
+                continue
+            chunks.append(chunk.text_delta or "")
             before_pause = list(fake.sessions[0].eval_calls)
             await asyncio.sleep(0.01)
             eval_counts_during_slow_consumer.append(before_pause)
@@ -3815,6 +4356,104 @@ def test_ds4_worker_schedule_reset_ignores_missing_event_loop(
     assert worker._reset_tasks == set()
 
 
+def test_ds4_worker_schedule_reset_tracks_async_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    worker = Ds4Worker(
+        _worker_options(_model_file(tmp_path)), 16, MagicMock(spec=Logger)
+    )
+    calls: list[tuple[bool, bytes | None]] = []
+
+    async def reset_session(
+        *, invalidate: bool, snapshot: bytes | None = None
+    ) -> None:
+        calls.append((invalidate, snapshot))
+
+    monkeypatch.setattr(worker, "_reset_session", reset_session)
+
+    async def run_case() -> None:
+        worker._schedule_reset(invalidate=False, snapshot=b"snapshot")
+        assert len(worker._reset_tasks) == 1
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    run(run_case())
+
+    assert calls == [(False, b"snapshot")]
+    assert worker._reset_tasks == set()
+
+
+def test_ds4_stream_cancellation_logs_reset_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    logger = MagicMock(spec=Logger)
+    worker = Ds4Worker(_worker_options(_model_file(tmp_path)), 16, logger)
+    plan = _Ds4GenerationPlan(
+        max_new_tokens=1,
+        sampling_options=SamplingOptions(),
+        stop_strings=(),
+        use_sampling=False,
+    )
+
+    monkeypatch.setattr(worker, "_require_session", lambda: object())
+
+    async def restore_disk_cache(
+        session: object, prompt_tokens: list[int]
+    ) -> bool:
+        _ = session, prompt_tokens
+        return True
+
+    async def save_snapshot(session: object) -> bytes:
+        _ = session
+        return b"snapshot"
+
+    async def generate_events(
+        session: object,
+        generation_plan: _Ds4GenerationPlan,
+        usage: object,
+    ):
+        _ = session, generation_plan, usage
+        yield StreamProviderEvent(
+            kind=StreamItemKind.ANSWER_DELTA,
+            text_delta="A",
+        )
+        await asyncio.sleep(3600)
+
+    async def reset_session(
+        *, invalidate: bool, snapshot: bytes | None = None
+    ) -> RuntimeError:
+        assert invalidate is True
+        assert snapshot == b"snapshot"
+        return RuntimeError("reset failed")
+
+    monkeypatch.setattr(worker, "_restore_disk_cache", restore_disk_cache)
+    monkeypatch.setattr(worker, "_save_snapshot", save_snapshot)
+    monkeypatch.setattr(worker, "_generate_events", generate_events)
+    monkeypatch.setattr(worker, "_reset_session", reset_session)
+
+    async def run_case() -> list[StreamProviderEvent]:
+        events = []
+        stream = worker._stream_events([1], plan)
+        events.append(await anext(stream))
+        await stream.aclose()
+        return events
+
+    events = run(run_case())
+
+    assert [(event.kind, event.text_delta) for event in events] == [
+        (StreamItemKind.ANSWER_DELTA, "A")
+    ]
+    logger.warning.assert_called_once()
+    message, error = logger.warning.call_args.args
+    assert (
+        message == "DS4 session reset after generation cancellation failed: %s"
+    )
+    assert isinstance(error, RuntimeError)
+    assert str(error) == "reset failed"
+
+
 def test_ds4_worker_close_helpers_cover_sync_and_failed_resources(
     tmp_path: Path,
 ) -> None:
@@ -4111,7 +4750,7 @@ def test_ds4_worker_render_prompt_and_plain_dsml_content_edges(
     assert tokens == [1, 10, 6, 11, 5, 12, 2, 20]
     model.close()
 
-    async def run_plain_content() -> list[object]:
+    async def run_plain_content() -> list[CanonicalStreamItem]:
         plain_model = Ds4Model(str(_model_file(tmp_path)))
         fake = _latest_fake_engine()
         fake.argmax_script = [101]
@@ -4133,7 +4772,9 @@ def test_ds4_worker_render_prompt_and_plain_dsml_content_edges(
         plain_model.close()
         return chunks
 
-    assert run(run_plain_content()) == ["plain content"]
+    plain_items = run(run_plain_content())
+    _assert_closed_success(plain_items)
+    assert _answer_deltas(plain_items) == ["plain content"]
 
 
 def test_ds4_worker_generation_error_adds_reset_failure_note(
@@ -4162,16 +4803,18 @@ def test_ds4_worker_generation_error_adds_reset_failure_note(
         use_sampling=False,
     )
 
-    async def consume() -> None:
-        async for _ in worker.stream([1], plan):
-            pass
+    async def consume() -> list[CanonicalStreamItem]:
+        return [item async for item in worker.stream([1], plan)]
 
-    with pytest.raises(Ds4GenerationError) as exc_info:
-        run(consume())
-
-    notes = getattr(exc_info.value, "__notes__", ())
+    items = run(consume())
+    terminal = _terminal_item(items)
+    assert terminal.kind is StreamItemKind.STREAM_ERRORED
+    assert isinstance(terminal.data, dict)
+    assert terminal.data["error_type"] == "Ds4GenerationError"
+    notes = terminal.data.get("notes")
+    assert isinstance(notes, list)
     assert any(
-        "reset after generation failure failed" in note for note in notes
+        "reset after generation failure failed" in str(note) for note in notes
     )
 
 
