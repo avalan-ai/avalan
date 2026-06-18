@@ -1,10 +1,6 @@
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     MessageRole,
-    ReasoningToken,
-    Token,
-    TokenDetail,
-    ToolCallToken,
 )
 from ...model.stream import (
     CanonicalStreamItem,
@@ -12,8 +8,8 @@ from ...model.stream import (
     StreamConsumerProjection,
     StreamItemKind,
     StreamTerminalOutcome,
+    StreamValidationError,
     canonical_item_from_consumer_projection,
-    canonical_item_from_token,
 )
 from ...utils import (
     to_json,
@@ -22,7 +18,6 @@ from ..entities import ChatCompletionRequest, ChatMessage
 from ..routers import orchestrate
 from ..routers.streaming import (
     ProtocolStreamAccumulator,
-    ProtocolStreamProjectionState,
     cleanup_stream_sources,
     stream_consumer_iterator,
 )
@@ -455,66 +450,6 @@ def _extract_jsonrpc_metadata(
     return metadata
 
 
-class _A2ALegacyStreamAdapter:
-    stream_session_id = "a2a-legacy-stream"
-    turn_id = "a2a-legacy-turn"
-
-    def __init__(self, run_id: str) -> None:
-        assert isinstance(run_id, str)
-        assert run_id.strip()
-        self.run_id = run_id
-        self.sequence = 0
-
-    def map(self, item: object) -> tuple[CanonicalStreamItem, ...] | None:
-        if not isinstance(
-            item,
-            (
-                ReasoningToken,
-                TokenDetail,
-                ToolCallToken,
-                Token,
-                str,
-            ),
-        ):
-            return None
-
-        result: list[CanonicalStreamItem] = []
-        self._append_stream_start(result)
-        result.append(
-            canonical_item_from_token(
-                item,
-                self._next_sequence(),
-                stream_session_id=self.stream_session_id,
-                run_id=self.run_id,
-                turn_id=self.turn_id,
-            )
-        )
-        return tuple(result)
-
-    def _append_stream_start(
-        self,
-        items: list[CanonicalStreamItem],
-    ) -> None:
-        if self.sequence != 0:
-            return
-        items.append(
-            CanonicalStreamItem(
-                stream_session_id=self.stream_session_id,
-                run_id=self.run_id,
-                turn_id=self.turn_id,
-                sequence=0,
-                kind=StreamItemKind.STREAM_STARTED,
-                channel=StreamChannel.CONTROL,
-            )
-        )
-        self.sequence = 1
-
-    def _next_sequence(self) -> int:
-        sequence = self.sequence
-        self.sequence += 1
-        return sequence
-
-
 class A2AResponseTranslator:
     """Convert orchestrator streaming output into A2A task artifacts."""
 
@@ -528,13 +463,6 @@ class A2AResponseTranslator:
         self._tool_artifact_id: str | None = None
         self._terminal_outcome: StreamTerminalOutcome | None = None
         self._terminal_error: str | None = None
-        self._legacy_adapter = _A2ALegacyStreamAdapter(task_id)
-        self._projection_state = ProtocolStreamProjectionState(
-            stream_session_id=self._legacy_adapter.stream_session_id,
-            run_id=self._legacy_adapter.run_id,
-            turn_id=self._legacy_adapter.turn_id,
-            accumulate=False,
-        )
 
     @property
     def text(self) -> str:
@@ -608,28 +536,13 @@ class A2AResponseTranslator:
         return self.text
 
     async def _process_item(self, item: object) -> list[dict[str, Any]]:
-        sequence = (
-            item.sequence
-            if isinstance(item, CanonicalStreamItem)
-            else self._legacy_adapter.sequence
-        )
-        projections = self._projection_state.project_many(
-            item,
-            sequence,
-            unsupported_message="unsupported legacy A2A stream item",
-        )
         if isinstance(item, CanonicalStreamItem):
-            assert len(projections) == 1
-            return await self._process_canonical_item(item)
-
-        events: list[dict[str, Any]] = []
-        for projection in projections:
-            events.extend(
-                await self._process_canonical_item(
-                    canonical_item_from_consumer_projection(projection)
-                )
-            )
-        return events
+            canonical_item = item
+        elif isinstance(item, StreamConsumerProjection):
+            canonical_item = canonical_item_from_consumer_projection(item)
+        else:
+            raise StreamValidationError("unsupported legacy A2A stream item")
+        return await self._process_canonical_item(canonical_item)
 
     async def _process_canonical_item(
         self,
@@ -697,11 +610,12 @@ class A2AResponseTranslator:
 
     async def _finish(self) -> list[dict[str, Any]]:
         events = await self._close_open_artifacts()
-        if self._projection_state.has_canonical_items:
-            self._accumulator.validate_complete()
-        if self._terminal_outcome is StreamTerminalOutcome.CANCELLED:
+        self._accumulator.validate_complete()
+        terminal_outcome = self._accumulator.terminal_outcome
+        assert terminal_outcome is not None
+        if terminal_outcome is StreamTerminalOutcome.CANCELLED:
             events.extend(await self._store.cancel_task(self._task_id))
-        elif self._terminal_outcome is StreamTerminalOutcome.ERRORED:
+        elif terminal_outcome is StreamTerminalOutcome.ERRORED:
             events.extend(
                 await self._store.fail_task(
                     self._task_id, self._terminal_error or "Stream failed"

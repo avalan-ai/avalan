@@ -1556,7 +1556,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.FLOW,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
@@ -1577,7 +1576,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
         scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
@@ -1597,7 +1595,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
         scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
@@ -1618,7 +1615,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
         scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
@@ -1639,7 +1635,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
         scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
@@ -1726,24 +1721,6 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
         removal_condition=(
             "Anthropic non-stream response content is projected through "
             "canonical response items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.server.a2a.router",
-        qualname="_A2ALegacyStreamAdapter.map",
-        surfaces=(
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.A2A,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="server.a2a",
-        removal_condition=(
-            "A2A response streams receive canonical consumer projections."
         ),
     ),
 )
@@ -1959,24 +1936,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         (StreamLegacyBoundaryDirection.PROJECTS,),
         "cli.model",
         "CLI stdout and rendering consume canonical projections only.",
-    ),
-    _runtime_boundary(
-        "avalan.server.a2a.router",
-        "_A2ALegacyStreamAdapter.map",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.A2A,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "server.a2a",
-        "A2A streaming accepts canonical projections only.",
     ),
     _runtime_boundary(
         "avalan.flow.stream",
