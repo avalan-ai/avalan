@@ -82,6 +82,13 @@ specifying `es` as the locale:
 avalan model run meta-llama/Meta-Llama-3-8B-Instruct --locale es
 ```
 
+The CLI uses the `fancy` theme by default. Add `--theme basic` to opt into a
+simpler text-first theme:
+
+```bash
+avalan model run MODEL --theme basic
+```
+
 ![Running the CLI in spanish](https://avalan.ai/images/spanish_translation.png)
 
 You'll need your Huggingface access token exported as `HF_TOKEN`.
@@ -161,7 +168,7 @@ usage: avalan [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tokenizer-
               [--parallel 
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
-              [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
+              [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE] [--theme {fancy,basic}]
               [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
               [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
               [--skip-hub-access-check] [--verbose] [--version]
@@ -193,6 +200,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -223,7 +232,7 @@ usage: avalan agent [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--toke
                     [--parallel 
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
-                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
+                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE] [--theme {fancy,basic}]
                     [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
                     [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
@@ -255,6 +264,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -285,7 +296,7 @@ usage: avalan agent message [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                             [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                            [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                            [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                             [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                             [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -316,6 +327,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -346,7 +359,7 @@ usage: avalan agent message search [-h] [--cache-dir CACHE_DIR] [--subfolder SUB
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                                   [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                                   [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                                    [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                                    [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                                    [--skip-hub-access-check] [--verbose] [--version]
@@ -407,6 +420,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -510,56 +525,81 @@ database tool settings:
 ### avalan agent run
 
 ```
-usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
+usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
+                        [--tokenizer-subfolder TOKENIZER_SUBFOLDER]
                         [--device DEVICE]
-                        [--parallel 
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
-plicate}]
-                        [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
-                        [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
-                        [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
-                        [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--display-events]
-                        [--display-pause [DISPLAY_PAUSE]] [--display-probabilities]
+                        [--parallel {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,replicate}]
+                        [--parallel-count PARALLEL_COUNT]
+                        [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
+                        [--locale LOCALE] [--theme {fancy,basic}]
+                        [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                        [--backend {transformers,mlx,vllm,ds4}]
+                        [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                        [--no-repl] [--quiet] [--tty TTY] [--record]
+                        [--revision REVISION] [--skip-hub-access-check]
+                        [--verbose] [--version]
+                        [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
+                        [--display-events] [--stats]
+                        [--display-pause [DISPLAY_PAUSE]]
+                        [--display-probabilities]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
-                        [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]] [--skip-display-reasoning-time]
-                        [--display-reasoning] [--display-tokens [DISPLAY_TOKENS]]
-                        [--display-tools] [--display-tools-events DISPLAY_TOOLS_EVENTS]
-                        [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT] [--id ID]
-                        [--participant PARTICIPANT] [--conversation] [--watch] [--no-session | --session SESSION]
-                        [--skip-load-recent-messages] [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT] [--stats]
-                        [--sync] [--tools-confirm] [--tool-format {json,react,bracket,openai,harmony,dsml}]
+                        [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]]
+                        [--skip-display-reasoning-time] [--display-reasoning]
+                        [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
+                        [--display-tools-events DISPLAY_TOOLS_EVENTS]
+                        [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
+                        [--id ID] [--participant PARTICIPANT] [--conversation]
+                        [--watch] [--no-session | --session SESSION]
+                        [--skip-load-recent-messages]
+                        [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT]
+                        [--sync] [--tools-confirm]
+                        [--tool-format {json,react,bracket,openai,harmony,dsml}]
                         [--tool-recovery-format {tool_call_block,minimax_xml,tool_code,broad_xml,dsml_leakage,fenced}]
                         [--reasoning-tag {think,channel}] [--ds4-ctx DS4_CTX]
                         [--ds4-native-backend {auto,metal,cuda,cpu}]
                         [--ds4-mtp DS4_MTP] [--ds4-mtp-draft DS4_MTP_DRAFT]
                         [--ds4-mtp-margin DS4_MTP_MARGIN] [--ds4-warm-weights]
                         [--ds4-quality] [--with-ds4-native-log]
-                        [--no-ds4-native-log] [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK]
-                        [--instructions INSTRUCTIONS] [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM]
-                        [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
-                        [--no-memory-recent]
-                        [--memory-permanent-message MEMORY_PERMANENT_MESSAGE] [--memory-permanent MEMORY_PERMANENT]
+                        [--no-ds4-native-log] [--engine-uri ENGINE_URI]
+                        [--name NAME] [--role ROLE] [--task TASK]
+                        [--instructions INSTRUCTIONS]
+                        [--goal-instructions GOAL_INSTRUCTIONS]
+                        [--system SYSTEM] [--developer DEVELOPER]
+                        [--user USER] [--user-template USER_TEMPLATE]
+                        [--memory-recent] [--no-memory-recent]
+                        [--memory-permanent-message MEMORY_PERMANENT_MESSAGE]
+                        [--memory-permanent MEMORY_PERMANENT]
                         [--memory-engine-model-id MEMORY_ENGINE_MODEL_ID]
-                        [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS] [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
-                        [--memory-engine-window MEMORY_ENGINE_WINDOW] [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
+                        [--memory-engine-max-tokens MEMORY_ENGINE_MAX_TOKENS]
+                        [--memory-engine-overlap MEMORY_ENGINE_OVERLAP]
+                        [--memory-engine-window MEMORY_ENGINE_WINDOW]
+                        [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
                         [--run-skip-special-tokens] [--run-disable-cache]
                         [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
-                        [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
+                        [--run-temperature RUN_TEMPERATURE]
+                        [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
                         [--reasoning-effort {none,minimal,low,medium,high,xhigh,max}]
-                        [--tool TOOL] [--tools TOOLS] [--tool-browser-engine TOOL_BROWSER_ENGINE] [--tool-browser-search]
+                        [--tool TOOL] [--tools TOOLS]
+                        [--tool-browser-engine TOOL_BROWSER_ENGINE]
+                        [--tool-browser-search]
                         [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
-                        [--tool-browser-search-k TOOL_BROWSER_SEARCH_K] [--tool-browser-debug]
+                        [--tool-browser-search-k TOOL_BROWSER_SEARCH_K]
+                        [--tool-browser-debug]
                         [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]
                         [--tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE]
-                        [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN] [--tool-browser-devtools]
-                        [--tool-browser-chromium-sandbox] [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]
+                        [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN]
+                        [--tool-browser-devtools]
+                        [--tool-browser-chromium-sandbox]
+                        [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]
                         [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]
-                        [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR] [--tool-browser-is-mobile]
-                        [--tool-browser-has-touch] [--tool-browser-java-script-enabled]
-                        [--tool-database-dsn TOOL_DATABASE_DSN] [--tool-database-delay-secs TOOL_DATABASE_DELAY_SECS]
-                        [--tool-database-identifier-case TOOL_DATABASE_IDENTIFIER_CASE] [--tool-database-read-only]
+                        [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR]
+                        [--tool-browser-is-mobile] [--tool-browser-has-touch]
+                        [--tool-browser-java-script-enabled]
+                        [--tool-database-dsn TOOL_DATABASE_DSN]
+                        [--tool-database-delay-secs TOOL_DATABASE_DELAY_SECS]
+                        [--tool-database-identifier-case TOOL_DATABASE_IDENTIFIER_CASE]
+                        [--tool-database-read-only]
                         [--tool-database-allowed-commands TOOL_DATABASE_ALLOWED_COMMANDS]
                         [--tool-graph-file TOOL_GRAPH_FILE]
                         [--tool-shell-backend TOOL_SHELL_BACKEND]
@@ -567,7 +607,59 @@ plicate}]
                         [--tool-shell-cwd TOOL_SHELL_CWD]
                         [--tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS]
                         [--tool-shell-max-timeout-seconds TOOL_SHELL_MAX_TIMEOUT_SECONDS]
-                        
+                        [--tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES]
+                        [--tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES]
+                        [--tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES]
+                        [--tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS]
+                        [--tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES]
+                        [--tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES]
+                        [--tool-shell-max-path-count TOOL_SHELL_MAX_PATH_COUNT]
+                        [--tool-shell-max-glob-count TOOL_SHELL_MAX_GLOB_COUNT]
+                        [--tool-shell-max-glob-bytes-per-glob TOOL_SHELL_MAX_GLOB_BYTES_PER_GLOB]
+                        [--tool-shell-max-total-glob-bytes TOOL_SHELL_MAX_TOTAL_GLOB_BYTES]
+                        [--tool-shell-max-full-file-bytes TOOL_SHELL_MAX_FULL_FILE_BYTES]
+                        [--tool-shell-max-rg-columns TOOL_SHELL_MAX_RG_COLUMNS]
+                        [--tool-shell-max-rg-context-lines TOOL_SHELL_MAX_RG_CONTEXT_LINES]
+                        [--tool-shell-max-rg-matches-per-file TOOL_SHELL_MAX_RG_MATCHES_PER_FILE]
+                        [--tool-shell-max-head-lines TOOL_SHELL_MAX_HEAD_LINES]
+                        [--tool-shell-max-tail-lines TOOL_SHELL_MAX_TAIL_LINES]
+                        [--tool-shell-max-text-filter-input-bytes TOOL_SHELL_MAX_TEXT_FILTER_INPUT_BYTES]
+                        [--tool-shell-max-filter-program-bytes TOOL_SHELL_MAX_FILTER_PROGRAM_BYTES]
+                        [--tool-shell-max-filter-pattern-bytes TOOL_SHELL_MAX_FILTER_PATTERN_BYTES]
+                        [--tool-shell-max-filter-selectors TOOL_SHELL_MAX_FILTER_SELECTORS]
+                        [--tool-shell-max-awk-fields TOOL_SHELL_MAX_AWK_FIELDS]
+                        [--tool-shell-max-awk-separator-bytes TOOL_SHELL_MAX_AWK_SEPARATOR_BYTES]
+                        [--tool-shell-max-json-input-bytes TOOL_SHELL_MAX_JSON_INPUT_BYTES]
+                        [--tool-shell-max-jq-filter-bytes TOOL_SHELL_MAX_JQ_FILTER_BYTES]
+                        [--tool-shell-max-pdf-input-bytes TOOL_SHELL_MAX_PDF_INPUT_BYTES]
+                        [--tool-shell-max-pdf-text-pages TOOL_SHELL_MAX_PDF_TEXT_PAGES]
+                        [--tool-shell-max-pdf-raster-pages TOOL_SHELL_MAX_PDF_RASTER_PAGES]
+                        [--tool-shell-max-pdf-raster-dpi TOOL_SHELL_MAX_PDF_RASTER_DPI]
+                        [--tool-shell-max-raster-long-edge-pixels TOOL_SHELL_MAX_RASTER_LONG_EDGE_PIXELS]
+                        [--tool-shell-max-raster-pixels TOOL_SHELL_MAX_RASTER_PIXELS]
+                        [--tool-shell-max-output-files TOOL_SHELL_MAX_OUTPUT_FILES]
+                        [--tool-shell-max-output-file-bytes TOOL_SHELL_MAX_OUTPUT_FILE_BYTES]
+                        [--tool-shell-max-total-output-file-bytes TOOL_SHELL_MAX_TOTAL_OUTPUT_FILE_BYTES]
+                        [--tool-shell-max-inline-output-file-bytes TOOL_SHELL_MAX_INLINE_OUTPUT_FILE_BYTES]
+                        [--tool-shell-max-ocr-input-bytes TOOL_SHELL_MAX_OCR_INPUT_BYTES]
+                        [--tool-shell-max-ocr-pixels TOOL_SHELL_MAX_OCR_PIXELS]
+                        [--tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES]
+                        [--tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI]
+                        [--tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES]
+                        [--tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES]
+                        [--tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES]
+                        [--tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS]
+                        [--tool-shell-max-pdf-timeout-seconds TOOL_SHELL_MAX_PDF_TIMEOUT_SECONDS]
+                        [--tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS]
+                        [--tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS]
+                        [--tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT]
+                        [--tool-shell-allow-media-tools]
+                        [--tool-shell-allow-absolute-paths]
+                        [--tool-shell-allow-symlinks]
+                        [--tool-shell-allow-hidden]
+                        [--tool-shell-executable-search-path TOOL_SHELL_EXECUTABLE_SEARCH_PATHS]
+                        [--tool-shell-executable-path COMMAND=PATH]
+                        [specifications_file]
 
 Run an AI agent
 
@@ -577,35 +669,45 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
-                        Path to huggingface cache hub (defaults to /root/.cache/huggingface/hub, can also be specified with
-                        $HF_HUB_CACHE)
+                        Path to huggingface cache hub (defaults to
+                        /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
   --subfolder SUBFOLDER
-                        Subfolder inside model repository to load the model from
+                        Subfolder inside model repository to load the model
+                        from
   --tokenizer-subfolder TOKENIZER_SUBFOLDER
-                        Subfolder inside model repository to load the tokenizer from
+                        Subfolder inside model repository to load the
+                        tokenizer from
   --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
-  --parallel 
-{auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
-plicate}
+  --parallel {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,replicate}
                         Tensor parallelism strategy to use
   --parallel-count PARALLEL_COUNT
-                        Number of processes to launch when --parallel is used (defaults to the number of available GPUs)
+                        Number of processes to launch when --parallel is used
+                        (defaults to the number of available GPUs)
   --disable-loading-progress-bar
-                        If specified, the shard loading progress bar will not be shown
+                        If specified, the shard loading progress bar will not
+                        be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
                         Backend to use (defaults to "transformers")
-  --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
-  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
+  --locales LOCALES     Path to locale files (defaults to
+                        /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU
+                        memory
   --login               Login to main hub (huggingface)
   --no-repl             Don't echo input coming from stdin
-  --quiet, -q           If specified, no welcome screen and only model output is displayed in model run (sets --disable-
-                        loading-progress-bar, --skip-hub-access-check, --skip-special-tokens automatically)
+  --quiet, -q           If specified, no welcome screen and only model output
+                        is displayed in model run (sets --disable-loading-
+                        progress-bar, --skip-hub-access-check, --skip-special-
+                        tokens automatically)
   --tty TTY             TTY stream to use for interactive prompts
-  --record              If specified, the current console output will be regularly saved to SVG files.
+  --record              If specified, the current console output will be
+                        regularly saved to SVG files.
   --revision REVISION   Model revision to use
   --skip-hub-access-check
                         If specified, skip hub model access check
@@ -613,25 +715,34 @@ plicate}
   --version             Display this program's version, and exit
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
-  --display-events      If --display-events is specified and there's an orchestrator / agent involved, show the events panel.
+  --display-events      Show non-tool stream events when an orchestrator or
+                        agent is involved.
+  --stats               Show token generation statistics for streaming output
   --display-pause [DISPLAY_PAUSE]
-                        Pause (in ms.) when cycling through selected tokens as defined by --display-probabilities
+                        Pause (in ms.) when cycling through selected tokens as
+                        defined by --display-probabilities
   --display-probabilities
-                        If --display-tokens specified, show also the token probability distribution
+                        If --display-tokens specified, show also the token
+                        probability distribution
   --display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM
-                        When --display-probabilities is used, select tokens which logit probability is no higher than this
-                        value. Defaults to 0.8
+                        When --display-probabilities is used, select tokens
+                        which logit probability is no higher than this value.
+                        Defaults to 0.8
   --display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM
-                        When --display-probabilities is used, select tokens that have alternate tokens with a logit
-                        probability at least or higher than this value. Defaults to 0.1
+                        When --display-probabilities is used, select tokens
+                        that have alternate tokens with a logit probability at
+                        least or higher than this value. Defaults to 0.1
   --display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]
-                        Display the time it takes to reach the given Nth token (defaults to 256)
+                        Display the time it takes to reach the given Nth token
+                        (defaults to 256)
   --skip-display-reasoning-time
                         Don't display total reasoning time
   --display-reasoning   Display streamed reasoning text in the live response panel
   --display-tokens [DISPLAY_TOKENS]
-                        How many tokens with full information to display at a time
-  --display-tools       If --display-events is specified and there's an orchestrator / agent involved, show the events panel.
+                        How many tokens with full information to display at a
+                        time
+  --display-tools       Show tool lifecycle details for agent or orchestrator
+                        runs.
   --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel
   --display-answer-height-expand
@@ -640,16 +751,18 @@ plicate}
                         Height of the answer section (defaults to 12)
   --id ID               Use given ID as the agent ID
   --participant PARTICIPANT
-                        If specified, this is the participant ID interacting with the agent
+                        If specified, this is the participant ID interacting
+                        with the agent
   --conversation        Activate conversation mode with the agent
-  --watch               Reload agent when the specification file changes (only with --conversation)
-  --no-session          If specified, don't use sessions in persistent message memory
+  --watch               Reload agent when the specification file changes (only
+                        with --conversation)
+  --no-session          If specified, don't use sessions in persistent message
+                        memory
   --session SESSION     Continue the conversation on the given session
   --skip-load-recent-messages
                         If specified, skips loading recent messages
   --load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT
                         If specified, load up to these many recent messages
-  --stats               Show token generation statistics for agent output
   --sync                Don't use an async generator (streaming output)
   --tools-confirm       Confirm tool calls before execution
   --tool-format {json,react,bracket,openai,harmony,dsml}
@@ -671,8 +784,10 @@ DS4 backend options:
   --ds4-warm-weights    Warm DS4 model weights when opening the engine
   --ds4-quality         Enable DS4 quality mode
   --with-ds4-native-log, --ds4-native-log
-                        Replay DS4 native stderr emitted while opening the engine
-  --no-ds4-native-log   Suppress DS4 native stderr emitted while opening the engine
+                        Replay DS4 native stderr emitted while opening the
+                        engine
+  --no-ds4-native-log   Suppress DS4 native stderr emitted while opening the
+                        engine
 
 inline agent settings:
   --engine-uri ENGINE_URI
@@ -714,10 +829,12 @@ inline agent settings:
   --run-temperature RUN_TEMPERATURE
                         Temperature [0, 1]
   --run-top-k RUN_TOP_K
-                        Number of highest probability vocabulary tokens to keep for top-k-filtering.
+                        Number of highest probability vocabulary tokens to
+                        keep for top-k-filtering.
   --run-top-p RUN_TOP_P
-                        If set to < 1, only the smallest set of most probable tokens with probabilities that add up to top_p
-                        or higher are kept for generation.
+                        If set to < 1, only the smallest set of most probable
+                        tokens with probabilities that add up to top_p or
+                        higher are kept for generation.
   --reasoning-effort {none,minimal,low,medium,high,xhigh,max}, --run-reasoning-effort {none,minimal,low,medium,high,xhigh,max}
                         Reasoning effort level
   --tool TOOL           Enable tool
@@ -822,7 +939,7 @@ usage: avalan agent serve [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                           [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                          [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                          [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                           [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
                           [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check] [--verbose]
                           [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--id ID]
@@ -881,6 +998,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1011,7 +1130,7 @@ usage: avalan agent proxy [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                           [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                          [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                          [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                           [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
                           [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check] [--verbose]
                           [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--id ID]
@@ -1070,6 +1189,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1200,7 +1321,7 @@ usage: avalan agent init [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [-
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                          [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
+                         [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                          [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--engine-uri ENGINE_URI]
@@ -1238,6 +1359,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1314,7 +1437,7 @@ usage: avalan cache [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--toke
                     [--parallel 
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
-                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
+                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE] [--theme {fancy,basic}]
                     [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
                     [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
@@ -1346,6 +1469,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1376,7 +1501,7 @@ usage: avalan cache delete [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] 
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                            [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                           [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                           [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                            [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
                            [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check] [--verbose]
                            [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--delete]
@@ -1404,6 +1529,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1440,7 +1567,7 @@ usage: avalan cache download [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                              [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                             [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                             [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                              [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                              [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                              [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1472,6 +1599,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1506,7 +1635,7 @@ usage: avalan cache list [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [-
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                          [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
+                         [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                          [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--model MODEL] [--summary]
@@ -1533,6 +1662,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1565,7 +1696,7 @@ usage: avalan deploy [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tok
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                      [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                     [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
+                     [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                      [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1596,6 +1727,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1626,7 +1759,7 @@ usage: avalan deploy run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [-
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                          [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                         [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
+                         [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                          [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                          [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                          [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -1657,6 +1790,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -1715,6 +1850,236 @@ See [Flow authoring](FLOW_AUTHORING.md) for definition shape, Mermaid modes,
 task-backed execution, and human review details.
 
 ### avalan flow run
+
+```
+usage: avalan flow run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
+                       [--tokenizer-subfolder TOKENIZER_SUBFOLDER] [--device DEVICE]
+                       [--parallel {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,replicate}]
+                       [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
+                       [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                       [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
+                       [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
+                       [--verbose] [--version]
+                       [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--input TASK_INPUT]
+                       [--input-json TASK_INPUT_JSON] [--file TASK_FILES] [--file-mime TASK_FILE_MIME_TYPES]
+                       [--pdf TASK_PDF] [--json] [--output TASK_OUTPUT_PATH] [--flow-parallel N] [--tool TOOL]
+                       [--tools TOOLS] [--tool-browser-engine TOOL_BROWSER_ENGINE] [--tool-browser-search]
+                       [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
+                       [--tool-browser-search-k TOOL_BROWSER_SEARCH_K] [--tool-browser-debug]
+                       [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]
+                       [--tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE]
+                       [--tool-browser-slowdown TOOL_BROWSER_SLOWDOWN] [--tool-browser-devtools]
+                       [--tool-browser-chromium-sandbox] [--tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH]
+                       [--tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT]
+                       [--tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR] [--tool-browser-is-mobile]
+                       [--tool-browser-has-touch] [--tool-browser-java-script-enabled]
+                       [--tool-database-dsn TOOL_DATABASE_DSN] [--tool-database-delay-secs TOOL_DATABASE_DELAY_SECS]
+                       [--tool-database-identifier-case TOOL_DATABASE_IDENTIFIER_CASE] [--tool-database-read-only]
+                       [--tool-database-allowed-commands TOOL_DATABASE_ALLOWED_COMMANDS]
+                       [--tool-graph-file TOOL_GRAPH_FILE] [--tool-shell-backend TOOL_SHELL_BACKEND]
+                       [--tool-shell-workspace-root TOOL_SHELL_WORKSPACE_ROOT] [--tool-shell-cwd TOOL_SHELL_CWD]
+                       [--tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS]
+                       [--tool-shell-max-timeout-seconds TOOL_SHELL_MAX_TIMEOUT_SECONDS]
+                       [--tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES]
+                       [--tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES]
+                       [--tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES]
+                       [--tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS]
+                       [--tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES]
+                       [--tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES]
+                       [--tool-shell-max-path-count TOOL_SHELL_MAX_PATH_COUNT]
+                       [--tool-shell-max-glob-count TOOL_SHELL_MAX_GLOB_COUNT]
+                       [--tool-shell-max-glob-bytes-per-glob TOOL_SHELL_MAX_GLOB_BYTES_PER_GLOB]
+                       [--tool-shell-max-total-glob-bytes TOOL_SHELL_MAX_TOTAL_GLOB_BYTES]
+                       [--tool-shell-max-full-file-bytes TOOL_SHELL_MAX_FULL_FILE_BYTES]
+                       [--tool-shell-max-rg-columns TOOL_SHELL_MAX_RG_COLUMNS]
+                       [--tool-shell-max-rg-context-lines TOOL_SHELL_MAX_RG_CONTEXT_LINES]
+                       [--tool-shell-max-rg-matches-per-file TOOL_SHELL_MAX_RG_MATCHES_PER_FILE]
+                       [--tool-shell-max-head-lines TOOL_SHELL_MAX_HEAD_LINES]
+                       [--tool-shell-max-tail-lines TOOL_SHELL_MAX_TAIL_LINES]
+                       [--tool-shell-max-text-filter-input-bytes TOOL_SHELL_MAX_TEXT_FILTER_INPUT_BYTES]
+                       [--tool-shell-max-filter-program-bytes TOOL_SHELL_MAX_FILTER_PROGRAM_BYTES]
+                       [--tool-shell-max-filter-pattern-bytes TOOL_SHELL_MAX_FILTER_PATTERN_BYTES]
+                       [--tool-shell-max-filter-selectors TOOL_SHELL_MAX_FILTER_SELECTORS]
+                       [--tool-shell-max-awk-fields TOOL_SHELL_MAX_AWK_FIELDS]
+                       [--tool-shell-max-awk-separator-bytes TOOL_SHELL_MAX_AWK_SEPARATOR_BYTES]
+                       [--tool-shell-max-json-input-bytes TOOL_SHELL_MAX_JSON_INPUT_BYTES]
+                       [--tool-shell-max-jq-filter-bytes TOOL_SHELL_MAX_JQ_FILTER_BYTES]
+                       [--tool-shell-max-pdf-input-bytes TOOL_SHELL_MAX_PDF_INPUT_BYTES]
+                       [--tool-shell-max-pdf-text-pages TOOL_SHELL_MAX_PDF_TEXT_PAGES]
+                       [--tool-shell-max-pdf-raster-pages TOOL_SHELL_MAX_PDF_RASTER_PAGES]
+                       [--tool-shell-max-pdf-raster-dpi TOOL_SHELL_MAX_PDF_RASTER_DPI]
+                       [--tool-shell-max-raster-long-edge-pixels TOOL_SHELL_MAX_RASTER_LONG_EDGE_PIXELS]
+                       [--tool-shell-max-raster-pixels TOOL_SHELL_MAX_RASTER_PIXELS]
+                       [--tool-shell-max-output-files TOOL_SHELL_MAX_OUTPUT_FILES]
+                       [--tool-shell-max-output-file-bytes TOOL_SHELL_MAX_OUTPUT_FILE_BYTES]
+                       [--tool-shell-max-total-output-file-bytes TOOL_SHELL_MAX_TOTAL_OUTPUT_FILE_BYTES]
+                       [--tool-shell-max-inline-output-file-bytes TOOL_SHELL_MAX_INLINE_OUTPUT_FILE_BYTES]
+                       [--tool-shell-max-ocr-input-bytes TOOL_SHELL_MAX_OCR_INPUT_BYTES]
+                       [--tool-shell-max-ocr-pixels TOOL_SHELL_MAX_OCR_PIXELS]
+                       [--tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES]
+                       [--tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI]
+                       [--tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES]
+                       [--tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES]
+                       [--tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES]
+                       [--tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS]
+                       [--tool-shell-max-pdf-timeout-seconds TOOL_SHELL_MAX_PDF_TIMEOUT_SECONDS]
+                       [--tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS]
+                       [--tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS]
+                       [--tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT]
+                       [--tool-shell-allow-media-tools] [--tool-shell-allow-absolute-paths]
+                       [--tool-shell-allow-symlinks] [--tool-shell-allow-hidden]
+                       [--tool-shell-executable-search-path TOOL_SHELL_EXECUTABLE_SEARCH_PATHS]
+                       [--tool-shell-executable-path COMMAND=PATH]
+                       flow
+
+Run a given flow
+
+positional arguments:
+  flow                  Flow to run
+
+options:
+  -h, --help            show this help message and exit
+  --cache-dir CACHE_DIR
+                        Path to huggingface cache hub (defaults to /root/.cache/huggingface/hub, can also be specified
+                        with $HF_HUB_CACHE)
+  --subfolder SUBFOLDER
+                        Subfolder inside model repository to load the model from
+  --tokenizer-subfolder TOKENIZER_SUBFOLDER
+                        Subfolder inside model repository to load the tokenizer from
+  --device DEVICE       Device to use (cpu, cuda, mps). Defaults to cpu
+  --parallel {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,replicate}
+                        Tensor parallelism strategy to use
+  --parallel-count PARALLEL_COUNT
+                        Number of processes to launch when --parallel is used (defaults to the number of available
+                        GPUs)
+  --disable-loading-progress-bar
+                        If specified, the shard loading progress bar will not be shown
+  --hf-token HF_TOKEN   Your Huggingface access token
+  --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
+  --loader-class {auto,gemma3,gpt-oss,mistral3}
+                        Loader class to use (defaults to "auto")
+  --backend {transformers,mlx,vllm,ds4}
+                        Backend to use (defaults to "transformers")
+  --locales LOCALES     Path to locale files (defaults to /workspace/avalan/locale)
+  --low-cpu-mem-usage   If specified, loads the model using ~1x model size CPU memory
+  --login               Login to main hub (huggingface)
+  --no-repl             Don't echo input coming from stdin
+  --quiet, -q           If specified, no welcome screen and only model output is displayed in model run (sets
+                        --disable-loading-progress-bar, --skip-hub-access-check, --skip-special-tokens automatically)
+  --tty TTY             TTY stream to use for interactive prompts
+  --record              If specified, the current console output will be regularly saved to SVG files.
+  --revision REVISION   Model revision to use
+  --skip-hub-access-check
+                        If specified, skip hub model access check
+  --verbose, -v         Set verbosity
+  --version             Display this program's version, and exit
+  --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
+                        Weight type to use (defaults to best available)
+  --input TASK_INPUT    Flow input value.
+  --input-json TASK_INPUT_JSON
+                        Flow input JSON value or @file.
+  --file TASK_FILES     Attach a local flow input file as field=path.
+  --file-mime TASK_FILE_MIME_TYPES
+                        Set a flow file MIME hint as field=mime/type.
+  --pdf TASK_PDF        Attach one top-level PDF file input.
+  --json                Print successful flow output as compact JSON.
+  --output TASK_OUTPUT_PATH
+                        Write successful flow output to a JSON file.
+  --flow-parallel N     Maximum number of ready flow nodes to execute in parallel (defaults to the number of CPUs)
+  --tool TOOL           Enable a tool for strict flow tool nodes.
+  --tools TOOLS         Enable tools matching a namespace for strict flow tool nodes.
+
+browser tool settings:
+  --tool-browser-engine TOOL_BROWSER_ENGINE
+  --tool-browser-search
+  --tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT
+  --tool-browser-search-k TOOL_BROWSER_SEARCH_K
+  --tool-browser-debug
+  --tool-browser-debug-url TOOL_BROWSER_DEBUG_URL
+  --tool-browser-debug-source TOOL_BROWSER_DEBUG_SOURCE
+  --tool-browser-slowdown TOOL_BROWSER_SLOWDOWN
+  --tool-browser-devtools
+  --tool-browser-chromium-sandbox
+  --tool-browser-viewport-width TOOL_BROWSER_VIEWPORT_WIDTH
+  --tool-browser-viewport-height TOOL_BROWSER_VIEWPORT_HEIGHT
+  --tool-browser-scale-factor TOOL_BROWSER_SCALE_FACTOR
+  --tool-browser-is-mobile
+  --tool-browser-has-touch
+  --tool-browser-java-script-enabled
+
+database tool settings:
+  --tool-database-dsn TOOL_DATABASE_DSN
+  --tool-database-delay-secs TOOL_DATABASE_DELAY_SECS
+  --tool-database-identifier-case TOOL_DATABASE_IDENTIFIER_CASE
+  --tool-database-read-only
+  --tool-database-allowed-commands TOOL_DATABASE_ALLOWED_COMMANDS
+
+graph tool settings:
+  --tool-graph-file TOOL_GRAPH_FILE
+
+shell tool settings:
+  --tool-shell-backend TOOL_SHELL_BACKEND
+  --tool-shell-workspace-root TOOL_SHELL_WORKSPACE_ROOT
+  --tool-shell-cwd TOOL_SHELL_CWD
+  --tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS
+  --tool-shell-max-timeout-seconds TOOL_SHELL_MAX_TIMEOUT_SECONDS
+  --tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES
+  --tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES
+  --tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES
+  --tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS
+  --tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES
+  --tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES
+  --tool-shell-max-path-count TOOL_SHELL_MAX_PATH_COUNT
+  --tool-shell-max-glob-count TOOL_SHELL_MAX_GLOB_COUNT
+  --tool-shell-max-glob-bytes-per-glob TOOL_SHELL_MAX_GLOB_BYTES_PER_GLOB
+  --tool-shell-max-total-glob-bytes TOOL_SHELL_MAX_TOTAL_GLOB_BYTES
+  --tool-shell-max-full-file-bytes TOOL_SHELL_MAX_FULL_FILE_BYTES
+  --tool-shell-max-rg-columns TOOL_SHELL_MAX_RG_COLUMNS
+  --tool-shell-max-rg-context-lines TOOL_SHELL_MAX_RG_CONTEXT_LINES
+  --tool-shell-max-rg-matches-per-file TOOL_SHELL_MAX_RG_MATCHES_PER_FILE
+  --tool-shell-max-head-lines TOOL_SHELL_MAX_HEAD_LINES
+  --tool-shell-max-tail-lines TOOL_SHELL_MAX_TAIL_LINES
+  --tool-shell-max-text-filter-input-bytes TOOL_SHELL_MAX_TEXT_FILTER_INPUT_BYTES
+  --tool-shell-max-filter-program-bytes TOOL_SHELL_MAX_FILTER_PROGRAM_BYTES
+  --tool-shell-max-filter-pattern-bytes TOOL_SHELL_MAX_FILTER_PATTERN_BYTES
+  --tool-shell-max-filter-selectors TOOL_SHELL_MAX_FILTER_SELECTORS
+  --tool-shell-max-awk-fields TOOL_SHELL_MAX_AWK_FIELDS
+  --tool-shell-max-awk-separator-bytes TOOL_SHELL_MAX_AWK_SEPARATOR_BYTES
+  --tool-shell-max-json-input-bytes TOOL_SHELL_MAX_JSON_INPUT_BYTES
+  --tool-shell-max-jq-filter-bytes TOOL_SHELL_MAX_JQ_FILTER_BYTES
+  --tool-shell-max-pdf-input-bytes TOOL_SHELL_MAX_PDF_INPUT_BYTES
+  --tool-shell-max-pdf-text-pages TOOL_SHELL_MAX_PDF_TEXT_PAGES
+  --tool-shell-max-pdf-raster-pages TOOL_SHELL_MAX_PDF_RASTER_PAGES
+  --tool-shell-max-pdf-raster-dpi TOOL_SHELL_MAX_PDF_RASTER_DPI
+  --tool-shell-max-raster-long-edge-pixels TOOL_SHELL_MAX_RASTER_LONG_EDGE_PIXELS
+  --tool-shell-max-raster-pixels TOOL_SHELL_MAX_RASTER_PIXELS
+  --tool-shell-max-output-files TOOL_SHELL_MAX_OUTPUT_FILES
+  --tool-shell-max-output-file-bytes TOOL_SHELL_MAX_OUTPUT_FILE_BYTES
+  --tool-shell-max-total-output-file-bytes TOOL_SHELL_MAX_TOTAL_OUTPUT_FILE_BYTES
+  --tool-shell-max-inline-output-file-bytes TOOL_SHELL_MAX_INLINE_OUTPUT_FILE_BYTES
+  --tool-shell-max-ocr-input-bytes TOOL_SHELL_MAX_OCR_INPUT_BYTES
+  --tool-shell-max-ocr-pixels TOOL_SHELL_MAX_OCR_PIXELS
+  --tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES
+  --tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI
+  --tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES
+  --tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES
+  --tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES
+  --tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS
+  --tool-shell-max-pdf-timeout-seconds TOOL_SHELL_MAX_PDF_TIMEOUT_SECONDS
+  --tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS
+  --tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS
+  --tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT
+  --tool-shell-allow-media-tools
+  --tool-shell-allow-absolute-paths
+  --tool-shell-allow-symlinks
+  --tool-shell-allow-hidden
+  --tool-shell-executable-search-path TOOL_SHELL_EXECUTABLE_SEARCH_PATHS
+                        Add a trusted directory used to resolve shell tools.
+  --tool-shell-executable-path COMMAND=PATH
+                        Map a shell command to a trusted absolute executable.
+```
 
 Run a flow from a TOML definition:
 
@@ -2222,7 +2587,7 @@ usage: avalan memory [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--tok
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                      [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                     [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
+                     [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                      [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                      [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                      [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -2253,6 +2618,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -2283,7 +2650,7 @@ usage: avalan memory embeddings [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOL
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                                 [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                                [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                                [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                                 [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                                 [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                                 [--verbose] [--version]
@@ -2321,6 +2688,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -2374,7 +2743,7 @@ usage: avalan memory search [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                             [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                            [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                            [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                             [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                             [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -2411,6 +2780,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -2481,7 +2852,7 @@ usage: avalan memory document index [-h] [--cache-dir CACHE_DIR] [--subfolder SU
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                                     [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                                    [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                                    [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                                     [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                                     [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                                     [--skip-hub-access-check] [--verbose] [--version]
@@ -2521,6 +2892,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -2597,7 +2970,7 @@ usage: avalan model display [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                             [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                            [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                            [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                             [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                             [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -2630,6 +3003,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -2670,7 +3045,7 @@ usage: avalan model install [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                             [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                            [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                            [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                             [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                             [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                             [--verbose] [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -2702,6 +3077,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -2736,11 +3113,11 @@ usage: avalan model run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                         [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
+                        [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                         [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] [--base-url BASE_URL]
-                        [--load] [--special-token SPECIAL_TOKEN] [--token TOKEN] [--tokenizer TOKENIZER] [--display-events]
+                        [--load] [--special-token SPECIAL_TOKEN] [--token TOKEN] [--tokenizer TOKENIZER] [--display-events] [--stats]
                         [--display-pause [DISPLAY_PAUSE]] [--display-probabilities]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
@@ -2810,6 +3187,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -2836,7 +3215,8 @@ plicate}
   --token TOKEN         Token to add to tokenizer, only when model is loaded
   --tokenizer TOKENIZER
                         Path to tokenizer to use instead of model's default, only if model is loaded
-  --display-events      If --display-events is specified and there's an orchestrator / agent involved, show the events panel.
+  --display-events      Show non-tool stream events when an orchestrator or agent is involved.
+  --stats               Show token generation statistics for streaming output
   --display-pause [DISPLAY_PAUSE]
                         Pause (in ms.) when cycling through selected tokens as defined by --display-probabilities
   --display-probabilities
@@ -2853,7 +3233,7 @@ plicate}
                         Don't display total reasoning time
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a time
-  --display-tools       If --display-events is specified and there's an orchestrator / agent involved, show the events panel.
+  --display-tools       Show tool lifecycle details for agent or orchestrator runs.
   --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel
   --display-answer-height-expand
@@ -3002,7 +3382,7 @@ usage: avalan model search [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] 
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                            [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                           [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                           [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                            [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl]
                            [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check] [--verbose]
                            [--version] [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -3031,6 +3411,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -3072,7 +3454,7 @@ usage: avalan model uninstall [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDE
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                               [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                              [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
+                              [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}]
                               [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES] [--low-cpu-mem-usage] [--login]
                               [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION] [--skip-hub-access-check]
                               [--verbose] [--version]
@@ -3105,6 +3487,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -3144,7 +3528,7 @@ usage: avalan tokenizer [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                         [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
+                        [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                         [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}] --tokenizer TOKENIZER
@@ -3172,6 +3556,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -3208,7 +3594,7 @@ usage: avalan train [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--toke
                     [--parallel 
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
-                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE]
+                    [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN] [--locale LOCALE] [--theme {fancy,basic}]
                     [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}] [--locales LOCALES]
                     [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record] [--revision REVISION]
                     [--skip-hub-access-check] [--verbose] [--version]
@@ -3240,6 +3626,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
@@ -3270,7 +3658,7 @@ usage: avalan train run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER] [--
 {auto,colwise,rowwise,colwise_rep,rowwise_rep,local_colwise,local_rowwise,local,gather,local_packed_rowwise,sequence_parallel,re
 plicate}]
                         [--parallel-count PARALLEL_COUNT] [--disable-loading-progress-bar] [--hf-token HF_TOKEN]
-                        [--locale LOCALE] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
+                        [--locale LOCALE] [--theme {fancy,basic}] [--loader-class {auto,gemma3,gpt-oss,mistral3}] [--backend {transformers,mlx,vllm,ds4}]
                         [--locales LOCALES] [--low-cpu-mem-usage] [--login] [--no-repl] [--quiet] [--tty TTY] [--record]
                         [--revision REVISION] [--skip-hub-access-check] [--verbose] [--version]
                         [--weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}]
@@ -3301,6 +3689,8 @@ plicate}
                         If specified, the shard loading progress bar will not be shown
   --hf-token HF_TOKEN   Your Huggingface access token
   --locale LOCALE       Language to use (defaults to en_US)
+  --theme {fancy,basic}
+                        Theme to use (default is fancy)
   --loader-class {auto,gemma3,gpt-oss,mistral3}
                         Loader class to use (defaults to "auto")
   --backend {transformers,mlx,vllm,ds4}
