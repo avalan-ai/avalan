@@ -373,7 +373,7 @@ _BENCHMARK_MARKDOWN_ROWS = (
     ("phase-5", "2026-06-14T21:03:15.003184+00:00"),
     ("phase-6", "2026-06-15T03:09:19.922841+00:00"),
     ("phase-6", "2026-06-15T10:08:29.700366+00:00"),
-    ("phase-7", "2026-06-16T06:30:51.716877+00:00"),
+    ("canonical-phase-7", "2026-06-16T06:30:51.716877+00:00"),
 )
 _BENCHMARK_MARKDOWN_COMPARISON_REFERENCES = (
     ("main", ""),
@@ -395,7 +395,7 @@ def _benchmark_row_marker(row: str) -> str:
 
 
 def _final_benchmark_markdown_section(markdown: str) -> str:
-    start = markdown.find(_benchmark_row_marker("phase-7"))
+    start = markdown.find(_benchmark_row_marker("canonical-phase-7"))
     assert start >= 0, "missing final benchmark row"
     next_start = markdown.find("\n## ", start + 1)
     if next_start < 0:
@@ -459,6 +459,13 @@ def _assert_final_benchmark_markdown_complete(markdown: str) -> None:
         assert metric in section, f"missing comparison metric: {metric}"
 
     acceptance_section = _final_acceptance_markdown_section(markdown)
+    expected_final_result = (
+        "Final result: `canonical-phase-7 baseline - "
+        "2026-06-16T06:30:51.716877+00:00`"
+    )
+    assert _normalized_text(expected_final_result) in _normalized_text(
+        acceptance_section
+    ), "missing final canonical phase-7 result label"
     for label, timestamp in _BENCHMARK_MARKDOWN_COMPARISON_REFERENCES:
         _assert_reference_present(acceptance_section, label, timestamp)
 
@@ -528,7 +535,7 @@ def _complete_benchmark_markdown() -> str:
 
 ## phase-6 baseline - 2026-06-15T10:08:29.700366+00:00
 
-## phase-7 baseline - 2026-06-16T06:30:51.716877+00:00
+## canonical-phase-7 baseline - 2026-06-16T06:30:51.716877+00:00
 
 | Model | Status | Load s | TTFT s | Total s | Est. tokens/s |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -559,7 +566,7 @@ within single-run noise.
 
 ### Final acceptance comparison
 
-Final result: `phase-7 baseline -
+Final result: `canonical-phase-7 baseline -
 2026-06-16T06:30:51.716877+00:00`.
 
 Comparison scope: the final result was compared with the `main` baseline
@@ -657,6 +664,20 @@ class StreamBenchmarkRegressionTestCase(TestCase):
         with self.assertRaisesRegex(
             AssertionError,
             "missing comparison row reference: phase-6",
+        ):
+            _assert_final_benchmark_markdown_complete(markdown)
+
+    def test_final_benchmark_markdown_parser_rejects_legacy_phase7_result(
+        self,
+    ) -> None:
+        markdown = _complete_benchmark_markdown().replace(
+            "Final result: `canonical-phase-7 baseline -",
+            "Final result: `phase-7 baseline -",
+        )
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "missing final canonical phase-7 result label",
         ):
             _assert_final_benchmark_markdown_complete(markdown)
 
