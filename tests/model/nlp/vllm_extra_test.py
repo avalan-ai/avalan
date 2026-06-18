@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, PropertyMock, patch
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 
 import avalan.model.nlp.text.vllm as vllm_module
-from avalan.entities import GenerationSettings, TransformerEngineSettings
+from avalan.entities import (
+    GenerationSettings,
+    Token,
+    TransformerEngineSettings,
+)
 from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.nlp.text.vllm import (
     VllmModel,
@@ -120,6 +124,73 @@ class VllmStreamTestCase(IsolatedAsyncioTestCase):
             ],
             ["<"],
         )
+
+    async def test_stream_rejects_legacy_token_chunk(self) -> None:
+        stream = VllmStream(iter([Token(token="legacy")]))
+
+        started = await stream.__anext__()
+        errored = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(
+            errored.data["message"],
+            "unsupported legacy local stream item",
+        )
+
+    async def test_stream_rejects_legacy_token_subclass_chunk(self) -> None:
+        class LegacyTokenSubclass(Token):
+            pass
+
+        stream = VllmStream(iter([LegacyTokenSubclass(token="legacy")]))
+
+        started = await stream.__anext__()
+        errored = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(
+            errored.data["message"],
+            "unsupported legacy local stream item",
+        )
+
+    async def test_stream_accepts_non_legacy_token_and_text_chunks(
+        self,
+    ) -> None:
+        stream = VllmStream(
+            iter(
+                [
+                    SimpleNamespace(token="tok", id=3),
+                    SimpleNamespace(text=" text"),
+                ]
+            )
+        )
+
+        items = [item async for item in stream]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["tok", " text"],
+        )
+        self.assertEqual(items[1].metadata, {"token_id": 3})
+        self.assertEqual(items[2].metadata, {})
 
     async def test_stream_parses_split_local_events(self):
         stream = VllmStream(

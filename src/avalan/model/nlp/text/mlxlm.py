@@ -1,7 +1,6 @@
 from ....entities import (
     GenerationSettings,
     Input,
-    Token,
     TransformerEngineSettings,
 )
 from ....model.response.text import TextGenerationResponse
@@ -11,7 +10,7 @@ from ....model.stream import (
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
-    StreamValidationError,
+    _reject_legacy_token_stream_chunk,
 )
 from ....tool.manager import ToolManager
 from ....types import LooseJsonValue
@@ -220,8 +219,7 @@ class MlxLmStream(TextGenerationVendorStream):
     ) -> tuple[str | None, dict[str, LooseJsonValue]]:
         if isinstance(chunk, str):
             return chunk, {}
-        if isinstance(chunk, Token):
-            raise StreamValidationError("unsupported legacy local stream item")
+        _reject_legacy_token_stream_chunk(chunk)
         token = getattr(chunk, "token", None)
         if not isinstance(token, str):
             text = getattr(chunk, "text", None)

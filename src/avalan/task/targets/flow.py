@@ -1556,7 +1556,6 @@ def _flow_node_event_listener(
     assert callable(listener)
 
     def observe(event: Event) -> Awaitable[None] | None:
-        assert isinstance(event, Event)
         payload: dict[str, Any] = {}
         if isinstance(event.payload, Mapping):
             payload.update(event.payload)

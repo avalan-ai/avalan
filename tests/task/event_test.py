@@ -485,6 +485,18 @@ class SanitizedTaskEventTest(TestCase):
 
     def test_non_event_objects_reduce_to_unknown_empty_payload(self) -> None:
         draft = sanitize_raw_task_event(object(), PrivacySanitizer())
+        payload_only = type(
+            "PayloadOnly",
+            (),
+            {
+                "type": EventType.START,
+                "payload": {"status": "private"},
+            },
+        )()
+        payload_only_draft = sanitize_raw_task_event(
+            payload_only,
+            PrivacySanitizer(),
+        )
         none_payload = sanitize_raw_task_event(
             Event(type=EventType.END, payload=None),
             PrivacySanitizer(),
@@ -500,10 +512,15 @@ class SanitizedTaskEventTest(TestCase):
         )
 
         payload = cast(dict[str, object], draft.payload)
+        payload_only_value = cast(
+            dict[str, object], payload_only_draft.payload
+        )
         none_value = cast(dict[str, object], none_payload.payload)
         timed_value = cast(dict[str, object], timed.payload)
         self.assertEqual(draft.event_type, "unknown")
+        self.assertEqual(payload_only_draft.event_type, "unknown")
         self.assertEqual(payload, {"event_type": "unknown"})
+        self.assertEqual(payload_only_value, {"event_type": "unknown"})
         self.assertEqual(none_value, {"event_type": "end"})
         self.assertEqual(timed_value["started_at"], 1.0)
         self.assertEqual(timed_value["finished_at"], 2.0)

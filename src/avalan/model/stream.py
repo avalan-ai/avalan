@@ -1,7 +1,3 @@
-from ..entities import (
-    Token,
-    TokenDetail,
-)
 from ..observability import observability_key_sample
 from ..types import LooseJsonValue
 from .provider import ProviderFamily, provider_family_value
@@ -147,6 +143,18 @@ class StreamProducerBackend(StrEnum):
 
 class StreamValidationError(ValueError):
     pass
+
+
+_LEGACY_TOKEN_STREAM_CLASS = ("avalan.entities", "Token")
+
+
+def _reject_legacy_token_stream_chunk(chunk: object) -> None:
+    for chunk_class in type(chunk).__mro__:
+        if (
+            chunk_class.__module__ == _LEGACY_TOKEN_STREAM_CLASS[0]
+            and chunk_class.__name__ == _LEGACY_TOKEN_STREAM_CLASS[1]
+        ):
+            raise StreamValidationError("unsupported legacy local stream item")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -1008,83 +1016,6 @@ def stream_projection_is_tool_call(
         else item
     )
     return projection.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
-
-
-def stream_projection_display_token(
-    item: CanonicalStreamItem | StreamConsumerProjection,
-) -> Token | None:
-    assert isinstance(item, (CanonicalStreamItem, StreamConsumerProjection))
-    projection = (
-        project_canonical_stream_item(item)
-        if isinstance(item, CanonicalStreamItem)
-        else item
-    )
-    text = stream_projection_text_delta(projection)
-    if text is None or stream_projection_is_tool_call(projection):
-        return None
-
-    metadata = projection.metadata
-    if not any(
-        key in metadata
-        for key in (
-            "token_id",
-            "probability",
-            "step",
-            "probability_distribution",
-            "tokens",
-        )
-    ):
-        return None
-
-    token_id = metadata.get("token_id")
-    probability = metadata.get("probability")
-    token_kwargs: dict[str, Any] = {"id": None, "token": text}
-    if isinstance(token_id, int):
-        token_kwargs["id"] = token_id
-    if isinstance(probability, int | float):
-        token_kwargs["probability"] = float(probability)
-
-    if (
-        "step" in metadata
-        or "probability_distribution" in metadata
-        or "tokens" in metadata
-    ):
-        detail_kwargs = dict(token_kwargs)
-        step = metadata.get("step")
-        if isinstance(step, int):
-            detail_kwargs["step"] = step
-        if "probability_distribution" in metadata:
-            detail_kwargs["probability_distribution"] = cast(
-                Any,
-                metadata["probability_distribution"],
-            )
-        candidates = _display_token_candidates(metadata.get("tokens"))
-        if candidates is not None:
-            detail_kwargs["tokens"] = candidates
-        return TokenDetail(**detail_kwargs)
-
-    return Token(**token_kwargs)
-
-
-def _display_token_candidates(value: object) -> list[Token] | None:
-    if not isinstance(value, list):
-        return None
-    candidates: list[Token] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        text = item.get("token")
-        if not isinstance(text, str):
-            continue
-        token_id = item.get("token_id")
-        probability = item.get("probability")
-        kwargs: dict[str, Any] = {"id": None, "token": text}
-        if isinstance(token_id, int):
-            kwargs["id"] = token_id
-        if isinstance(probability, int | float):
-            kwargs["probability"] = float(probability)
-        candidates.append(Token(**kwargs))
-    return candidates
 
 
 async def iter_stream_consumer_projections(
