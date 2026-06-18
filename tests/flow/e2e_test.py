@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
@@ -6,7 +6,7 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
 import avalan.flow.executor as flow_executor_module
-from avalan.event import Event, EventType
+from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.flow import (
     FlowCondition,
     FlowConditionOperator,
@@ -49,6 +49,10 @@ from avalan.flow import (
     serialize_flow_definition,
     tool_flow_node_registry,
 )
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    stream_observability_payload,
+)
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
@@ -62,6 +66,48 @@ from avalan.tool.shell import (
     ShellPolicyDenied,
     ShellToolSet,
 )
+
+
+class _FlowEventCollector:
+    def __init__(self) -> None:
+        self._events: list[Event] = []
+
+    def append(self, item: CanonicalStreamItem) -> None:
+        assert isinstance(item, CanonicalStreamItem)
+        event_type = item.metadata.get("event_type")
+        assert isinstance(event_type, str)
+        typed_event_type = _event_type_value(event_type)
+        payload = item.data if isinstance(item.data, Mapping) else {}
+        self._events.append(
+            Event(
+                type=typed_event_type,
+                payload=payload,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        stream_observability_payload(item)
+                    )
+                ),
+            )
+        )
+
+    def __iter__(self) -> Iterator[Event]:
+        return iter(self._events)
+
+    def __getitem__(self, index: int) -> Event:
+        return self._events[index]
+
+    def __len__(self) -> int:
+        return len(self._events)
+
+    def __str__(self) -> str:
+        return str(self._events)
+
+
+def _event_type_value(value: str) -> EventType | str:
+    try:
+        return EventType(value)
+    except ValueError:
+        return value
 
 
 class FlowE2ETestCase(IsolatedAsyncioTestCase):
@@ -839,7 +885,7 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(compiled.ok, compiled.public_diagnostics)
         assert compiled.definition is not None
-        events: list[Event] = []
+        events = _FlowEventCollector()
         executor = FlowExecutor(event_listener=events.append)
         result = await executor.run(compiled.definition)
 
@@ -905,7 +951,7 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
 
         for decision, target in decisions.items():
             with self.subTest(decision=decision):
-                events: list[Event] = []
+                events = _FlowEventCollector()
                 calls: list[str] = []
                 definition = _human_review_definition()
                 executor = FlowExecutor(
@@ -1073,7 +1119,7 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
     async def test_fallback_path_exhausts_to_manual_verification(
         self,
     ) -> None:
-        events: list[Event] = []
+        events = _FlowEventCollector()
         calls: list[str] = []
         executor = FlowExecutor(
             runner=_fallback_runner(calls),
@@ -1145,7 +1191,7 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
             _event_payloads(events, EventType.FLOW_NODE_RETRYING)[0][
                 "diagnostic_codes"
             ],
-            ("flow.execution.provider_unavailable",),
+            ["flow.execution.provider_unavailable"],
         )
         self.assertEqual(
             _event_payloads(events, EventType.FLOW_NODE_FAILED)[0]["attempts"],
@@ -1186,7 +1232,7 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
     async def test_retry_exhaustion_without_error_route_fails_closed(
         self,
     ) -> None:
-        events: list[Event] = []
+        events = _FlowEventCollector()
         calls: list[str] = []
         executor = FlowExecutor(
             runner=_fallback_runner(calls),
@@ -1250,7 +1296,7 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
     async def test_validate_and_repair_loop_exits_normally(
         self,
     ) -> None:
-        events: list[Event] = []
+        events = _FlowEventCollector()
         calls: list[str] = []
         executor = FlowExecutor(
             runner=_repair_loop_runner(calls, exit_after=3),
@@ -1327,7 +1373,7 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
     async def test_validate_and_repair_loop_routes_iteration_limit(
         self,
     ) -> None:
-        events: list[Event] = []
+        events = _FlowEventCollector()
         calls: list[str] = []
         executor = FlowExecutor(
             runner=_repair_loop_runner(calls, exit_after=None),
@@ -1398,7 +1444,7 @@ class FlowE2ETestCase(IsolatedAsyncioTestCase):
             _event_payloads(events, EventType.FLOW_NODE_FAILED)[0][
                 "diagnostic_codes"
             ],
-            ("flow.execution.loop_limit_reached",),
+            ["flow.execution.loop_limit_reached"],
         )
         self.assertEqual(
             next(
@@ -1880,7 +1926,7 @@ class _FlowShellExecutor:
 
 
 def _event_payloads(
-    events: list[Event],
+    events: Iterable[Event],
     event_type: EventType,
 ) -> list[Mapping[str, object]]:
     return [

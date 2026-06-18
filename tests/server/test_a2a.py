@@ -728,6 +728,51 @@ def test_token_text_ignores_canonical_control_item() -> None:
     assert a2a_router_module._token_text(item) == ""
 
 
+def test_canonical_flow_status_metadata_uses_public_projection_only() -> None:
+    item = CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=5,
+        kind=StreamItemKind.FLOW_EVENT,
+        channel=StreamChannel.FLOW,
+        correlation=StreamItemCorrelation(
+            flow_run_id="flow-1",
+            node_id="node-1",
+            parent_sequence=4,
+        ),
+        data={"private_output": "secret-result"},
+        metadata={
+            "event_type": "flow_node_completed",
+            "state": "succeeded",
+            "status": "completed",
+            "duration_ms": 12.5,
+            "private_output": "secret-result",
+            "trace_token": "secret-trace",
+        },
+    )
+
+    metadata = a2a_router_module._canonical_flow_status_metadata(item)
+
+    assert metadata == {
+        "phase": "flow.event",
+        "sequence": 5,
+        "flow_run_id": "flow-1",
+        "node_id": "node-1",
+        "parent_sequence": 4,
+        "flow_metadata": {
+            "event_type": "flow_node_completed",
+            "state": "succeeded",
+            "status": "completed",
+            "duration_ms": 12.5,
+        },
+        "flow_event_type": "flow_node_completed",
+    }
+    assert "flow_data" not in metadata
+    assert "private_output" not in metadata["flow_metadata"]
+    assert "trace_token" not in metadata["flow_metadata"]
+
+
 def test_translator_rejects_unsupported_legacy_item() -> None:
     asyncio.run(_run_unsupported_legacy_item_flow())
 

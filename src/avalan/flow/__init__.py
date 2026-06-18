@@ -196,7 +196,6 @@ from .registry import FlowToolResolver as FlowToolResolver
 from .registry import default_flow_node_registry as default_flow_node_registry
 from .registry import flow_input_binding as flow_input_binding
 from .registry import tool_flow_node_registry as tool_flow_node_registry
-from .runtime import FlowEventListener as FlowEventListener
 from .runtime import FlowNodeExecutionError as FlowNodeExecutionError
 from .runtime import FlowNodeRegistryRunner as FlowNodeRegistryRunner
 from .runtime import FlowPlanExecutionResult as FlowPlanExecutionResult
@@ -205,6 +204,7 @@ from .runtime import FlowRuntimeContext as FlowRuntimeContext
 from .runtime import (
     FlowRuntimeEvaluationError as FlowRuntimeEvaluationError,
 )
+from .runtime import FlowStreamListener as FlowStreamListener
 from .runtime import (
     evaluate_flow_condition_plan as evaluate_flow_condition_plan,
 )
@@ -245,17 +245,11 @@ from .store import (
 )
 from .store import flow_trace_from_snapshot as flow_trace_from_snapshot
 from .store import flow_trace_to_snapshot as flow_trace_to_snapshot
-from .stream import (
-    FlowCanonicalEventListener as FlowCanonicalEventListener,
-)
+from .stream import FlowStreamRecorder as FlowStreamRecorder
 from .stream import FlowStreamSession as FlowStreamSession
-from .stream import (
-    canonical_flow_event_listener as canonical_flow_event_listener,
-)
-from .stream import (
-    canonical_flow_item_from_event as canonical_flow_item_from_event,
-)
-from .stream import flow_event_is_projectable as flow_event_is_projectable
+from .stream import FlowStreamSink as FlowStreamSink
+from .stream import canonical_flow_item as canonical_flow_item
+from .stream import flow_stream_recorder as flow_stream_recorder
 from .stream import flow_stream_session as flow_stream_session
 from .subflow import FLOW_SUBFLOW_NODE_TYPE as FLOW_SUBFLOW_NODE_TYPE
 from .subflow import LocalFlowSubflowResolver as LocalFlowSubflowResolver

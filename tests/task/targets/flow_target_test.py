@@ -85,6 +85,12 @@ from avalan.flow.flow import Flow
 from avalan.flow.loader import FlowDefinitionLoader
 from avalan.flow.node import Node
 from avalan.flow.registry import FlowNodeConfigurationError
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemCorrelation,
+    StreamItemKind,
+)
 from avalan.server.routers import flow as flow_router_module
 from avalan.task import (
     DROPPED_MARKER,
@@ -1163,6 +1169,55 @@ def load(path):
 
 
 class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
+    async def test_task_flow_stream_listener_preserves_custom_event_type(
+        self,
+    ) -> None:
+        captured: list[Event] = []
+        listener = flow_target_module._task_flow_stream_listener(
+            self._context(event_listener=captured.append)
+        )
+
+        assert listener is not None
+        result = listener(
+            CanonicalStreamItem(
+                stream_session_id="flow-session",
+                run_id="run-1",
+                turn_id="turn-1",
+                sequence=3,
+                kind=StreamItemKind.FLOW_EVENT,
+                channel=StreamChannel.FLOW,
+                correlation=StreamItemCorrelation(
+                    flow_run_id="flow-run-1",
+                    node_id="custom-node",
+                ),
+                data={"detail": "kept"},
+                metadata={
+                    "event_type": "flow.custom_event",
+                    "started": 1,
+                    "finished": 2.5,
+                    "elapsed": "not-a-float",
+                },
+            )
+        )
+        if result is not None:
+            await result
+
+        self.assertEqual(len(captured), 1)
+        event = captured[0]
+        self.assertEqual(event.type, "flow.custom_event")
+        self.assertEqual(event.payload, {"detail": "kept"})
+        self.assertEqual(event.started, 1.0)
+        self.assertEqual(event.finished, 2.5)
+        self.assertIsNone(event.elapsed)
+        observability = event.observability_payload
+        assert observability is not None
+        self.assertEqual(observability.data["kind"], "flow.event")
+        self.assertEqual(observability.data["channel"], "flow")
+        self.assertEqual(
+            observability.data["correlation"],
+            {"flow_run_id": "flow-run-1", "node_id": "custom-node"},
+        )
+
     def test_task_scoped_registry_accepts_tool_resolver(self) -> None:
         registry = task_flow_node_registry(
             self._context(),

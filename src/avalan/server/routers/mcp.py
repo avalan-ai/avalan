@@ -28,6 +28,7 @@ from .streaming import (
     ProtocolStreamAccumulator,
     ProtocolStreamSnapshot,
     cancellable_stream_iterator,
+    canonical_flow_public_metadata,
     cleanup_stream_sources,
     protocol_stream_retention_settings,
     stream_consumer_iterator,
@@ -1036,6 +1037,9 @@ async def _mcp_canonical_stream_item_notifications(
     notifications: list[JSONObject] = []
 
     state.accumulator.add(item)
+    if item.kind is StreamItemKind.FLOW_EVENT:
+        notifications.append(_canonical_flow_notification(item))
+        return notifications
     if item.kind is StreamItemKind.TOOL_CALL_READY:
         _record_canonical_tool_call_ready(item, state.tool_summaries)
         return notifications
@@ -1205,6 +1209,36 @@ def _canonical_tool_notification(
         message["name"] = name
     if "arguments" in data:
         message["arguments"] = arguments
+    return {
+        "jsonrpc": "2.0",
+        "method": "notifications/message",
+        "params": {
+            "level": "info",
+            "message": message,
+        },
+    }
+
+
+def _canonical_flow_notification(item: CanonicalStreamItem) -> JSONObject:
+    assert item.kind is StreamItemKind.FLOW_EVENT
+    metadata = canonical_flow_public_metadata(item)
+    message: dict[str, JSONValue] = {
+        "type": "flow.event",
+        "sequence": item.sequence,
+        "metadata": cast(JSONValue, metadata),
+    }
+    event_type = metadata.get("event_type")
+    if isinstance(event_type, str) and event_type:
+        message["event"] = event_type
+    flow_run_id = item.correlation.flow_run_id
+    if flow_run_id is not None:
+        message["flowRunId"] = flow_run_id
+    node_id = item.correlation.node_id
+    if node_id is not None:
+        message["nodeId"] = node_id
+    parent_sequence = item.correlation.parent_sequence
+    if parent_sequence is not None:
+        message["parentSequence"] = parent_sequence
     return {
         "jsonrpc": "2.0",
         "method": "notifications/message",

@@ -621,6 +621,59 @@ class MCPUtilityTestCase(TestCase):
         self.assertEqual(mcp_router._canonical_reasoning_delta(control), "")
         self.assertIsNone(mcp_router._canonical_reasoning_delta(answer))
 
+    def test_canonical_flow_notification_uses_public_metadata_only(
+        self,
+    ) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=4,
+            kind=StreamItemKind.FLOW_EVENT,
+            channel=StreamChannel.FLOW,
+            correlation=StreamItemCorrelation(
+                flow_run_id="flow-1",
+                node_id="node-1",
+                parent_sequence=3,
+            ),
+            data={"private_output": "secret-result"},
+            metadata={
+                "event_type": "flow_node_completed",
+                "state": "succeeded",
+                "status": "completed",
+                "attempts": 2,
+                "private_output": "secret-result",
+                "trace_token": "secret-trace",
+            },
+        )
+
+        notification = mcp_router._canonical_flow_notification(item)
+        params = cast(dict[str, Any], notification["params"])
+        message = cast(dict[str, Any], params["message"])
+
+        self.assertEqual(notification["method"], "notifications/message")
+        self.assertEqual(params["level"], "info")
+        self.assertEqual(
+            message,
+            {
+                "type": "flow.event",
+                "sequence": 4,
+                "metadata": {
+                    "event_type": "flow_node_completed",
+                    "state": "succeeded",
+                    "status": "completed",
+                    "attempts": 2,
+                },
+                "event": "flow_node_completed",
+                "flowRunId": "flow-1",
+                "nodeId": "node-1",
+                "parentSequence": 3,
+            },
+        )
+        self.assertNotIn("data", message)
+        self.assertNotIn("secret-result", dumps(message, sort_keys=True))
+        self.assertNotIn("secret-trace", dumps(message, sort_keys=True))
+
     def test_canonical_tool_notification_variants(self) -> None:
         empty = CanonicalStreamItem(
             stream_session_id="s",
