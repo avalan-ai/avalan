@@ -22,15 +22,16 @@ from . import orchestrate, resolve_model_id
 from .streaming import (
     cleanup_stream_sources,
     protocol_stream_terminal_snapshot,
+    protocol_stream_usage_mappings,
     stream_consumer_iterator,
     stream_terminal_succeeded,
 )
 
 from asyncio import CancelledError
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from json import dumps
 from logging import Logger
-from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -291,12 +292,15 @@ def _stream_text(
 def _chat_usage(usage: object | None) -> ChatCompletionUsage | None:
     if usage is None:
         return None
-    if not isinstance(usage, dict):
+    usage_mappings = protocol_stream_usage_mappings(usage)
+    if not usage_mappings:
         return ChatCompletionUsage()
 
-    prompt_tokens = _usage_int(usage, "prompt_tokens", "input_tokens")
-    completion_tokens = _usage_int(usage, "completion_tokens", "output_tokens")
-    total_tokens = _usage_int(usage, "total_tokens")
+    prompt_tokens = _usage_int(usage_mappings, "prompt_tokens", "input_tokens")
+    completion_tokens = _usage_int(
+        usage_mappings, "completion_tokens", "output_tokens"
+    )
+    total_tokens = _usage_int(usage_mappings, "total_tokens")
     if total_tokens == 0:
         total_tokens = prompt_tokens + completion_tokens
     return ChatCompletionUsage(
@@ -306,11 +310,15 @@ def _chat_usage(usage: object | None) -> ChatCompletionUsage | None:
     )
 
 
-def _usage_int(usage: dict[object, object], *keys: str) -> int:
-    for key in keys:
-        value = usage.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return max(0, value)
+def _usage_int(
+    usage_mappings: tuple[Mapping[object, object], ...],
+    *keys: str,
+) -> int:
+    for usage in usage_mappings:
+        for key in keys:
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return max(0, value)
     return 0
 
 

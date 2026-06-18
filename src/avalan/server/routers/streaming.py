@@ -27,7 +27,7 @@ from asyncio import (
 from asyncio import (
     Event as AsyncEvent,
 )
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from inspect import isawaitable
@@ -236,6 +236,18 @@ def canonical_flow_public_metadata(
         for key, value in item.metadata.items()
         if key in _FLOW_PUBLIC_METADATA_FIELDS
     }
+
+
+def protocol_stream_usage_mappings(
+    usage: object | None,
+) -> tuple[Mapping[object, object], ...]:
+    if not isinstance(usage, Mapping):
+        return ()
+    usage_mapping = cast(Mapping[object, object], usage)
+    totals = usage.get("totals")
+    if isinstance(totals, Mapping):
+        return (usage_mapping, cast(Mapping[object, object], totals))
+    return (usage_mapping,)
 
 
 ProtocolStreamProjectionState = StreamProjectionState

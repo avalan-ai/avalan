@@ -39,6 +39,7 @@ from avalan.server.routers.streaming import (
     cleanup_stream_sources,
     protocol_stream_retention_settings,
     protocol_stream_terminal_snapshot,
+    protocol_stream_usage_mappings,
     stream_consumer_iterator,
     stream_iterator,
     stream_terminal_succeeded,
@@ -1800,6 +1801,17 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaises(AssertionError):
             canonical_flow_public_metadata(item)
+
+    def test_protocol_stream_usage_mappings_preserves_canonical_totals(
+        self,
+    ) -> None:
+        usage = {"input_tokens": 1, "totals": {"input_tokens": 2}}
+
+        self.assertEqual(
+            protocol_stream_usage_mappings(usage),
+            (usage, usage["totals"]),
+        )
+        self.assertEqual(protocol_stream_usage_mappings("usage"), ())
 
     async def test_protocol_stream_accumulator_rejects_duplicate_terminal(
         self,
