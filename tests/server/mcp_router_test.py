@@ -27,6 +27,7 @@ from avalan.model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
     project_canonical_stream_item,
@@ -376,6 +377,58 @@ class MCPResourceStoreTestCase(TestCase):
         self.assertEqual(run(store.history(resource.id)), ("two", "three"))
         self.assertEqual(third.revision, 3)
 
+    def test_default_resource_byte_limit_uses_stream_policy(self) -> None:
+        store = mcp_router.MCPResourceStore()
+
+        self.assertEqual(
+            store._resource_byte_limit,
+            StreamRetentionPolicy().mcp_resource_text_byte_limit,
+        )
+
+    def test_retains_resource_history_within_byte_limit(self) -> None:
+        store = mcp_router.MCPResourceStore(
+            resource_item_limit=10,
+            resource_byte_limit=5,
+        )
+        resource = run(store.create(base_path="/m", initial_text="abc"))
+        updated = run(store.append(resource.id, "def"))
+        huge = run(store.append(resource.id, "0123456789"))
+
+        self.assertEqual(updated.text, "bcdef")
+        self.assertEqual(run(store.history(resource.id)), ("56789",))
+        self.assertEqual(huge.text, "56789")
+        self.assertLessEqual(len(huge.text.encode("utf-8")), 5)
+
+        unicode_store = mcp_router.MCPResourceStore(
+            resource_byte_limit=4,
+        )
+        unicode_resource = run(
+            unicode_store.create(base_path="/m", initial_text="\u00e9" * 3)
+        )
+
+        self.assertEqual(unicode_resource.text, "\u00e9" * 2)
+        self.assertLessEqual(len(unicode_resource.text.encode("utf-8")), 4)
+
+    def test_resource_byte_limit_preserves_utf8_chunk_boundaries(
+        self,
+    ) -> None:
+        store = mcp_router.MCPResourceStore(
+            resource_item_limit=10,
+            resource_byte_limit=5,
+        )
+        resource = run(store.create(base_path="/m", initial_text="first"))
+        unicode_update = run(store.append(resource.id, "\u00e9\u00e9"))
+        boundary_update = run(store.append(resource.id, "cd"))
+
+        self.assertEqual(unicode_update.text, "t\u00e9\u00e9")
+        self.assertEqual(boundary_update.text, "\u00e9cd")
+        self.assertEqual(run(store.history(resource.id)), ("\u00e9", "cd"))
+        self.assertEqual(
+            mcp_router.MCPResourceStore._utf8_suffix("abc", 3), "abc"
+        )
+        self.assertNotIn("\ufffd", boundary_update.text)
+        self.assertLessEqual(len(boundary_update.text.encode("utf-8")), 5)
+
     def test_zero_resource_history_discards_text_but_keeps_resource(
         self,
     ) -> None:
@@ -451,6 +504,14 @@ class MCPResourceStoreTestCase(TestCase):
             mcp_router.MCPResourceStore(  # type: ignore[arg-type]
                 resource_limit=True
             )
+
+    def test_rejects_invalid_resource_byte_limit(self) -> None:
+        with self.assertRaises(AssertionError):
+            mcp_router.MCPResourceStore(resource_byte_limit=0)
+        with self.assertRaises(AssertionError):
+            mcp_router.MCPResourceStore(resource_byte_limit=-1)
+        with self.assertRaises(AssertionError):
+            mcp_router.MCPResourceStore(resource_byte_limit=True)
 
     def test_close_is_idempotent(self) -> None:
         store = mcp_router.MCPResourceStore()
@@ -825,6 +886,40 @@ class MCPUtilityTestCase(TestCase):
         self.assertEqual(
             mcp_router._canonical_error_message(accumulator.snapshot()),
             "Stream errored.",
+        )
+
+    def test_canonical_error_message_uses_terminal_snapshot(self) -> None:
+        accumulator = mcp_router.ProtocolStreamAccumulator(
+            retention_policy=StreamRetentionPolicy(replay_history_item_limit=0)
+        )
+        for item in (
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data={"message": "provider failed"},
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            ),
+        ):
+            accumulator.add(item)
+
+        snapshot = accumulator.snapshot()
+
+        self.assertEqual(snapshot.control_items, ())
+        self.assertEqual(
+            mcp_router._canonical_error_message(snapshot),
+            "provider failed",
         )
 
     def test_resource_notification_variants(self) -> None:
@@ -3154,6 +3249,172 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         for resource_id in store._resources:
             self.assertLessEqual(len(await store.history(resource_id)), 1)
+
+    async def test_final_tool_result_survives_resource_byte_pressure(
+        self,
+    ) -> None:
+        retained_byte_limit = 8
+        tool_output = "x" * 80
+        tool_result = {"stdout": tool_output, "status": "complete"}
+        store = mcp_router.MCPResourceStore(
+            resource_item_limit=10,
+            resource_limit=4,
+            resource_byte_limit=retained_byte_limit,
+        )
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        call = StreamItemCorrelation(tool_call_id="call-1")
+        response = DummyResponse(
+            [
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                    channel=StreamChannel.TOOL_EXECUTION,
+                    correlation=call,
+                    data={"name": "run", "arguments": {}},
+                    metadata={"tool_name": "run"},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=2,
+                    kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                    channel=StreamChannel.TOOL_EXECUTION,
+                    correlation=call,
+                    text_delta=tool_output,
+                    data={"category": "stdout", "content": tool_output},
+                    metadata={"tool_name": "run"},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=3,
+                    kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                    channel=StreamChannel.TOOL_EXECUTION,
+                    correlation=call,
+                    data={
+                        "name": "run",
+                        "arguments": {},
+                        "result": tool_result,
+                    },
+                    metadata={"tool_name": "run"},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="done",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=5,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=6,
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    channel=StreamChannel.USAGE,
+                    usage={},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=7,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ]
+        )
+
+        chunks: list[str] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="pressure",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=123,
+            progress_token="progress",
+            orchestrator=orchestrator,
+            logger=MagicMock(),
+            resource_store=store,
+            base_path="/m",
+            cancel_event=AsyncEvent(),
+        ):
+            chunks.append(chunk.decode("utf-8"))
+
+        messages = [
+            loads(part) for part in "".join(chunks).splitlines() if part
+        ]
+        resource_messages = [
+            item
+            for item in messages
+            if item.get("method") == "notifications/resources/updated"
+        ]
+        tool_result_messages = [
+            item
+            for item in messages
+            if item.get("method") == "notifications/message"
+            and item["params"]["message"]["type"] == "tool.result"
+        ]
+        result = [item for item in messages if item.get("result")][-1]
+
+        self.assertEqual(
+            resource_messages[0]["params"]["resources"][0]["delta"]["set"][
+                "text"
+            ],
+            tool_output,
+        )
+        self.assertEqual(
+            tool_result_messages[-1]["params"]["message"]["resultDelta"],
+            tool_result,
+        )
+        self.assertEqual(
+            result["result"]["content"],
+            [{"type": "text", "text": "done"}],
+        )
+        self.assertEqual(
+            result["result"]["structuredContent"]["toolCalls"][0]["result"],
+            tool_result,
+        )
+        resource_id = next(iter(store._resources))
+        retained = (await store.get(resource_id)).text
+        self.assertEqual(retained, tool_output[-retained_byte_limit:])
+        self.assertEqual(
+            await store.history(resource_id),
+            (tool_output[-retained_byte_limit:],),
+        )
+        self.assertLessEqual(
+            len(retained.encode("utf-8")), retained_byte_limit
+        )
 
     async def test_oversized_completed_stream_prunes_closed_resources(
         self,

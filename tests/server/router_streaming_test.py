@@ -1596,6 +1596,144 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         )
         accumulator.validate_complete()
 
+    async def test_protocol_stream_accumulator_uses_custom_retention_policy(
+        self,
+    ) -> None:
+        retention_policy = StreamRetentionPolicy(
+            accumulator_item_limit=1,
+            replay_history_item_limit=1,
+            metrics_history_item_limit=0,
+            flow_history_item_limit=0,
+        )
+        accumulator = ProtocolStreamAccumulator(
+            retention_policy=retention_policy
+        )
+        completed_data: dict[str, object] = {"message": "finished"}
+        final_usage: dict[str, object] = {
+            "input_text_tokens": 2,
+            "output_text_tokens": 1,
+        }
+        closed_item = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=4,
+            kind=StreamItemKind.STREAM_CLOSED,
+            channel=StreamChannel.CONTROL,
+        )
+
+        for item in (
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="answer",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                data=completed_data,
+                usage=final_usage,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+            closed_item,
+        ):
+            accumulator.add(item)
+
+        snapshot = accumulator.snapshot()
+
+        self.assertEqual(snapshot.answer_text, "answer")
+        self.assertEqual(snapshot.usage, final_usage)
+        self.assertEqual(snapshot.usage_items, ())
+        self.assertEqual(snapshot.control_items, (closed_item,))
+        self.assertIs(
+            snapshot.terminal_outcome, StreamTerminalOutcome.COMPLETED
+        )
+        self.assertEqual(snapshot.terminal_snapshot.sequence, 3)
+        self.assertEqual(snapshot.terminal_snapshot.data, completed_data)
+        self.assertTrue(snapshot.terminal_snapshot.succeeded)
+        accumulator.validate_complete()
+
+    async def test_protocol_stream_accumulator_keeps_terminal_error_snapshot(
+        self,
+    ) -> None:
+        accumulator = ProtocolStreamAccumulator(
+            retention_policy=StreamRetentionPolicy(
+                accumulator_item_limit=1,
+                replay_history_item_limit=0,
+            )
+        )
+        error_data: dict[str, object] = {
+            "message": "upstream failed",
+            "code": "provider",
+        }
+
+        for item in (
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data=error_data,
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.STREAM_CLOSED,
+                channel=StreamChannel.CONTROL,
+            ),
+        ):
+            accumulator.add(item)
+
+        snapshot = accumulator.snapshot()
+
+        self.assertEqual(snapshot.control_items, ())
+        self.assertIs(snapshot.terminal_outcome, StreamTerminalOutcome.ERRORED)
+        self.assertFalse(snapshot.terminal_succeeded)
+        self.assertIs(
+            snapshot.terminal_snapshot.outcome, StreamTerminalOutcome.ERRORED
+        )
+        self.assertEqual(snapshot.terminal_snapshot.sequence, 1)
+        self.assertEqual(snapshot.terminal_snapshot.data, error_data)
+        self.assertFalse(snapshot.terminal_snapshot.succeeded)
+        accumulator.validate_complete()
+
     def test_canonical_flow_public_metadata_filters_private_fields(
         self,
     ) -> None:
@@ -1769,13 +1907,17 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         settings = protocol_stream_retention_settings(
             StreamRetentionPolicy(
                 mcp_resource_item_limit=3,
+                mcp_resource_text_byte_limit=6,
                 a2a_task_record_item_limit=4,
+                a2a_task_event_byte_limit=7,
                 flow_history_item_limit=5,
             )
         )
 
         self.assertEqual(settings.resource_item_limit, 3)
+        self.assertEqual(settings.resource_text_byte_limit, 6)
         self.assertEqual(settings.task_record_item_limit, 4)
+        self.assertEqual(settings.task_event_byte_limit, 7)
         self.assertEqual(settings.flow_history_item_limit, 5)
         self.assertTrue(settings.active_session_lossless)
 
@@ -1787,17 +1929,76 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             ProtocolStreamRetentionSettings(
                 resource_item_limit=-1,
+                resource_text_byte_limit=1,
                 task_record_item_limit=0,
+                task_event_byte_limit=2,
                 flow_history_item_limit=0,
                 active_session_lossless=True,
             )
         with self.assertRaises(AssertionError):
             ProtocolStreamRetentionSettings(
                 resource_item_limit=0,
+                resource_text_byte_limit=1,
                 task_record_item_limit=0,
+                task_event_byte_limit=2,
                 flow_history_item_limit=0,
                 active_session_lossless=False,
             )
+        with self.assertRaises(AssertionError):
+            ProtocolStreamRetentionSettings(
+                resource_item_limit=0,
+                resource_text_byte_limit=0,
+                task_record_item_limit=0,
+                task_event_byte_limit=2,
+                flow_history_item_limit=0,
+                active_session_lossless=True,
+            )
+        with self.assertRaises(AssertionError):
+            ProtocolStreamRetentionSettings(
+                resource_item_limit=0,
+                resource_text_byte_limit=-1,
+                task_record_item_limit=0,
+                task_event_byte_limit=2,
+                flow_history_item_limit=0,
+                active_session_lossless=True,
+            )
+        with self.assertRaises(AssertionError):
+            ProtocolStreamRetentionSettings(
+                resource_item_limit=0,
+                resource_text_byte_limit=True,
+                task_record_item_limit=0,
+                task_event_byte_limit=2,
+                flow_history_item_limit=0,
+                active_session_lossless=True,
+            )
+        with self.assertRaises(AssertionError):
+            ProtocolStreamRetentionSettings(
+                resource_item_limit=0,
+                resource_text_byte_limit=1,
+                task_record_item_limit=0,
+                task_event_byte_limit=1,
+                flow_history_item_limit=0,
+                active_session_lossless=True,
+            )
+        with self.assertRaises(AssertionError):
+            ProtocolStreamRetentionSettings(
+                resource_item_limit=0,
+                resource_text_byte_limit=1,
+                task_record_item_limit=0,
+                task_event_byte_limit=True,
+                flow_history_item_limit=0,
+                active_session_lossless=True,
+            )
+        with self.assertRaises(AssertionError):
+            StreamRetentionPolicy(mcp_resource_text_byte_limit=-1)
+        with self.assertRaises(AssertionError):
+            StreamRetentionPolicy(mcp_resource_text_byte_limit=0)
+        with self.assertRaises(AssertionError):
+            StreamRetentionPolicy(mcp_resource_text_byte_limit=True)
+        with self.assertRaises(AssertionError):
+            StreamRetentionPolicy(a2a_task_event_byte_limit=1)
+        with self.assertRaises(AssertionError):
+            StreamRetentionPolicy(a2a_task_event_byte_limit=True)
 
     async def test_default_server_stream_retention_surfaces_are_bounded(
         self,
@@ -1813,8 +2014,16 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
             policy.mcp_resource_item_limit,
         )
         self.assertEqual(
+            settings.resource_text_byte_limit,
+            policy.mcp_resource_text_byte_limit,
+        )
+        self.assertEqual(
             settings.task_record_item_limit,
             policy.a2a_task_record_item_limit,
+        )
+        self.assertEqual(
+            settings.task_event_byte_limit,
+            policy.a2a_task_event_byte_limit,
         )
         self.assertEqual(
             settings.flow_history_item_limit,

@@ -123,6 +123,7 @@ class MCPResourceStore:
         self,
         resource_item_limit: int | None = None,
         resource_limit: int | None = None,
+        resource_byte_limit: int | None = None,
     ) -> None:
         retention_settings = protocol_stream_retention_settings(
             StreamRetentionPolicy()
@@ -131,18 +132,24 @@ class MCPResourceStore:
             resource_item_limit = retention_settings.resource_item_limit
         if resource_limit is None:
             resource_limit = retention_settings.resource_item_limit
+        if resource_byte_limit is None:
+            resource_byte_limit = retention_settings.resource_text_byte_limit
         assert isinstance(resource_item_limit, int)
         assert not isinstance(resource_item_limit, bool)
         assert resource_item_limit >= 0
         assert isinstance(resource_limit, int)
         assert not isinstance(resource_limit, bool)
         assert resource_limit > 0
+        assert isinstance(resource_byte_limit, int)
+        assert not isinstance(resource_byte_limit, bool)
+        assert resource_byte_limit > 0
         self._resources: dict[str, MCPResource] = {}
         self._resource_chunks: dict[str, list[str]] = {}
         self._resource_order: list[str] = []
         self._counter = 0
         self._resource_item_limit = resource_item_limit
         self._resource_limit = resource_limit
+        self._resource_byte_limit = resource_byte_limit
         self._lock = Lock()
 
     async def create(
@@ -240,12 +247,42 @@ class MCPResourceStore:
     def _retained_chunks(self, chunks: list[str]) -> list[str]:
         if self._resource_item_limit == 0:
             return []
-        if len(chunks) <= self._resource_item_limit:
-            return list(chunks)
-        return list(chunks[-self._resource_item_limit :])
+        retained = list(chunks[-self._resource_item_limit :])
+        bounded_reversed: list[str] = []
+        remaining_bytes = self._resource_byte_limit
+
+        for chunk in reversed(retained):
+            chunk_size = len(chunk.encode("utf-8"))
+            if chunk_size <= remaining_bytes:
+                bounded_reversed.append(chunk)
+                remaining_bytes -= chunk_size
+                if remaining_bytes == 0:
+                    break
+                continue
+            bounded = self._utf8_suffix(chunk, remaining_bytes)
+            if bounded:
+                bounded_reversed.append(bounded)
+            break
+
+        bounded_reversed.reverse()
+        return bounded_reversed
 
     def _retained_text(self, chunks: list[str]) -> str:
         return "".join(self._retained_chunks(chunks))
+
+    @staticmethod
+    def _utf8_suffix(text: str, byte_limit: int) -> str:
+        assert isinstance(byte_limit, int)
+        assert not isinstance(byte_limit, bool)
+        assert byte_limit > 0
+        data = text.encode("utf-8")
+        if len(data) <= byte_limit:
+            return text
+
+        start = len(data) - byte_limit
+        while start < len(data) and (data[start] & 0b1100_0000) == 0b1000_0000:
+            start += 1
+        return data[start:].decode("utf-8")
 
     def _enforce_resource_retention(
         self, *, protected_resource_ids: set[str]
@@ -1148,15 +1185,10 @@ def _canonical_progress_notification(
 
 
 def _canonical_error_message(snapshot: ProtocolStreamSnapshot) -> str:
-    terminal = next(
-        (
-            item
-            for item in reversed(snapshot.control_items)
-            if item.kind is StreamItemKind.STREAM_ERRORED
-        ),
-        None,
-    )
-    if terminal is not None and isinstance(terminal.data, dict):
+    terminal = snapshot.terminal_snapshot
+    if terminal.outcome is StreamTerminalOutcome.ERRORED and isinstance(
+        terminal.data, dict
+    ):
         message = terminal.data.get("message")
         if isinstance(message, str) and message:
             return message
@@ -1429,11 +1461,15 @@ async def _canonical_tool_resource_notifications(
     resource_key = f"{tool_call_id}:{name}"
     resource = resources.get(resource_key)
     if resource is None:
-        resource = await resource_store.create(
+        stored_resource = await resource_store.create(
             base_path=base_path, initial_text=content
         )
+        resource = replace(stored_resource, text=content)
     else:
-        resource = await resource_store.append(resource.id, content)
+        stored_resource = await resource_store.append(resource.id, content)
+        # The shared store is lossy retained history; this per-request copy
+        # stays lossless while the active MCP response is being emitted.
+        resource = replace(stored_resource, text=resource.text + content)
     resources[resource_key] = resource
 
     tool_summary = tool_summaries.setdefault(

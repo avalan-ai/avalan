@@ -12,6 +12,8 @@ from avalan.server.a2a.store import (
     TaskRecord,
     TaskStore,
     TaskStoreRetention,
+    _payload_size,
+    _trim_event_data_to_bytes,
     _trim_payload_to_bytes,
 )
 
@@ -73,51 +75,60 @@ def test_task_store_rejects_invalid_retention() -> None:
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_tasks=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_tasks=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_tasks=True)
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_tasks="1")  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_task_age_seconds=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_task_age_seconds=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_task_age_seconds=True)
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_task_age_seconds="1")  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_events_per_task=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_events_per_task=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_events_per_task=True)
+
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_event_payload_bytes=0)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_event_payload_bytes=1)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_event_payload_bytes=True)
+    with pytest.raises(AssertionError):
+        TaskStoreRetention(max_event_payload_bytes="2")  # type: ignore[arg-type]
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_messages_per_task=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_messages_per_task=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_messages_per_task=True)
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_artifacts_per_task=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_artifacts_per_task=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_artifacts_per_task=True)
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_message_chunks=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_message_chunks=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_message_chunks=True)
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_message_bytes=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_message_bytes=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_message_bytes=True)
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_artifact_items=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_artifact_items=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_artifact_items=True)
 
     with pytest.raises(AssertionError):
         TaskStoreRetention(max_artifact_bytes=0)
     with pytest.raises(AssertionError):
-        TaskStoreRetention(max_artifact_bytes=True)  # type: ignore[arg-type]
+        TaskStoreRetention(max_artifact_bytes=True)
 
     with pytest.raises(AssertionError):
         TaskStore(retention="bad")  # type: ignore[arg-type]
@@ -125,10 +136,11 @@ def test_task_store_rejects_invalid_retention() -> None:
 
 def test_task_store_default_retention_uses_stream_policy() -> None:
     retention = TaskStoreRetention()
+    policy = StreamRetentionPolicy()
 
+    assert retention.max_tasks == policy.a2a_task_record_item_limit
     assert (
-        retention.max_tasks
-        == StreamRetentionPolicy().a2a_task_record_item_limit
+        retention.max_event_payload_bytes == policy.a2a_task_event_byte_limit
     )
 
 
@@ -312,19 +324,23 @@ def test_task_store_bounds_records_and_histories() -> None:
     asyncio.run(_exercise_bounded_store())
 
 
+def test_retained_event_payload_bytes_do_not_truncate_live_event() -> None:
+    asyncio.run(_exercise_event_payload_byte_retention())
+
+
 async def _exercise_bounded_store() -> None:
-    store = TaskStore(
-        retention=TaskStoreRetention(
-            max_tasks=1,
-            max_events_per_task=3,
-            max_messages_per_task=1,
-            max_artifacts_per_task=1,
-            max_message_chunks=2,
-            max_message_bytes=6,
-            max_artifact_items=2,
-            max_artifact_bytes=64,
-        )
+    retention = TaskStoreRetention(
+        max_tasks=1,
+        max_events_per_task=3,
+        max_event_payload_bytes=64,
+        max_messages_per_task=1,
+        max_artifacts_per_task=1,
+        max_message_chunks=2,
+        max_message_bytes=6,
+        max_artifact_items=2,
+        max_artifact_bytes=64,
     )
+    store = TaskStore(retention=retention)
 
     await store.create_task(
         "old", model=None, instructions=None, input_messages=[]
@@ -387,10 +403,55 @@ async def _exercise_bounded_store() -> None:
     events = await store.get_events("task")
     assert len(events) == 3
     assert events == await store.get_events("task", after=0)
+    assert all(
+        _payload_size(event["data"]) <= retention.max_event_payload_bytes
+        for event in events
+    )
 
     task = await store.get_task("task")
     assert [message["id"] for message in task["messages"]] == ["message-2"]
     assert [artifact["id"] for artifact in task["artifacts"]] == ["artifact-2"]
+
+
+async def _exercise_event_payload_byte_retention() -> None:
+    retention = TaskStoreRetention(max_event_payload_bytes=64)
+    store = TaskStore(retention=retention)
+    large_text = "x" * 512
+
+    await store.create_task(
+        "task", model=None, instructions=None, input_messages=[]
+    )
+    artifact_id, _ = await store.ensure_artifact(
+        "task",
+        artifact_id="artifact",
+        name=None,
+        kind="tool",
+        role="assistant",
+    )
+
+    live_events = await store.add_artifact_delta(
+        "task",
+        artifact_id,
+        {"type": "text", "text": large_text},
+    )
+    live_event = live_events[0]
+    live_payload = live_event["data"]["artifact"]["payload"]
+    assert live_payload["text"] == large_text
+
+    stored_events = await store.get_events("task")
+    stored_event = next(
+        event for event in stored_events if event["event"] == "artifact.delta"
+    )
+    assert stored_event["id"] == live_event["id"]
+    assert stored_event["sequence"] == live_event["sequence"]
+    assert stored_event["data"] != live_event["data"]
+    assert stored_event["data"]["retention"]["truncated"] is True
+    assert _payload_size(stored_event["data"]) <= (
+        retention.max_event_payload_bytes
+    )
+
+    artifact = await store.get_artifact("task", artifact_id)
+    assert artifact["content"][0]["text"] == large_text
 
 
 def test_task_store_bounds_single_oversized_payloads() -> None:
@@ -398,6 +459,13 @@ def test_task_store_bounds_single_oversized_payloads() -> None:
 
 
 def test_task_store_retention_helpers_cover_edge_paths() -> None:
+    assert _trim_event_data_to_bytes({"payload": "ok"}, 100) == {
+        "payload": "ok"
+    }
+    assert _trim_event_data_to_bytes({"payload": "x" * 100}, 40) == {
+        "retention": {"truncated": True}
+    }
+    assert _trim_event_data_to_bytes({"payload": "x" * 100}, 2) == {}
     assert _trim_payload_to_bytes("abcdef", 3) == "def"
     assert _trim_payload_to_bytes({"text": "abc"}, 20) == {"text": "abc"}
     asyncio.run(_exercise_count_bounded_payloads())

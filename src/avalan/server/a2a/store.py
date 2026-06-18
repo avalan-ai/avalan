@@ -4,6 +4,7 @@ from ...model.stream import StreamRetentionPolicy
 from ...types import assert_optional_positive_number, assert_positive_int
 
 from asyncio import Lock
+from copy import deepcopy
 from dataclasses import dataclass, field
 from json import dumps
 from time import time
@@ -23,6 +24,7 @@ class TaskStoreRetention:
         max_tasks: Maximum number of task records to retain.
         max_task_age_seconds: Maximum task age, or no age limit.
         max_events_per_task: Maximum event records retained per task.
+        max_event_payload_bytes: Maximum serialized bytes retained per event.
         max_messages_per_task: Maximum messages retained per task.
         max_artifacts_per_task: Maximum artifacts retained per task.
         max_message_chunks: Maximum text chunks retained per message.
@@ -37,6 +39,9 @@ class TaskStoreRetention:
     max_tasks: int = StreamRetentionPolicy().a2a_task_record_item_limit
     max_task_age_seconds: float | None = None
     max_events_per_task: int = 4096
+    max_event_payload_bytes: int = (
+        StreamRetentionPolicy().a2a_task_event_byte_limit
+    )
     max_messages_per_task: int = 256
     max_artifacts_per_task: int = 256
     max_message_chunks: int = 4096
@@ -48,6 +53,7 @@ class TaskStoreRetention:
         for field_name, value in (
             ("max_tasks", self.max_tasks),
             ("max_events_per_task", self.max_events_per_task),
+            ("max_event_payload_bytes", self.max_event_payload_bytes),
             ("max_messages_per_task", self.max_messages_per_task),
             ("max_artifacts_per_task", self.max_artifacts_per_task),
             ("max_message_chunks", self.max_message_chunks),
@@ -60,6 +66,9 @@ class TaskStoreRetention:
             self.max_task_age_seconds,
             "max_task_age_seconds",
         )
+        assert (
+            self.max_event_payload_bytes >= 2
+        ), "max_event_payload_bytes must be at least 2"
 
 
 @dataclass(slots=True)
@@ -560,17 +569,27 @@ class TaskStore:
         self, record: TaskRecord, event: str, data: dict[str, Any]
     ) -> TaskEvent:
         self._sequence += 1
-        payload = TaskEvent(
+        live_event = TaskEvent(
             id=str(uuid4()),
             sequence=self._sequence,
             event=event,
             created_at=_now(),
             data=data,
         )
-        record.events.append(payload)
+        retained_event = TaskEvent(
+            id=live_event.id,
+            sequence=live_event.sequence,
+            event=live_event.event,
+            created_at=live_event.created_at,
+            data=_trim_event_data_to_bytes(
+                live_event.data,
+                self._retention.max_event_payload_bytes,
+            ),
+        )
+        record.events.append(retained_event)
         self._trim_events(record)
-        record.updated_at = payload.created_at
-        return payload
+        record.updated_at = live_event.created_at
+        return live_event
 
     def _record(self, task_id: str) -> TaskRecord:
         self._prune_expired_tasks()
@@ -661,6 +680,19 @@ def _payload_size(value: Any) -> int:
             "utf-8"
         )
     )
+
+
+def _trim_event_data_to_bytes(
+    data: dict[str, Any], byte_limit: int
+) -> dict[str, Any]:
+    assert byte_limit >= 2
+    retained_data: dict[str, Any] = deepcopy(data)
+    if _payload_size(retained_data) <= byte_limit:
+        return retained_data
+    summary: dict[str, Any] = {"retention": {"truncated": True}}
+    if _payload_size(summary) <= byte_limit:
+        return summary
+    return {}
 
 
 def _trim_payload_to_bytes(value: Any, byte_limit: int) -> Any:
