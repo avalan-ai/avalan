@@ -2959,6 +2959,81 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         validate_canonical_stream_items(orchestrated.canonical_items)
         validate_tool_lifecycle_items(orchestrated.canonical_items)
 
+    async def test_iteration_raw_argument_deltas_use_ready_arguments(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        agent.return_value = _string_response("done", async_gen=True)
+        operation = _dummy_operation()
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+
+        async def execute(
+            call: ToolCall,
+            _context: ToolCallContext,
+        ) -> ToolCallResult:
+            return ToolCallResult(
+                id="result1",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="ok",
+            )
+
+        tool.side_effect = execute
+        correlation = StreamItemCorrelation(tool_call_id="call1")
+        response = _response_from_items(
+            _canonical_item(StreamItemKind.STREAM_STARTED, 0),
+            _canonical_item(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                1,
+                text_delta="(4 + 6) * 5 / 2",
+                correlation=correlation,
+            ),
+            _canonical_item(
+                StreamItemKind.TOOL_CALL_READY,
+                2,
+                data={
+                    "name": "calc",
+                    "arguments": {"input": "(4 + 6) * 5 / 2"},
+                },
+                correlation=correlation,
+            ),
+            _canonical_item(
+                StreamItemKind.TOOL_CALL_DONE,
+                3,
+                correlation=correlation,
+            ),
+            _canonical_item(StreamItemKind.STREAM_COMPLETED, 4, usage={}),
+            _canonical_item(StreamItemKind.STREAM_CLOSED, 5),
+        )
+        orchestrated = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+            tool=tool,
+            enable_tool_parsing=False,
+        )
+
+        items = await _collect_stream_items(orchestrated)
+
+        self.assertEqual(_answer_text(items), "done")
+        executed_call = tool.await_args.args[0]
+        self.assertEqual(
+            executed_call.arguments,
+            {"input": "(4 + 6) * 5 / 2"},
+        )
+        self.assertNotIn(
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            [item.kind for item in orchestrated.canonical_items],
+        )
+        validate_canonical_stream_items(orchestrated.canonical_items)
+        validate_tool_lifecycle_items(orchestrated.canonical_items)
+
     async def test_iteration_malformed_argument_deltas_emit_diagnostic(
         self,
     ) -> None:

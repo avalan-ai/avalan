@@ -1564,6 +1564,7 @@ def _flow_node_event_listener(
             Event(
                 type=event.type,
                 payload=payload,
+                observability_payload=event.observability_payload,
                 started=event.started,
                 finished=event.finished,
                 elapsed=event.elapsed,

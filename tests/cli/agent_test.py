@@ -3203,6 +3203,37 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             self.orch.tool._settings.tool_format, ToolFormat.REACT
         )
 
+    def test_agent_tool_format_defaults_react_for_local_tool_backends(self):
+        for backend in ("ds4", "mlx"):
+            with self.subTest(backend=backend):
+                self.args.backend = backend
+                self.args.tool = ["math.calculator"]
+                self.args.tool_format = None
+
+                self.assertIs(
+                    agent_cmds._agent_tool_format(self.args),
+                    ToolFormat.REACT,
+                )
+
+    def test_agent_tool_format_keeps_explicit_and_non_tool_defaults(self):
+        self.args.backend = "ds4"
+        self.args.tool = ["math.calculator"]
+        self.args.tool_format = ToolFormat.JSON.value
+
+        self.assertIs(
+            agent_cmds._agent_tool_format(self.args), ToolFormat.JSON
+        )
+
+        self.args.tool_format = None
+        self.args.tool = None
+
+        self.assertIsNone(agent_cmds._agent_tool_format(self.args))
+
+        self.args.backend = "transformers"
+        self.args.tool = ["math.calculator"]
+
+        self.assertIsNone(agent_cmds._agent_tool_format(self.args))
+
     async def test_run_engine_uri_only_generates_id(self):
         self.args.specifications_file = None
         self.args.engine_uri = "engine"

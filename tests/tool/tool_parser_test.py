@@ -24,6 +24,23 @@ class ToolCallParserFormatTestCase(TestCase):
         text = 'Action: calculator\nAction Input: {"expression": "2"}'
         self.assertEqual(parser(text), ("calculator", {"expression": "2"}))
 
+    def test_react_raw_input_maps_to_single_input_argument(self):
+        parser = ToolCallParser(tool_format=ToolFormat.REACT)
+        text = "Action: calculator\nAction Input: (4 + 6) * 5 / 2"
+
+        self.assertEqual(
+            parser(text),
+            ("calculator", {"input": "(4 + 6) * 5 / 2"}),
+        )
+
+        outcome = parser.parse(text)
+
+        self.assertEqual(len(outcome.calls), 1)
+        self.assertEqual(
+            outcome.calls[0].arguments, {"input": "(4 + 6) * 5 / 2"}
+        )
+        self.assertEqual(outcome.diagnostics, [])
+
     def test_react_dotted_tool_name(self):
         parser = ToolCallParser(tool_format=ToolFormat.REACT)
         text = 'Action: math.calculator\nAction Input: {"expression": "2"}'

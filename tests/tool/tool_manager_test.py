@@ -3477,6 +3477,95 @@ class ToolManagerCallTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(first.result, "2")
         self.assertEqual(second.result, "done")
 
+    async def test_react_raw_input_executes_single_parameter_tool(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["calculator"],
+            available_toolsets=[ToolSet(tools=[CalculatorTool()])],
+            settings=ToolManagerSettings(tool_format=ToolFormat.REACT),
+        )
+        call_id = _uuid4()
+        result_id = _uuid4()
+
+        with (
+            patch("avalan.tool.parser.uuid4", return_value=call_id),
+            patch("avalan.tool.manager.uuid4", return_value=result_id),
+        ):
+            calls = manager.get_calls(
+                "Action: calculator\nAction Input: (4 + 6) * 5 / 2"
+            )
+            assert calls is not None
+            result = await manager.execute_call(
+                calls[0],
+                context=ToolCallContext(),
+            )
+
+        expected_call = ToolCall(
+            id=call_id,
+            name="calculator",
+            arguments={"input": "(4 + 6) * 5 / 2"},
+        )
+        prepared_call = ToolCall(
+            id=call_id,
+            name="calculator",
+            arguments={"expression": "(4 + 6) * 5 / 2"},
+        )
+        self.assertEqual(calls, [expected_call])
+        self.assertEqual(
+            result,
+            ToolCallResult(
+                id=result_id,
+                call=prepared_call,
+                name="calculator",
+                arguments={"expression": "(4 + 6) * 5 / 2"},
+                result="25",
+            ),
+        )
+
+    async def test_react_raw_input_still_rejects_multi_parameter_tool(self):
+        manager = ToolManager.create_instance(
+            enable_tools=["adder"],
+            available_toolsets=[ToolSet(tools=[DummyAdder()])],
+            settings=ToolManagerSettings(tool_format=ToolFormat.REACT),
+        )
+        calls = manager.get_calls("Action: adder\nAction Input: one plus two")
+
+        assert calls is not None
+        result = await manager.execute_call(
+            calls[0],
+            context=ToolCallContext(),
+        )
+
+        self.assertIsInstance(result, ToolCallDiagnostic)
+        assert isinstance(result, ToolCallDiagnostic)
+        self.assertIs(
+            result.code,
+            ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+        )
+        self.assertEqual(calls[0].arguments, {"input": "one plus two"})
+
+    def test_raw_input_normalization_ignores_uninspectable_tool(self):
+        arguments = {"input": "raw text"}
+
+        normalized = ToolManager._normalize_single_input_argument(
+            cast(Any, object()),
+            arguments,
+        )
+
+        self.assertIs(normalized, arguments)
+
+    def test_raw_input_normalization_ignores_varargs_tool(self):
+        async def variadic(*values: str) -> str:
+            return ",".join(values)
+
+        arguments = {"input": "raw text"}
+
+        normalized = ToolManager._normalize_single_input_argument(
+            variadic,
+            arguments,
+        )
+
+        self.assertIs(normalized, arguments)
+
     def test_get_calls_preserves_multiple_tag_calls_after_xml_parse_error(
         self,
     ):

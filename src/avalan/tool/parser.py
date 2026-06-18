@@ -790,7 +790,9 @@ class ToolCallParser:
         try:
             arguments, _ = _REACT_JSON_DECODER.raw_decode(stripped)
         except JSONDecodeError:
-            return None, True
+            if stripped[0] in ("{", "["):
+                return None, True
+            return {"input": stripped}, False
         return arguments, False
 
     def _parse_bracket(self, text: str) -> tuple[str, dict[str, Any]] | None:

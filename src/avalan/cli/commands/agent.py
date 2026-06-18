@@ -423,6 +423,22 @@ def _agent_enabled_tools(args: Namespace) -> list[str] | None:
     return None
 
 
+def _agent_tool_format(args: Namespace) -> ToolFormat | None:
+    if getattr(args, "tool_format", None):
+        return ToolFormat(args.tool_format)
+    if not _agent_enabled_tools(args):
+        return None
+    backend = getattr(args, "backend", None)
+    if backend in (
+        Backend.DS4,
+        Backend.DS4.value,
+        Backend.MLXLM,
+        Backend.MLXLM.value,
+    ):
+        return ToolFormat.REACT
+    return None
+
+
 def _agent_tool_settings(args: Namespace) -> ToolSettingsContext:
     return ToolSettingsContext(
         browser=get_tool_settings(
@@ -709,9 +725,7 @@ async def agent_run(
                 cache_strategy=getattr(args, "run_cache_strategy", None),
             )
             logger.debug("Loading agent from inline settings")
-            tool_format = (
-                ToolFormat(args.tool_format) if args.tool_format else None
-            )
+            tool_format = _agent_tool_format(args)
             tool_recovery_formats = [
                 ToolCallRecoveryFormat(value)
                 for value in getattr(args, "tool_recovery_format", None) or []

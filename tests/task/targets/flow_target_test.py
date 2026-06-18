@@ -36,7 +36,7 @@ from avalan.entities import (
     ToolNameResolution,
     ToolNameResolutionStatus,
 )
-from avalan.event import Event, EventType
+from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.flow import (
     FlowConditionOperator,
     FlowConditionPlan,
@@ -747,12 +747,20 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
             "analyze_pov_1",
             captured.append,
         )
+        observability = EventObservabilityPayload.canonical_stream(
+            {
+                "kind": "reasoning.delta",
+                "channel": "reasoning",
+                "sequence": 1,
+            }
+        )
 
         assert listener is not None
         result = listener(
             Event(
                 type=EventType.TOKEN_GENERATED,
                 payload={"token_type": "ReasoningToken"},
+                observability_payload=observability,
                 started=1.0,
                 finished=2.0,
                 elapsed=1.0,
@@ -764,6 +772,7 @@ class FlowTaskTargetRunnerValidationTest(TestCase):
         payload = cast(dict[str, object], captured[0].payload)
         self.assertEqual(payload["flow_node"], "analyze_pov_1")
         self.assertEqual(payload["token_type"], "ReasoningToken")
+        self.assertIs(captured[0].observability_payload, observability)
         self.assertEqual(captured[0].started, 1.0)
         self.assertEqual(captured[0].finished, 2.0)
         self.assertEqual(captured[0].elapsed, 1.0)

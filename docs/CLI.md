@@ -3122,7 +3122,8 @@ plicate}]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]] [--skip-display-reasoning-time]
-                        [--display-tokens [DISPLAY_TOKENS]] [--display-tools] [--display-tools-events DISPLAY_TOOLS_EVENTS]
+                        [--display-reasoning] [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
+                        [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
                         [--attention {eager,flash_attention_2,flex_attention,sdpa}] [--output-hidden-states] [--path PATH]
                         [--checkpoint CHECKPOINT] [--base-model BASE_MODEL] [--upsampler-model UPSAMPLER_MODEL]
@@ -3231,6 +3232,7 @@ plicate}
                         Display the time it takes to reach the given Nth token (defaults to 256)
   --skip-display-reasoning-time
                         Don't display total reasoning time
+  --display-reasoning   Display streamed reasoning text in the live response panel
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a time
   --display-tools       Show tool lifecycle details for agent or orchestrator runs.
