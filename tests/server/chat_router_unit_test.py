@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from json import loads
 from logging import Logger, getLogger
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
@@ -43,6 +44,61 @@ from avalan.server.entities import (
     ReasoningConfig,
     ResponsesRequest,
 )
+
+
+async def _canonical_answer_gen(
+    *deltas: str,
+) -> AsyncIterator[CanonicalStreamItem]:
+    sequence = 0
+    yield CanonicalStreamItem(
+        stream_session_id="chat-test-stream",
+        run_id="chat-test-run",
+        turn_id="chat-test-turn",
+        sequence=sequence,
+        kind=StreamItemKind.STREAM_STARTED,
+        channel=StreamChannel.CONTROL,
+    )
+    sequence += 1
+    for delta in deltas:
+        yield CanonicalStreamItem(
+            stream_session_id="chat-test-stream",
+            run_id="chat-test-run",
+            turn_id="chat-test-turn",
+            sequence=sequence,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=delta,
+        )
+        sequence += 1
+    if deltas:
+        yield CanonicalStreamItem(
+            stream_session_id="chat-test-stream",
+            run_id="chat-test-run",
+            turn_id="chat-test-turn",
+            sequence=sequence,
+            kind=StreamItemKind.ANSWER_DONE,
+            channel=StreamChannel.ANSWER,
+        )
+        sequence += 1
+    yield CanonicalStreamItem(
+        stream_session_id="chat-test-stream",
+        run_id="chat-test-run",
+        turn_id="chat-test-turn",
+        sequence=sequence,
+        kind=StreamItemKind.STREAM_COMPLETED,
+        channel=StreamChannel.CONTROL,
+        usage=cast(Any, {"input_tokens": 0, "output_tokens": len(deltas)}),
+        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+    )
+    sequence += 1
+    yield CanonicalStreamItem(
+        stream_session_id="chat-test-stream",
+        run_id="chat-test-run",
+        turn_id="chat-test-turn",
+        sequence=sequence,
+        kind=StreamItemKind.STREAM_CLOSED,
+        channel=StreamChannel.CONTROL,
+    )
 
 
 class DummyOrchestrator(Orchestrator):
@@ -337,14 +393,10 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(await self.chat.di_get_orchestrator(req), 1)
 
     async def test_create_chat_completion_stream(self) -> None:
-        async def output_gen():
-            yield 'a\nsnow 雪 "quoted"'
-            yield "b"
-
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
-            lambda: output_gen(),
+            lambda: _canonical_answer_gen('a\nsnow 雪 "quoted"', "b"),
             logger=getLogger(),
             use_async_generator=True,
             provider_family="transformers",
@@ -418,11 +470,8 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                         Event(type=EventType.START)
                     )
 
-                async def output_gen():
-                    yield "bounded"
-
                 return TextGenerationResponse(
-                    output_gen,
+                    lambda: _canonical_answer_gen("bounded"),
                     logger=getLogger(),
                     use_async_generator=True,
                     provider_family="transformers",

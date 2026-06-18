@@ -137,7 +137,12 @@ class VllmCoverageTestCase(IsolatedAsyncioTestCase):
 
         stream = VllmStream(agen())
         self.assertIsNone(stream._iterator)
-        self.assertEqual(await stream.__anext__(), "z")
+        started = await stream.__anext__()
+        delta = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "z")
 
     async def test_stream_generator_object_chunk(self) -> None:
         model = VllmModel(
@@ -215,7 +220,12 @@ class OllamaCoverageTestCase(IsolatedAsyncioTestCase):
             yield "raw"
 
         stream = OllamaStream(agen())
-        self.assertEqual(await stream.__anext__(), "")
+        items = [item async for item in stream]
+
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "",
+        )
 
 
 class VendorCoverageTestCase(TestCase):
@@ -368,7 +378,12 @@ class VllmAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             yield "s"
 
         stream = VllmStream(agen())
-        self.assertEqual(await stream.__anext__(), "s")
+        started = await stream.__anext__()
+        delta = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(delta.text_delta, "s")
 
 
 class DummyVendorModel:
@@ -462,4 +477,4 @@ class OpenAiAdditionalCoverageTestCase(TestCase):
 
         stream = OpenAIStream(agen())
         with self.assertRaises(StopAsyncIteration):
-            asyncio.run(stream.__anext__())
+            asyncio.run(stream._generator.__anext__())

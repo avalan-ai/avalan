@@ -3,12 +3,19 @@ from .....entities import (
     Message,
     MessageRole,
     ReasoningEffort,
-    Token,
-    TokenDetail,
 )
 from .....model.provider import ProviderFamily
-from .....model.stream import TextGenerationSingleStream
+from .....model.stream import (
+    CanonicalStreamItem,
+    StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+    TextGenerationSingleStream,
+    TextGenerationStream,
+)
 from .....tool.manager import ToolManager
+from .....types import LooseJsonValue
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -17,34 +24,86 @@ from . import (
     TextGenerationVendorModel,
 )
 
-from typing import Any, AsyncGenerator, AsyncIterator, cast
+from collections.abc import Mapping
+from typing import Any, AsyncIterator, cast
 
 from google.genai import Client
 from google.genai.types import GenerateContentResponse
 
 
 class GoogleStream(TextGenerationVendorStream):
+    _stream: AsyncIterator[GenerateContentResponse]
+
     def __init__(self, stream: AsyncIterator[GenerateContentResponse]):
-        async def generator() -> (
-            AsyncGenerator[Token | TokenDetail | str, None]
-        ):
-            terminal_usage: object | None = None
-            async for chunk in stream:
-                usage = GoogleClient._field(chunk, "usage_metadata")
-                if usage is None:
-                    usage = GoogleClient._field(chunk, "usageMetadata")
-                if usage is not None:
-                    terminal_usage = usage
-                text = GoogleClient._field(chunk, "text")
-                if isinstance(text, str):
-                    yield text
-            self._usage = terminal_usage
+        self._stream = stream
 
         super().__init__(
-            generator(),
+            cast(AsyncIterator[Any], stream),
             provider_family=ProviderFamily.GOOGLE,
             sources=(stream,),
         )
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: ProviderFamily | str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        return self._provider_canonical_stream(
+            self._provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family,
+            capabilities=capabilities
+            or StreamProviderCapabilities(
+                backend=StreamProducerBackend.HOSTED,
+                provider_family=ProviderFamily.GOOGLE,
+                supports_usage=True,
+                supports_cancellation=True,
+            ),
+            close_after_terminal=close_after_terminal,
+        )
+
+    async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
+        terminal_usage: object | None = None
+        async for chunk in self._stream:
+            usage = GoogleClient._field(chunk, "usage_metadata")
+            if usage is None:
+                usage = GoogleClient._field(chunk, "usageMetadata")
+            if usage is not None:
+                terminal_usage = usage
+            text = GoogleClient._field(chunk, "text")
+            provider_payload = self._provider_payload(chunk)
+            if isinstance(text, str):
+                yield StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=text,
+                    provider_payload=provider_payload,
+                    provider_event_type="generate_content.delta",
+                )
+        if terminal_usage is not None:
+            self._usage = terminal_usage
+            yield StreamProviderEvent(
+                kind=StreamItemKind.USAGE_COMPLETED,
+                usage=cast(LooseJsonValue, terminal_usage),
+                provider_event_type="generate_content.usage",
+            )
+
+    @staticmethod
+    def _provider_payload(chunk: object) -> LooseJsonValue | None:
+        if isinstance(chunk, Mapping):
+            return dict(chunk)
+        model_dump = getattr(chunk, "model_dump", None)
+        if callable(model_dump):
+            payload = model_dump(mode="json")
+            if isinstance(payload, Mapping):
+                return dict(payload)
+        return None
 
 
 class GoogleClient(TextGenerationVendor):
@@ -62,7 +121,7 @@ class GoogleClient(TextGenerationVendor):
         instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> AsyncIterator[Token | TokenDetail | str]:
+    ) -> TextGenerationStream:
         assert (
             instructions is None
         ), "Google does not support provider instructions"

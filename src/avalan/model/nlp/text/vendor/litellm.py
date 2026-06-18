@@ -9,7 +9,7 @@ from .....model.stream import (
     StreamProviderEvent,
     StreamVisibility,
     TextGenerationSingleStream,
-    normalize_provider_stream,
+    TextGenerationStream,
 )
 from .....tool.manager import ToolManager
 from .....types import LooseJsonValue
@@ -61,26 +61,27 @@ class LiteLLMStream(TextGenerationVendorStream):
         stream_session_id: str,
         run_id: str,
         turn_id: str,
+        provider_family: ProviderFamily | str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        return self._close_stream_on_exit(
-            normalize_provider_stream(
-                self._provider_events(),
-                stream_session_id=stream_session_id,
-                run_id=run_id,
-                turn_id=turn_id,
-                provider_family=self._provider_family,
-                capabilities=StreamProviderCapabilities(
-                    backend=StreamProducerBackend.HOSTED,
-                    provider_family=ProviderFamily.OPENAI_COMPATIBLE,
-                    supports_reasoning=True,
-                    supports_tool_calls=True,
-                    supports_usage=True,
-                    supports_terminal_events=False,
-                    supports_cancellation=True,
-                ),
-                close_after_terminal=close_after_terminal,
+        return self._provider_canonical_stream(
+            self._provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family,
+            capabilities=capabilities
+            or StreamProviderCapabilities(
+                backend=StreamProducerBackend.HOSTED,
+                provider_family=ProviderFamily.OPENAI_COMPATIBLE,
+                supports_reasoning=True,
+                supports_tool_calls=True,
+                supports_usage=True,
+                supports_terminal_events=False,
+                supports_cancellation=True,
             ),
+            close_after_terminal=close_after_terminal,
         )
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
@@ -189,6 +190,7 @@ class LiteLLMStream(TextGenerationVendorStream):
         usage = LiteLLMClient._field(chunk, "usage")
         if usage is None:
             return ()
+        self._usage = usage
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.USAGE_COMPLETED,
@@ -267,7 +269,7 @@ class LiteLLMClient(TextGenerationVendor):
         instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> AsyncIterator[Token | TokenDetail | str]:
+    ) -> TextGenerationStream:
         assert (
             instructions is None
         ), "LiteLLM does not support provider instructions"

@@ -1,9 +1,11 @@
 import importlib
 import sys
+from collections.abc import AsyncIterator
 from json import loads
 from logging import getLogger
 from pathlib import Path
 from types import ModuleType
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
 
 from avalan.agent.orchestrator import Orchestrator
@@ -11,6 +13,67 @@ from avalan.entities import MessageContentFile, MessageContentText
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager, EventManagerMode
 from avalan.model import TextGenerationResponse
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
+
+
+async def _canonical_answer_gen(
+    *deltas: str,
+) -> AsyncIterator[CanonicalStreamItem]:
+    sequence = 0
+    yield CanonicalStreamItem(
+        stream_session_id="responses-test-stream",
+        run_id="responses-test-run",
+        turn_id="responses-test-turn",
+        sequence=sequence,
+        kind=StreamItemKind.STREAM_STARTED,
+        channel=StreamChannel.CONTROL,
+    )
+    sequence += 1
+    for delta in deltas:
+        yield CanonicalStreamItem(
+            stream_session_id="responses-test-stream",
+            run_id="responses-test-run",
+            turn_id="responses-test-turn",
+            sequence=sequence,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=delta,
+        )
+        sequence += 1
+    if deltas:
+        yield CanonicalStreamItem(
+            stream_session_id="responses-test-stream",
+            run_id="responses-test-run",
+            turn_id="responses-test-turn",
+            sequence=sequence,
+            kind=StreamItemKind.ANSWER_DONE,
+            channel=StreamChannel.ANSWER,
+        )
+        sequence += 1
+    yield CanonicalStreamItem(
+        stream_session_id="responses-test-stream",
+        run_id="responses-test-run",
+        turn_id="responses-test-turn",
+        sequence=sequence,
+        kind=StreamItemKind.STREAM_COMPLETED,
+        channel=StreamChannel.CONTROL,
+        usage=cast(Any, {"input_tokens": 0, "output_tokens": len(deltas)}),
+        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+    )
+    sequence += 1
+    yield CanonicalStreamItem(
+        stream_session_id="responses-test-stream",
+        run_id="responses-test-run",
+        turn_id="responses-test-turn",
+        sequence=sequence,
+        kind=StreamItemKind.STREAM_CLOSED,
+        channel=StreamChannel.CONTROL,
+    )
 
 
 class StreamingOrchestrator(Orchestrator):
@@ -18,12 +81,8 @@ class StreamingOrchestrator(Orchestrator):
         pass
 
     async def __call__(self, messages, settings=None):
-        async def gen():
-            yield "a"
-            yield "b"
-
         return TextGenerationResponse(
-            gen,
+            lambda: _canonical_answer_gen("a", "b"),
             logger=getLogger(),
             use_async_generator=True,
             provider_family="transformers",
@@ -71,12 +130,8 @@ class EventfulServerOrchestrator(Orchestrator):
             await self.event_manager.trigger(Event(type=EventType.START))
 
         if self._streaming:
-
-            async def output_gen():
-                yield "bounded"
-
             return TextGenerationResponse(
-                output_gen,
+                lambda: _canonical_answer_gen("bounded"),
                 logger=getLogger(),
                 use_async_generator=True,
                 provider_family="transformers",

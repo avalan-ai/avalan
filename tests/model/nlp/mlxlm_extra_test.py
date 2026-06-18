@@ -6,11 +6,13 @@ from threading import get_ident
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
 
+import torch  # noqa: F401
 from transformers.tokenization_utils_base import BatchEncoding
 
 import avalan.model  # noqa: F401
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import StreamItemKind
 
 
 class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
@@ -33,8 +35,22 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
             from avalan.model.nlp.text.mlxlm import MlxLmStream
 
             stream = MlxLmStream(iter(["a", "b"]))
-            self.assertEqual(await stream.__anext__(), "a")
-            self.assertEqual(await stream.__anext__(), "b")
+            items = [await stream.__anext__() for _ in range(6)]
+            self.assertEqual(
+                [item.kind for item in items],
+                [
+                    StreamItemKind.STREAM_STARTED,
+                    StreamItemKind.ANSWER_DELTA,
+                    StreamItemKind.ANSWER_DELTA,
+                    StreamItemKind.ANSWER_DONE,
+                    StreamItemKind.STREAM_COMPLETED,
+                    StreamItemKind.STREAM_CLOSED,
+                ],
+            )
+            self.assertEqual(
+                [items[1].text_delta, items[2].text_delta],
+                ["a", "b"],
+            )
             with self.assertRaises(StopAsyncIteration):
                 await stream.__anext__()
         del sys.modules["avalan.model"].TextGenerationModel
@@ -77,8 +93,22 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
             from avalan.model.nlp.text.mlxlm import MlxLmStream
 
             stream = MlxLmStream(lambda: ThreadBoundIterator())
-            self.assertEqual(await stream.__anext__(), "a")
-            self.assertEqual(await stream.__anext__(), "b")
+            items = [await stream.__anext__() for _ in range(6)]
+            self.assertEqual(
+                [item.kind for item in items],
+                [
+                    StreamItemKind.STREAM_STARTED,
+                    StreamItemKind.ANSWER_DELTA,
+                    StreamItemKind.ANSWER_DELTA,
+                    StreamItemKind.ANSWER_DONE,
+                    StreamItemKind.STREAM_COMPLETED,
+                    StreamItemKind.STREAM_CLOSED,
+                ],
+            )
+            self.assertEqual(
+                [items[1].text_delta, items[2].text_delta],
+                ["a", "b"],
+            )
             with self.assertRaises(StopAsyncIteration):
                 await stream.__anext__()
 
@@ -108,8 +138,144 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
 
             stream = MlxLmStream(iter(["late"]))
             stream.close()
+            items = [await stream.__anext__() for _ in range(3)]
+            self.assertEqual(
+                [item.kind for item in items],
+                [
+                    StreamItemKind.STREAM_STARTED,
+                    StreamItemKind.STREAM_COMPLETED,
+                    StreamItemKind.STREAM_CLOSED,
+                ],
+            )
+
+        del sys.modules["avalan.model"].TextGenerationModel
+
+    async def test_stream_placeholder_generator_is_empty(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(iter([]))
             with self.assertRaises(StopAsyncIteration):
-                await stream.__anext__()
+                await stream._generator.__anext__()
+
+        del sys.modules["avalan.model"].TextGenerationModel
+
+    async def test_stream_maps_token_metadata_and_skips_empty_chunks(
+        self,
+    ) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+
+        token_chunk = types.SimpleNamespace(
+            token="tok",
+            id=7,
+            probability=0.25,
+            step=3,
+            probability_distribution={"tok": 0.25},
+            tokens=[
+                types.SimpleNamespace(token="alt", id=8, probability=0.1),
+                types.SimpleNamespace(token=None, id=9, probability=0.2),
+                types.SimpleNamespace(token="plain", id=-1),
+            ],
+        )
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(
+                iter([types.SimpleNamespace(), token_chunk]),
+                use_executor=False,
+            )
+            items = [await stream.__anext__() for _ in range(5)]
+
+        del sys.modules["avalan.model"].TextGenerationModel
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].text_delta, "tok")
+        self.assertEqual(
+            items[1].metadata,
+            {
+                "token_id": 7,
+                "probability": 0.25,
+                "step": 3,
+                "probability_distribution": {"tok": 0.25},
+                "tokens": [
+                    {
+                        "token": "alt",
+                        "token_id": 8,
+                        "probability": 0.1,
+                    },
+                    {"token": "plain"},
+                ],
+            },
+        )
+
+    async def test_stream_async_close_and_cancel_close_before_pull(
+        self,
+    ) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            close_stream = MlxLmStream(iter(["late"]))
+            self.assertFalse(close_stream._closed)
+            await close_stream.aclose()
+            self.assertTrue(close_stream._closed)
+
+            cancel_stream = MlxLmStream(iter(["late"]))
+            self.assertFalse(cancel_stream._closed)
+            await cancel_stream.cancel()
+            self.assertTrue(cancel_stream._closed)
 
         del sys.modules["avalan.model"].TextGenerationModel
 
@@ -140,8 +306,13 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
             from avalan.model.nlp.text.mlxlm import MlxLmStream
 
             stream = MlxLmStream(lambda: BrokenIterator())
-            with self.assertRaisesRegex(ValueError, "bad generation"):
-                await stream.__anext__()
+            started = await stream.__anext__()
+            errored = await stream.__anext__()
+
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+            assert isinstance(errored.data, dict)
+            self.assertEqual(errored.data["message"], "bad generation")
 
         del sys.modules["avalan.model"].TextGenerationModel
 
@@ -360,7 +531,25 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             {"input_ids": [[1]]}, GenerationSettings(), False
         ):
             chunks.append(c)
-        self.assertEqual(chunks, ["a", "b"])
+        self.assertEqual(
+            [chunk.kind for chunk in chunks],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            [
+                chunk.text_delta
+                for chunk in chunks
+                if chunk.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["a", "b"],
+        )
 
     async def test_stream_generator_uses_calling_thread(self) -> None:
         model = self.mod.MlxLmModel(
@@ -404,7 +593,14 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         ):
             chunks.append(c)
 
-        self.assertEqual(chunks, ["a", "b"])
+        self.assertEqual(
+            [
+                chunk.text_delta
+                for chunk in chunks
+                if chunk.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["a", "b"],
+        )
         self.assertEqual(factory_threads, [calling_thread])
         self.assertEqual(set(next_threads), {calling_thread})
 
@@ -601,29 +797,34 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         stream = self.mod.MlxLmStream(
             iter(
                 [
-                    self.mod.Token(token="tok"),
+                    types.SimpleNamespace(token="tok", id=7),
                     types.SimpleNamespace(text="txt"),
                 ]
             )
         )
 
-        self.assertEqual(await stream.__anext__(), "tok")
-        self.assertEqual(await stream.__anext__(), "txt")
+        items = [await stream.__anext__() for _ in range(6)]
 
-        only_text = []
-        async for chunk in self.mod.MlxLmStream(
-            iter([self.mod.Token(token="a"), types.SimpleNamespace(text="b")])
-        )._generator:
-            only_text.append(chunk)
-        self.assertIsInstance(only_text[0], self.mod.Token)
-        self.assertEqual(only_text[1], "b")
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["tok", "txt"],
+        )
+        self.assertEqual(items[1].metadata["token_id"], 7)
 
     async def test_stream_raises_base_exception_chunk(self) -> None:
         stream = self.mod.MlxLmStream(iter([RuntimeError("bad chunk")]))
 
-        with self.assertRaisesRegex(RuntimeError, "bad chunk"):
-            await stream.__anext__()
+        started = await stream.__anext__()
+        errored = await stream.__anext__()
 
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(errored.data["message"], "bad chunk")
         self.assertTrue(stream._closed)
 
     async def test_stream_generator_normalizes_token_and_text(self) -> None:
@@ -639,7 +840,7 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
         model._tokenizer.decode.return_value = "p"
         self.stub.stream_generate.side_effect = lambda *a, **kw: iter(
             [
-                self.mod.Token(token="z"),
+                types.SimpleNamespace(token="z"),
                 types.SimpleNamespace(text="y"),
             ]
         )
@@ -648,7 +849,14 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
             {"input_ids": [[1]]}, GenerationSettings(), False
         ):
             chunks.append(chunk)
-        self.assertEqual(chunks, ["z", "y"])
+        self.assertEqual(
+            [
+                chunk.text_delta
+                for chunk in chunks
+                if chunk.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["z", "y"],
+        )
 
     def test_get_sampler_and_prompt_rejects_non_mapping_inputs(self) -> None:
         model = self.mod.MlxLmModel(

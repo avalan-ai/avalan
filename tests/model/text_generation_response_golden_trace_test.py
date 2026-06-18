@@ -490,21 +490,24 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
     async def test_canonical_stream_legacy_rejection_raw_stream(
         self,
     ) -> None:
-        response = _legacy_rejection_response_from_raw_stream()
-        items: list[CanonicalStreamItem] = []
+        for provider_family in ("local", "openai"):
+            with self.subTest(provider_family=provider_family):
+                response = _legacy_rejection_response_from_raw_stream()
+                items: list[CanonicalStreamItem] = []
 
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "unsupported legacy SDK response stream item",
-        ):
-            async for item in response.canonical_stream(
-                stream_session_id=_STREAM_SESSION_ID,
-                run_id=_RUN_ID,
-                turn_id=_TURN_ID,
-            ):
-                items.append(item)
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported legacy SDK response stream item",
+                ):
+                    async for item in response.canonical_stream(
+                        stream_session_id=_STREAM_SESSION_ID,
+                        run_id=_RUN_ID,
+                        turn_id=_TURN_ID,
+                        provider_family=provider_family,
+                    ):
+                        items.append(item)
 
-        self.assertEqual(items, [])
+                self.assertEqual(items, [])
 
     async def test_to_str_legacy_rejection_mixed_raw_stream(self) -> None:
         response = _legacy_rejection_response_from_raw_stream(

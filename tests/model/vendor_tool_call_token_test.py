@@ -13,10 +13,43 @@ from avalan.entities import (
     ToolCall,
     ToolCallToken,
 )
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamItemKind,
+    StreamTerminalOutcome,
+    StreamValidationError,
+    stream_channel_for_kind,
+)
 from avalan.model.vendor import (
     TextGenerationVendor,
     TextGenerationVendorStream,
 )
+
+
+def _canonical_item(
+    kind: StreamItemKind,
+    sequence: int,
+    *,
+    text_delta: str | None = None,
+    usage: object | None = None,
+    metadata: dict[str, object] | None = None,
+) -> CanonicalStreamItem:
+    return CanonicalStreamItem(
+        stream_session_id="source-stream",
+        run_id="source-run",
+        turn_id="source-turn",
+        sequence=sequence,
+        kind=kind,
+        channel=stream_channel_for_kind(kind),
+        text_delta=text_delta,
+        usage=cast(Any, usage),
+        terminal_outcome=(
+            StreamTerminalOutcome.COMPLETED
+            if kind is StreamItemKind.STREAM_COMPLETED
+            else None
+        ),
+        metadata=cast(dict[str, Any], metadata or {}),
+    )
 
 
 class VendorBuildToolCallTokenTestCase(TestCase):
@@ -159,22 +192,148 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         self.assertEqual(stream.provider_family, "openai")
         self.assertEqual(stream.usage, {"tokens": 1})
 
-    def test_stream_iterates_generator_and_rejects_missing_generator(
+    def test_stream_iterates_public_canonical_items_and_metadata(
         self,
     ) -> None:
         async def generator():
-            yield "token"
+            yield _canonical_item(StreamItemKind.STREAM_STARTED, 0)
+            yield _canonical_item(
+                StreamItemKind.ANSWER_DELTA,
+                1,
+                text_delta="token",
+            )
+            yield _canonical_item(StreamItemKind.ANSWER_DONE, 2)
+            yield _canonical_item(StreamItemKind.STREAM_COMPLETED, 3)
+            yield _canonical_item(StreamItemKind.STREAM_CLOSED, 4)
 
-        async def next_token() -> object:
-            stream = TextGenerationVendorStream(generator())
+        async def collect_items() -> list[CanonicalStreamItem]:
+            stream = TextGenerationVendorStream(
+                generator(),
+                provider_family="openai",
+                usage={"output_tokens": 1},
+            )
             iterator = stream()
-            self.assertIs(iterator, stream)
-            return await anext(iterator)
+            self.assertIsNot(iterator, stream)
+            return [item async for item in iterator]
 
-        self.assertEqual(run(next_token()), "token")
+        items = run(collect_items())
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[0].stream_session_id, "vendor-stream")
+        self.assertEqual(items[1].text_delta, "token")
+        self.assertEqual({item.provider_family for item in items}, {"openai"})
+        self.assertEqual(items[-2].usage, {"output_tokens": 1})
 
         with self.assertRaises(AssertionError):
             TextGenerationVendorStream(cast(Any, None)).__aiter__()
+
+    def test_stream_rejects_legacy_generator_items(self) -> None:
+        class Source:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        async def generator():
+            yield "token"
+
+        async def collect_stream() -> Source:
+            source = Source()
+            stream = TextGenerationVendorStream(generator(), sources=(source,))
+            with self.assertRaisesRegex(
+                StreamValidationError,
+                "unsupported legacy vendor stream item",
+            ):
+                async for _ in stream():
+                    pass
+            return source
+
+        source = run(collect_stream())
+
+        self.assertEqual(source.close_count, 1)
+
+    def test_stream_accepts_empty_canonical_generator(self) -> None:
+        async def generator():
+            if False:
+                yield _canonical_item(StreamItemKind.STREAM_STARTED, 0)
+
+        async def collect_stream() -> list[CanonicalStreamItem]:
+            stream = TextGenerationVendorStream(generator())
+            return [item async for item in stream()]
+
+        self.assertEqual(run(collect_stream()), [])
+
+    def test_stream_rejects_legacy_item_after_canonical_first_item(
+        self,
+    ) -> None:
+        async def generator():
+            yield _canonical_item(StreamItemKind.STREAM_STARTED, 0)
+            yield "legacy"
+
+        async def collect_stream() -> list[CanonicalStreamItem]:
+            stream = TextGenerationVendorStream(generator())
+            items: list[CanonicalStreamItem] = []
+            with self.assertRaisesRegex(
+                StreamValidationError,
+                "unsupported legacy vendor stream item",
+            ):
+                async for item in stream():
+                    items.append(item)
+            return items
+
+        items = run(collect_stream())
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [StreamItemKind.STREAM_STARTED],
+        )
+
+    def test_stream_preserves_canonical_source_metadata_and_usage(
+        self,
+    ) -> None:
+        async def generator():
+            yield _canonical_item(
+                StreamItemKind.STREAM_STARTED,
+                0,
+                metadata={"source": "canonical"},
+            )
+            yield _canonical_item(
+                StreamItemKind.ANSWER_DELTA,
+                1,
+                text_delta="canonical",
+            )
+            yield _canonical_item(StreamItemKind.ANSWER_DONE, 2)
+            yield _canonical_item(
+                StreamItemKind.STREAM_COMPLETED,
+                3,
+                usage={"output_tokens": 2},
+            )
+            yield _canonical_item(StreamItemKind.STREAM_CLOSED, 4)
+
+        async def collect_items() -> list[CanonicalStreamItem]:
+            stream = TextGenerationVendorStream(
+                generator(),
+                provider_family="openai",
+                usage={"output_tokens": 99},
+            )
+            return [item async for item in stream()]
+
+        items = run(collect_items())
+
+        self.assertEqual(items[0].metadata, {"source": "canonical"})
+        self.assertEqual(items[1].text_delta, "canonical")
+        self.assertEqual(items[-2].usage, {"output_tokens": 2})
+        self.assertEqual({item.provider_family for item in items}, {"openai"})
 
     def test_stream_cancel_is_idempotent(self) -> None:
         class Source:
@@ -197,6 +356,29 @@ class VendorBuildToolCallTokenTestCase(TestCase):
         source = run(cancel_twice())
 
         self.assertEqual(source.cancel_count, 1)
+
+    def test_stream_iteration_closes_sources(self) -> None:
+        class Source:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        async def generator():
+            yield _canonical_item(StreamItemKind.STREAM_STARTED, 0)
+            yield _canonical_item(StreamItemKind.STREAM_COMPLETED, 1)
+
+        async def collect_stream() -> Source:
+            source = Source()
+            stream = TextGenerationVendorStream(generator(), sources=(source,))
+            async for _ in stream():
+                pass
+            return source
+
+        source = run(collect_stream())
+
+        self.assertEqual(source.close_count, 1)
 
     def test_stream_close_accepts_sync_sources_and_dedupes(self) -> None:
         class Source:

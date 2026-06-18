@@ -7,6 +7,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from json import loads
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -53,6 +54,10 @@ class AsyncIter:
             return next(self._iter)
         except StopIteration as exc:  # pragma: no cover - helper
             raise StopAsyncIteration from exc
+
+
+async def _legacy_stream_next(stream: Any) -> Any:
+    return await stream._generator.__anext__()
 
 
 @pytest.fixture(scope="module")
@@ -128,7 +133,7 @@ def test_stream_variants(anthropic_mod):
         ) as btt:
             stream = mod.AnthropicStream(agen())
             out = []
-            async for token in stream:
+            async for token in stream._generator:
                 out.append(token)
         return out, btt
 
@@ -178,10 +183,10 @@ def test_stream_records_usage_on_message_stop(anthropic_mod):
 
     async def collect():
         stream = mod.AnthropicStream(agen())
-        token = await stream.__anext__()
+        token = await _legacy_stream_next(stream)
         assert stream.usage is None
         with pytest.raises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         return stream, token
 
     stream, token = asyncio.run(collect())
@@ -222,7 +227,7 @@ def test_stream_records_mapping_usage_on_message_stop(anthropic_mod):
     async def collect():
         stream = mod.AnthropicStream(agen())
         with pytest.raises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         return stream
 
     stream = asyncio.run(collect())
@@ -235,6 +240,47 @@ def test_stream_records_mapping_usage_on_message_stop(anthropic_mod):
     assert totals.output_tokens == 0
     assert totals.reasoning_tokens is None
     assert totals.total_tokens is None
+
+
+def test_stream_public_iterator_yields_canonical_items(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield mod.RawContentBlockDeltaEvent(SimpleNamespace(text="hi"))
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return [item async for item in stream]
+
+    items = asyncio.run(collect())
+
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.ANSWER_DELTA,
+        StreamItemKind.ANSWER_DONE,
+        StreamItemKind.STREAM_COMPLETED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+    assert items[1].text_delta == "hi"
+    assert {item.provider_family for item in items} == {"anthropic"}
+
+
+def test_stream_direct_anext_yields_canonical_items(anthropic_mod):
+    mod, _ = anthropic_mod
+
+    async def agen():
+        yield mod.RawContentBlockDeltaEvent(SimpleNamespace(text="hi"))
+
+    async def collect():
+        stream = mod.AnthropicStream(agen())
+        return await stream.__anext__(), await stream.__anext__()
+
+    started, delta = asyncio.run(collect())
+
+    assert started.kind is StreamItemKind.STREAM_STARTED
+    assert delta.kind is StreamItemKind.ANSWER_DELTA
+    assert delta.text_delta == "hi"
+    assert delta.provider_family == "anthropic"
 
 
 def test_canonical_stream_maps_anthropic_events(anthropic_mod):
@@ -603,7 +649,7 @@ def test_stream_without_message_stop_drops_cumulative_usage(anthropic_mod):
     async def collect():
         stream = mod.AnthropicStream(agen())
         with pytest.raises(StopAsyncIteration):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         return stream
 
     stream = asyncio.run(collect())
@@ -636,7 +682,7 @@ def test_stream_failure_before_message_stop_drops_cumulative_usage(
     async def collect():
         stream = mod.AnthropicStream(FailingIter())
         with pytest.raises(RuntimeError):
-            await stream.__anext__()
+            await _legacy_stream_next(stream)
         return stream
 
     stream = asyncio.run(collect())
@@ -1350,7 +1396,7 @@ def test_stream_skips_tool_events_with_missing_indexes(anthropic_mod):
     async def collect():
         stream = mod.AnthropicStream(agen())
         out = []
-        async for token in stream:
+        async for token in stream._generator:
             out.append(token)
         return out
 

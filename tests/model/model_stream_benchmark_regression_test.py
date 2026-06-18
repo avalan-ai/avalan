@@ -36,8 +36,8 @@ from avalan.model.stream import (
     StreamTerminalOutcome,
     StreamValidationError,
     _LegacyTokenStreamAdapter,
+    _normalize_local_stream,
     iter_stream_consumer_projections,
-    normalize_local_stream,
 )
 
 
@@ -803,7 +803,7 @@ class StreamBenchmarkRegressionTestCase(TestCase):
 
         async def consume() -> tuple[PullTrackedTokens, int, float]:
             tokens = PullTrackedTokens()
-            stream = normalize_local_stream(
+            stream = _normalize_local_stream(
                 tokens,
                 stream_session_id="slow-stream",
                 run_id="slow-run",
@@ -858,7 +858,7 @@ class StreamBenchmarkRegressionTestCase(TestCase):
             float,
         ]:
             tokens = ImmediateTokens()
-            stream = normalize_local_stream(
+            stream = _normalize_local_stream(
                 tokens,
                 stream_session_id="latency-stream",
                 run_id="latency-run",
@@ -928,7 +928,7 @@ class StreamBenchmarkRegressionTestCase(TestCase):
 
         async def cancel_pending_pull() -> tuple[PendingTokens, float]:
             tokens = PendingTokens()
-            stream = normalize_local_stream(
+            stream = _normalize_local_stream(
                 tokens,
                 stream_session_id="cancel-stream",
                 run_id="cancel-run",

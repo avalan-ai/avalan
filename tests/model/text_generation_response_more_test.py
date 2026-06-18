@@ -10,6 +10,8 @@ from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
     ReasoningToken,
+    Token,
+    TokenDetail,
     ToolCall,
     ToolCallToken,
 )
@@ -21,9 +23,12 @@ from avalan.model.stream import (
     StreamChannel,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
     StreamTerminalOutcome,
     StreamValidationError,
     TextGenerationSingleStream,
+    TextGenerationStream,
     accumulate_canonical_stream_items,
     canonical_item_from_consumer_projection,
     project_canonical_stream_item,
@@ -87,6 +92,43 @@ class _HostedVendorStream(TextGenerationVendorStream):
         )
 
 
+class _HostedCanonicalSource:
+    def __init__(
+        self,
+        items: tuple[CanonicalStreamItem, ...],
+        *,
+        block_on_read: int | None = None,
+    ) -> None:
+        self._items = items
+        self._index = 0
+        self._block_on_read = block_on_read
+        self.read_count = 0
+        self.close_count = 0
+        self.pull_started = Event()
+        self.pull_cancelled = False
+
+    def __aiter__(self) -> "_HostedCanonicalSource":
+        return self
+
+    async def __anext__(self) -> CanonicalStreamItem:
+        self.read_count += 1
+        if self._block_on_read == self.read_count:
+            self.pull_started.set()
+            try:
+                await Event().wait()
+            except CancelledError:
+                self.pull_cancelled = True
+                raise
+        if self._index >= len(self._items):
+            raise StopAsyncIteration
+        item = self._items[self._index]
+        self._index += 1
+        return item
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
 class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
     @staticmethod
     def _hosted_response(
@@ -96,6 +138,17 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             _HostedVendorStream(source),
             logger=getLogger(),
             use_async_generator=True,
+        )
+
+    @staticmethod
+    def _hosted_canonical_response(
+        source: _HostedCanonicalSource,
+    ) -> TextGenerationResponse:
+        return TextGenerationResponse(
+            lambda **_: source,
+            logger=getLogger(),
+            use_async_generator=True,
+            provider_family=ProviderFamily.OPENAI,
         )
 
     @staticmethod
@@ -163,11 +216,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(source.cancel_count, 1)
         self.assertEqual(source.close_count, 1)
 
-    async def test_hosted_projection_disconnect_closes_no_read_ahead(
+    async def test_hosted_projection_disconnect_closes_after_first_item(
         self,
     ) -> None:
-        source = _HostedProviderSource(("a", "b"))
-        response = self._hosted_response(source)
+        source = _HostedCanonicalSource(self._complete_canonical_items())
+        response = self._hosted_canonical_response(source)
         projections = response.consumer_projections(
             stream_session_id="hosted-response-stream",
             run_id="hosted-response-run",
@@ -178,15 +231,16 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         await projections.aclose()
 
         self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
-        self.assertEqual(source.read_count, 0)
-        self.assertEqual(source.cancel_count, 0)
+        self.assertEqual(source.read_count, 1)
         self.assertEqual(source.close_count, 1)
 
     async def test_hosted_projection_cancel_closes_pending_read(
         self,
     ) -> None:
-        source = _HostedProviderSource(("a",), block_on_read=2)
-        response = self._hosted_response(source)
+        source = _HostedCanonicalSource(
+            self._complete_canonical_items(), block_on_read=3
+        )
+        response = self._hosted_canonical_response(source)
         projections = response.consumer_projections(
             stream_session_id="hosted-response-stream",
             run_id="hosted-response-run",
@@ -232,8 +286,134 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 StreamTerminalOutcome.CANCELLED,
             )
         self.assertTrue(source.pull_cancelled)
-        self.assertEqual(source.read_count, 2)
+        self.assertEqual(source.read_count, 3)
         self.assertEqual(source.close_count, 1)
+
+    async def test_base_vendor_stream_response_uses_requested_identity(
+        self,
+    ) -> None:
+        async def generator() -> AsyncIterator[CanonicalStreamItem]:
+            for item in self._complete_canonical_items():
+                yield item
+
+        capabilities = StreamProviderCapabilities(
+            backend=StreamProducerBackend.HOSTED,
+            provider_family=ProviderFamily.OPENAI,
+            supports_usage=True,
+        )
+        response = TextGenerationResponse(
+            TextGenerationVendorStream(
+                generator(), provider_family=ProviderFamily.OPENAI
+            ),
+            logger=getLogger(),
+            use_async_generator=True,
+        )
+
+        items = [
+            item
+            async for item in response.canonical_stream(
+                stream_session_id="requested-stream",
+                run_id="requested-run",
+                turn_id="requested-turn",
+                provider_family=ProviderFamily.OPENAI,
+                capabilities=capabilities,
+            )
+        ]
+
+        self.assertEqual(
+            {
+                (item.stream_session_id, item.run_id, item.turn_id)
+                for item in items
+            },
+            {("requested-stream", "requested-run", "requested-turn")},
+        )
+        self.assertEqual(
+            items[0].metadata["capabilities"],
+            capabilities.to_metadata(),
+        )
+        self.assertEqual(
+            {item.provider_family for item in items},
+            {ProviderFamily.OPENAI.value},
+        )
+
+    async def test_base_vendor_stream_derives_family_from_capabilities(
+        self,
+    ) -> None:
+        async def generator() -> AsyncIterator[CanonicalStreamItem]:
+            for item in self._complete_canonical_items():
+                yield item
+
+        capabilities = StreamProviderCapabilities(
+            backend=StreamProducerBackend.HOSTED,
+            provider_family=ProviderFamily.OPENAI,
+        )
+        response = TextGenerationResponse(
+            TextGenerationVendorStream(generator()),
+            logger=getLogger(),
+            use_async_generator=True,
+        )
+
+        items = [
+            item
+            async for item in response.canonical_stream(
+                stream_session_id="requested-stream",
+                run_id="requested-run",
+                turn_id="requested-turn",
+                capabilities=capabilities,
+            )
+        ]
+
+        self.assertEqual(
+            {item.provider_family for item in items},
+            {ProviderFamily.OPENAI.value},
+        )
+
+    async def test_inherited_base_canonical_stream_uses_response_projection(
+        self,
+    ) -> None:
+        async def generator() -> AsyncIterator[CanonicalStreamItem]:
+            for item in self._complete_canonical_items():
+                yield item
+
+        class BaseOnlyStream(TextGenerationStream):
+            def __init__(self) -> None:
+                self._generator = generator()
+
+            def __call__(
+                self, *args: object, **kwargs: object
+            ) -> AsyncIterator[CanonicalStreamItem]:
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                assert self._generator is not None
+                return await self._generator.__anext__()
+
+        response = TextGenerationResponse(
+            BaseOnlyStream(),
+            logger=getLogger(),
+            use_async_generator=True,
+        )
+
+        items = [
+            item
+            async for item in response.canonical_stream(
+                stream_session_id="requested-stream",
+                run_id="requested-run",
+                turn_id="requested-turn",
+            )
+        ]
+
+        self.assertEqual(
+            {
+                (item.stream_session_id, item.run_id, item.turn_id)
+                for item in items
+            },
+            {("response-stream", "response-run", "response-turn")},
+        )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
 
     @staticmethod
     def _errored_canonical_items() -> tuple[CanonicalStreamItem, ...]:
@@ -938,20 +1118,9 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             )
 
     async def test_consumer_projections_stream_lossless_items(self) -> None:
-        async def gen():
-            yield "answer "
-            yield "<think>"
-            yield "private"
-            yield "</think>"
-            yield ToolCallToken(
-                token='{"expression":"2+2"}',
-                call=ToolCall(
-                    id="call-1",
-                    name="calculator",
-                    arguments={"expression": "2+2"},
-                ),
-            )
-            yield "done"
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            for item in self._semantic_answer_items():
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -979,10 +1148,15 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             list(range(len(projections))),
         )
         self.assertEqual(
-            {item.stream_session_id for item in projections}, {"sdk-stream"}
+            {item.stream_session_id for item in projections},
+            {"response-stream"},
         )
-        self.assertEqual({item.run_id for item in projections}, {"sdk-run"})
-        self.assertEqual({item.turn_id for item in projections}, {"sdk-turn"})
+        self.assertEqual(
+            {item.run_id for item in projections}, {"response-run"}
+        )
+        self.assertEqual(
+            {item.turn_id for item in projections}, {"response-turn"}
+        )
         self.assertIn(
             StreamItemKind.REASONING_DELTA, [p.kind for p in projections]
         )
@@ -996,11 +1170,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 for item in projections
                 if item.channel is StreamChannel.ANSWER
             ),
-            "answer done",
+            "final answer",
         )
-        self.assertEqual(await resp.to_str(), "answer done")
+        self.assertEqual(await resp.to_str(), "final answer")
 
-    async def test_consumer_projections_parse_split_reasoning_markers(
+    async def test_consumer_projections_rejects_local_legacy_reasoning_stream(
         self,
     ) -> None:
         async def gen():
@@ -1021,8 +1195,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             provider_family="transformers",
         )
 
-        projections = tuple(
-            [
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [
                 item
                 async for item in resp.consumer_projections(
                     stream_session_id="sdk-stream",
@@ -1030,36 +1207,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                     turn_id="sdk-turn",
                 )
             ]
-        )
 
-        self.assertEqual(
-            "".join(
-                item.text_delta or ""
-                for item in projections
-                if item.channel is StreamChannel.ANSWER
-            ),
-            "alpha  omega <thinking> visible",
-        )
-        self.assertEqual(
-            "".join(
-                item.text_delta or ""
-                for item in projections
-                if item.channel is StreamChannel.REASONING
-            ),
-            "<think>\n  hidden\n</think>",
-        )
-        self.assertLess(
-            next(
-                item.sequence
-                for item in projections
-                if item.kind is StreamItemKind.REASONING_DONE
-            ),
-            next(
-                item.sequence
-                for item in projections
-                if item.text_delta == " omega"
-            ),
-        )
         response_text = TextGenerationResponse(
             lambda **_: gen(),
             logger=getLogger(),
@@ -1119,24 +1267,29 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         class LegacyOutput:
-            def __init__(self) -> None:
+            def __init__(self, item: str | Token | TokenDetail) -> None:
+                self._item = item
                 self.read_count = 0
                 self.closed = False
 
             def __aiter__(self) -> "LegacyOutput":
                 return self
 
-            async def __anext__(self) -> str:
+            async def __anext__(self) -> str | Token | TokenDetail:
                 self.read_count += 1
                 if self.read_count > 1:
                     raise AssertionError("default SDK stream read ahead")
-                return "legacy"
+                return self._item
 
             async def aclose(self) -> None:
                 self.closed = True
 
-        async def assert_rejection(surface: str) -> None:
-            output = LegacyOutput()
+        async def assert_rejection(
+            surface: str,
+            provider_family: str,
+            legacy_item: str | Token | TokenDetail,
+        ) -> None:
+            output = LegacyOutput(legacy_item)
             settings = GenerationSettings()
             resp = TextGenerationResponse(
                 lambda **_: output,
@@ -1144,6 +1297,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 use_async_generator=True,
                 generation_settings=settings,
                 settings=settings,
+                provider_family=provider_family,
             )
             items: list[object] = []
 
@@ -1170,9 +1324,27 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             self.assertEqual(output.read_count, 1)
             self.assertTrue(output.closed)
 
+        legacy_items: tuple[str | Token | TokenDetail, ...] = (
+            "legacy",
+            Token(token="legacy-token"),
+            TokenDetail(
+                id=7,
+                token="legacy-detail",
+                probability=0.5,
+                step=1,
+            ),
+        )
         for surface in ("canonical_stream", "consumer_projections"):
-            with self.subTest(surface=surface):
-                await assert_rejection(surface)
+            for provider_family in ("local", "openai"):
+                for legacy_item in legacy_items:
+                    with self.subTest(
+                        surface=surface,
+                        provider_family=provider_family,
+                        item_type=legacy_item.__class__.__name__,
+                    ):
+                        await assert_rejection(
+                            surface, provider_family, legacy_item
+                        )
 
     async def test_aclose_handles_unopened_and_nonclosable_output(
         self,
@@ -1479,9 +1651,91 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
     async def test_consumer_projections_preserve_split_reasoning_whitespace(
         self,
     ) -> None:
-        async def gen():
-            for character in "lead <think> private </think> tail":
-                yield character
+        items = (
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="lead ",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="<think>",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=3,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta=" private ",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=4,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="</think>",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=5,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=6,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=" tail",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=7,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=8,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        )
+
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            for item in items:
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -1519,9 +1773,82 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
     async def test_consumer_projections_handle_adjacent_reasoning_sections(
         self,
     ) -> None:
-        async def gen():
-            for character in "x<think>a</think><think>b</think>y":
-                yield character
+        items = (
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="x",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="<think>a</think>",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=3,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="<think>b</think>",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=4,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=5,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="y",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=6,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=7,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        )
+
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            for item in items:
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -2796,43 +3123,51 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         ):
             await resp.to_str()
 
-    async def test_consumer_projections_accept_canonical_output_items(
+    async def test_consumer_projections_accept_semantic_output_items(
         self,
     ) -> None:
-        async def gen():
-            for item in self._complete_canonical_items():
-                yield item
+        for projected in (False, True):
+            with self.subTest(projected=projected):
 
-        settings = GenerationSettings()
-        resp = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+                async def gen():
+                    for item in self._complete_canonical_items():
+                        if projected:
+                            yield project_canonical_stream_item(item)
+                        else:
+                            yield item
 
-        projections = tuple(
-            [
-                item
-                async for item in resp.consumer_projections(
-                    stream_session_id="sdk-stream",
-                    run_id="sdk-run",
-                    turn_id="sdk-turn",
+                settings = GenerationSettings()
+                resp = TextGenerationResponse(
+                    lambda **_: gen(),
+                    logger=getLogger(),
+                    use_async_generator=True,
+                    generation_settings=settings,
+                    settings=settings,
                 )
-            ]
-        )
 
-        self.assertEqual([item.sequence for item in projections], [0, 1, 2, 3])
-        self.assertEqual(
-            {item.stream_session_id for item in projections},
-            {"response-stream"},
-        )
-        self.assertEqual(projections[1].text_delta, "ok")
-        self.assertIs(
-            projections[-1].terminal_outcome,
-            StreamTerminalOutcome.COMPLETED,
-        )
+                projections = tuple(
+                    [
+                        item
+                        async for item in resp.consumer_projections(
+                            stream_session_id="sdk-stream",
+                            run_id="sdk-run",
+                            turn_id="sdk-turn",
+                        )
+                    ]
+                )
+
+                self.assertEqual(
+                    [item.sequence for item in projections], [0, 1, 2, 3]
+                )
+                self.assertEqual(
+                    {item.stream_session_id for item in projections},
+                    {"response-stream"},
+                )
+                self.assertEqual(projections[1].text_delta, "ok")
+                self.assertIs(
+                    projections[-1].terminal_outcome,
+                    StreamTerminalOutcome.COMPLETED,
+                )
 
     async def test_to_str_after_partial_reasoning_iteration_uses_answer_only(
         self,

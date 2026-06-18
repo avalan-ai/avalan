@@ -14,6 +14,7 @@ from avalan.model.nlp.text.vllm import (
     _sampling_params_class,
     _vllm_attribute,
 )
+from avalan.model.stream import StreamItemKind
 
 
 class VllmStreamTestCase(IsolatedAsyncioTestCase):
@@ -21,12 +22,45 @@ class VllmStreamTestCase(IsolatedAsyncioTestCase):
         iterator = iter(["a", "b"])
         stream = VllmStream(iterator)
         self.assertIs(stream._iterator, iterator)
-        self.assertIs(stream._generator, iterator)
 
-        self.assertEqual(await stream.__anext__(), "a")
-        self.assertEqual(await stream.__anext__(), "b")
+        items = [await stream.__anext__() for _ in range(6)]
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            [items[1].text_delta, items[2].text_delta],
+            ["a", "b"],
+        )
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
+
+    async def test_placeholder_generator_is_empty(self):
+        stream = VllmStream(iter([]))
+
+        with self.assertRaises(StopAsyncIteration):
+            await stream._generator.__anext__()
+
+    async def test_chunk_text_uses_text_attribute_and_string_fallback(self):
+        async def generator():
+            yield SimpleNamespace(text="attr")
+            yield 42
+
+        stream = VllmStream(generator())
+
+        items = [await stream.__anext__() for _ in range(6)]
+
+        self.assertEqual(
+            [items[1].text_delta, items[2].text_delta],
+            ["attr", "42"],
+        )
 
 
 class VllmModelTestCase(IsolatedAsyncioTestCase):
@@ -228,7 +262,18 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(result, VllmStream)
         assert isinstance(result, VllmStream)
-        self.assertEqual(await result.__anext__(), "stream")
+        items = [await result.__anext__() for _ in range(5)]
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[1].text_delta, "stream")
         model._string_output.assert_not_called()
 
     async def test_call_use_async_generator_false(self):

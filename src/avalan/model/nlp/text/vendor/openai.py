@@ -24,7 +24,7 @@ from .....model.stream import (
     StreamValidationError,
     StreamVisibility,
     TextGenerationSingleStream,
-    normalize_provider_stream,
+    TextGenerationStream,
 )
 from .....tool.manager import ToolManager
 from .....types import LooseJsonValue
@@ -196,8 +196,8 @@ class OpenAIStream(TextGenerationVendorStream):
             sources=(stream,),
         )
 
-    async def __anext__(self) -> Token | TokenDetail | str:
-        return await self._generator.__anext__()
+    async def __anext__(self) -> CanonicalStreamItem:
+        return await super().__anext__()
 
     def canonical_stream(
         self,
@@ -205,29 +205,30 @@ class OpenAIStream(TextGenerationVendorStream):
         stream_session_id: str,
         run_id: str,
         turn_id: str,
+        provider_family: ProviderFamily | str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
         close_after_terminal: bool = True,
     ) -> AsyncIterator[CanonicalStreamItem]:
         self._canonical_tool_calls = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
-        return self._close_stream_on_exit(
-            normalize_provider_stream(
-                self._provider_events(),
-                stream_session_id=stream_session_id,
-                run_id=run_id,
-                turn_id=turn_id,
+        return self._provider_canonical_stream(
+            self._provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family,
+            capabilities=capabilities
+            or StreamProviderCapabilities(
+                backend=StreamProducerBackend.HOSTED,
                 provider_family=self._provider_family,
-                capabilities=StreamProviderCapabilities(
-                    backend=StreamProducerBackend.HOSTED,
-                    provider_family=self._provider_family,
-                    supports_reasoning=True,
-                    supports_tool_calls=True,
-                    supports_usage=True,
-                    supports_terminal_events=True,
-                    supports_cancellation=True,
-                ),
-                close_after_terminal=close_after_terminal,
+                supports_reasoning=True,
+                supports_tool_calls=True,
+                supports_usage=True,
+                supports_terminal_events=True,
+                supports_cancellation=True,
             ),
+            close_after_terminal=close_after_terminal,
         )
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
@@ -337,6 +338,7 @@ class OpenAIStream(TextGenerationVendorStream):
         usage = OpenAIClient._response_field(response, "usage")
         result: list[StreamProviderEvent] = []
         if usage is not None:
+            self._usage = usage
             result.append(
                 StreamProviderEvent(
                     kind=StreamItemKind.USAGE_COMPLETED,
@@ -672,7 +674,7 @@ class OpenAIClient(TextGenerationVendor):
         timeout: int | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> AsyncIterator[Token | TokenDetail | str] | TextGenerationSingleStream:
+    ) -> TextGenerationStream:
         template_messages = self._template_messages(messages)
         use_reasoning_profile = self._uses_reasoning_profile(model_id)
         kwargs: dict[str, Any] = {

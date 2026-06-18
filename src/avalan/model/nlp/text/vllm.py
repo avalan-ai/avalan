@@ -5,6 +5,13 @@ from ....entities import (
 )
 from ....model.nlp.text.generation import TextGenerationModel
 from ....model.provider import provider_family_value
+from ....model.stream import (
+    CanonicalStreamItem,
+    StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+)
 from ....model.vendor import TextGenerationVendorStream
 from ....tool.manager import ToolManager
 
@@ -12,7 +19,15 @@ from asyncio import to_thread
 from dataclasses import asdict, replace
 from importlib import import_module
 from logging import Logger, getLogger
-from typing import Any, AsyncGenerator, Awaitable, Callable, Iterator, cast
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    cast,
+)
 
 _UNSET = object()
 LLM: Any = _UNSET
@@ -46,41 +61,98 @@ def _sampling_params_class() -> Any:
 
 
 class VllmStream(TextGenerationVendorStream):
+    _iterator: Iterator[Any] | None
+    _stream: AsyncIterator[Any]
+
     def __init__(
         self,
-        generator: Iterator[str] | AsyncGenerator[str, None],
+        generator: Iterator[Any] | AsyncGenerator[Any, None],
         *,
         provider_family: str = "vllm",
     ) -> None:
+        async def empty_generator() -> (
+            AsyncGenerator[CanonicalStreamItem, None]
+        ):
+            if False:
+                yield cast(CanonicalStreamItem, None)
+
         if hasattr(generator, "__anext__"):
-            super().__init__(
-                cast(AsyncGenerator[str, None], generator),
-                provider_family=provider_family,
-            )
             self._iterator = None
+            self._stream = cast(AsyncGenerator[Any, None], generator)
+            super().__init__(
+                empty_generator(),
+                provider_family=provider_family,
+                sources=(self._stream,),
+            )
             return
 
         self._iterator = generator
-        self._provider_family = provider_family_value(provider_family)
-        self._usage = None
-        self._generator = cast(
-            AsyncGenerator[str, None], cast(Any, self._iterator)
+        self._stream = self._async_generator_from_iterator(generator)
+        super().__init__(
+            empty_generator(),
+            provider_family=provider_family_value(provider_family),
+            sources=(self._stream,),
         )
 
-    async def __anext__(self) -> str:
-        if self._iterator is None:
-            chunk = await super().__anext__()
-            if isinstance(chunk, str):
-                return chunk
-            return chunk.token
+    async def __anext__(self) -> CanonicalStreamItem:
+        return await super().__anext__()
 
-        iterator = self._iterator
-        chunk = await to_thread(
-            cast(Callable[[], Any], lambda: next(iterator, None))
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncIterator[CanonicalStreamItem]:
+        return self._provider_canonical_stream(
+            self._provider_events(),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family or self._provider_family,
+            capabilities=capabilities
+            or StreamProviderCapabilities(
+                backend=StreamProducerBackend.LOCAL,
+                provider_family=self._provider_family,
+                supports_cancellation=True,
+            ),
+            close_after_terminal=close_after_terminal,
         )
-        if chunk is None:
-            raise StopAsyncIteration
-        return str(chunk)
+
+    async def _provider_events(
+        self,
+    ) -> AsyncGenerator[StreamProviderEvent, None]:
+        async for chunk in self._stream:
+            yield StreamProviderEvent(
+                kind=StreamItemKind.ANSWER_DELTA,
+                text_delta=self._chunk_text(chunk),
+                provider_event_type="vllm.delta",
+            )
+
+    @staticmethod
+    def _chunk_text(chunk: object) -> str:
+        if isinstance(chunk, str):
+            return chunk
+        token = getattr(chunk, "token", None)
+        if isinstance(token, str):
+            return token
+        text = getattr(chunk, "text", None)
+        return text if isinstance(text, str) else str(chunk)
+
+    @staticmethod
+    async def _async_generator_from_iterator(
+        iterator: Iterator[Any],
+    ) -> AsyncGenerator[Any, None]:
+        while True:
+            chunk = await to_thread(
+                cast(Callable[[], Any], lambda: next(iterator, None))
+            )
+            if chunk is None:
+                return
+            yield str(chunk)
 
 
 class VllmModel(TextGenerationModel):

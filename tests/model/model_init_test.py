@@ -4,7 +4,11 @@ from unittest import IsolatedAsyncioTestCase
 from avalan.entities import GenerationSettings, Message, MessageRole
 from avalan.model.response import InvalidJsonResponseException
 from avalan.model.response.text import TextGenerationResponse
-from avalan.model.stream import TextGenerationStream
+from avalan.model.stream import (
+    TextGenerationSingleStream,
+    TextGenerationStream,
+    accumulate_canonical_stream_items,
+)
 from avalan.model.vendor import (
     TextGenerationVendor,
     TextGenerationVendorStream,
@@ -146,20 +150,17 @@ class StreamVendorTestCase(IsolatedAsyncioTestCase):
 
     async def test_vendor_stream_iteration(self):
         async def agen():
-            for ch in "ab":
-                yield ch
+            for item in TextGenerationSingleStream("ab").canonical_items:
+                yield item
 
-        class DummyVendorStream(TextGenerationVendorStream):
-            async def __anext__(self):
-                return await self._generator.__anext__()
-
-        stream = DummyVendorStream(agen())
+        stream = TextGenerationVendorStream(agen())
         it = stream()
-        self.assertIs(it, stream)
-        collected = []
-        async for token in it:
-            collected.append(token)
-        self.assertEqual(collected, ["a", "b"])
+        self.assertIsNot(it, stream)
+        collected = [item async for item in it]
+
+        accumulator = accumulate_canonical_stream_items(collected)
+
+        self.assertEqual(accumulator.answer_text, "ab")
 
     async def test_vendor_stream_exposes_usage(self):
         usage = {"input_tokens": 1}

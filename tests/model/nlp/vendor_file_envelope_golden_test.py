@@ -17,6 +17,7 @@ from avalan.entities import (
     MessageContentText,
     MessageRole,
 )
+from avalan.model.stream import StreamValidationError
 from avalan.model.vendor import (
     TextGenerationVendor,
     TextGenerationVendorStream,
@@ -198,10 +199,14 @@ def test_base_vendor_boundary_branches() -> None:
     async def agen() -> Any:
         yield "token"
 
-    stream = TextGenerationVendorStream(agen())
-    assert stream() is stream
-    assert stream.__aiter__() is stream
-    assert asyncio.run(stream.__anext__()) == "token"
+    async def first_public_item_kind() -> None:
+        stream = TextGenerationVendorStream(agen())
+        iterator = stream()
+        assert iterator is not stream
+        await anext(iterator)
+
+    with pytest.raises(StreamValidationError):
+        asyncio.run(first_public_item_kind())
 
 
 def test_openai_file_envelopes_cover_streaming_and_non_streaming() -> None:
@@ -321,7 +326,7 @@ def test_openai_stream_skips_custom_tool_call_without_string_id() -> None:
     )
 
     with pytest.raises(StopAsyncIteration):
-        asyncio.run(stream.__anext__())
+        asyncio.run(stream._generator.__anext__())
 
 
 def test_anthropic_file_envelopes_cover_streaming_and_non_streaming() -> None:
