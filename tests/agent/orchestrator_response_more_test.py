@@ -294,17 +294,10 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
             OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
         )
         self.assertEqual(
-            resp._tool_call_ready_items.maxsize,
-            OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
-        )
-        self.assertEqual(
-            resp._pending_tool_call_ready_items.maxsize,
-            OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
-        )
-        self.assertEqual(
             resp._tool_result_outcomes.maxsize,
             OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
         )
+        self.assertEqual(resp._canonical_tool_call_lifecycles, {})
 
     async def test_staging_queue_overflow_fails_without_blocking(self):
         queue: Queue[object] = Queue(maxsize=1)
