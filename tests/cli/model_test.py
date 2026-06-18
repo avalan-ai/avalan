@@ -31,12 +31,15 @@ from avalan.cli.commands import (
     model as model_cmds,
 )
 from avalan.cli.display import CliStreamDisplayConfig
+from avalan.cli.display_snapshot import CliStreamSnapshotBuilder
 from avalan.cli.theme import TokenRenderState
 from avalan.cli.theme.basic import BasicTheme
 from avalan.cli.theme.fancy import FancyTheme
 from avalan.cli.theme.stream_presenter import (
     CliStreamAnswerTextChunk,
+    CliStreamPresenterContext,
     CliStreamPresenterRequest,
+    CliStreamRenderableFrame,
     LegacyThemeStreamPresenter,
 )
 from avalan.entities import (
@@ -1144,17 +1147,17 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         live = MagicMock()
         live.__enter__.return_value = live
         live.__exit__.return_value = False
-        theme = FancyTheme(lambda message: message, lambda s, p, n: s)
+
+        class ExplodingTokensFancyTheme(FancyTheme):
+            def tokens(self, *_args: object, **_kwargs: object) -> object:
+                raise AssertionError("legacy tokens should not run")
+
+        theme = ExplodingTokensFancyTheme(
+            lambda message: message, lambda s, p, n: s
+        )
         display_config = self._display_config(stats=True)
 
-        with (
-            patch("avalan.cli.stream_coordinator.Live", return_value=live),
-            patch.object(
-                FancyTheme,
-                "tokens",
-                side_effect=AssertionError("legacy tokens should not run"),
-            ),
-        ):
+        with patch("avalan.cli.stream_coordinator.Live", return_value=live):
             await model_cmds.token_generation(
                 args=args,
                 console=console,
@@ -12763,20 +12766,46 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
     async def test_frame_rate_renderer_coalesces_fancy_theme_frames(self):
         async def fancy_frame(answer: str) -> object:
-            frames = theme.token_frames(
-                TokenRenderState(
-                    model_id="m",
-                    answer_text_tokens=(answer,),
-                    input_token_count=1,
-                    total_tokens=1,
-                    ttft=0.0,
-                    elapsed=1.0,
-                ),
-                console_width=80,
-                logger=MagicMock(),
-                maximum_frames=1,
+            config = CliStreamDisplayConfig(
+                quiet=False,
+                stats=True,
+                display_tools=False,
+                display_events=False,
+                display_tools_events=2,
+                record=False,
+                interactive=True,
+                refresh_per_second=2,
+                answer_height=12,
+                answer_height_expand=False,
+                display_tokens=0,
+                display_pause=0,
+                display_probabilities=False,
+                display_probabilities_maximum=0.8,
+                display_probabilities_sample_minimum=0.1,
+                display_time_to_n_token=None,
+                display_reasoning_time=True,
             )
-            return frames[0][1]
+            builder = CliStreamSnapshotBuilder(config)
+            builder.append_answer_text(answer, tokens=1)
+            builder.update_token_counts(input_tokens=1, output_tokens=1)
+            request = CliStreamPresenterRequest(
+                snapshot=builder.snapshot(),
+                display_config=config,
+                context=CliStreamPresenterContext(
+                    model_id="m",
+                    console_width=80,
+                    input_token_count=1,
+                ),
+                mode="live",
+            )
+            presenter = theme.stream_presenter(getLogger(__name__))
+            items = [item async for item in presenter.present(request)]
+            return next(
+                item.renderable
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+                and item.role == "stream"
+            )
 
         theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
         first_frame = await fancy_frame("first")

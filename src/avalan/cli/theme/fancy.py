@@ -1939,48 +1939,6 @@ class FancyTheme(Theme):
             )
         )
 
-    async def tokens(
-        self,
-        state: TokenRenderState,
-        *,
-        console_width: int,
-        logger: Logger,
-        maximum_frames: int | None = None,
-        logits_count: int | None = None,
-        tool_events_limit: int | None = None,
-        think_height: int = 6,
-        think_padding: int = 1,
-        tool_height: int = 6,
-        tool_padding: int = 1,
-        height: int = 12,
-        padding: int = 1,
-        wrap_padding: int = 4,
-        limit_think_height: bool = True,
-        limit_tool_height: bool = True,
-        limit_answer_height: bool = False,
-        start_thinking: bool = False,
-    ) -> AsyncGenerator[TokenRenderFrame, None]:
-        for frame in self._iter_token_frames(
-            state,
-            console_width=console_width,
-            logger=logger,
-            maximum_frames=maximum_frames,
-            logits_count=logits_count,
-            tool_events_limit=tool_events_limit,
-            think_height=think_height,
-            think_padding=think_padding,
-            tool_height=tool_height,
-            tool_padding=tool_padding,
-            height=height,
-            padding=padding,
-            wrap_padding=wrap_padding,
-            limit_think_height=limit_think_height,
-            limit_tool_height=limit_tool_height,
-            limit_answer_height=limit_answer_height,
-            start_thinking=start_thinking,
-        ):
-            yield frame
-
     def _iter_token_frames(
         self,
         state: TokenRenderState,
