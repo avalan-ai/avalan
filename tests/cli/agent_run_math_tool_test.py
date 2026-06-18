@@ -34,6 +34,7 @@ from avalan.entities import (
 from avalan.entities import (
     Operation as EntitiesOperation,
 )
+from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.response.text import TextGenerationResponse
@@ -47,7 +48,6 @@ from avalan.model.stream import (
 from avalan.tool import Tool, ToolSet
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.math import MathToolSet
-
 
 README_CALCULATOR_PROMPT = (
     "What is (4 + 6) and then that result times 5, divided by 2?"
@@ -1224,8 +1224,13 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             any(
                 e.type == EventType.TOOL_RESULT
                 and isinstance(e.payload, dict)
-                and e.payload["result"].name == "math.calculator"
-                and e.payload["result"].result == "25"
+                and e.payload.get("kind")
+                == StreamItemKind.TOOL_EXECUTION_COMPLETED.value
+                and e.payload.get("channel")
+                == StreamChannel.TOOL_EXECUTION.value
+                and isinstance((summary := e.payload.get("summary")), dict)
+                and set(summary.get("data_keys", ()))
+                >= {"arguments", "name", "result"}
                 for e in tool_result_events
             )
         )

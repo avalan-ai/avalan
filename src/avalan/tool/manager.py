@@ -241,6 +241,12 @@ class ToolManager:
                 message="Tool call arguments must be an object.",
             )
 
+        tool = (
+            self._tools.get(resolution.canonical_name) if self._tools else None
+        )
+        assert tool is not None
+        arguments = self._normalize_single_input_argument(tool, arguments)
+
         diagnostic = self._validate_argument_limits(
             call=call,
             canonical_name=resolution.canonical_name,
@@ -250,10 +256,6 @@ class ToolManager:
             return diagnostic
 
         assert resolution.canonical_name is not None
-        tool = (
-            self._tools.get(resolution.canonical_name) if self._tools else None
-        )
-        assert tool is not None
         return self._validate_tool_arguments(
             call=call,
             canonical_name=resolution.canonical_name,
@@ -760,6 +762,11 @@ class ToolManager:
                 message="Tool call arguments must be an object.",
             )
 
+        descriptor = self._descriptors[resolution.canonical_name]
+        tool = descriptor.callable
+        assert tool is not None
+        arguments = self._normalize_single_input_argument(tool, arguments)
+
         diagnostic = self._validate_argument_limits(
             call=call,
             canonical_name=resolution.canonical_name,
@@ -768,9 +775,6 @@ class ToolManager:
         if diagnostic is not None:
             return diagnostic
 
-        descriptor = self._descriptors[resolution.canonical_name]
-        tool = descriptor.callable
-        assert tool is not None
         prepared_call = ToolCall(
             id=call.id,
             name=resolution.canonical_name,
@@ -786,6 +790,44 @@ class ToolManager:
             arguments=arguments,
             context=context,
         )
+
+    @classmethod
+    def _normalize_single_input_argument(
+        cls, tool: Callable[..., Any], arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        if set(arguments) != {"input"}:
+            return arguments
+        parameter_name = cls._single_user_parameter_name(tool)
+        if parameter_name is None or parameter_name == "input":
+            return arguments
+        return {parameter_name: arguments["input"]}
+
+    @staticmethod
+    def _single_user_parameter_name(tool: Callable[..., Any]) -> str | None:
+        target = tool.__call__ if isinstance(tool, Tool) else tool
+        try:
+            parameters = signature(target).parameters.values()
+        except (TypeError, ValueError):
+            return None
+
+        user_parameters: list[str] = []
+        for parameter in parameters:
+            if parameter.name == "context":
+                continue
+            if parameter.kind in (
+                Parameter.VAR_POSITIONAL,
+                Parameter.VAR_KEYWORD,
+            ):
+                return None
+            if parameter.kind in (
+                Parameter.POSITIONAL_ONLY,
+                Parameter.POSITIONAL_OR_KEYWORD,
+                Parameter.KEYWORD_ONLY,
+            ):
+                user_parameters.append(parameter.name)
+        if len(user_parameters) != 1:
+            return None
+        return user_parameters[0]
 
     def _guard_diagnostic(
         self, call: ToolCall, context: ToolCallContext

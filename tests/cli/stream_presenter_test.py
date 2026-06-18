@@ -23,7 +23,11 @@ from avalan.cli.stream_presenter import (
     CliStreamSnapshotPresenter,
     LegacyThemeStreamPresenter,
 )
-from avalan.cli.theme import Theme
+from avalan.cli.theme import (
+    Theme,
+    TokenRenderDisplayToken,
+    TokenRenderDisplayTokenCandidate,
+)
 from avalan.cli.theme.fancy import FancyStreamPresenter, FancyTheme
 from avalan.entities import Token, TokenDetail
 from avalan.model.stream import (
@@ -132,9 +136,94 @@ async def _collect(
 
 async def _frame_stream(
     *frames: tuple[Token | None, str],
-) -> AsyncIterator[tuple[Token | None, str]]:
-    for frame in frames:
-        yield frame
+) -> AsyncIterator[tuple[TokenRenderDisplayToken | None, str]]:
+    for token, renderable in frames:
+        yield _render_token(token), renderable
+
+
+def _render_token(token: Token | None) -> TokenRenderDisplayToken | None:
+    if token is None:
+        return None
+    return TokenRenderDisplayToken(
+        sequence=getattr(token, "sequence", 1),
+        kind=StreamItemKind.ANSWER_DELTA,
+        channel=StreamChannel.ANSWER,
+        token=token.token,
+        id=token.id,  # type: ignore[arg-type]
+        probability=token.probability,
+        step=getattr(token, "step", None),
+        probability_distribution=getattr(
+            token, "probability_distribution", None
+        ),
+        tokens=tuple(
+            TokenRenderDisplayTokenCandidate(
+                token=candidate.token,
+                id=candidate.id,  # type: ignore[arg-type]
+                probability=candidate.probability,
+            )
+            for candidate in getattr(token, "tokens", None) or ()
+        ),
+    )
+
+
+def _recorded_state_call(
+    state: object,
+    kwargs: dict[str, object],
+) -> dict[str, object]:
+    call = dict(kwargs)
+    call["state"] = state
+    call["model_id"] = getattr(state, "model_id")
+    call["added_tokens"] = _list_or_none(getattr(state, "added_tokens"))
+    call["special_tokens"] = _list_or_none(getattr(state, "special_tokens"))
+    call["display_token_size"] = getattr(state, "display_token_size")
+    call["display_probabilities"] = getattr(state, "display_probabilities")
+    call["pick"] = getattr(state, "pick")
+    call["focus_on_token_when"] = getattr(state, "focus_on_token_when")
+    call["thinking_text_tokens"] = list(
+        getattr(state, "reasoning_text_tokens")
+    )
+    call["tool_text_tokens"] = list(getattr(state, "tool_text_tokens"))
+    call["answer_text_tokens"] = list(getattr(state, "answer_text_tokens"))
+    call["tokens"] = [
+        _legacy_token_from_render_token(token)
+        for token in getattr(state, "display_tokens")
+    ]
+    call["input_token_count"] = getattr(state, "input_token_count")
+    call["total_tokens"] = getattr(state, "total_tokens")
+    call["tool_token_count"] = getattr(state, "tool_token_count")
+    call["tool_events"] = []
+    call["tool_event_calls"] = []
+    call["tool_event_results"] = []
+    call["tool_running_spinner"] = getattr(state, "tool_running_spinner")
+    call["ttft"] = getattr(state, "ttft")
+    call["ttnt"] = getattr(state, "ttnt")
+    call["ttsr"] = getattr(state, "ttsr")
+    call["elapsed"] = getattr(state, "elapsed")
+    return call
+
+
+def _list_or_none(value: object) -> list[object] | None:
+    if value is None:
+        return None
+    return list(value)  # type: ignore[arg-type]
+
+
+def _legacy_token_from_render_token(token: object) -> TokenDetail:
+    return TokenDetail(
+        id=getattr(token, "id"),  # type: ignore[arg-type]
+        token=getattr(token, "token"),
+        probability=getattr(token, "probability"),
+        step=getattr(token, "step"),
+        probability_distribution=getattr(token, "probability_distribution"),
+        tokens=[
+            Token(
+                id=getattr(candidate, "id"),  # type: ignore[arg-type]
+                token=getattr(candidate, "token"),
+                probability=getattr(candidate, "probability"),
+            )
+            for candidate in getattr(token, "tokens")
+        ],
+    )
 
 
 async def _canonical_items(
@@ -154,8 +243,8 @@ class RecordingTheme:
         self.calls: list[dict[str, object]] = []
         self.frames = frames
 
-    def tokens(self, **kwargs: object) -> object:
-        self.calls.append(kwargs)
+    def token_frames(self, state: object, **kwargs: object) -> object:
+        self.calls.append(_recorded_state_call(state, kwargs))
         stream = _frame_stream(*self.frames)
         if self.awaitable:
             return self._await_stream(stream)
@@ -163,8 +252,8 @@ class RecordingTheme:
 
     async def _await_stream(
         self,
-        stream: AsyncIterator[tuple[Token | None, str]],
-    ) -> AsyncIterator[tuple[Token | None, str]]:
+        stream: AsyncIterator[tuple[TokenRenderDisplayToken | None, str]],
+    ) -> AsyncIterator[tuple[TokenRenderDisplayToken | None, str]]:
         return stream
 
 
@@ -176,11 +265,11 @@ class ClosableFrameStream:
     def __aiter__(self) -> "ClosableFrameStream":
         return self
 
-    async def __anext__(self) -> tuple[Token | None, str]:
+    async def __anext__(self) -> tuple[TokenRenderDisplayToken | None, str]:
         if self.yielded:
             raise StopAsyncIteration
         self.yielded = True
-        return Token(id=1, token="x", probability=0.7), "frame"
+        return _render_token(Token(id=1, token="x", probability=0.7)), "frame"
 
     async def aclose(self) -> None:
         self.closed = True
@@ -194,11 +283,11 @@ class FailingClosableFrameStream:
     def __aiter__(self) -> "FailingClosableFrameStream":
         return self
 
-    async def __anext__(self) -> tuple[Token | None, str]:
+    async def __anext__(self) -> tuple[TokenRenderDisplayToken | None, str]:
         if self.yielded:
             raise RuntimeError("theme stream failed")
         self.yielded = True
-        return Token(id=1, token="x", probability=0.7), "frame"
+        return _render_token(Token(id=1, token="x", probability=0.7)), "frame"
 
     async def aclose(self) -> None:
         self.closed = True
@@ -208,15 +297,24 @@ class ClosableTheme:
     def __init__(self, stream: ClosableFrameStream) -> None:
         self.stream = stream
 
-    def tokens(self, **_: object) -> ClosableFrameStream:
+    def token_frames(
+        self, *_args: object, **_kwargs: object
+    ) -> ClosableFrameStream:
         return self.stream
+
+
+class IterableFrameTheme:
+    def token_frames(self, *_args: object, **_kwargs: object) -> object:
+        return iter(((None, "iter-frame"),))
 
 
 class FailingClosableTheme:
     def __init__(self, stream: FailingClosableFrameStream) -> None:
         self.stream = stream
 
-    def tokens(self, **_: object) -> FailingClosableFrameStream:
+    def token_frames(
+        self, *_args: object, **_kwargs: object
+    ) -> FailingClosableFrameStream:
         return self.stream
 
 
@@ -225,8 +323,8 @@ class InvalidTheme:
 
 
 class NoTokenTheme(Theme):
-    def tokens(self, *_args: object, **_kwargs: object) -> object:
-        raise AssertionError("tokens should not be called")
+    def token_frames(self, *_args: object, **_kwargs: object) -> object:
+        raise AssertionError("token_frames should not be called")
 
 
 class FakeClock:
@@ -780,6 +878,7 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(call["ttnt"], 0.6)
         self.assertEqual(call["ttsr"], 0.4)
         self.assertEqual(call["elapsed"], 1.5)
+
         self.assertEqual(call["console_width"], 80)
         self.assertEqual(call["tool_token_count"], 1)
         self.assertEqual(call["maximum_frames"], 1)
@@ -796,8 +895,12 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tokens[0].tokens[0].token, "alt")
 
         predicate = call["focus_on_token_when"]
-        self.assertTrue(predicate(Token(id=9, token="low", probability=0.1)))
-        self.assertFalse(predicate(Token(id=9, token="high", probability=0.9)))
+        low_token = _render_token(Token(id=9, token="low", probability=0.1))
+        high_token = _render_token(Token(id=9, token="high", probability=0.9))
+        assert low_token is not None
+        assert high_token is not None
+        self.assertTrue(predicate(low_token))
+        self.assertFalse(predicate(high_token))
         self.assertTrue(
             predicate(
                 TokenDetail(
@@ -818,6 +921,25 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
                 )
             )
         )
+
+    async def test_live_adapter_accepts_synchronous_frame_iterable(
+        self,
+    ) -> None:
+        config = _config()
+        presenter = LegacyThemeStreamPresenter(
+            IterableFrameTheme(), getLogger(__name__)
+        )
+
+        items = await _collect(
+            presenter,
+            _request(config, _snapshot(config, answer="Hello")),
+        )
+
+        self.assertEqual(len(items), 1)
+        frame = items[0]
+        self.assertIsInstance(frame, CliStreamRenderableFrame)
+        assert isinstance(frame, CliStreamRenderableFrame)
+        self.assertEqual(frame.renderable, "iter-frame")
 
     async def test_live_adapter_hides_disabled_timing_fields(self) -> None:
         config = _config(
@@ -896,11 +1018,16 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
         request = _request(config, snapshot, context=context)
 
         async def mutate_theme_inputs(
+            state: object,
             **kwargs: object,
-        ) -> AsyncIterator[tuple[Token | None, str]]:
-            added_tokens = kwargs["added_tokens"]
-            special_tokens = kwargs["special_tokens"]
-            display_tokens = kwargs["tokens"]
+        ) -> AsyncIterator[tuple[TokenRenderDisplayToken | None, str]]:
+            del kwargs
+            added_tokens = _list_or_none(getattr(state, "added_tokens"))
+            special_tokens = _list_or_none(getattr(state, "special_tokens"))
+            display_tokens = [
+                _legacy_token_from_render_token(token)
+                for token in getattr(state, "display_tokens")
+            ]
             assert isinstance(added_tokens, list)
             assert isinstance(special_tokens, list)
             assert isinstance(display_tokens, list)
@@ -914,11 +1041,12 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
             yield None, "frame"
 
         class MutatingTheme:
-            def tokens(
+            def token_frames(
                 self,
+                state: object,
                 **kwargs: object,
-            ) -> AsyncIterator[tuple[Token | None, str]]:
-                return mutate_theme_inputs(**kwargs)
+            ) -> AsyncIterator[tuple[TokenRenderDisplayToken | None, str]]:
+                return mutate_theme_inputs(state, **kwargs)
 
         items = await _collect(
             LegacyThemeStreamPresenter(
@@ -1075,7 +1203,9 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
     ) -> None:
         config = _config()
         theme = RecordingTheme()
-        theme.tokens = lambda **_: object()  # type: ignore[method-assign]
+        theme.token_frames = (  # type: ignore[method-assign]
+            lambda *_args, **_kwargs: object()
+        )
         presenter = LegacyThemeStreamPresenter(theme, getLogger(__name__))
 
         with self.assertRaises(AssertionError):

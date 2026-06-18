@@ -10,7 +10,7 @@ from .display_snapshot import (
     CliStreamSnapshot,
 )
 
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass
 from inspect import isawaitable
 from logging import Logger
@@ -23,9 +23,7 @@ StreamFrameRole = Literal["stream", "events", "tools", "stats", "answer"]
 TokenFrameStream: TypeAlias = AsyncIterator[
     tuple["_ThemeTokenRenderDisplayToken | None", RenderableType]
 ]
-TokenFrameStreamFactory: TypeAlias = Callable[
-    ..., object
-]
+TokenFrameStreamFactory: TypeAlias = Callable[..., object]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -59,9 +57,9 @@ class _ThemeTokenRenderState:
     display_token_size: int | None = None
     display_probabilities: bool = False
     pick: int = 0
-    focus_on_token_when: Callable[
-        [_ThemeTokenRenderDisplayToken], bool
-    ] | None = None
+    focus_on_token_when: (
+        Callable[[_ThemeTokenRenderDisplayToken], bool] | None
+    ) = None
     reasoning_text_tokens: tuple[str, ...] = ()
     tool_text_tokens: tuple[str, ...] = ()
     answer_text_tokens: tuple[str, ...] = ()
@@ -469,9 +467,9 @@ def _theme_token_render_state(
     request: CliStreamPresenterRequest,
     *,
     display_probabilities: bool,
-    focus_on_token_when: Callable[
-        [_ThemeTokenRenderDisplayToken], bool
-    ] | None,
+    focus_on_token_when: (
+        Callable[[_ThemeTokenRenderDisplayToken], bool] | None
+    ),
     event_stats: EventStats | None,
 ) -> _ThemeTokenRenderState:
     snapshot = request.snapshot
@@ -546,9 +544,7 @@ async def _iter_token_frame_stream(
     for frame in frames:
         assert isinstance(frame, tuple) and len(frame) == 2
         current_token, renderable = frame
-        assert current_token is None or isinstance(
-            current_token, _ThemeTokenRenderDisplayToken
-        )
+        assert current_token is None or _is_render_token(current_token)
         yield cast(
             tuple[_ThemeTokenRenderDisplayToken | None, RenderableType],
             frame,
@@ -622,7 +618,7 @@ def _render_token_from_display_snapshot(
                 probability=candidate.probability,
             )
             for candidate in token.candidates
-        )
+        ),
     )
 
 
@@ -637,16 +633,28 @@ def _display_token_from_render_token(
             text=candidate.token,
             probability=candidate.probability,
         )
-        for candidate in token.tokens
+        for candidate in getattr(token, "tokens", ())
     )
     return CliDisplayTokenSnapshot(
-        sequence=token.sequence,
+        sequence=getattr(token, "sequence", 0),
         token_id=_display_token_id(token.id),
         text=token.token,
         probability=token.probability,
-        step=token.step,
-        probability_distribution=token.probability_distribution,
+        step=getattr(token, "step", None),
+        probability_distribution=getattr(
+            token, "probability_distribution", None
+        ),
         candidates=candidates,
+    )
+
+
+def _is_render_token(token: object) -> bool:
+    return (
+        hasattr(token, "sequence")
+        and hasattr(token, "token")
+        and hasattr(token, "id")
+        and hasattr(token, "probability")
+        and hasattr(token, "tokens")
     )
 
 

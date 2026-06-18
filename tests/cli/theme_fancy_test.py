@@ -17,6 +17,13 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from avalan.cli.display import CliStreamDisplayConfig
+from avalan.cli.display_snapshot import (
+    CliDisplayTokenSnapshot,
+    CliProjectionMetadataSummarySnapshot,
+    CliStreamSnapshot,
+    CliStreamSnapshotBuilder,
+)
 from avalan.cli.theme import (
     TokenRenderDisplayToken,
     TokenRenderDisplayTokenCandidate,
@@ -24,13 +31,6 @@ from avalan.cli.theme import (
 )
 from avalan.cli.theme import (
     fancy as fancy_theme_module,
-)
-from avalan.cli.display import CliStreamDisplayConfig
-from avalan.cli.display_snapshot import (
-    CliDisplayTokenSnapshot,
-    CliProjectionMetadataSummarySnapshot,
-    CliStreamSnapshot,
-    CliStreamSnapshotBuilder,
 )
 from avalan.cli.theme.fancy import FancyStreamPresenter, FancyTheme
 from avalan.cli.theme.stream_presenter import (
@@ -1574,7 +1574,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = theme.tokens(
+            frames = theme.token_frames(
                 _token_state(
                     answer_text_tokens=["a"],
                     tool_running_spinner=spinner,
@@ -1586,7 +1586,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 console_width=80,
                 logger=MagicMock(),
             )
-            frame = await gen.__anext__()
+            frame = frames[0]
         self.assertTrue(
             any(
                 getattr(r, "renderable", None) is spinner
@@ -1599,7 +1599,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = theme.tokens(
+            frames = theme.token_frames(
                 _token_state(
                     tool_text_tokens=["tool"],
                     answer_text_tokens=["answer"],
@@ -1611,7 +1611,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 console_width=80,
                 logger=MagicMock(),
             )
-            _, frame = await gen.__anext__()
+            _, frame = frames[0]
         self.assertEqual(len(frame.renderables), 2)
         self.assertIn("tool", str(frame.renderables[0].renderable.renderable))
 
@@ -1626,7 +1626,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = theme.tokens(
+            frames = theme.token_frames(
                 _token_state(
                     answer_text_tokens=["a"],
                     input_token_count=1,
@@ -1640,7 +1640,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 console_width=80,
                 logger=MagicMock(),
             )
-            _, frame = await gen.__anext__()
+            _, frame = frames[0]
         subtitle = frame.renderables[0].subtitle
         self.assertIn("1 token in", subtitle)
         self.assertIn("1 token out", subtitle)
@@ -1659,7 +1659,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = theme.tokens(
+            frames = theme.token_frames(
                 _token_state(
                     answer_text_tokens=["a"],
                     input_token_count=2,
@@ -1674,7 +1674,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 console_width=80,
                 logger=MagicMock(),
             )
-            _, frame = await gen.__anext__()
+            _, frame = frames[0]
         subtitle = frame.renderables[0].subtitle
         self.assertIn("2 tokens in", subtitle)
         self.assertIn("2 tokens out", subtitle)
@@ -1691,7 +1691,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = theme.tokens(
+            frames = theme.token_frames(
                 _token_state(
                     input_token_count=4,
                     total_tokens=0,
@@ -1704,7 +1704,7 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
                 console_width=80,
                 logger=MagicMock(),
             )
-            _, frame = await gen.__anext__()
+            _, frame = frames[0]
 
         self.assertEqual(len(frame.renderables), 1)
         panel = frame.renderables[0]
@@ -2351,7 +2351,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     display_token_size=1,
                     focus_on_token_when=lambda x: True,
@@ -2368,7 +2368,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 logger=MagicMock(),
                 maximum_frames=1,
             )
-            frame = await gen.__anext__()
+            frame = frames[0]
         self.assertTrue(frame[1].renderables)
 
     async def test_tokens_multiple_frames(self):
@@ -2388,7 +2388,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 lambda sep, items: sep.join(str(x) for x in items if x),
             ),
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     display_token_size=1,
                     display_probabilities=True,
@@ -2407,10 +2407,8 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 logger=MagicMock(),
                 maximum_frames=2,
             )
-            frame1 = await gen.__anext__()
-            frame2 = await gen.__anext__()
-            with self.assertRaises(StopAsyncIteration):
-                await gen.__anext__()
+            self.assertEqual(len(frames), 2)
+            frame1, frame2 = frames
 
         self.assertTrue(frame1[1].renderables)
         self.assertTrue(frame2[1].renderables)
@@ -2434,7 +2432,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 lambda sep, items: sep.join(str(x) for x in items if x),
             ),
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     display_token_size=1,
                     display_probabilities=True,
@@ -2452,7 +2450,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 logger=MagicMock(),
                 maximum_frames=1,
             )
-            token, frame = await gen.__anext__()
+            token, frame = frames[0]
 
         self.assertIsNotNone(token)
         assert token is not None
@@ -2472,7 +2470,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 lambda sep, items: sep.join(str(x) for x in items if x),
             ),
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     display_token_size=1,
                     display_probabilities=True,
@@ -2490,7 +2488,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 logger=MagicMock(),
                 maximum_frames=1,
             )
-            current_token, frame = await gen.__anext__()
+            current_token, frame = frames[0]
 
         self.assertIsNone(current_token)
         self.assertTrue(frame.renderables)
@@ -2499,7 +2497,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     answer_text_tokens=["x\n"],
                     ttft=0.0,
@@ -2510,9 +2508,8 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 console_width=40,
                 logger=MagicMock(),
             )
-            token, frame = await gen.__anext__()
-            with self.assertRaises(StopAsyncIteration):
-                await gen.__anext__()
+            self.assertEqual(len(frames), 1)
+            token, frame = frames[0]
 
         self.assertIsNone(token)
         self.assertTrue(frame.renderables)
@@ -2530,7 +2527,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 lambda sep, items: sep.join(str(x) for x in items if x),
             ),
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     display_token_size=1,
                     display_probabilities=True,
@@ -2548,7 +2545,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 logger=MagicMock(),
                 maximum_frames=1,
             )
-            frame = await gen.__anext__()
+            frame = frames[0]
         self.assertTrue(frame[1].renderables)
 
     async def test_tokens_wrap_long_lines(self):
@@ -2557,7 +2554,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     answer_text_tokens=[f"{long1}\n", long2],
                     ttft=0.0,
@@ -2568,7 +2565,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 console_width=40,
                 logger=MagicMock(),
             )
-            _, frame = await gen.__anext__()
+            _, frame = frames[0]
 
         self.assertEqual(len(frame.renderables), 1)
         text = frame.renderables[0].renderable.renderable
@@ -2582,7 +2579,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     thinking_text_tokens=[
                         f"{think_line}\n",
@@ -2597,7 +2594,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 console_width=40,
                 logger=MagicMock(),
             )
-            _, frame = await gen.__anext__()
+            _, frame = frames[0]
 
         self.assertEqual(len(frame.renderables), 2)
         think_text = frame.renderables[0].renderable.renderable
@@ -2611,7 +2608,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
         with patch(
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
-            gen = self.theme.tokens(
+            frames = self.theme.token_frames(
                 _token_state(
                     thinking_text_tokens=lines,
                     ttft=0.0,
@@ -2622,7 +2619,7 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 console_width=40,
                 logger=MagicMock(),
             )
-            _, frame = await gen.__anext__()
+            _, frame = frames[0]
 
         self.assertEqual(len(frame.renderables), 1)
         think_text = frame.renderables[0].renderable.renderable

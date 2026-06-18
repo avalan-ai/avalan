@@ -1,13 +1,12 @@
 """Reduce canonical stream projections into CLI display snapshots."""
 
-from ..event import Event, EventType
+from ..event import EventType
 from ..model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
     StreamItemKind,
     iter_stream_consumer_projections,
-    stream_projection_display_token,
     stream_projection_text_delta,
 )
 from .display import CliStreamDisplayConfig
@@ -25,15 +24,31 @@ from .display_snapshot import (
     CliStreamSnapshotBuilder,
     ToolResultStatus,
     ToolStatus,
+    display_token_snapshot_from_projection,
 )
 
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
+from typing import Protocol, runtime_checkable
 
 CliStreamClock = Callable[[], float]
-CliStreamReducerInput = StreamConsumerProjection | Event
+
+
+@runtime_checkable
+class CliSideChannelEvent(Protocol):
+    """Describe event objects emitted by CLI side-channel listeners."""
+
+    type: object
+    payload: object
+    observability: object
+    started: object
+    finished: object
+    elapsed: object
+
+
+CliStreamReducerInput = StreamConsumerProjection | CliSideChannelEvent
 
 
 @dataclass(slots=True)
@@ -126,7 +141,7 @@ class CliStreamSnapshotReducer:
         if self._is_duplicate_terminal_projection(projection):
             return False
         text_delta = stream_projection_text_delta(projection)
-        display_token = stream_projection_display_token(projection)
+        display_token = display_token_snapshot_from_projection(projection)
         now = self._active_stream_time()
         if now is not None:
             self._mark_started(now)
@@ -151,14 +166,14 @@ class CliStreamSnapshotReducer:
             tool_events_changed=tool_events_changed,
         )
 
-    def reduce_event(self, event: Event) -> CliStreamSnapshot:
+    def reduce_event(self, event: CliSideChannelEvent) -> CliStreamSnapshot:
         """Reduce one CLI side-channel event summary."""
         self.apply_event(event)
         return self.snapshot()
 
-    def apply_event(self, event: Event) -> bool:
+    def apply_event(self, event: CliSideChannelEvent) -> bool:
         """Apply one CLI side-channel event without building a snapshot."""
-        assert isinstance(event, Event)
+        assert isinstance(event, CliSideChannelEvent)
         event_type = event_type_value(event.type)
         if event_type == EventType.TOKEN_GENERATED.value:
             return False
@@ -523,7 +538,7 @@ class CliStreamSnapshotReducer:
             self._forget_side_channel_tool_event(event_id)
         return removed_count > 0
 
-    def _reduce_tool_event(self, event: Event) -> bool:
+    def _reduce_tool_event(self, event: CliSideChannelEvent) -> bool:
         tool_call_ids, name = _tool_event_identity(event)
         normalized_tool_ids = tuple(
             _normalized_tool_call_id(tool_call_id)
@@ -612,7 +627,7 @@ async def iter_cli_stream_snapshots(
     assert isinstance(items, AsyncIterable)
     reducer = CliStreamSnapshotReducer(config, clock=clock)
     async for item in items:
-        if isinstance(item, Event):
+        if isinstance(item, CliSideChannelEvent):
             yield reducer.reduce_event(item)
         else:
             yield reducer.reduce_projection(item)
@@ -685,7 +700,7 @@ def _usage_int(usage: Mapping[str, object], key: str) -> int | None:
 
 
 def _tool_event_identity(
-    event: Event,
+    event: CliSideChannelEvent,
 ) -> tuple[tuple[object, ...], object | None]:
     payload = event.payload
     calls = _tool_event_calls(payload)

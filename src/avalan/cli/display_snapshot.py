@@ -1,15 +1,9 @@
 """Represent immutable CLI stream display snapshots."""
 
-from ..entities import (
-    Token,
-    TokenDetail,
-    ToolCallDiagnostic,
-    ToolCallError,
-)
-from ..event import Event
+from ..entities import ToolCallDiagnostic, ToolCallError
 from ..model.stream import (
     StreamConsumerProjection,
-    stream_projection_display_token,
+    stream_projection_text_delta,
 )
 from .display import CliStreamDisplayConfig, DiagnosticChannel
 from .display_safety import (
@@ -34,6 +28,15 @@ DEFAULT_PROJECTION_SUMMARY_LIMIT = 4
 # A config value of display_tools_events=None means "no visible display
 # limit"; snapshots still use this hard cap so retained CLI history is bounded.
 DEFAULT_UNLIMITED_TOOL_HISTORY_LIMIT = 256
+_DISPLAY_TOKEN_METADATA_KEYS = frozenset(
+    (
+        "token_id",
+        "probability",
+        "step",
+        "probability_distribution",
+        "tokens",
+    )
+)
 
 HistoryItem = TypeVar("HistoryItem")
 CoalescedValue = TypeVar("CoalescedValue")
@@ -522,38 +525,89 @@ def retention_from_config(
     )
 
 
+def _has_token_display_fields(value: object) -> bool:
+    return (
+        hasattr(value, "id")
+        and hasattr(value, "token")
+        and hasattr(value, "probability")
+    )
+
+
+def _source_token_candidate_snapshots(
+    value: object,
+) -> tuple[CliDisplayTokenCandidateSnapshot, ...]:
+    if not isinstance(value, tuple | list):
+        return ()
+    candidates: list[CliDisplayTokenCandidateSnapshot] = []
+    for candidate in value:
+        if not _has_token_display_fields(candidate):
+            continue
+        candidates.append(
+            CliDisplayTokenCandidateSnapshot(
+                token_id=_safe_id(getattr(candidate, "id")),
+                text=safe_text(getattr(candidate, "token")),
+                probability=_safe_probability(
+                    getattr(candidate, "probability")
+                ),
+            )
+        )
+    return tuple(candidates)
+
+
 def display_token_snapshot(
-    token: Token,
+    token: object,
     *,
     sequence: int | None = None,
     include_candidates: bool = False,
 ) -> CliDisplayTokenSnapshot:
     """Return immutable display metadata for a token."""
-    assert isinstance(token, Token)
+    assert _has_token_display_fields(token)
     candidates: tuple[CliDisplayTokenCandidateSnapshot, ...] = ()
-    if include_candidates and isinstance(token, TokenDetail) and token.tokens:
-        candidates = tuple(
-            CliDisplayTokenCandidateSnapshot(
-                token_id=_safe_id(candidate.id),
-                text=safe_text(candidate.token),
-                probability=_safe_probability(candidate.probability),
-            )
-            for candidate in token.tokens
+    if include_candidates:
+        candidates = _source_token_candidate_snapshots(
+            getattr(token, "tokens", ())
         )
-    probability_distribution = (
-        _primitive_value(token.probability_distribution)
-        if isinstance(token, TokenDetail)
-        else None
+    probability_distribution = _primitive_value(
+        getattr(token, "probability_distribution", None)
     )
-    step = token.step if isinstance(token, TokenDetail) else None
+    step = _metadata_int(getattr(token, "step", None))
     return CliDisplayTokenSnapshot(
         sequence=sequence,
-        token_id=_safe_id(token.id),
-        text=safe_text(token.token),
-        probability=_safe_probability(token.probability),
+        token_id=_safe_id(getattr(token, "id")),
+        text=safe_text(getattr(token, "token")),
+        probability=_safe_probability(getattr(token, "probability")),
         step=step,
         probability_distribution=probability_distribution,
         candidates=candidates,
+    )
+
+
+def display_token_snapshot_from_projection(
+    projection: StreamConsumerProjection,
+) -> CliDisplayTokenSnapshot | None:
+    """Return display token snapshot from a canonical projection."""
+    assert isinstance(projection, StreamConsumerProjection)
+    token_text = stream_projection_text_delta(projection)
+    if token_text is None:
+        return None
+    metadata = projection.metadata
+    if not any(key in metadata for key in _DISPLAY_TOKEN_METADATA_KEYS):
+        return None
+    token_id = _metadata_int(metadata.get("token_id"))
+    probability = _metadata_probability(metadata.get("probability"))
+    step = _metadata_int(metadata.get("step"))
+    probability_distribution = _metadata_string(
+        metadata.get("probability_distribution")
+    )
+    candidates = _metadata_token_candidate_snapshots(metadata.get("tokens"))
+    return CliDisplayTokenSnapshot(
+        sequence=projection.sequence,
+        token_id=_safe_id(token_id),
+        text=safe_text(token_text),
+        probability=_safe_probability(probability),
+        step=step,
+        probability_distribution=_primitive_value(probability_distribution),
+        candidates=tuple(candidates),
     )
 
 
@@ -732,7 +786,7 @@ class CliStreamSnapshotBuilder:
 
     def add_display_token(
         self,
-        token: Token,
+        token: object,
         *,
         sequence: int | None = None,
     ) -> None:
@@ -756,10 +810,16 @@ class CliStreamSnapshotBuilder:
         projection: StreamConsumerProjection,
     ) -> None:
         """Add display token metadata from a canonical projection."""
-        token = stream_projection_display_token(projection)
-        if token is None:
+        snapshot = display_token_snapshot_from_projection(projection)
+        if snapshot is None:
             return
-        self.add_display_token(token, sequence=projection.sequence)
+        if self.retention.display_token_history_limit == 0:
+            return
+        self._display_tokens.append(snapshot)
+        self._token_counts = replace(
+            self._token_counts,
+            display_tokens=self._token_counts.display_tokens + 1,
+        )
 
     def add_active_tool(
         self,
@@ -964,17 +1024,18 @@ class CliStreamSnapshotBuilder:
 
     def add_tool_event(
         self,
-        event: Event,
+        event: object,
         *,
         tool_call_id: object | None = None,
         name: object | None = None,
         sequence: int | None = None,
     ) -> None:
         """Add a safe CLI-only tool event summary."""
-        assert isinstance(event, Event)
-        event_type = event_type_value(event.type)
+        assert _has_event_display_fields(event)
+        event_type = event_type_value(getattr(event, "type"))
         if not self.display.show_tools or not event_type.startswith("tool_"):
             return
+        payload = getattr(event, "payload", None)
         self._tool_events.append(
             CliToolEventSummarySnapshot(
                 event_type=event_type,
@@ -985,17 +1046,13 @@ class CliStreamSnapshotBuilder:
                 ),
                 name=None if name is None else safe_text(name),
                 payload_summary=(
-                    None
-                    if event.payload is None
-                    else safe_summary(event.payload)
+                    None if payload is None else safe_summary(payload)
                 ),
-                observability_summary=safe_summary(
-                    event.observability.to_dict()
-                ),
+                observability_summary=_event_observability_summary(event),
                 sequence=sequence,
-                started=event.started,
-                finished=event.finished,
-                elapsed=event.elapsed,
+                started=getattr(event, "started"),
+                finished=getattr(event, "finished"),
+                elapsed=getattr(event, "elapsed"),
             )
         )
 
@@ -1011,30 +1068,27 @@ class CliStreamSnapshotBuilder:
 
     def add_event(
         self,
-        event: Event,
+        event: object,
         *,
         sequence: int | None = None,
     ) -> None:
         """Add a safe non-tool event summary when event display is enabled."""
-        assert isinstance(event, Event)
-        event_type = event_type_value(event.type)
+        assert _has_event_display_fields(event)
+        event_type = event_type_value(getattr(event, "type"))
         if not self.display.show_events or event_type.startswith("tool_"):
             return
+        payload = getattr(event, "payload", None)
         self._events.append(
             CliEventSummarySnapshot(
                 event_type=event_type,
                 payload_summary=(
-                    None
-                    if event.payload is None
-                    else safe_summary(event.payload)
+                    None if payload is None else safe_summary(payload)
                 ),
-                observability_summary=safe_summary(
-                    event.observability.to_dict()
-                ),
+                observability_summary=_event_observability_summary(event),
                 sequence=sequence,
-                started=event.started,
-                finished=event.finished,
-                elapsed=event.elapsed,
+                started=getattr(event, "started"),
+                finished=getattr(event, "finished"),
+                elapsed=getattr(event, "elapsed"),
             )
         )
 
@@ -1279,6 +1333,63 @@ def _safe_probability(value: object | None) -> float | None:
     if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
     return None
+
+
+def _has_event_display_fields(value: object) -> bool:
+    return (
+        hasattr(value, "type")
+        and hasattr(value, "payload")
+        and hasattr(value, "observability")
+        and hasattr(value, "started")
+        and hasattr(value, "finished")
+        and hasattr(value, "elapsed")
+    )
+
+
+def _event_observability_summary(value: object) -> str:
+    observability = getattr(value, "observability")
+    to_dict = getattr(observability, "to_dict", None)
+    return safe_summary(to_dict() if callable(to_dict) else observability)
+
+
+def _metadata_int(value: object | None) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _metadata_probability(value: object | None) -> float | None:
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def _metadata_string(value: object | None) -> str | None:
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _metadata_token_candidate_snapshots(
+    value: object | None,
+) -> list[CliDisplayTokenCandidateSnapshot]:
+    if not isinstance(value, list | tuple):
+        return []
+    candidates: list[CliDisplayTokenCandidateSnapshot] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        token = item.get("token")
+        if not isinstance(token, str):
+            continue
+        candidates.append(
+            CliDisplayTokenCandidateSnapshot(
+                token_id=_safe_id(_metadata_int(item.get("token_id"))),
+                text=safe_text(token),
+                probability=_metadata_probability(item.get("probability")),
+            )
+        )
+    return candidates
 
 
 def _tool_name(value: object) -> str:

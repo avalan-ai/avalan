@@ -100,6 +100,7 @@ from avalan.task.converters import (
 )
 from avalan.task.converters.pdf_image import pdf_image_converter_capability
 from avalan.task.store import TaskStoreConflictError, TaskStoreNotFoundError
+from avalan.task.targets import flow as flow_target_module
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
@@ -517,6 +518,57 @@ class FlowRunCommandTestCase(TestCase):
         self.assertEqual(flow_stats["output_tokens"], 0)
         self.assertEqual(flow_stats["reasoning_tokens"], 1)
         self.assertNotIn("private reasoning", str(event.payload))
+
+    def test_flow_progress_monitor_counts_wrapped_canonical_token_event(
+        self,
+    ) -> None:
+        theme = _RecordingFlowProgressTheme()
+        monitor = flow_cmds._FlowRunProgressMonitor(
+            console=Console(file=StringIO(), width=120),
+            theme=cast(Any, theme),
+            mermaid_source="flowchart LR\n  write_spec_request\n",
+            node_states={"write_spec_request": "pending"},
+        )
+        item = CanonicalStreamItem(
+            stream_session_id="stream-1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="private answer",
+        )
+        captured: list[Event] = []
+        listener = flow_target_module._flow_node_event_listener(
+            "write_spec_request",
+            captured.append,
+        )
+        assert listener is not None
+        listener(
+            Event.from_observability_payload(
+                type=EventType.TOKEN_GENERATED,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        stream_observability_payload(item)
+                    )
+                ),
+            )
+        )
+        event = sanitize_raw_task_event(captured[0], PrivacySanitizer())
+
+        monitor.observe(
+            SimpleNamespace(
+                event_type="flow_node_started",
+                payload={"node": "write_spec_request", "status": "started"},
+            )
+        )
+        monitor.observe(event)
+        monitor.render()
+
+        flow_stats = theme.flow_stats["write_spec_request"]
+        self.assertEqual(flow_stats["output_tokens"], 1)
+        self.assertEqual(flow_stats["reasoning_tokens"], 0)
+        self.assertNotIn("private answer", str(event.payload))
 
     def test_flow_progress_monitor_adds_usage_when_not_streaming(
         self,

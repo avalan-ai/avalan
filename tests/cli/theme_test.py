@@ -2,7 +2,7 @@ import unittest
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
-from logging import getLogger
+from logging import Logger, getLogger
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import UUID
@@ -10,7 +10,7 @@ from uuid import UUID
 import numpy as np
 
 from avalan.cli.download import create_live_tqdm_class, tqdm_rich_progress
-from avalan.cli.theme import Theme, TokenRenderState
+from avalan.cli.theme import Theme, TokenRenderFrame, TokenRenderState
 from avalan.cli.theme.fancy import FancyTheme
 from avalan.entities import (
     HubCache,
@@ -1090,6 +1090,63 @@ class ThemeTokensTestCase(unittest.IsolatedAsyncioTestCase):
         ]
 
         self.assertEqual(frames, [])
+
+    async def test_tokens_delegates_to_token_frames(self) -> None:
+        class YieldingTheme(Theme):
+            def token_frames(
+                self,
+                state: TokenRenderState,
+                *,
+                console_width: int,
+                logger: Logger,
+                maximum_frames: int | None = None,
+                logits_count: int | None = None,
+                tool_events_limit: int | None = None,
+                think_height: int = 6,
+                think_padding: int = 1,
+                tool_height: int = 6,
+                tool_padding: int = 1,
+                height: int = 12,
+                padding: int = 1,
+                wrap_padding: int = 4,
+                limit_think_height: bool = True,
+                limit_tool_height: bool = True,
+                limit_answer_height: bool = False,
+                start_thinking: bool = False,
+            ) -> tuple[TokenRenderFrame, ...]:
+                _ = (
+                    state,
+                    console_width,
+                    logger,
+                    maximum_frames,
+                    logits_count,
+                    tool_events_limit,
+                    think_height,
+                    think_padding,
+                    tool_height,
+                    tool_padding,
+                    height,
+                    padding,
+                    wrap_padding,
+                    limit_think_height,
+                    limit_tool_height,
+                    limit_answer_height,
+                    start_thinking,
+                )
+                return ((None, "frame"),)
+
+        theme = YieldingTheme(_gettext, _ngettext)
+
+        frames = [
+            frame
+            async for frame in theme.tokens(
+                TokenRenderState(model_id="m"),
+                console_width=80,
+                logger=getLogger(__name__),
+            )
+        ]
+
+        self.assertEqual(frames, [(None, "frame")])
 
 
 class ThemeMiscMethodsTestCase(unittest.TestCase):

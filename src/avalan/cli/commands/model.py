@@ -3,7 +3,10 @@ from ...agent.orchestrator import Orchestrator
 from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
 from ...cli.display import CliStreamDisplayConfig, cli_stream_display_config
-from ...cli.display_reducer import CliStreamSnapshotReducer
+from ...cli.display_reducer import (
+    CliSideChannelEvent,
+    CliStreamSnapshotReducer,
+)
 from ...cli.stream_coordinator import CliStreamCoordinator
 from ...cli.stream_presenter import (
     CliStreamPresenterContext,
@@ -24,7 +27,7 @@ from ...entities import (
     Modality,
     Model,
 )
-from ...event import TOOL_TYPES, Event, EventStats, EventType
+from ...event import TOOL_TYPES, EventStats, EventType
 from ...model.call import ModelCall, ModelCallContext
 from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.input import input_files
@@ -992,7 +995,11 @@ async def token_generation(
         if raise_failure:
             raise_presentation_retry_failure()
 
-    async def render_snapshot(*, force: bool = False) -> None:
+    async def render_snapshot(
+        *,
+        force: bool = False,
+        flush: bool = False,
+    ) -> None:
         nonlocal presented_snapshot_revision
         raise_presentation_retry_failure()
         if presented_snapshot_revision == snapshot_revision:
@@ -1011,6 +1018,8 @@ async def token_generation(
         )
         async for item in presenter.present(request):
             await coordinator.handle_item(item)
+        if flush:
+            await coordinator.flush()
         presented_snapshot_revision = snapshot_revision
 
     async def reduce_projection(
@@ -1030,10 +1039,11 @@ async def token_generation(
                     force=(
                         projection.terminal_outcome is not None
                         or _stream_projection_forces_presentation(projection)
-                    )
+                    ),
+                    flush=projection.terminal_outcome is not None,
                 )
 
-    async def reduce_event(event: Event) -> None:
+    async def reduce_event(event: CliSideChannelEvent) -> None:
         nonlocal snapshot_revision
         async with render_lock:
             if not side_channel_events_enabled:
@@ -1045,8 +1055,8 @@ async def token_generation(
 
     async def event_stream() -> None:
         async for event in event_listen(stop_signal=stop_signal):
-            assert isinstance(event, Event)
-            await reduce_event(event)
+            assert _has_side_channel_event_fields(event)
+            await reduce_event(cast(CliSideChannelEvent, event))
 
     async def response_stream() -> None:
         nonlocal side_channel_events_enabled, snapshot_revision
@@ -1057,6 +1067,9 @@ async def token_generation(
                 run_id="cli-render-run",
                 turn_id="cli-render-turn",
             ):
+                if projection.terminal_outcome is not None:
+                    side_channel_events_enabled = False
+                    stop_signal.set()
                 await reduce_projection(projection)
         except BaseException:
             stop_signal.set()
@@ -1080,7 +1093,7 @@ async def token_generation(
                     )
                     if changed:
                         snapshot_revision += 1
-                await render_snapshot(force=True)
+                await render_snapshot(force=True, flush=True)
                 await coordinator.flush()
 
     if coordinator_container is not None:
@@ -1253,15 +1266,15 @@ def _stream_presenter_context(
     if display_config.show_token_details or dtokens_pick > 0:
         tokenizer_config = getattr(lm, "tokenizer_config", None)
         if tokenizer_config is not None:
-            tokenizer_tokens = _stream_tokenizer_tuple(
+            tokenizer_tokens = _presenter_tokenizer_tuple(
                 getattr(tokenizer_config, "tokens", None)
             )
-            tokenizer_special_tokens = _stream_tokenizer_tuple(
+            tokenizer_special_tokens = _presenter_tokenizer_tuple(
                 getattr(tokenizer_config, "special_tokens", None)
             )
 
     return CliStreamPresenterContext(
-        model_id=_stream_model_id(args, lm),
+        model_id=_presenter_model_id(args, lm),
         console_width=_stream_console_width(console),
         input_token_count=_stream_input_token_count(
             orchestrator,
@@ -1276,7 +1289,7 @@ def _stream_presenter_context(
     )
 
 
-def _stream_model_id(args: Namespace, lm: TextGenerationModel) -> str:
+def _presenter_model_id(args: Namespace, lm: TextGenerationModel) -> str:
     model_id = getattr(lm, "model_id", None)
     if isinstance(model_id, str) and model_id.strip():
         return model_id
@@ -1333,7 +1346,7 @@ def _stream_nonzero_int(value: object) -> int | None:
     return value
 
 
-def _stream_tokenizer_tuple(value: object) -> tuple[str, ...] | None:
+def _presenter_tokenizer_tuple(value: object) -> tuple[str, ...] | None:
     if value is None:
         return None
     if isinstance(value, str):
@@ -1518,10 +1531,14 @@ _CANONICAL_TOOL_EVENT_KIND_PREFIXES = (
 )
 
 
-def _event_targets_tool_panel(event: Event) -> bool:
+def _has_side_channel_event_fields(event: object) -> bool:
+    return hasattr(event, "type") and hasattr(event, "payload")
+
+
+def _event_targets_tool_panel(event: object) -> bool:
     canonical_payload = _canonical_event_payload(event)
     if canonical_payload is None:
-        return event.type in TOOL_TYPES
+        return getattr(event, "type") in TOOL_TYPES
     channel = canonical_payload.get("channel")
     if channel in _CANONICAL_TOOL_EVENT_CHANNELS:
         return True
@@ -1531,8 +1548,8 @@ def _event_targets_tool_panel(event: Event) -> bool:
     )
 
 
-def _canonical_event_payload(event: Event) -> Mapping[str, Any] | None:
-    payload = event.payload
+def _canonical_event_payload(event: object) -> Mapping[str, Any] | None:
+    payload = getattr(event, "payload", None)
     if not isinstance(payload, Mapping):
         return None
     if not all(
@@ -1716,8 +1733,7 @@ async def _token_stream(
         sampled_alternative = any(
             candidate.id != dtoken.id
             and candidate.probability is not None
-            and candidate.probability
-            >= display_probabilities_sample_minimum
+            and candidate.probability >= display_probabilities_sample_minimum
             for candidate in dtoken.tokens
         )
         return low_probability or sampled_alternative
@@ -1957,9 +1973,9 @@ def _stream_text(
     return stream_projection_text_delta(token)
 
 
-def _stream_event_type(event: Event) -> str:
-    assert isinstance(event, Event)
-    event_type = event.type
+def _side_channel_event_type(event: object) -> str:
+    assert _has_side_channel_event_fields(event)
+    event_type = getattr(event, "type")
     if isinstance(event_type, EventType):
         return event_type.value
     return str(event_type)

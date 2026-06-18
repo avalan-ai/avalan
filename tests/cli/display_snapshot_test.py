@@ -402,6 +402,39 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         with self.assertRaises(FrozenInstanceError):
             snapshot.build_stats.snapshots_built = 0
 
+    def test_display_token_snapshot_filters_malformed_structural_candidates(
+        self,
+    ) -> None:
+        class TokenLike:
+            id = 7
+            token = "answer"
+            probability = 0.4
+            tokens = object()
+
+        class IncompleteCandidate:
+            id = 8
+            token = "ignored"
+
+        class Candidate:
+            id = 9
+            token = "candidate"
+            probability = 0.2
+
+        without_candidates = display_token_snapshot(
+            TokenLike(), include_candidates=True
+        )
+
+        self.assertEqual(without_candidates.candidates, ())
+
+        TokenLike.tokens = [IncompleteCandidate(), Candidate()]
+
+        snapshot = display_token_snapshot(TokenLike(), include_candidates=True)
+
+        self.assertEqual(len(snapshot.candidates), 1)
+        self.assertEqual(snapshot.candidates[0].token_id, 9)
+        self.assertEqual(snapshot.candidates[0].text, "candidate")
+        self.assertEqual(snapshot.candidates[0].probability, 0.2)
+
     def test_snapshots_are_isolated_after_builder_mutation(self) -> None:
         builder = CliStreamSnapshotBuilder(
             _config(stats=True, display_tools=True, display_events=True)
@@ -691,6 +724,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
                 metadata={
                     "token_id": 9,
                     "probability": 0.4,
+                    "probability_distribution": "softmax",
                     "tokens": [
                         {
                             "token_id": 10,
@@ -708,6 +742,10 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.display_tokens[0].sequence, 3)
         self.assertEqual(snapshot.display_tokens[0].text, "answer")
         self.assertEqual(snapshot.display_tokens[0].probability, 0.4)
+        self.assertEqual(
+            snapshot.display_tokens[0].probability_distribution,
+            "softmax",
+        )
         self.assertEqual(len(snapshot.display_tokens[0].candidates), 1)
         self.assertEqual(
             snapshot.display_tokens[0].candidates[0].text, "candidate"

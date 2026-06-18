@@ -793,6 +793,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             try:
                 arguments = loads(argument_text)
             except JSONDecodeError as exc:
+                ready_arguments = ready_data.get("arguments")
+                if isinstance(
+                    ready_arguments, dict
+                ) and not argument_text.lstrip().startswith(("{", "[")):
+                    return cast(dict[str, Any], ready_arguments)
                 self._append_canonical_tool_call_lifecycle_diagnostic(
                     tool_call_id=tool_call_id,
                     code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS.value,

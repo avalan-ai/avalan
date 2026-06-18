@@ -1141,7 +1141,10 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
         from logging import getLogger
 
         self.logger = getLogger("cli-test")
-        with patch.object(sys, "argv", ["prog"]):
+        with (
+            patch.dict("os.environ", {"HF_TOKEN": ""}),
+            patch.object(sys, "argv", ["prog"]),
+        ):
             self.cli = CLI(self.logger)
         self.translator = SimpleNamespace(
             gettext=lambda s: s, ngettext=lambda s, p, n: s if n == 1 else p
