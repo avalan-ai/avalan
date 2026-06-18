@@ -91,6 +91,99 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
             "unsupported legacy local stream item",
         )
 
+    async def test_stream_rejects_legacy_token_subclass_chunk(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        class LegacyTokenSubclass(Token):
+            pass
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(
+                iter([LegacyTokenSubclass(token="legacy")]),
+                use_executor=False,
+            )
+            started = await stream.__anext__()
+            errored = await stream.__anext__()
+
+        del sys.modules["avalan.model"].TextGenerationModel
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(
+            errored.data["message"],
+            "unsupported legacy local stream item",
+        )
+
+    async def test_stream_accepts_non_legacy_token_and_text_chunks(
+        self,
+    ) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            stream = MlxLmStream(
+                iter(
+                    [
+                        types.SimpleNamespace(token="tok", id=3),
+                        types.SimpleNamespace(text=" text"),
+                    ]
+                ),
+                use_executor=False,
+            )
+            items = [item async for item in stream]
+
+        del sys.modules["avalan.model"].TextGenerationModel
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["tok", " text"],
+        )
+        self.assertEqual(items[1].metadata, {"token_id": 3})
+        self.assertEqual(items[2].metadata, {})
+
     async def test_stream_factory_stays_on_worker_thread(self) -> None:
         stub = types.ModuleType("mlx_lm")
         stub.generate = MagicMock()

@@ -853,7 +853,47 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/model/model_stream_contract_test.py"
             "::StreamContractTestCase"
+            "::test_legacy_classifier_guard_strict_mode_reports_rejection_guards"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_production_streaming_source_has_no_legacy_classifiers"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_forbidden_text_guard_detects_tokens_with_narrow_allowances"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_forbidden_production_streaming_text_tokens_are_absent"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
             "::test_legacy_classifier_guard_detects_grouped_aliases"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_legacy_classifier_guard_detects_type_and_match_classifiers"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_legacy_classifier_guard_detects_delayed_alias_classifiers"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_legacy_classification_import_guard_detects_common_shapes"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_runtime_streaming_source_has_no_legacy_classification_imports"
         ),
         (
             "tests/model/model_stream_contract_test.py"
@@ -868,7 +908,37 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/model/model_stream_contract_test.py"
             "::StreamContractTestCase"
+            "::test_public_canonical_to_legacy_projection_guard_detects_shapes"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_public_canonical_to_legacy_projections_are_absent"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
             "::test_protocol_projection_mapper_guard_detects_merged_constant_keys"
+        ),
+        (
+            "tests/model/nlp/mlxlm_extra_test.py"
+            "::MlxLmStreamTestCase"
+            "::test_stream_accepts_non_legacy_token_and_text_chunks"
+        ),
+        (
+            "tests/model/nlp/mlxlm_extra_test.py"
+            "::MlxLmStreamTestCase"
+            "::test_stream_rejects_legacy_token_subclass_chunk"
+        ),
+        (
+            "tests/model/nlp/vllm_extra_test.py"
+            "::VllmStreamTestCase"
+            "::test_stream_accepts_non_legacy_token_and_text_chunks"
+        ),
+        (
+            "tests/model/nlp/vllm_extra_test.py"
+            "::VllmStreamTestCase"
+            "::test_stream_rejects_legacy_token_subclass_chunk"
         ),
         (
             "tests/model/model_stream_contract_test.py"

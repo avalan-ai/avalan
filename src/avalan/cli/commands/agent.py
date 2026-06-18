@@ -17,7 +17,7 @@ from ...entities import (
     ToolCallRecoveryFormat,
     ToolFormat,
 )
-from ...event import Event, EventStats
+from ...event import EventStats, EventType
 from ...event.manager import EventManagerMode
 from ...model.hubs.huggingface import HuggingfaceHub
 from ...model.nlp.text.generation import TextGenerationModel
@@ -643,9 +643,10 @@ async def agent_run(
         )
 
     async def _event_listener(event: object) -> None:
-        assert isinstance(event, Event)
         nonlocal event_stats
-        event_stats.record_trigger(event.type)
+        event_type = getattr(event, "type", None)
+        assert isinstance(event_type, EventType)
+        event_stats.record_trigger(event_type)
 
     async def _init_orchestrator() -> Orchestrator:
         loader = OrchestratorLoader(

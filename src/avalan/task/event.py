@@ -1,4 +1,9 @@
-from ..event import Event, EventPayloadKind, EventType
+from ..event import (
+    Event,
+    EventObservabilityPayload,
+    EventPayloadKind,
+    EventType,
+)
 from ..types import (
     JsonValue,
 )
@@ -46,6 +51,16 @@ _ENGINE_EVENT_TYPES = frozenset(
 )
 _USAGE_OBSERVED_EVENT_TYPE = "usage_observed"
 _USAGE_EVENT_TYPES = frozenset({_USAGE_OBSERVED_EVENT_TYPE})
+_RAW_EVENT_SHAPE_ATTRIBUTES = frozenset(
+    {
+        "type",
+        "payload",
+        "observability_payload",
+        "started",
+        "finished",
+        "elapsed",
+    }
+)
 
 
 class TaskEventCategory(StrEnum):
@@ -247,7 +262,9 @@ def freeze_task_event_value(value: object) -> TaskEventValue:
 
 
 def _raw_event_type(event: object) -> str:
-    raw_type = event.type if isinstance(event, Event) else None
+    if not _has_raw_event_shape(event):
+        return _UNKNOWN_EVENT_TYPE
+    raw_type = getattr(event, "type", None)
     if isinstance(raw_type, EventType):
         return raw_type.value
     if isinstance(raw_type, str) and _is_safe_event_type(raw_type):
@@ -256,25 +273,35 @@ def _raw_event_type(event: object) -> str:
 
 
 def _raw_event_payload(event: object) -> Mapping[str, object]:
-    if not isinstance(event, Event):
+    if not _has_raw_event_shape(event):
         return MappingProxyType({})
     payload: dict[str, object] = {}
-    if isinstance(event.payload, Mapping):
-        payload.update(event.payload)
-    observability_payload = event.observability_payload
+    raw_payload = getattr(event, "payload", None)
+    if isinstance(raw_payload, Mapping):
+        payload.update(raw_payload)
+    observability_payload = getattr(event, "observability_payload", None)
     if (
-        observability_payload is not None
+        isinstance(observability_payload, EventObservabilityPayload)
         and observability_payload.kind is EventPayloadKind.CANONICAL_STREAM
     ):
         payload["canonical_stream"] = dict(observability_payload.data)
-    if _finite_number(event.started):
-        payload["started_at"] = event.started
-    if _finite_number(event.finished):
-        payload["finished_at"] = event.finished
-    if _finite_number(event.elapsed):
-        elapsed = cast(float, event.elapsed)
+    started = getattr(event, "started", None)
+    finished = getattr(event, "finished", None)
+    elapsed = getattr(event, "elapsed", None)
+    if _finite_number(started):
+        payload["started_at"] = started
+    if _finite_number(finished):
+        payload["finished_at"] = finished
+    if _finite_number(elapsed):
+        elapsed = cast(float, elapsed)
         payload["duration_ms"] = elapsed * 1000
     return MappingProxyType(payload)
+
+
+def _has_raw_event_shape(event: object) -> bool:
+    return all(
+        hasattr(event, attribute) for attribute in _RAW_EVENT_SHAPE_ATTRIBUTES
+    )
 
 
 def _finite_number(value: object) -> bool:
