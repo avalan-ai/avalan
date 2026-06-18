@@ -35,7 +35,10 @@ from ...model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
+    StreamItemCorrelation,
     StreamItemKind,
+    StreamTerminalOutcome,
+    StreamValidationError,
     project_stream_consumer_item,
     stream_consumer_iterator,
     stream_projection_is_reasoning,
@@ -842,28 +845,36 @@ async def token_generation(
         display_config=display_config,
         dtokens_pick=dtokens_pick,
     )
+    diagnostics_enabled = (
+        display_config.diagnostic_channel != "none"
+        and (
+            display_config.show_stats
+            or display_config.show_tools
+            or display_config.show_events
+        )
+        and (
+            display_config.live_enabled
+            or _stream_presenter_supports_stderr_diagnostics(presenter)
+        )
+    )
+    presenter_mode: StreamPresenterMode = (
+        "live" if diagnostics_enabled else "answer"
+    )
     event_listen: Any = None
-    if orchestrator is not None and (
-        display_config.show_events or display_config.show_tools
+    if (
+        diagnostics_enabled
+        and orchestrator is not None
+        and (display_config.show_events or display_config.show_tools)
     ):
         event_manager = getattr(orchestrator, "event_manager", None)
         listen = getattr(event_manager, "listen", None)
         if callable(listen):
             event_listen = listen
-    live_diagnostics_enabled = display_config.live_enabled and (
-        display_config.show_stats
-        or display_config.show_tools
-        or display_config.show_events
-    )
-    presenter_mode: StreamPresenterMode = (
-        "answer"
-        if display_config.answer_stdout_only or not live_diagnostics_enabled
-        else "live"
-    )
     coordinator = CliStreamCoordinator(console, display_config)
     side_channel_events_enabled = True
     snapshot_revision = 0
     presented_snapshot_revision = -1
+    last_projection_sequence: int | None = None
 
     async def render_snapshot() -> None:
         nonlocal presented_snapshot_revision
@@ -884,7 +895,9 @@ async def token_generation(
         projection: StreamConsumerProjection,
     ) -> None:
         nonlocal side_channel_events_enabled, snapshot_revision
+        nonlocal last_projection_sequence
         async with render_lock:
+            last_projection_sequence = projection.sequence
             reducer.reduce_projection(projection)
             if projection.terminal_outcome is not None:
                 side_channel_events_enabled = False
@@ -909,7 +922,7 @@ async def token_generation(
             await reduce_event(event)
 
     async def response_stream() -> None:
-        nonlocal side_channel_events_enabled
+        nonlocal side_channel_events_enabled, snapshot_revision
         try:
             async for projection in _stream_render_projections(
                 response,
@@ -925,6 +938,20 @@ async def token_generation(
             side_channel_events_enabled = False
             stop_signal.set()
             async with render_lock:
+                if (
+                    _stream_presenter_requires_completion_snapshot(presenter)
+                    and not reducer.snapshot().terminal.completed
+                ):
+                    reducer.reduce_projection(
+                        _stream_completed_projection(
+                            (
+                                last_projection_sequence + 1
+                                if last_projection_sequence is not None
+                                else 0
+                            ),
+                        )
+                    )
+                    snapshot_revision += 1
                 await render_snapshot()
                 await coordinator.flush()
 
@@ -1024,6 +1051,33 @@ async def token_generation(
                 if not task.done():
                     task.cancel()
             await gather(event_task, response_task, return_exceptions=True)
+
+
+def _stream_completed_projection(sequence: int) -> StreamConsumerProjection:
+    assert isinstance(sequence, int)
+    assert sequence >= 0
+    return StreamConsumerProjection(
+        stream_session_id="cli-render-stream",
+        run_id="cli-render-run",
+        turn_id="cli-render-turn",
+        sequence=sequence,
+        kind=StreamItemKind.STREAM_COMPLETED,
+        channel=StreamChannel.CONTROL,
+        correlation=StreamItemCorrelation(),
+        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+    )
+
+
+def _stream_presenter_requires_completion_snapshot(
+    presenter: object,
+) -> bool:
+    return bool(getattr(presenter, "requires_completion_snapshot", False))
+
+
+def _stream_presenter_supports_stderr_diagnostics(
+    presenter: object,
+) -> bool:
+    return bool(getattr(presenter, "supports_stderr_diagnostics", False))
 
 
 def _stream_presenter_context(

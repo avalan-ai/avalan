@@ -2,7 +2,7 @@ from argparse import Namespace
 from dataclasses import dataclass
 from typing import Literal
 
-DiagnosticChannel = Literal["live", "none"]
+DiagnosticChannel = Literal["live", "stderr", "none"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,31 +59,33 @@ class CliStreamDisplayConfig:
     @property
     def diagnostic_channel(self) -> DiagnosticChannel:
         """Return where optional streaming diagnostics should render."""
-        if self.quiet or not self.interactive:
+        if self.quiet:
             return "none"
         if self.stats or self.display_tools or self.display_events:
-            return "live"
+            return "live" if self.interactive else "stderr"
         return "none"
 
     @property
     def show_stats(self) -> bool:
         """Return whether token statistics should render."""
-        return self.stats and self.diagnostic_channel == "live"
+        return self.stats and self.diagnostic_channel != "none"
 
     @property
     def show_tools(self) -> bool:
         """Return whether tool diagnostics should render."""
-        return self.display_tools and self.diagnostic_channel == "live"
+        return self.display_tools and self.diagnostic_channel != "none"
 
     @property
     def show_events(self) -> bool:
         """Return whether non-tool events should render."""
-        return self.display_events and self.diagnostic_channel == "live"
+        return self.display_events and self.diagnostic_channel != "none"
 
     @property
     def show_token_details(self) -> bool:
         """Return whether per-token detail panels should render."""
-        return self.show_stats and self.display_tokens > 0
+        return (
+            self.show_stats and self.live_enabled and self.display_tokens > 0
+        )
 
     @property
     def show_probabilities(self) -> bool:

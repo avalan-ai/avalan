@@ -135,7 +135,7 @@ class StreamImportBoundaryTestCase(TestCase):
 
             self.assertEqual(
                 type(presenter).__name__,
-                "CliStreamSnapshotPresenter",
+                "BasicStreamPresenter",
             )
             self.assertNotIn("avalan.cli.theme.fancy", modules)
         finally:

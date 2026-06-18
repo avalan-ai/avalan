@@ -1815,7 +1815,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
 
         tokens.assert_not_called()
-        console.print.assert_called_once_with("answer", end="")
+        self.assertEqual(
+            console.print.call_args_list,
+            [call("answer", end=""), call("\n", end="")],
+        )
         renderables = self._live_update_renderables(live)
         self.assertTrue(
             any(
@@ -1877,7 +1880,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 display_config=self._display_config(display_events=True),
             )
 
-        console.print.assert_called_once_with("answer", end="")
+        self.assertEqual(
+            console.print.call_args_list,
+            [call("answer", end=""), call("\n", end="")],
+        )
         renderables = self._live_update_renderables(live)
         self.assertTrue(
             any(
@@ -1885,6 +1891,361 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 for renderable in renderables
             )
         )
+
+    async def test_token_generation_basic_default_answer_newline_no_live(
+        self,
+    ) -> None:
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with (
+            patch("avalan.cli.stream_coordinator.Live") as live,
+            patch.object(
+                BasicTheme,
+                "tokens",
+                side_effect=AssertionError("tokens should not be called"),
+            ) as tokens,
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=self._answer_response("answer"),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(),
+            )
+
+        tokens.assert_not_called()
+        live.assert_not_called()
+        self.assertEqual(
+            console.print.call_args_list,
+            [call("answer", end=""), call("\n", end="")],
+        )
+
+    async def test_token_generation_basic_non_interactive_uses_stderr(
+        self,
+    ) -> None:
+        event_reduced = asyncio.Event()
+        tool_call = {
+            "id": "tool-1",
+            "name": "search",
+            "arguments": {"query": "weather"},
+        }
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                yield Event(type=EventType.START, payload={"value": "ok"})
+                yield Event(
+                    type=EventType.TOOL_PROCESS,
+                    payload=[tool_call],
+                )
+                event_reduced.set()
+                while not stop_signal.is_set():
+                    await asyncio.sleep(0)
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[str]:
+                async def gen() -> AsyncIterator[str]:
+                    await event_reduced.wait()
+                    yield "answer"
+
+                return gen()
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with (
+            patch("avalan.cli.stream_coordinator.Live") as live,
+            patch(
+                "avalan.cli.stream_coordinator.Console",
+                return_value=diagnostic_console,
+            ) as stderr_console,
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=SimpleNamespace(event_manager=EventManager()),
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(
+                    display_events=True,
+                    display_tools=True,
+                    interactive=False,
+                    record=True,
+                    stats=True,
+                ),
+            )
+
+        live.assert_not_called()
+        stderr_console.assert_called_once_with(
+            stderr=True,
+            force_terminal=False,
+        )
+        self.assertEqual(
+            console.print.call_args_list,
+            [call("answer", end=""), call("\n", end="")],
+        )
+        diagnostic_text = "\n".join(
+            str(args[0])
+            for args, _kwargs in diagnostic_console.print.call_args_list
+        )
+        self.assertIn("event start", diagnostic_text)
+        self.assertIn("tool event tool_process: search", diagnostic_text)
+        self.assertIn("tokens", diagnostic_text)
+
+    async def test_token_generation_basic_non_interactive_stdout_is_plain(
+        self,
+    ) -> None:
+        protocol_text = (
+            '<tool_call>{"name": "calc", "arguments": {}}</tool_call>'
+            "<|channel|>analysis<|message|>hidden<|end|>"
+            "Plain 25"
+        )
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with (
+            patch("avalan.cli.stream_coordinator.Live") as live,
+            patch(
+                "avalan.cli.stream_coordinator.Console",
+                return_value=diagnostic_console,
+            ),
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=self._answer_response(protocol_text),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=True,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(
+                    display_tools=True,
+                    interactive=False,
+                    stats=True,
+                ),
+            )
+
+        live.assert_not_called()
+        stdout_text = "".join(
+            str(args[0]) for args, _kwargs in console.print.call_args_list
+        )
+        self.assertEqual(stdout_text, "Plain 25\n")
+        for fragment in (
+            "\x1b",
+            "[",
+            "Spinner",
+            "<tool_call",
+            "arguments",
+            "<|channel|>",
+            "hidden",
+            "tool ",
+            "tokens ",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, stdout_text)
+        diagnostic_text = "\n".join(
+            str(args[0])
+            for args, _kwargs in diagnostic_console.print.call_args_list
+        )
+        self.assertIn("tokens", diagnostic_text)
+
+    async def test_token_generation_basic_combined_tools_events_are_distinct(
+        self,
+    ) -> None:
+        event_reduced = asyncio.Event()
+        tool_call_id = "call-1"
+        tool_call = {
+            "id": tool_call_id,
+            "name": "calc",
+            "arguments": {"expression": "(4 + 6) * 5 / 2"},
+        }
+
+        def item(
+            sequence: int,
+            kind: StreamItemKind,
+            *,
+            text_delta: str | None = None,
+            data: dict[str, object] | None = None,
+            usage: dict[str, object] | None = None,
+            terminal_outcome: StreamTerminalOutcome | None = None,
+        ) -> CanonicalStreamItem:
+            channel = stream_channel_for_kind(kind)
+            return CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=kind,
+                channel=channel,
+                correlation=(
+                    StreamItemCorrelation(tool_call_id=tool_call_id)
+                    if channel
+                    in (StreamChannel.TOOL_CALL, StreamChannel.TOOL_EXECUTION)
+                    else StreamItemCorrelation()
+                ),
+                text_delta=text_delta,
+                data=data,
+                usage=usage,
+                terminal_outcome=terminal_outcome,
+            )
+
+        class EventManager:
+            async def listen(self, *, stop_signal):
+                yield Event(
+                    type=EventType.TOKEN_GENERATED,
+                    payload={"token": "hidden"},
+                )
+                yield Event(type=EventType.TOOL_PROCESS, payload=[tool_call])
+                event_reduced.set()
+                while not stop_signal.is_set():
+                    await asyncio.sleep(0)
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+                async def gen() -> AsyncIterator[CanonicalStreamItem]:
+                    await event_reduced.wait()
+                    yield item(0, StreamItemKind.STREAM_STARTED)
+                    yield item(
+                        1,
+                        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        text_delta='{"expression": "(4 + 6) * 5 / 2"}',
+                    )
+                    yield item(
+                        2,
+                        StreamItemKind.TOOL_CALL_READY,
+                        data={"name": "calc"},
+                    )
+                    yield item(3, StreamItemKind.TOOL_CALL_DONE)
+                    yield item(
+                        4,
+                        StreamItemKind.TOOL_EXECUTION_STARTED,
+                        data={"name": "calc"},
+                    )
+                    yield item(
+                        5,
+                        StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                        data={"name": "calc", "result": 25},
+                    )
+                    yield item(
+                        6,
+                        StreamItemKind.ANSWER_DELTA,
+                        text_delta="25",
+                    )
+                    yield item(7, StreamItemKind.ANSWER_DONE)
+                    yield item(
+                        8,
+                        StreamItemKind.STREAM_COMPLETED,
+                        usage={
+                            "input_tokens": 1,
+                            "output_tokens": 1,
+                            "total_tokens": 2,
+                        },
+                        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                    )
+
+                return gen()
+
+        args = Namespace(skip_display_reasoning_time=False)
+        console = MagicMock()
+        live = MagicMock()
+        live.__enter__.return_value = live
+        live.__exit__.return_value = False
+        theme = BasicTheme(lambda message: message, lambda s, p, n: s)
+
+        with (
+            patch("avalan.cli.stream_coordinator.Live", return_value=live),
+            patch.object(
+                BasicTheme,
+                "tokens",
+                side_effect=AssertionError("tokens should not be called"),
+            ) as tokens,
+        ):
+            await model_cmds.token_generation(
+                args=args,
+                console=console,
+                theme=theme,
+                logger=getLogger(__name__),
+                orchestrator=SimpleNamespace(event_manager=EventManager()),
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(
+                    display_events=True,
+                    display_tools=True,
+                ),
+            )
+
+        tokens.assert_not_called()
+        self.assertEqual(
+            console.print.call_args_list,
+            [call("25", end=""), call("\n", end="")],
+        )
+        self.assertGreater(live.update.call_count, 0)
+        render_console = Console(file=StringIO(), record=True, width=160)
+        for update_call in live.update.call_args_list:
+            render_console.print(update_call.args[0])
+        all_live_text = render_console.export_text()
+
+        final_console = Console(file=StringIO(), record=True, width=160)
+        final_console.print(live.update.call_args_list[-1].args[0])
+        final_text = final_console.export_text()
+
+        self.assertNotIn("token_generated", all_live_text)
+        self.assertEqual(final_text.count("tool calc completed"), 1)
+        self.assertEqual(final_text.count("tool calc result:"), 1)
+        self.assertNotIn("tool event tool_process", final_text)
+        self.assertNotIn("event tool_process", final_text)
 
     async def test_token_generation_display_events_uses_response_projection(
         self,
@@ -1974,7 +2335,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 display_config=self._display_config(display_events=True),
             )
 
-        console.print.assert_called_once_with("answer", end="")
+        self.assertEqual(
+            console.print.call_args_list,
+            [call("answer", end=""), call("\n", end="")],
+        )
         renderables = self._live_update_renderables(live)
         rendered_text = "\n".join(
             str(renderable) for renderable in renderables
@@ -7458,6 +7822,105 @@ class CliModelRunTestCase(IsolatedAsyncioTestCase):
         tg_kwargs = tg_patch.await_args.kwargs
         self.assertEqual(tg_kwargs["input_string"], "hi")
         self.assertEqual(tg_kwargs["response"], "resp")
+
+    async def test_run_local_model_non_interactive_uses_stderr_diagnostics(
+        self,
+    ):
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            model="id",
+            device="cpu",
+            max_new_tokens=2,
+            quiet=False,
+            skip_hub_access_check=False,
+            no_repl=False,
+            do_sample=True,
+            enable_gradient_calculation=True,
+            min_p=0.1,
+            repetition_penalty=1.1,
+            temperature=0.5,
+            top_k=5,
+            top_p=0.9,
+            use_cache=False,
+            stop_on_keyword=None,
+            system=None,
+            skip_special_tokens=False,
+            display_tokens=0,
+            tool_events=2,
+            display_events=True,
+            display_tools=True,
+            display_tools_events=2,
+            record=True,
+        )
+        console = MagicMock()
+        console.is_terminal = False
+        theme = MagicMock()
+        theme._ = lambda s: s
+        theme.icons = {"user_input": ">"}
+        theme.model.return_value = "panel"
+        hub = MagicMock()
+        hub.can_access.return_value = True
+        hub.model.return_value = "hub_model"
+        logger = MagicMock()
+
+        engine_uri = SimpleNamespace(model_id="id", is_local=True)
+        lm = AsyncMock(return_value="resp")
+        lm.config = MagicMock()
+        lm.config.__repr__ = lambda self=None: "cfg"
+
+        load_cm = MagicMock()
+        load_cm.__enter__.return_value = lm
+        load_cm.__exit__.return_value = False
+
+        manager = RealModelManager(hub, logger)
+        manager.parse_uri = MagicMock(return_value=engine_uri)
+        manager.load = MagicMock(return_value=load_cm)
+
+        with (
+            patch.object(model_cmds, "ModelManager", return_value=manager),
+            patch.object(
+                model_cmds.ModelManager,
+                "get_operation_from_arguments",
+                side_effect=RealModelManager.get_operation_from_arguments,
+            ),
+            patch.object(
+                model_cmds,
+                "get_model_settings",
+                return_value={
+                    "engine_uri": engine_uri,
+                    "modality": Modality.TEXT_GENERATION,
+                },
+            ),
+            patch.object(
+                model_cmds,
+                "get_input",
+                wraps=model_cmds.get_input,
+            ) as get_input_patch,
+            patch("avalan.cli.has_input", return_value=True),
+            patch("avalan.cli.stdin", StringIO("hi\n")),
+            patch.object(
+                model_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+        ):
+            await model_cmds.model_run(args, console, theme, hub, 5, logger)
+
+        hub.can_access.assert_not_called()
+        hub.model.assert_not_called()
+        theme.model.assert_not_called()
+        console.print.assert_not_called()
+        get_input_patch.assert_called_once()
+        self.assertTrue(get_input_patch.call_args.kwargs["is_quiet"])
+        self.assertTrue(get_input_patch.call_args.kwargs["echo_stdin"])
+        lm.assert_awaited_once()
+        tg_patch.assert_awaited_once()
+        tg_kwargs = tg_patch.await_args.kwargs
+        display_config = tg_kwargs["display_config"]
+        self.assertTrue(display_config.answer_stdout_only)
+        self.assertEqual(display_config.diagnostic_channel, "stderr")
+        self.assertTrue(display_config.show_tools)
+        self.assertTrue(display_config.show_events)
+        self.assertFalse(tg_kwargs["with_stats"])
+        self.assertEqual(tg_kwargs["input_string"], "hi")
 
     async def test_run_remote_model(self):
         args = Namespace(

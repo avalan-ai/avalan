@@ -2,19 +2,52 @@ import subprocess
 import sys
 import unittest
 from argparse import Namespace
+from dataclasses import replace
 from datetime import datetime
+from io import StringIO
 from logging import getLogger
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from rich.console import Console
+from rich.spinner import Spinner
+
 from avalan.cli.commands import cache as cache_cmds
 from avalan.cli.commands import model as model_cmds
+from avalan.cli.display import CliStreamDisplayConfig
+from avalan.cli.display_snapshot import (
+    CliProjectionMetadataSummarySnapshot,
+    CliStreamSnapshot,
+    CliStreamSnapshotBuilder,
+    CliToolExecutionSummarySnapshot,
+)
 from avalan.cli.download import tqdm_rich_progress
 from avalan.cli.theme import Theme
-from avalan.cli.theme.basic import BasicTheme
+from avalan.cli.theme.basic import (
+    BasicStreamPresenter,
+    BasicTheme,
+    _basic_json_tool_answer,
+    _basic_open_harmony_pattern,
+    _basic_visible_answer_text,
+    _BasicAnswerPresenter,
+)
 from avalan.cli.theme.fancy import FancyTheme
-from avalan.entities import Model, TokenizerConfig, ToolCall
+from avalan.cli.theme.stream_presenter import (
+    CliStreamAnswerTextChunk,
+    CliStreamPresenterContext,
+    CliStreamPresenterRequest,
+    CliStreamRenderableFrame,
+)
+from avalan.entities import (
+    Model,
+    TokenizerConfig,
+    ToolCall,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
+)
 from avalan.event import Event, EventType
+from avalan.model.stream import StreamTerminalOutcome
 
 
 def _gettext(message: str) -> str:
@@ -53,6 +86,887 @@ def _model() -> Model:
     )
 
 
+def _stream_config(**overrides: object) -> CliStreamDisplayConfig:
+    values = {
+        "quiet": False,
+        "stats": False,
+        "display_tools": False,
+        "display_events": False,
+        "display_tools_events": 2,
+        "record": False,
+        "interactive": True,
+        "refresh_per_second": 10,
+        "answer_height": 12,
+        "answer_height_expand": False,
+        "display_tokens": 0,
+        "display_pause": 0,
+        "display_probabilities": False,
+        "display_probabilities_maximum": 0.8,
+        "display_probabilities_sample_minimum": 0.1,
+        "display_time_to_n_token": None,
+        "display_reasoning_time": False,
+    }
+    values.update(overrides)
+    return CliStreamDisplayConfig(**values)
+
+
+def _stream_context() -> CliStreamPresenterContext:
+    return CliStreamPresenterContext(model_id="model", console_width=80)
+
+
+def _stream_request(
+    config: CliStreamDisplayConfig,
+    snapshot: CliStreamSnapshot,
+    *,
+    mode: str = "live",
+) -> CliStreamPresenterRequest:
+    return CliStreamPresenterRequest(
+        snapshot=snapshot,
+        display_config=config,
+        context=_stream_context(),
+        mode=mode,  # type: ignore[arg-type]
+    )
+
+
+async def _collect_stream_items(
+    presenter: BasicStreamPresenter,
+    request: CliStreamPresenterRequest,
+) -> list[object]:
+    return [item async for item in presenter.present(request)]
+
+
+def _answer_chunks(items: list[object]) -> list[str]:
+    return [
+        item.text
+        for item in items
+        if isinstance(item, CliStreamAnswerTextChunk)
+    ]
+
+
+def _frames(items: list[object]) -> list[CliStreamRenderableFrame]:
+    return [
+        item for item in items if isinstance(item, CliStreamRenderableFrame)
+    ]
+
+
+def _render_text(renderable: object) -> str:
+    output = StringIO()
+    Console(file=output, force_terminal=False, width=120).print(renderable)
+    return output.getvalue()
+
+
+def _visible_text(items: list[object]) -> str:
+    parts: list[str] = []
+    for item in items:
+        if isinstance(item, CliStreamAnswerTextChunk):
+            parts.append(item.text)
+        elif isinstance(item, CliStreamRenderableFrame):
+            parts.append(_render_text(item.renderable))
+    return "".join(parts)
+
+
+class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_default_streaming_is_answer_only_with_final_newline(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("private reasoning")
+        builder.append_tool_call_request_text('{"name": "calc"}')
+        builder.append_answer_text("Answer is 25.")
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        repeated = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(items), ["Answer is 25.", "\n"])
+        self.assertEqual(_frames(items), [])
+        self.assertEqual(_answer_chunks(repeated), [])
+
+    async def test_completed_empty_answer_does_not_emit_newline(self) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(items), [])
+        self.assertEqual(_frames(items), [])
+
+    async def test_completed_answer_ending_newline_is_not_duplicated(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("Answer is 25.\n")
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(items), ["Answer is 25.\n"])
+        self.assertEqual(_frames(items), [])
+
+    async def test_answer_mode_suppresses_frames_and_reset_replays(
+        self,
+    ) -> None:
+        config = _stream_config(
+            stats=True,
+            display_tools=True,
+            display_events=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("Answer.")
+        builder.add_active_tool(tool_call_id="call", name="calc")
+        builder.add_event_summary(event_type=EventType.START)
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        snapshot = builder.snapshot()
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, snapshot, mode="answer"),
+        )
+        presenter.reset()
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, snapshot, mode="answer"),
+        )
+
+        self.assertEqual(_answer_chunks(first), ["Answer.", "\n"])
+        self.assertEqual(_frames(first), [])
+        self.assertEqual(_answer_chunks(second), ["Answer.", "\n"])
+        self.assertEqual(_frames(second), [])
+
+    async def test_requested_tools_and_events_render_compact_frames(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=True,
+            display_events=True,
+            display_tools_events=8,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("working")
+        builder.add_active_tool(
+            tool_call_id="active-call",
+            name="search",
+            arguments={"query": "weather"},
+        )
+        builder.add_active_tool(tool_call_id="done-call", name="calc")
+        builder.complete_tool(tool_call_id="done-call", name="calc")
+        builder.add_tool_result_summary(
+            tool_call_id="done-call",
+            name="calc",
+            status="result",
+            result=25,
+            arguments_count=1,
+        )
+        builder.add_tool_diagnostic(
+            ToolCallDiagnostic(
+                id="diag",
+                call_id="done-call",
+                requested_name="calc",
+                code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+                stage=ToolCallDiagnosticStage.RESOLVE,
+                message="Unknown tool.",
+            )
+        )
+        builder.add_tool_event(
+            Event(type=EventType.TOOL_PROCESS, payload={"name": "calc"}),
+            tool_call_id="done-call",
+            name="calc",
+        )
+        builder.add_event_summary(
+            event_type=EventType.START,
+            payload={"node": "math"},
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frames = _frames(items)
+        self.assertEqual(_answer_chunks(items), ["working"])
+        self.assertEqual([frame.role for frame in frames], ["tools", "events"])
+        tool_text = _render_text(frames[0].renderable)
+        event_text = str(frames[1].renderable)
+        for fragment in (
+            "tool search running",
+            "weather",
+            "tool calc completed",
+            "tool calc result: 25",
+            "tool calc diagnostic tool.unknown",
+            "tool event tool_process: calc",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, tool_text)
+        self.assertIn("event start", event_text)
+        self.assertNotIn("tool_process", event_text)
+
+    async def test_requested_single_surfaces_render_only_that_surface(
+        self,
+    ) -> None:
+        source_config = _stream_config(
+            stats=True,
+            display_tools=True,
+            display_events=True,
+            display_tools_events=8,
+        )
+        builder = CliStreamSnapshotBuilder(source_config)
+        builder.append_answer_text("done")
+        builder.add_active_tool(tool_call_id="call", name="calc")
+        builder.complete_tool(tool_call_id="call", name="calc")
+        builder.add_tool_result_summary(
+            tool_call_id="call",
+            name="calc",
+            status="result",
+            result=25,
+            arguments_count=1,
+        )
+        builder.add_event_summary(event_type=EventType.START)
+        builder.update_token_counts(
+            input_tokens=2,
+            cached_input_tokens=1,
+            output_tokens=3,
+            reasoning_usage_tokens=4,
+            total_tokens=10,
+        )
+        builder.update_timing(elapsed_seconds=0.5)
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        snapshot = builder.snapshot()
+
+        cases = [
+            (
+                "tools",
+                _stream_config(display_tools=True, display_tools_events=8),
+                ["tools"],
+                "tool calc result: 25",
+                ("event start", "tokens "),
+            ),
+            (
+                "events",
+                _stream_config(display_events=True),
+                ["events"],
+                "event start",
+                ("tool calc", "tokens "),
+            ),
+            (
+                "stats",
+                _stream_config(stats=True),
+                ["stats"],
+                "tokens in=2, cached=1, out=3, reasoning=4, total=10",
+                ("tool calc", "event start"),
+            ),
+        ]
+
+        for label, config, roles, expected, unexpected in cases:
+            with self.subTest(label=label):
+                presenter = BasicStreamPresenter(getLogger(__name__))
+
+                items = await _collect_stream_items(
+                    presenter,
+                    _stream_request(config, snapshot),
+                )
+
+                frames = _frames(items)
+                output = _visible_text(items)
+                self.assertEqual([frame.role for frame in frames], roles)
+                self.assertIn("done", output)
+                self.assertIn(expected, output)
+                for fragment in unexpected:
+                    self.assertNotIn(fragment, output)
+
+    async def test_stats_render_only_for_completed_terminal_snapshot(
+        self,
+    ) -> None:
+        config = _stream_config(stats=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("done")
+        builder.update_token_counts(
+            input_tokens=2,
+            output_tokens=3,
+            total_tokens=5,
+        )
+        builder.update_timing(elapsed_seconds=1.25)
+        builder.add_usage_summary(
+            {"input_tokens": 2, "output_tokens": 3},
+            kind="stream.completed",
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        running = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        completed = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(running), ["done"])
+        self.assertEqual(_frames(running), [])
+        completed_frames = _frames(completed)
+        self.assertEqual(_answer_chunks(completed), ["\n"])
+        self.assertEqual([frame.role for frame in completed_frames], ["stats"])
+        stats_text = str(completed_frames[0].renderable)
+        self.assertIn("tokens in=2, out=3, total=5", stats_text)
+        self.assertIn("elapsed 1.25s", stats_text)
+        self.assertIn("usage stream.completed", stats_text)
+
+    async def test_display_tools_events_zero_keeps_active_and_clears_stale(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=0)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("working")
+        builder.add_active_tool(
+            tool_call_id="active-call",
+            name="calc",
+            arguments={"x": 1},
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.complete_tool(tool_call_id="active-call", name="calc")
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        first_frames = _frames(first)
+        second_frames = _frames(second)
+        self.assertEqual(_answer_chunks(first), ["working"])
+        self.assertEqual([frame.role for frame in first_frames], ["tools"])
+        self.assertIsInstance(first_frames[0].renderable, Spinner)
+        first_text = _render_text(first_frames[0].renderable)
+        self.assertIn("tool calc running", first_text)
+        self.assertNotIn("completed", first_text)
+        self.assertEqual(_answer_chunks(second), [])
+        self.assertEqual([frame.role for frame in second_frames], ["tools"])
+        self.assertEqual(second_frames[0].renderable, "")
+
+    async def test_non_live_active_tools_remain_line_oriented(self) -> None:
+        config = _stream_config(
+            display_tools=True,
+            interactive=False,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(
+            tool_call_id="active-call",
+            name="calc",
+            arguments={"x": 1},
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        self.assertIsInstance(frames[0].renderable, str)
+        self.assertIn("tool calc running", str(frames[0].renderable))
+
+    async def test_compact_formatting_handles_empty_and_truncated_summaries(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=4)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_event(Event(type=EventType.TOOL_PROCESS))
+        snapshot = replace(
+            builder.snapshot(),
+            active_tools=(
+                CliToolExecutionSummarySnapshot(
+                    tool_call_id="long-call",
+                    name="x" * 200,
+                ),
+            ),
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, snapshot),
+        )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        tool_text = _render_text(frames[0].renderable)
+        self.assertIn("x" * 157 + "...", tool_text.replace("\n", ""))
+        self.assertIn("tool event tool_process", tool_text)
+        self.assertNotIn("tool event tool_process:", tool_text)
+
+    async def test_protocol_text_is_not_rendered_as_answer_or_diagnostics(
+        self,
+    ) -> None:
+        config = _stream_config(
+            stats=True,
+            display_tools=True,
+            display_events=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("Thought: secret\n")
+        builder.append_answer_text(
+            '<tool_call>{"name": "calc", "arguments": {}}</tool_call>'
+        )
+        builder.append_answer_text(
+            "<|start|>assistant<|channel|>analysis<|message|>hidden<|end|>"
+        )
+        builder.append_answer_text('{"tool": "calc", "arguments": {"x": 1}}\n')
+        builder.append_answer_text(
+            "<DSML\uff5ctool_calls>"
+            '<DSML\uff5cinvoke name="math.calculator">'
+            "</DSML\uff5cinvoke>"
+            "</DSML\uff5ctool_calls>"
+        )
+        builder.append_answer_text("25")
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        snapshot = replace(
+            builder.snapshot(),
+            projection_metadata_summaries=(
+                CliProjectionMetadataSummarySnapshot(
+                    sequence=1,
+                    kind="chunk",
+                    data_summary='{"protocol": "hidden"}',
+                ),
+            ),
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, snapshot),
+        )
+
+        self.assertEqual(_answer_chunks(items), ["25", "\n"])
+        output = "\n".join(
+            (
+                _render_text(item.renderable)
+                if isinstance(item, CliStreamRenderableFrame)
+                else item.text
+            )
+            for item in items
+            if isinstance(
+                item,
+                (CliStreamRenderableFrame, CliStreamAnswerTextChunk),
+            )
+        )
+        self.assertIn("25", output)
+        for fragment in (
+            "ReACT",
+            "Thought",
+            "<tool_call>",
+            '{"name": "calc"}',
+            "hidden",
+            "tool",
+            "arguments",
+            "DSML",
+            "protocol",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, output)
+
+    async def test_ordinary_json_answer_text_is_visible(self) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text('{"answer": 25}')
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(items), ['{"answer": 25}', "\n"])
+
+    async def test_incremental_protocol_prefix_is_withheld_and_suppressed(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        builder.append_answer_text("<")
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_answer_text(
+            'tool_call>{"name": "calc", "arguments": {}}</tool_call>'
+        )
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        completed = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(first), [])
+        self.assertEqual(_answer_chunks(second), [])
+        self.assertEqual(_answer_chunks(completed), [])
+
+    async def test_incremental_protocol_prefix_can_resolve_as_answer(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        builder.append_answer_text("1 <")
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.append_answer_text(" 2")
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        self.assertEqual(_answer_chunks(first), ["1 "])
+        self.assertEqual(_answer_chunks(second), ["< 2"])
+
+    async def test_answer_presenter_rejects_invalid_snapshot_sequence(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("long")
+        presenter = _BasicAnswerPresenter()
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "answer presenter requires answer mode",
+        ):
+            [
+                item
+                async for item in presenter.present(
+                    _stream_request(config, builder.snapshot(), mode="live")
+                )
+            ]
+
+        first = [
+            item
+            async for item in presenter.present(
+                _stream_request(config, builder.snapshot(), mode="answer")
+            )
+        ]
+        shorter = CliStreamSnapshotBuilder(config)
+        shorter.append_answer_text("lo")
+
+        with self.assertRaisesRegex(
+            AssertionError,
+            "answer snapshots must grow monotonically",
+        ):
+            [
+                item
+                async for item in presenter.present(
+                    _stream_request(config, shorter.snapshot(), mode="answer")
+                )
+            ]
+
+        self.assertEqual(_answer_chunks(first), ["long"])
+
+    async def test_partial_json_tool_line_can_be_replaced_by_answer(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = _BasicAnswerPresenter()
+
+        builder.append_answer_text('{"name": "calc"')
+        first = [
+            item
+            async for item in presenter.present(
+                _stream_request(config, builder.snapshot(), mode="answer")
+            )
+        ]
+        builder.append_answer_text(', "arguments": {}}\nFinal')
+        second = [
+            item
+            async for item in presenter.present(
+                _stream_request(config, builder.snapshot(), mode="answer")
+            )
+        ]
+
+        self.assertEqual(_answer_chunks(first), ['{"name": "calc"'])
+        self.assertEqual(_answer_chunks(second), ["Final"])
+
+    def test_basic_filter_helper_edge_cases(self) -> None:
+        self.assertEqual(
+            _basic_visible_answer_text("", terminal_completed=True),
+            "",
+        )
+        self.assertEqual(
+            _basic_visible_answer_text(
+                '{"tool": "calc", "arguments": {}}',
+                terminal_completed=True,
+            ),
+            "",
+        )
+        self.assertEqual(
+            _basic_visible_answer_text(
+                '{\n  "tool": "calc",\n  "arguments": {}\n}',
+                terminal_completed=True,
+            ),
+            "",
+        )
+        self.assertEqual(
+            _basic_visible_answer_text(
+                "answer\n   ",
+                terminal_completed=False,
+            ),
+            "answer\n   ",
+        )
+        self.assertEqual(
+            _basic_visible_answer_text("Thought", terminal_completed=False),
+            "",
+        )
+        self.assertEqual(
+            _basic_open_harmony_pattern("<|channel|>analysis pending").sub(
+                "",
+                "<|channel|>analysis pending",
+            ),
+            "",
+        )
+        self.assertFalse(_basic_json_tool_answer("not-json{"))
+        self.assertTrue(_basic_json_tool_answer('{"tool_calls": ['))
+        self.assertFalse(_basic_json_tool_answer('{"arguments": {'))
+        self.assertTrue(
+            _basic_json_tool_answer('{"name": "calc", "arguments": {')
+        )
+
+    async def test_quiet_suppresses_all_non_answer_noise(self) -> None:
+        source_config = _stream_config(
+            stats=True,
+            display_tools=True,
+            display_events=True,
+            display_tools_events=8,
+        )
+        builder = CliStreamSnapshotBuilder(source_config)
+        builder.append_answer_text("Thought: hidden\n")
+        builder.append_answer_text(
+            '<tool_call>{"name": "calc", "arguments": {}}</tool_call>'
+        )
+        builder.append_answer_text(
+            "<|channel|>analysis<|message|>hidden<|end|>"
+        )
+        builder.append_answer_text("Clean answer.")
+        builder.add_active_tool(tool_call_id="call", name="calc")
+        builder.add_event_summary(event_type=EventType.START)
+        builder.update_token_counts(input_tokens=1, output_tokens=2)
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        quiet_config = _stream_config(
+            quiet=True,
+            stats=True,
+            display_tools=True,
+            display_events=True,
+            display_tools_events=8,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(quiet_config, builder.snapshot()),
+        )
+
+        output = _visible_text(items)
+        self.assertEqual(_frames(items), [])
+        self.assertIn("Clean answer.", output)
+        for fragment in (
+            "Thought",
+            "<tool_call",
+            "arguments",
+            "<|channel|>",
+            "hidden",
+            "tool calc",
+            "event start",
+            "tokens ",
+            "Spinner",
+            "[",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, output)
+
+    async def test_protocol_internals_are_suppressed_across_basic_modes(
+        self,
+    ) -> None:
+        protocol_text = (
+            "Thought: use a tool\n"
+            "Action: math.calculator\n"
+            'Action Input: {"expression": "(4 + 6) * 5 / 2"}\n'
+            "Observation: 25\n"
+            "```tool_call\n"
+            '{"name": "math.calculator", "arguments": {"expression": "x"}}\n'
+            "```\n"
+            '<function_call>{"name": "math.calculator"}</function_call>'
+            "<DSML:tool_calls>"
+            '<DSML:invoke name="math.calculator"></DSML:invoke>'
+            "</DSML:tool_calls>"
+            "<|start|>assistant<|channel|>analysis<|message|>"
+            "internal plan<|end|>"
+            '{"tool_calls": [{"name": "math.calculator"}]}\n'
+            '{"type": "tool_call", "name": "math.calculator", '
+            '"arguments": {}}\n'
+            "Final result: 25"
+        )
+        cases = [
+            ("default", _stream_config()),
+            (
+                "quiet",
+                _stream_config(
+                    quiet=True,
+                    stats=True,
+                    display_tools=True,
+                    display_events=True,
+                ),
+            ),
+            (
+                "non-interactive",
+                _stream_config(
+                    interactive=False,
+                    stats=True,
+                    display_tools=True,
+                    display_events=True,
+                ),
+            ),
+            ("display-tools", _stream_config(display_tools=True)),
+        ]
+
+        for label, config in cases:
+            with self.subTest(label=label):
+                builder = CliStreamSnapshotBuilder(config)
+                builder.append_answer_text(protocol_text)
+                builder.set_terminal(
+                    completed=True,
+                    outcome=StreamTerminalOutcome.COMPLETED,
+                )
+                presenter = BasicStreamPresenter(getLogger(__name__))
+
+                items = await _collect_stream_items(
+                    presenter,
+                    _stream_request(config, builder.snapshot()),
+                )
+
+                answer_text = "".join(_answer_chunks(items))
+                self.assertIn("Final result: 25", answer_text)
+                for fragment in (
+                    "Thought:",
+                    "Action:",
+                    "Action Input:",
+                    "Observation:",
+                    "```tool_call",
+                    "<function_call",
+                    "DSML",
+                    "<|channel|>",
+                    "internal plan",
+                    "tool_calls",
+                    '"arguments"',
+                ):
+                    self.assertNotIn(fragment, answer_text)
+
+    async def test_malformed_tool_diagnostics_are_concise_and_requested_only(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=4)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_diagnostic(
+            ToolCallDiagnostic(
+                id="diag",
+                call_id="call",
+                requested_name="broken_tool",
+                code=ToolCallDiagnosticCode.MALFORMED_CALL,
+                stage=ToolCallDiagnosticStage.PARSE,
+                message="Malformed tool call " + "x" * 220,
+                details={
+                    "raw": "<tool_call>raw-secret</tool_call>",
+                    "trace": "hidden traceback",
+                },
+            )
+        )
+        snapshot = builder.snapshot()
+
+        hidden = await _collect_stream_items(
+            BasicStreamPresenter(getLogger(__name__)),
+            _stream_request(_stream_config(), snapshot),
+        )
+        shown = await _collect_stream_items(
+            BasicStreamPresenter(getLogger(__name__)),
+            _stream_request(config, snapshot),
+        )
+
+        self.assertEqual(_frames(hidden), [])
+        frames = _frames(shown)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        tool_text = _render_text(frames[0].renderable)
+        self.assertIn(
+            "tool broken_tool diagnostic tool_call.malformed:",
+            tool_text,
+        )
+        self.assertIn("Malformed tool call", tool_text)
+        self.assertIn("...", tool_text)
+        self.assertLess(len(tool_text), 260)
+        self.assertNotIn("raw-secret", tool_text)
+        self.assertNotIn("hidden traceback", tool_text)
+        self.assertNotIn("parse", tool_text)
+
+
 class BasicThemeTestCase(unittest.TestCase):
     def test_importing_basic_theme_does_not_import_fancy(self) -> None:
         result = subprocess.run(
@@ -79,6 +993,13 @@ class BasicThemeTestCase(unittest.TestCase):
         self.assertNotIsInstance(theme, FancyTheme)
         self.assertEqual(theme._("message"), "translated:message")
         self.assertEqual(theme._n("one", "many", 2), "many")
+
+    def test_basic_theme_returns_basic_stream_presenter(self) -> None:
+        theme = BasicTheme(_gettext, _ngettext)
+
+        presenter = theme.stream_presenter(getLogger(__name__))
+
+        self.assertIsInstance(presenter, BasicStreamPresenter)
 
     def test_basic_theme_inherits_common_defaults(self) -> None:
         theme = BasicTheme(_gettext, _ngettext)

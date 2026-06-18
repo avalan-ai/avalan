@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, call, patch
 from uuid import uuid4
 
 from rich.console import Group
+from rich.spinner import Spinner
 
 from avalan.cli.display import CliStreamDisplayConfig
 from avalan.cli.stream_coordinator import (
@@ -332,6 +333,134 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         console.print.assert_has_calls([call("a", end=""), call("b", end="")])
         live_factory.assert_not_called()
         console.save_svg.assert_not_called()
+
+    async def test_stderr_diagnostics_use_separate_console_without_live(
+        self,
+    ) -> None:
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        live_factory = MagicMock()
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(
+                display_events=True,
+                display_tools=True,
+                interactive=False,
+                record=True,
+                stats=True,
+            ),
+            diagnostic_console=diagnostic_console,
+            live_factory=live_factory,
+        )
+
+        async with coordinator:
+            await coordinator.handle_item(CliStreamAnswerTextChunk(text="a"))
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable="event start",
+                    role="events",
+                )
+            )
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable="event start",
+                    role="events",
+                )
+            )
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable="tool calc completed",
+                    role="tools",
+                )
+            )
+
+        console.print.assert_called_once_with("a", end="")
+        diagnostic_console.print.assert_has_calls(
+            [
+                call("event start"),
+                call("tool calc completed"),
+            ]
+        )
+        self.assertEqual(diagnostic_console.print.call_count, 2)
+        live_factory.assert_not_called()
+        console.save_svg.assert_not_called()
+
+    async def test_stderr_diagnostics_deduplicate_group_renderables(
+        self,
+    ) -> None:
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(
+                display_tools=True,
+                interactive=False,
+            ),
+            diagnostic_console=diagnostic_console,
+            live_factory=MagicMock(),
+        )
+
+        async with coordinator:
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable=Group(
+                        Spinner("dots", text="tool calc running"),
+                        "tool calc completed",
+                    ),
+                    role="tools",
+                )
+            )
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable=Group(
+                        Spinner("dots", text="tool calc running"),
+                        "tool calc completed",
+                    ),
+                    role="tools",
+                )
+            )
+
+        diagnostic_console.print.assert_called_once()
+        console.print.assert_not_called()
+
+    async def test_stderr_empty_frame_clears_deduplication_key(self) -> None:
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(
+                display_tools=True,
+                interactive=False,
+            ),
+            diagnostic_console=diagnostic_console,
+            live_factory=MagicMock(),
+        )
+
+        async with coordinator:
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable="tool calc completed",
+                    role="tools",
+                )
+            )
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(renderable="", role="tools")
+            )
+            await coordinator.handle_item(
+                CliStreamRenderableFrame(
+                    renderable="tool calc completed",
+                    role="tools",
+                )
+            )
+
+        diagnostic_console.print.assert_has_calls(
+            [
+                call("tool calc completed"),
+                call("tool calc completed"),
+            ]
+        )
+        self.assertEqual(diagnostic_console.print.call_count, 2)
+        console.print.assert_not_called()
 
     async def test_recording_saves_after_owner_render(self) -> None:
         events: list[tuple[str, object]] = []

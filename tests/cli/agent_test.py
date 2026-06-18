@@ -1667,7 +1667,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.console.print.assert_any_call("agent_panel")
         self.console.print.assert_any_call("< ", end="")
 
-    async def test_run_non_interactive_suppresses_diagnostics(self):
+    async def test_run_non_interactive_uses_stderr_diagnostics(self):
         self.console.is_terminal = False
         self.args.stats = True
         self.args.display_tools = True
@@ -1709,9 +1709,10 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         tg_patch.assert_awaited_once()
         display_config = tg_patch.await_args.kwargs["display_config"]
         self.assertTrue(display_config.answer_stdout_only)
-        self.assertFalse(display_config.show_stats)
-        self.assertFalse(display_config.show_tools)
-        self.assertFalse(display_config.show_events)
+        self.assertEqual(display_config.diagnostic_channel, "stderr")
+        self.assertTrue(display_config.show_stats)
+        self.assertTrue(display_config.show_tools)
+        self.assertTrue(display_config.show_events)
         get_input_patch.assert_called_once()
         self.assertTrue(get_input_patch.call_args.kwargs["is_quiet"])
         self.assertTrue(get_input_patch.call_args.kwargs["echo_stdin"])
