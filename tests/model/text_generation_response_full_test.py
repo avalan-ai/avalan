@@ -4,12 +4,12 @@ from unittest import IsolatedAsyncioTestCase
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
-    ReasoningToken,
     TokenDetail,
     ToolCall,
     ToolCallToken,
 )
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import StreamValidationError
 
 
 async def _gen():
@@ -65,12 +65,13 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
             generation_settings=settings,
             settings=settings,
         )
-        resp.__aiter__()
-        resp._parser_queue.put("x")
-        first = await resp.__anext__()
-        second = await resp.__anext__()
-        self.assertEqual(first, "x")
-        self.assertEqual(second, "a")
+        iterator = resp.__aiter__()
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await iterator.__anext__()
 
     async def test_set_thinking_and_properties(self):
         settings = GenerationSettings()
@@ -125,15 +126,18 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         )
         iterator = resp.__aiter__()
 
-        self.assertEqual(await iterator.__anext__(), "answer ")
-        self.assertIsInstance(await iterator.__anext__(), ReasoningToken)
-        self.assertTrue(resp.is_thinking)
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await iterator.__anext__()
 
         restarted = resp.__aiter__()
-        first = await restarted.__anext__()
-
-        self.assertEqual(first, "answer ")
-        self.assertNotIsInstance(first, ReasoningToken)
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await restarted.__anext__()
         self.assertFalse(resp.is_thinking)
 
     async def test_disabled_reasoning_parser_returns_raw_token(self):
@@ -149,8 +153,11 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
             settings=gs,
         )
         it = resp.__aiter__()
-        token = await it.__anext__()
-        self.assertEqual(token, "b")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await it.__anext__()
         self.assertFalse(resp.can_think)
         resp.set_thinking(True)  # Should have no effect
         self.assertFalse(resp.is_thinking)
@@ -172,23 +179,11 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        tokens = []
-        async for t in resp:
-            tokens.append(t)
-
-        self.assertEqual(
-            [type(t) for t in tokens],
-            [
-                ToolCallToken,
-                TokenDetail,
-                ReasoningToken,
-                ReasoningToken,
-                ReasoningToken,
-            ],
-        )
-        self.assertEqual(tokens[0].token, "tool")
-        self.assertEqual(tokens[1].token, "det")
-        self.assertEqual(tokens[-1].token, "<")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [item async for item in resp]
 
     async def test_completed_tool_call_bypasses_reasoning_parser(self) -> None:
         call = ToolCall(
@@ -209,6 +204,8 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        tokens = [token async for token in resp]
-
-        self.assertEqual(tokens, [ToolCallToken(token="", call=call)])
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [item async for item in resp]

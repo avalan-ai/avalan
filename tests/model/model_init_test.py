@@ -5,6 +5,10 @@ from avalan.entities import GenerationSettings, Message, MessageRole
 from avalan.model.response import InvalidJsonResponseException
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
     TextGenerationSingleStream,
     TextGenerationStream,
     accumulate_canonical_stream_items,
@@ -15,12 +19,53 @@ from avalan.model.vendor import (
 )
 
 
+def _canonical_answer_items(text: str) -> tuple[CanonicalStreamItem, ...]:
+    return (
+        CanonicalStreamItem(
+            stream_session_id="model-init-stream",
+            run_id="model-init-run",
+            turn_id="model-init-turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="model-init-stream",
+            run_id="model-init-run",
+            turn_id="model-init-turn",
+            sequence=1,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=text,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="model-init-stream",
+            run_id="model-init-run",
+            turn_id="model-init-turn",
+            sequence=2,
+            kind=StreamItemKind.ANSWER_DONE,
+            channel=StreamChannel.ANSWER,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="model-init-stream",
+            run_id="model-init-run",
+            turn_id="model-init-turn",
+            sequence=3,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    )
+
+
+async def _canonical_answer_gen(text: str):
+    for item in _canonical_answer_items(text):
+        yield item
+
+
 class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):
     async def test_iteration_and_callback(self):
-        async def gen():
-            for ch in "hi":
-                yield ch
-
         consumed = False
 
         async def done():
@@ -28,7 +73,7 @@ class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):
             consumed = True
 
         resp = TextGenerationResponse(
-            lambda **_: gen(),
+            lambda **_: _canonical_answer_gen("hi"),
             logger=getLogger(),
             use_async_generator=True,
             inputs={"input_ids": [[1, 2, 3]]},
@@ -40,10 +85,10 @@ class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):
         tokens = []
         async for token in resp:
             tokens.append(token)
-        self.assertEqual(tokens, ["h", "i"])
+        self.assertEqual(tokens, list(_canonical_answer_items("hi")))
         self.assertTrue(consumed)
         self.assertEqual(resp.input_token_count, 3)
-        self.assertEqual(resp.output_token_count, 2)
+        self.assertEqual(resp.output_token_count, 4)
 
     async def test_to_json_valid_and_invalid(self):
         resp = TextGenerationResponse(
@@ -66,12 +111,8 @@ class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):
             await invalid.to_json()
 
     async def test_output_token_count_to_str(self):
-        async def gen():
-            for ch in "hi":
-                yield ch
-
         resp = TextGenerationResponse(
-            lambda **_: gen(),
+            lambda **_: _canonical_answer_gen("hi"),
             logger=getLogger(),
             use_async_generator=True,
             generation_settings=GenerationSettings(),
@@ -79,15 +120,11 @@ class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(await resp.to_str(), "hi")
-        self.assertEqual(resp.output_token_count, 2)
+        self.assertEqual(resp.output_token_count, 4)
 
     async def test_output_token_count_to_json(self):
-        async def gen():
-            for ch in '{"a":1}':
-                yield ch
-
         resp = TextGenerationResponse(
-            lambda **_: gen(),
+            lambda **_: _canonical_answer_gen('{"a":1}'),
             logger=getLogger(),
             use_async_generator=True,
             generation_settings=GenerationSettings(),
@@ -95,7 +132,7 @@ class TextGenerationResponseTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(await resp.to_json(), '{"a":1}')
-        self.assertEqual(resp.output_token_count, len('{"a":1}'))
+        self.assertEqual(resp.output_token_count, 4)
 
 
 class StreamVendorTestCase(IsolatedAsyncioTestCase):

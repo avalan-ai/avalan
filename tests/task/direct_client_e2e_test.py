@@ -26,6 +26,12 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.flow import Flow, FlowDefinitionLoader
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.task import (
     HASHED_MARKER,
     FanoutObservabilitySink,
@@ -734,29 +740,69 @@ class ProviderFakeResponse:
 class TerminalUsageStream:
     def __init__(self) -> None:
         self.usage: object | None = None
-        self._done = False
+        self._sequence = 0
 
     def __call__(self, **_: object) -> "TerminalUsageStream":
         self.usage = None
-        self._done = False
+        self._sequence = 0
         return self
 
     def __aiter__(self) -> "TerminalUsageStream":
         return self
 
-    async def __anext__(self) -> str:
-        if not self._done:
-            self._done = True
-            return "public stream summary"
-        self.usage = {
-            "input_tokens": 8,
-            "cached_input_tokens": 3,
-            "cache_creation_input_tokens": 2,
-            "output_tokens": 5,
-            "reasoning_tokens": 1,
-            "total_tokens": 13,
-        }
-        raise StopAsyncIteration
+    async def __anext__(self) -> CanonicalStreamItem:
+        match self._sequence:
+            case 0:
+                item = CanonicalStreamItem(
+                    stream_session_id="task-streaming-usage",
+                    run_id="task-run",
+                    turn_id="task-turn",
+                    sequence=self._sequence,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                )
+            case 1:
+                item = CanonicalStreamItem(
+                    stream_session_id="task-streaming-usage",
+                    run_id="task-run",
+                    turn_id="task-turn",
+                    sequence=self._sequence,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="public stream summary",
+                )
+            case 2:
+                item = CanonicalStreamItem(
+                    stream_session_id="task-streaming-usage",
+                    run_id="task-run",
+                    turn_id="task-turn",
+                    sequence=self._sequence,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                )
+            case 3:
+                self.usage = {
+                    "input_tokens": 8,
+                    "cached_input_tokens": 3,
+                    "cache_creation_input_tokens": 2,
+                    "output_tokens": 5,
+                    "reasoning_tokens": 1,
+                    "total_tokens": 13,
+                }
+                item = CanonicalStreamItem(
+                    stream_session_id="task-streaming-usage",
+                    run_id="task-run",
+                    turn_id="task-turn",
+                    sequence=self._sequence,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage=cast(Any, self.usage),
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                )
+            case _:
+                raise StopAsyncIteration
+        self._sequence += 1
+        return item
 
 
 class StreamingUsageTarget(TaskTargetRunner):

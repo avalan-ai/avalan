@@ -4,9 +4,9 @@ from unittest import IsolatedAsyncioTestCase
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
-    ReasoningToken,
 )
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import StreamValidationError
 
 
 class TextGenerationStopOnLimitTestCase(IsolatedAsyncioTestCase):
@@ -29,9 +29,8 @@ class TextGenerationStopOnLimitTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
         it = resp.__aiter__()
-        first = await it.__anext__()
-        second = await it.__anext__()
-        self.assertIsInstance(first, ReasoningToken)
-        self.assertIsInstance(second, ReasoningToken)
-        with self.assertRaises(StopAsyncIteration):
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
             await it.__anext__()
