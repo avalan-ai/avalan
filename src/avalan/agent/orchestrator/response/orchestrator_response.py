@@ -1644,7 +1644,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         if emit_ready:
             self._append_canonical_tool_call_ready(call)
         self._append_canonical_tool_execution_started(call)
-        self._append_canonical_tool_execution_cancelled(call)
+        self._append_canonical_tool_execution_cancelled(
+            call,
+            stage=ToolCallDiagnosticStage.DISPATCH,
+        )
 
     async def _execute_tool_call_with_lifecycle(
         self,
@@ -1727,7 +1730,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 confirm=False,
             )
         except CancelledError:
-            self._append_canonical_tool_execution_cancelled(call)
+            self._append_canonical_tool_execution_cancelled(
+                call,
+                stage=ToolCallDiagnosticStage.DISPATCH,
+            )
             if finish_stream_on_error:
                 self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
             raise
@@ -1828,7 +1834,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 )
             else:
                 diagnostic = self._tool_confirmation_cancelled_diagnostic(call)
-                self._append_canonical_tool_execution_cancelled(call)
+                self._append_canonical_tool_execution_terminal(
+                    call,
+                    diagnostic,
+                )
             event = _legacy_tool_event(
                 EventType.TOOL_RESULT,
                 payload={
@@ -1886,7 +1895,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 )
                 continue
             self._append_canonical_tool_execution_started(call)
-            self._append_canonical_tool_execution_cancelled(call)
+            self._append_canonical_tool_execution_terminal(
+                call,
+                self._tool_confirmation_cancelled_diagnostic(call),
+            )
 
     def _append_canonical_tool_confirmation_failure(
         self,
@@ -2403,6 +2415,24 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             message="Tool call was cancelled before execution.",
         )
 
+    @classmethod
+    def _tool_execution_cancelled_diagnostic(
+        cls,
+        call: ToolCall,
+        *,
+        stage: ToolCallDiagnosticStage,
+    ) -> ToolCallDiagnostic:
+        name = cls._diagnostic_tool_name(call)
+        return ToolCallDiagnostic(
+            id=uuid4(),
+            call_id=call.id,
+            requested_name=name,
+            canonical_name=name,
+            code=ToolCallDiagnosticCode.CANCELLED,
+            stage=stage,
+            message="Tool call was cancelled.",
+        )
+
     @staticmethod
     def _diagnostic_tool_name(call: ToolCall) -> str | None:
         return call.name if call.name.strip() else None
@@ -2842,12 +2872,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         )
 
     def _append_canonical_tool_execution_cancelled(
-        self, call: ToolCall
+        self,
+        call: ToolCall,
+        *,
+        stage: ToolCallDiagnosticStage = ToolCallDiagnosticStage.GUARD,
     ) -> None:
-        self._append_canonical_tool_execution_result(
-            StreamItemKind.TOOL_EXECUTION_CANCELLED,
+        self._append_canonical_tool_execution_terminal(
             call,
-            {"name": call.name},
+            self._tool_execution_cancelled_diagnostic(call, stage=stage),
         )
 
     def _append_canonical_tool_execution_result(
