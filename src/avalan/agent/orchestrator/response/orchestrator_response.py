@@ -11,6 +11,7 @@ from ....entities import (
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
+    ToolCallDiagnosticStatus,
     ToolCallError,
     ToolCallOutcome,
     ToolCallResult,
@@ -29,6 +30,7 @@ from ....model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamProviderEvent,
     StreamTerminalOutcome,
     StreamValidationError,
     canonical_item_from_consumer_projection,
@@ -56,6 +58,7 @@ from asyncio import (
 )
 from base64 import b64encode
 from dataclasses import asdict, dataclass, is_dataclass, replace
+from datetime import datetime
 from inspect import iscoroutine
 from json import dumps, loads
 from queue import Full, Queue
@@ -550,6 +553,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self,
         item: object,
     ) -> None:
+        if isinstance(item, StreamProviderEvent):
+            bridged_item = self._legacy_parser_item_from_provider_event(item)
+            if bridged_item is None:
+                return
+            item = bridged_item
         projection = self._stream_item_projection(
             item,
             self._canonical_sequence,
@@ -572,6 +580,112 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             item,
             "parser item",
         )
+
+    def _legacy_parser_item_from_provider_event(
+        self,
+        event: StreamProviderEvent,
+    ) -> ToolCallToken | Event | None:
+        if event.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            return ToolCallToken(token=event.text_delta or "")
+        if event.kind is StreamItemKind.TOOL_CALL_READY:
+            data = cast(dict[str, Any], event.data or {})
+            call = ToolCall(
+                id=event.correlation.tool_call_id,
+                name=cast(str, data.get("name") or ""),
+                arguments=cast(dict[str, Any], data.get("arguments") or {}),
+            )
+            return _legacy_tool_event(
+                EventType.TOOL_PROCESS,
+                payload=cast(Any, [call]),
+                started=perf_counter(),
+            )
+        if event.kind is StreamItemKind.STREAM_DIAGNOSTIC:
+            return _legacy_tool_event(
+                EventType.TOOL_DIAGNOSTIC,
+                payload={
+                    "diagnostics": cast(
+                        Any,
+                        self._legacy_diagnostics_from_provider_event(event),
+                    )
+                },
+                started=perf_counter(),
+            )
+        if event.kind is StreamItemKind.TOOL_CALL_DONE:
+            return None
+        raise AssertionError(f"unsupported parser event kind: {event.kind}")
+
+    @staticmethod
+    def _legacy_diagnostics_from_provider_event(
+        event: StreamProviderEvent,
+    ) -> list[ToolCallDiagnostic]:
+        data = event.data if isinstance(event.data, dict) else {}
+        diagnostics = data.get("diagnostics")
+        if not isinstance(diagnostics, list):
+            return []
+        fallback_call_id = event.correlation.tool_call_id
+        if fallback_call_id is None:
+            tool_call_id = data.get("tool_call_id")
+            fallback_call_id = (
+                tool_call_id if isinstance(tool_call_id, str) else None
+            )
+        return [
+            OrchestratorResponse._legacy_diagnostic_from_data(
+                diagnostic,
+                fallback_call_id=fallback_call_id,
+            )
+            for diagnostic in diagnostics
+            if isinstance(diagnostic, dict)
+        ]
+
+    @staticmethod
+    def _legacy_diagnostic_from_data(
+        data: dict[str, Any],
+        *,
+        fallback_call_id: str | None,
+    ) -> ToolCallDiagnostic:
+        return ToolCallDiagnostic(
+            id=cast(str, data.get("id") or "parser-diagnostic"),
+            call_id=cast(str | None, data.get("call_id")) or fallback_call_id,
+            requested_name=cast(str | None, data.get("requested_name")),
+            canonical_name=cast(str | None, data.get("canonical_name")),
+            status=ToolCallDiagnosticStatus(
+                cast(
+                    str,
+                    data.get("status")
+                    or ToolCallDiagnosticStatus.NON_EXECUTED.value,
+                )
+            ),
+            code=ToolCallDiagnosticCode(
+                cast(
+                    str,
+                    data.get("code")
+                    or ToolCallDiagnosticCode.MALFORMED_CALL.value,
+                )
+            ),
+            stage=ToolCallDiagnosticStage(
+                cast(
+                    str,
+                    data.get("stage") or ToolCallDiagnosticStage.PARSE.value,
+                )
+            ),
+            message=cast(str, data.get("message") or "Malformed tool call."),
+            retryable=bool(data.get("retryable", False)),
+            details=cast(dict[str, Any], data.get("details") or {}),
+            started_at=OrchestratorResponse._legacy_diagnostic_datetime(
+                data.get("started_at")
+            ),
+            finished_at=OrchestratorResponse._legacy_diagnostic_datetime(
+                data.get("finished_at")
+            ),
+            duration_ms=cast(int | float | None, data.get("duration_ms")),
+        )
+
+    @staticmethod
+    def _legacy_diagnostic_datetime(value: object) -> datetime | None:
+        if value is None:
+            return None
+        assert isinstance(value, str)
+        return datetime.fromisoformat(value)
 
     def _matching_token_event_canonical_item(
         self,
@@ -956,6 +1070,13 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 parser_items: list[Token | TokenDetail | Event] = []
                 parser_events: list[Event] = []
                 for item in await self._tool_parser.flush():
+                    if isinstance(item, StreamProviderEvent):
+                        bridged_item = (
+                            self._legacy_parser_item_from_provider_event(item)
+                        )
+                        if bridged_item is None:
+                            continue
+                        item = bridged_item
                     projection = self._stream_item_projection(
                         item,
                         self._canonical_sequence,

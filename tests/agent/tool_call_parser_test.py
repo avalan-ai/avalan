@@ -18,7 +18,7 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
         base_parser = ToolCallParser()
         manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tokens = []
         for t in ["<tool_call>", "x", "</tool_call>", "y"]:
             tokens.extend(await parser.push(t))
@@ -40,7 +40,7 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
         base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tokens: list = []
         parts = [
             "<|channel|>",
@@ -68,7 +68,7 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
         base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tokens: list = []
         parts = [
             "<|channel|>",
@@ -96,7 +96,7 @@ class ToolCallParserTestCase(IsolatedAsyncioTestCase):
         base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tokens: list = []
         parts = [
             "<|start|>",

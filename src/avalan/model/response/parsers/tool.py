@@ -1,13 +1,21 @@
-"""Parser emitting events for detected tool calls."""
+"""Parser emitting canonical events for detected tool calls."""
 
 from ....entities import ToolCallDiagnostic, ToolCallToken, ToolFormat
 from ....event import Event, EventType
 from ....event.manager import EventManager
+from ....tool.dsml import DsmlTools
 from ....tool.manager import ToolManager
 from ....tool.parser import ToolCallParser
+from ...stream import (
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamProviderEvent,
+    StreamVisibility,
+)
 
 from dataclasses import dataclass
 from io import StringIO
+from json import JSONDecodeError, JSONDecoder, dumps
 from time import perf_counter
 from typing import Any, Iterable, cast
 
@@ -376,10 +384,15 @@ class ToolCallResponseParser:
     """Parse tool calls during streaming."""
 
     def __init__(
-        self, tool_manager: ToolManager, event_manager: EventManager | None
+        self,
+        tool_manager: ToolManager,
+        event_manager: EventManager | None,
+        *,
+        legacy_fixture: bool = False,
     ) -> None:
         self._tool_manager = tool_manager
         self._event_manager = event_manager
+        self._legacy_fixture = legacy_fixture
         self._buffer = StringIO()
         self._tool_buffer = StringIO()
         self._tag_buffer = ""
@@ -388,6 +401,10 @@ class ToolCallResponseParser:
         self._pending_str = ""
         self._pending_tool_visible_suffix = ""
         self._tool_close_state = self._new_tool_close_state()
+        self._tool_call_id: str | None = None
+        self._tool_call_index = 0
+        self._tool_argument_emitted_until = 0
+        self._tool_argument_text_by_id: dict[str, str] = {}
         self._visible_state = _VisibleTextState()
 
     async def push(self, token_str: str) -> Iterable[Any]:
@@ -454,9 +471,10 @@ class ToolCallResponseParser:
                     )
                 self._pending_tokens.append(tool_token)
                 self._tool_buffer.write(tool_token)
-                result.extend(
-                    ToolCallToken(token=t) for t in self._pending_tokens
-                )
+                for pending_token in self._pending_tokens:
+                    event = self._tool_argument_delta(pending_token)
+                    if event is not None:
+                        result.append(event)
                 self._pending_tokens.clear()
                 self._pending_str = ""
                 self._inside_call = (
@@ -518,7 +536,9 @@ class ToolCallResponseParser:
                     self._split_visible_tool_suffix_prefix(tool_token)
                 )
             if tool_token:
-                result.append(ToolCallToken(token=tool_token))
+                event = self._tool_argument_delta(tool_token)
+                if event is not None:
+                    result.append(event)
             if closed_split is not None:
                 self._tool_buffer = StringIO()
                 self._tool_buffer.write(tool_text)
@@ -566,42 +586,124 @@ class ToolCallResponseParser:
             else:
                 diagnostics = self._stream_buffer_diagnostics(parse_text)
             if diagnostics:
-                event = await self._diagnostic_event(diagnostics)
+                diagnostic_events = await self._diagnostic_events(diagnostics)
                 return await self._finish_closed_segment(
-                    result + [event], visible_suffix
+                    result + diagnostic_events, visible_suffix
                 )
 
             return await self._finish_closed_segment(result, visible_suffix)
 
         return result
 
-    async def _diagnostic_event(
+    async def _diagnostic_events(
         self, diagnostics: list[ToolCallDiagnostic]
-    ) -> Event:
-        event = Event(
-            type=EventType.TOOL_DIAGNOSTIC,
-            payload={"diagnostics": cast(Any, diagnostics)},
-            started=perf_counter(),
+    ) -> list[Event | StreamProviderEvent]:
+        return [
+            await self._diagnostic_event(group, tool_call_id=tool_call_id)
+            for tool_call_id, group in self._diagnostic_groups(diagnostics)
+        ]
+
+    async def _diagnostic_event(
+        self,
+        diagnostics: list[ToolCallDiagnostic],
+        *,
+        tool_call_id: str | None = None,
+    ) -> Event | StreamProviderEvent:
+        if self._legacy_fixture:
+            event = Event(
+                type=EventType.TOOL_DIAGNOSTIC,
+                payload={"diagnostics": cast(Any, diagnostics)},
+                started=perf_counter(),
+            )
+            if self._event_manager:
+                await self._event_manager.trigger(event)
+            return event
+
+        tool_call_id = (
+            tool_call_id
+            or self._diagnostic_tool_call_id(diagnostics)
+            or self._ensure_tool_call_id()
+        )
+        message = (
+            diagnostics[0].message if diagnostics else "Malformed tool call."
+        )
+        provider_event = StreamProviderEvent(
+            kind=StreamItemKind.STREAM_DIAGNOSTIC,
+            data={
+                "code": "tool_call.malformed",
+                "message": message,
+                "tool_call_id": tool_call_id,
+                "diagnostics": [
+                    self._diagnostic_data(diagnostic)
+                    for diagnostic in diagnostics
+                ],
+            },
+            correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
+            visibility=StreamVisibility.DIAGNOSTIC,
         )
         if self._event_manager:
-            await self._event_manager.trigger(event)
-        return event
+            await self._event_manager.trigger(
+                Event(
+                    type=EventType.TOOL_DIAGNOSTIC,
+                    payload={"diagnostics": cast(Any, diagnostics)},
+                    started=perf_counter(),
+                )
+            )
+        return provider_event
 
     async def _events_for_parse(
         self,
         calls: list[Any],
         diagnostics: list[ToolCallDiagnostic],
-    ) -> list[Event]:
-        events: list[Event] = []
-        if diagnostics:
-            events.append(await self._diagnostic_event(diagnostics))
-        events.append(
-            Event(
-                type=EventType.TOOL_PROCESS,
-                payload=cast(Any, calls),
-                started=perf_counter(),
+    ) -> list[Event | StreamProviderEvent]:
+        events: list[Event | StreamProviderEvent] = []
+        if self._legacy_fixture:
+            if diagnostics:
+                events.append(await self._diagnostic_event(diagnostics))
+            events.append(
+                Event(
+                    type=EventType.TOOL_PROCESS,
+                    payload=cast(Any, calls),
+                    started=perf_counter(),
+                )
             )
-        )
+            return events
+
+        for tool_call_id, group in self._diagnostic_groups(diagnostics):
+            events.append(
+                await self._diagnostic_event(group, tool_call_id=tool_call_id)
+            )
+        first_call = True
+        for call in calls:
+            tool_call_id = self._tool_call_id_for_call(
+                call, first_call=first_call
+            )
+            first_call = False
+            correlation = StreamItemCorrelation(tool_call_id=tool_call_id)
+            argument_text = self._remaining_tool_argument_delta_text(
+                tool_call_id, self._tool_argument_delta_text(call)
+            )
+            if argument_text:
+                events.append(
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        text_delta=argument_text,
+                        correlation=correlation,
+                    )
+                )
+            events.extend(
+                [
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_READY,
+                        data=self._tool_call_data(call),
+                        correlation=correlation,
+                    ),
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_DONE,
+                        correlation=correlation,
+                    ),
+                ]
+            )
         return events
 
     async def _finish_closed_segment(
@@ -639,12 +741,12 @@ class ToolCallResponseParser:
             else:
                 diagnostics = self._stream_buffer_diagnostics(buffer_text)
                 if diagnostics:
-                    result.append(await self._diagnostic_event(diagnostics))
+                    result.extend(await self._diagnostic_events(diagnostics))
                     self._clear_buffers()
         elif self._pending_tokens:
             diagnostics = self._stream_buffer_diagnostics(self._pending_str)
             if diagnostics:
-                result.append(await self._diagnostic_event(diagnostics))
+                result.extend(await self._diagnostic_events(diagnostics))
                 self._clear_buffers()
                 return result
 
@@ -669,6 +771,246 @@ class ToolCallResponseParser:
 
     def _new_tool_close_state(self) -> _ToolCallCloseState:
         return _ToolCallCloseState(self._tool_marker_tail_limit())
+
+    def _new_tool_call_id(self) -> str:
+        self._tool_call_index += 1
+        return f"parser-tool-call-{self._tool_call_index}"
+
+    def _ensure_tool_call_id(self) -> str:
+        if self._tool_call_id is None:
+            self._tool_call_id = self._new_tool_call_id()
+        return self._tool_call_id
+
+    def _tool_call_id_for_call(
+        self,
+        call: Any,
+        *,
+        first_call: bool,
+    ) -> str:
+        if first_call and self._tool_call_id is not None:
+            return self._tool_call_id
+        call_id = getattr(call, "id", None)
+        if call_id is not None:
+            return str(call_id)
+        return (
+            self._ensure_tool_call_id()
+            if first_call
+            else self._new_tool_call_id()
+        )
+
+    @staticmethod
+    def _diagnostic_tool_call_id(
+        diagnostics: list[ToolCallDiagnostic],
+    ) -> str | None:
+        for diagnostic in diagnostics:
+            if diagnostic.call_id is not None:
+                return str(diagnostic.call_id)
+        return None
+
+    def _diagnostic_groups(
+        self,
+        diagnostics: list[ToolCallDiagnostic],
+    ) -> list[tuple[str | None, list[ToolCallDiagnostic]]]:
+        groups: dict[str, list[ToolCallDiagnostic]] = {}
+        uncorrelated: list[tuple[str | None, list[ToolCallDiagnostic]]] = []
+        for diagnostic in diagnostics:
+            if diagnostic.call_id is None:
+                uncorrelated.append((self._new_tool_call_id(), [diagnostic]))
+                continue
+            groups.setdefault(str(diagnostic.call_id), []).append(diagnostic)
+        return [
+            *((tool_call_id, group) for tool_call_id, group in groups.items()),
+            *uncorrelated,
+        ]
+
+    def _tool_argument_delta(
+        self, token: str
+    ) -> ToolCallToken | StreamProviderEvent | None:
+        if self._legacy_fixture:
+            return ToolCallToken(token=token)
+        if getattr(self._tool_manager, "tool_format", None) is ToolFormat.DSML:
+            return self._dsml_tool_argument_delta(token)
+
+        text = self._tool_buffer.getvalue() + token
+        argument_text = self._stream_tool_argument_text(text)
+        if argument_text is None:
+            return None
+        tool_call_id = self._stream_tool_call_id(text)
+        delta = self._remaining_tool_argument_delta_text(
+            tool_call_id, argument_text
+        )
+        if not delta:
+            return None
+        return StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            text_delta=delta,
+            correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
+        )
+
+    def _dsml_tool_argument_delta(
+        self, token: str
+    ) -> StreamProviderEvent | None:
+        text = self._tool_buffer.getvalue() + token
+        deltas, emitted_until = DsmlTools.stream_argument_deltas(
+            text, self._tool_argument_emitted_until
+        )
+        self._tool_argument_emitted_until = emitted_until
+        delta = "".join(deltas)
+        if not delta:
+            return None
+        tool_call_id = self._stream_tool_call_id(text)
+        self._tool_argument_text_by_id[tool_call_id] = (
+            self._tool_argument_text_by_id.get(tool_call_id, "") + delta
+        )
+        return StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            text_delta=delta,
+            correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
+        )
+
+    @staticmethod
+    def _tool_argument_delta_text(call: Any) -> str:
+        arguments = getattr(call, "arguments", None)
+        if arguments is None:
+            return ""
+        return dumps(arguments, separators=(",", ":"))
+
+    def _remaining_tool_argument_delta_text(
+        self,
+        tool_call_id: str,
+        argument_text: str,
+    ) -> str:
+        if not argument_text:
+            return ""
+        emitted_text = self._tool_argument_text_by_id.get(tool_call_id, "")
+        if not emitted_text:
+            self._tool_argument_text_by_id[tool_call_id] = argument_text
+            return argument_text
+        if not argument_text.startswith(emitted_text):
+            return ""
+        self._tool_argument_text_by_id[tool_call_id] = argument_text
+        return argument_text[len(emitted_text) :]
+
+    def _stream_tool_call_id(self, text: str) -> str:
+        if self._tool_call_id is not None:
+            return self._tool_call_id
+        explicit_id = self._current_explicit_tool_call_id(text)
+        if explicit_id is not None:
+            self._tool_call_id = explicit_id
+            return explicit_id
+        return self._ensure_tool_call_id()
+
+    def _current_explicit_tool_call_id(self, text: str) -> str | None:
+        payload = self._stream_tool_payload(text)
+        if payload is None:
+            return None
+        value = self._decode_json_object(payload)
+        if value is None:
+            return None
+        call_id = value.get("id")
+        return str(call_id) if isinstance(call_id, str) and call_id else None
+
+    def _stream_tool_argument_text(self, text: str) -> str | None:
+        payload = self._stream_tool_payload(text)
+        if payload is None:
+            return None
+        payload_data = self._decode_json_object(payload)
+        if payload_data is None:
+            return None
+        if "arguments" not in payload_data:
+            return dumps(payload_data, separators=(",", ":"))
+        name = payload_data.get("name")
+        arguments = payload_data.get("arguments")
+        if not ToolCallParser._is_valid_tool_name(name):
+            return None
+        if not isinstance(arguments, dict):
+            return None
+        return dumps(arguments, separators=(",", ":"))
+
+    def _stream_tool_payload(self, text: str) -> str | None:
+        if (
+            getattr(self._tool_manager, "tool_format", None)
+            is ToolFormat.HARMONY
+        ):
+            marker = "<|message|>"
+            message_start = text.find(marker)
+            if message_start == -1:
+                return None
+            payload = text[message_start + len(marker) :]
+            for end_marker in ("<|call|>", "<|channel|>final<|message|>"):
+                marker_index = payload.find(end_marker)
+                if marker_index != -1:
+                    payload = payload[:marker_index]
+            return payload
+
+        start_index = self._first_stream_tool_start_index(text)
+        if start_index is None:
+            return None
+        opening_marker = self._tool_start_marker_at(text, start_index)
+        if opening_marker is None:
+            return None
+        if opening_marker == "<tool>":
+            payload_start = start_index + len(opening_marker)
+        else:
+            tag_end = ToolCallParser._tag_end_index(text, start_index)
+            if tag_end == -1:
+                return None
+            payload_start = tag_end + 1
+        payload = text[payload_start:]
+        for end_marker in self._tool_marker_ends():
+            marker_index = payload.find(end_marker)
+            if marker_index != -1:
+                payload = payload[:marker_index]
+        return payload
+
+    def _first_stream_tool_start_index(self, text: str) -> int | None:
+        indexes = tuple(self._tool_marker_start_indexes(text))
+        return indexes[0] if indexes else None
+
+    @staticmethod
+    def _decode_json_object(text: str) -> dict[str, Any] | None:
+        value_text = text.strip()
+        if not value_text:
+            return None
+        try:
+            value, end_index = JSONDecoder().raw_decode(value_text)
+        except JSONDecodeError:
+            return None
+        if value_text[end_index:].strip():
+            return None
+        return value if isinstance(value, dict) else None
+
+    @staticmethod
+    def _tool_call_data(call: Any) -> dict[str, Any]:
+        return {
+            "name": getattr(call, "name", None),
+            "arguments": getattr(call, "arguments", None) or {},
+        }
+
+    @staticmethod
+    def _diagnostic_data(diagnostic: ToolCallDiagnostic) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "id": str(diagnostic.id),
+            "code": diagnostic.code.value,
+            "stage": diagnostic.stage.value,
+            "status": diagnostic.status.value,
+            "message": diagnostic.message,
+            "retryable": diagnostic.retryable,
+            "details": diagnostic.details,
+        }
+        if diagnostic.call_id is not None:
+            data["call_id"] = str(diagnostic.call_id)
+        if diagnostic.requested_name is not None:
+            data["requested_name"] = diagnostic.requested_name
+        if diagnostic.canonical_name is not None:
+            data["canonical_name"] = diagnostic.canonical_name
+        if diagnostic.duration_ms is not None:
+            data["duration_ms"] = diagnostic.duration_ms
+        if diagnostic.started_at is not None:
+            data["started_at"] = diagnostic.started_at.isoformat()
+        if diagnostic.finished_at is not None:
+            data["finished_at"] = diagnostic.finished_at.isoformat()
+        return data
 
     def _reset_tool_close_state(self, text: str = "") -> None:
         self._tool_close_state = self._new_tool_close_state()
@@ -1074,6 +1416,9 @@ class ToolCallResponseParser:
         self._pending_tokens.clear()
         self._pending_str = ""
         self._pending_tool_visible_suffix = ""
+        self._tool_call_id = None
+        self._tool_argument_emitted_until = 0
+        self._tool_argument_text_by_id.clear()
         self._reset_tool_close_state()
         self._visible_state = _VisibleTextState()
         if visible_text:

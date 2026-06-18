@@ -14,6 +14,7 @@ from ..stream import (
     StreamItemKind,
     StreamProducerBackend,
     StreamProviderCapabilities,
+    StreamProviderEvent,
     StreamTerminalOutcome,
     StreamValidationError,
     TextGenerationSingleStream,
@@ -145,7 +146,10 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
     _legacy_tool_call_data: dict[str, dict[str, Any]]
     _semantic_stream_seen: bool = False
     _legacy_stream_seen: bool = False
+    _legacy_reasoning_delta_seen: bool = False
+    _legacy_reasoning_done_emitted: bool = False
     _manual_thinking: bool = False
+    _pending_legacy_reasoning_done: bool = False
 
     def __init__(
         self,
@@ -186,6 +190,9 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
         self._legacy_tool_call_data = {}
         self._semantic_stream_seen = False
         self._legacy_stream_seen = False
+        self._legacy_reasoning_delta_seen = False
+        self._legacy_reasoning_done_emitted = False
+        self._pending_legacy_reasoning_done = False
         self._terminal_failure_outcome = None
         self._terminal_failure_message = None
         if (
@@ -645,18 +652,45 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
 
         while True:
             if self._parser_queue and not self._parser_queue.empty():
-                return await self._record_returned_token(
-                    self._parser_queue.get()
-                )
+                queued_token = self._parser_queue.get()
+                if isinstance(queued_token, ReasoningToken):
+                    self._legacy_reasoning_delta_seen = True
+                elif (
+                    self._pending_legacy_reasoning_done
+                    and self._legacy_reasoning_delta_seen
+                    and not (
+                        isinstance(queued_token, str)
+                        and not queued_token.strip()
+                    )
+                    and not (
+                        isinstance(queued_token, (Token, TokenDetail))
+                        and not queued_token.token.strip()
+                    )
+                ):
+                    self._record_pending_legacy_reasoning_done()
+                return await self._record_returned_token(queued_token)
 
             try:
                 token = await self._output.__anext__()
             except StopAsyncIteration:
-                if self._reasoning_parser:
+                if self._reasoning_parser and not self._semantic_stream_seen:
                     parser_queue = self._parser_queue
                     assert parser_queue is not None
                     for it in await self._reasoning_parser.flush():
-                        parser_queue.put(it)
+                        if isinstance(it, StreamProviderEvent):
+                            if it.kind is StreamItemKind.REASONING_DONE:
+                                self._pending_legacy_reasoning_done = True
+                                continue
+                            assert it.kind is StreamItemKind.REASONING_DELTA
+                            parser_queue.put(
+                                ReasoningToken(
+                                    token=it.text_delta or "",
+                                    id=-1,
+                                    probability=None,
+                                )
+                            )
+                        else:
+                            parser_queue.put(it)
                     if not parser_queue.empty():
                         continue
                 try:
@@ -698,9 +732,27 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
             self._buffer.write(token_str)
 
             if isinstance(token, ToolCallToken) and token.call is not None:
+                if (
+                    self._pending_legacy_reasoning_done
+                    and self._legacy_reasoning_delta_seen
+                    and token.token.strip()
+                ):
+                    self._record_pending_legacy_reasoning_done()
                 return await self._record_returned_token(token)
 
             if not self._reasoning_parser:
+                if isinstance(token, ReasoningToken):
+                    self._legacy_reasoning_delta_seen = True
+                elif (
+                    self._pending_legacy_reasoning_done
+                    and self._legacy_reasoning_delta_seen
+                    and not (isinstance(token, str) and not token.strip())
+                    and not (
+                        isinstance(token, (Token, TokenDetail))
+                        and not token.token.strip()
+                    )
+                ):
+                    self._record_pending_legacy_reasoning_done()
                 return await self._record_returned_token(token)
 
             try:
@@ -712,7 +764,28 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
 
             for it in items:
                 parsed: Token | TokenDetail | str
-                if isinstance(it, ReasoningToken):
+                if isinstance(it, StreamProviderEvent):
+                    if it.kind is StreamItemKind.REASONING_DONE:
+                        self._pending_legacy_reasoning_done = True
+                        continue
+                    assert it.kind is StreamItemKind.REASONING_DELTA
+                    token_id = (
+                        token.id
+                        if isinstance(token, (Token, TokenDetail))
+                        else -1
+                    )
+                    if token_id is None:
+                        token_id = -1
+                    parsed = ReasoningToken(
+                        token=it.text_delta or "",
+                        id=token_id,
+                        probability=(
+                            token.probability
+                            if isinstance(token, TokenDetail)
+                            else None
+                        ),
+                    )
+                elif isinstance(it, ReasoningToken):
                     token_id = (
                         token.id
                         if isinstance(token, (Token, TokenDetail))
@@ -747,7 +820,23 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
             parser_queue = self._parser_queue
             assert parser_queue is not None
             if not parser_queue.empty():
-                return await self._record_returned_token(parser_queue.get())
+                queued_token = parser_queue.get()
+                if isinstance(queued_token, ReasoningToken):
+                    self._legacy_reasoning_delta_seen = True
+                elif (
+                    self._pending_legacy_reasoning_done
+                    and self._legacy_reasoning_delta_seen
+                    and not (
+                        isinstance(queued_token, str)
+                        and not queued_token.strip()
+                    )
+                    and not (
+                        isinstance(queued_token, (Token, TokenDetail))
+                        and not queued_token.token.strip()
+                    )
+                ):
+                    self._record_pending_legacy_reasoning_done()
+                return await self._record_returned_token(queued_token)
 
     async def _record_returned_token(
         self,
@@ -823,7 +912,31 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
             self._stream_accumulator_sequence += 1
         return self._stream_accumulator
 
+    def _record_pending_legacy_reasoning_done(self) -> None:
+        if (
+            not self._pending_legacy_reasoning_done
+            or self._legacy_reasoning_done_emitted
+            or not self._legacy_reasoning_delta_seen
+        ):
+            self._pending_legacy_reasoning_done = False
+            return
+        accumulator = self._ensure_legacy_stream_accumulator()
+        accumulator.add(
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=self._stream_accumulator_sequence,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            )
+        )
+        self._stream_accumulator_sequence += 1
+        self._legacy_reasoning_done_emitted = True
+        self._pending_legacy_reasoning_done = False
+
     def _finalize_legacy_stream_accumulator(self) -> None:
+        self._record_pending_legacy_reasoning_done()
         accumulator = self._ensure_legacy_stream_accumulator()
         if accumulator.terminal_outcome is not None:
             return
@@ -861,7 +974,10 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                 )
             )
             self._stream_accumulator_sequence += 1
-        if accumulator.reasoning_text:
+        if (
+            self._legacy_reasoning_delta_seen
+            and not self._legacy_reasoning_done_emitted
+        ):
             accumulator.add(
                 CanonicalStreamItem(
                     stream_session_id="response-stream",
@@ -873,6 +989,7 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                 )
             )
             self._stream_accumulator_sequence += 1
+            self._legacy_reasoning_done_emitted = True
         if accumulator.answer_text:
             accumulator.add(
                 CanonicalStreamItem(

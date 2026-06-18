@@ -8845,14 +8845,16 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
     async def test_model_run_mixed_tokens(self):
         async def complex_generator():
             rp = ReasoningParser(
-                reasoning_settings=ReasoningSettings(), logger=getLogger()
+                reasoning_settings=ReasoningSettings(),
+                logger=getLogger(),
+                legacy_fixture=True,
             )
             tm = MagicMock()
             tm.is_potential_tool_call.return_value = True
             tm.get_calls.return_value = None
             base_parser = ToolCallParser()
             tm.tool_call_status.side_effect = base_parser.tool_call_status
-            tp = ToolCallResponseParser(tm, None)
+            tp = ToolCallResponseParser(tm, None, legacy_fixture=True)
             sequence = [
                 "X",
                 "<think>",
@@ -8894,7 +8896,9 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
                         else:
                             yield p
 
-        settings = GenerationSettings()
+        settings = GenerationSettings(
+            reasoning=ReasoningSettings(enabled=False)
+        )
         response = TextGenerationResponse(
             lambda **_: complex_generator(),
             logger=getLogger(),
