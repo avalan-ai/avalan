@@ -1,7 +1,6 @@
 import unittest
 from argparse import Namespace
 from logging import getLogger
-from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.agent import (
@@ -20,18 +19,17 @@ from avalan.entities import (
     OperationParameters,
     OperationTextParameters,
     ToolCall,
-    ToolCallToken,
 )
 from avalan.entities import (
     Operation as EntitiesOperation,
 )
-from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
 )
@@ -88,35 +86,74 @@ def _canonical_answer_response(*text_deltas: str) -> TextGenerationResponse:
     )
 
 
-class _LegacyFixtureToolCallResponse:
-    is_async_generator = True
-    input_token_count = 0
-    output_token_count = 0
-    usage = None
-
-    def __init__(self, call: ToolCall) -> None:
-        self._call = call
-
-    def add_done_callback(self, _: object) -> None:
-        return None
-
-    def __aiter__(self):
-        return self._gen()
-
-    async def _gen(self):
-        yield ToolCallToken(token="", call=self._call)
-
-
 def _legacy_fixture_tool_call_response() -> TextGenerationResponse:
-    return cast(
-        TextGenerationResponse,
-        _LegacyFixtureToolCallResponse(
-            ToolCall(
-                id="cli_math_tool_call_1",
-                name="math.calculator",
-                arguments={"expression": "(4 + 6) * 5 / 2"},
-            )
-        ),
+    call = ToolCall(
+        id="cli_math_tool_call_1",
+        name="math.calculator",
+        arguments={"expression": "(4 + 6) * 5 / 2"},
+    )
+
+    async def gen():
+        yield CanonicalStreamItem(
+            stream_session_id="cli-math-tool-stream",
+            run_id="cli-math-tool-run",
+            turn_id="cli-math-tool-turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="cli-math-tool-stream",
+            run_id="cli-math-tool-run",
+            turn_id="cli-math-tool-turn",
+            sequence=1,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id=call.id),
+            text_delta='{"expression": "(4 + 6) * 5 / 2"}',
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="cli-math-tool-stream",
+            run_id="cli-math-tool-run",
+            turn_id="cli-math-tool-turn",
+            sequence=2,
+            kind=StreamItemKind.TOOL_CALL_READY,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id=call.id),
+            data={"name": call.name, "arguments": call.arguments},
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="cli-math-tool-stream",
+            run_id="cli-math-tool-run",
+            turn_id="cli-math-tool-turn",
+            sequence=3,
+            kind=StreamItemKind.TOOL_CALL_DONE,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id=call.id),
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="cli-math-tool-stream",
+            run_id="cli-math-tool-run",
+            turn_id="cli-math-tool-turn",
+            sequence=4,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="cli-math-tool-stream",
+            run_id="cli-math-tool-run",
+            turn_id="cli-math-tool-turn",
+            sequence=5,
+            kind=StreamItemKind.STREAM_CLOSED,
+            channel=StreamChannel.CONTROL,
+        )
+
+    return TextGenerationResponse(
+        lambda: gen(),
+        logger=getLogger(),
+        use_async_generator=True,
     )
 
 
@@ -364,13 +401,20 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(
             any(
-                isinstance(t, Event)
-                and t.type == EventType.TOOL_RESULT
-                and t.payload["result"].result == "25"
+                t.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED
+                and t.data
+                and t.data.get("result") == "25"
                 for t in tokens
             )
         )
-        self.assertTrue(any("25" in getattr(t, "token", "") for t in tokens))
+        self.assertTrue(
+            any(
+                t.kind is StreamItemKind.ANSWER_DELTA
+                and t.text_delta
+                and "25" in t.text_delta
+                for t in tokens
+            )
+        )
 
     async def test_cli_conversation_with_piped_input_exits_without_tty(self):
         args = make_args()
@@ -515,14 +559,21 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(DummyEngine.last_tool, orch.tool)
         self.assertTrue(
             any(
-                isinstance(t, Event)
-                and t.type == EventType.TOOL_RESULT
-                and t.payload["result"].name == "math.calculator"
-                and t.payload["result"].result == "25"
+                t.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED
+                and t.data
+                and t.data.get("name") == "math.calculator"
+                and t.data.get("result") == "25"
                 for t in tokens
             )
         )
-        self.assertTrue(any("25" in getattr(t, "token", "") for t in tokens))
+        self.assertTrue(
+            any(
+                t.kind is StreamItemKind.ANSWER_DELTA
+                and t.text_delta
+                and "25" in t.text_delta
+                for t in tokens
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ import importlib
 import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -24,7 +24,6 @@ from avalan.entities import (
     MessageRole,
     Token,
     ToolCall,
-    ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.event import Event, EventType
@@ -109,22 +108,68 @@ def _legacy_fixture_tool_event_orchestrator_response() -> OrchestratorResponse:
         arguments={"value": 1},
     )
 
-    class LegacyFixtureToolResponse:
-        is_async_generator = True
-        input_token_count = 0
-        output_token_count = 0
-        usage = None
+    async def response_gen() -> AsyncIterator[CanonicalStreamItem]:
+        yield CanonicalStreamItem(
+            stream_session_id="a2a-tool-stream",
+            run_id="a2a-tool-run",
+            turn_id="a2a-tool-turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="a2a-tool-stream",
+            run_id="a2a-tool-run",
+            turn_id="a2a-tool-turn",
+            sequence=1,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id=call.id),
+            text_delta='{"value": 1}',
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="a2a-tool-stream",
+            run_id="a2a-tool-run",
+            turn_id="a2a-tool-turn",
+            sequence=2,
+            kind=StreamItemKind.TOOL_CALL_READY,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id=call.id),
+            data={"name": call.name, "arguments": call.arguments},
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="a2a-tool-stream",
+            run_id="a2a-tool-run",
+            turn_id="a2a-tool-turn",
+            sequence=3,
+            kind=StreamItemKind.TOOL_CALL_DONE,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id=call.id),
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="a2a-tool-stream",
+            run_id="a2a-tool-run",
+            turn_id="a2a-tool-turn",
+            sequence=4,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="a2a-tool-stream",
+            run_id="a2a-tool-run",
+            turn_id="a2a-tool-turn",
+            sequence=5,
+            kind=StreamItemKind.STREAM_CLOSED,
+            channel=StreamChannel.CONTROL,
+        )
 
-        def add_done_callback(self, _: object) -> None:
-            return None
-
-        def __aiter__(self) -> AsyncIterator[ToolCallToken]:
-            return self._gen()
-
-        async def _gen(self) -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-    response = cast(TextGenerationResponse, LegacyFixtureToolResponse())
+    response = TextGenerationResponse(
+        lambda **_: response_gen(),
+        logger=logging.getLogger(),
+        use_async_generator=True,
+    )
     agent = AsyncMock(spec=EngineAgent)
     agent.engine = SimpleNamespace(model_id="model", tokenizer=None)
     tool = AsyncMock()
@@ -717,18 +762,17 @@ async def _run_unsupported_legacy_item_flow() -> None:
 
 async def _run_orchestrator_tool_event_projection_flow() -> None:
     raw_response = _legacy_fixture_tool_event_orchestrator_response()
-    raw_types: list[EventType] = []
+    raw_kinds: list[StreamItemKind] = []
     raw_iterator = raw_response.__aiter__()
     while True:
         try:
             item = await asyncio.wait_for(raw_iterator.__anext__(), 1)
         except StopAsyncIteration:
             break
-        if isinstance(item, Event):
-            raw_types.append(item.type)
+        raw_kinds.append(item.kind)
 
-    assert EventType.TOOL_PROCESS in raw_types
-    assert EventType.TOOL_RESULT in raw_types
+    assert StreamItemKind.TOOL_CALL_READY in raw_kinds
+    assert StreamItemKind.TOOL_EXECUTION_COMPLETED in raw_kinds
 
     store = TaskStore()
     task_id = "task-orchestrator-events"
@@ -797,26 +841,23 @@ async def _run_orchestrator_canonical_non_answer_projection_flow() -> None:
     assert StreamItemKind.STREAM_DIAGNOSTIC in kinds
     assert StreamItemKind.REASONING_DELTA in kinds
     assert StreamItemKind.REASONING_DONE in kinds
-    assert StreamItemKind.USAGE_COMPLETED in kinds
     assert StreamItemKind.STREAM_COMPLETED in kinds
     assert StreamItemKind.STREAM_CLOSED in kinds
-    usage_projection = next(
-        projection
-        for projection in projections
-        if projection.kind is StreamItemKind.USAGE_COMPLETED
-    )
     completed_projection = next(
         projection
         for projection in projections
         if projection.kind is StreamItemKind.STREAM_COMPLETED
     )
-    assert usage_projection.usage == {"output_tokens": 1}
-    assert completed_projection.usage is None
+    assert completed_projection.usage is not None
+    assert completed_projection.usage["totals"]["output_tokens"] == 1
 
     projection_accumulator = ProtocolStreamAccumulator()
     for projection in projections:
         projection_accumulator.add(projection)
-    assert projection_accumulator.snapshot().usage == {"output_tokens": 1}
+    assert projection_accumulator.snapshot().usage is not None
+    assert (
+        projection_accumulator.snapshot().usage["totals"]["output_tokens"] == 1
+    )
     assert all(
         projection.stream_session_id == projections[0].stream_session_id
         for projection in projections
@@ -841,7 +882,11 @@ async def _run_orchestrator_canonical_non_answer_projection_flow() -> None:
     task = await store.get_task(task_id)
     assert task["status"] == "completed"
     assert task["error"] is None
-    assert translator._accumulator.snapshot().usage == {"output_tokens": 1}
+    assert translator._accumulator.snapshot().usage is not None
+    assert (
+        translator._accumulator.snapshot().usage["totals"]["output_tokens"]
+        == 1
+    )
     artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
     assert artifacts["reasoning"]["content"][0]["text"] == "plan"
     assert artifacts["reasoning"]["state"] == "completed"

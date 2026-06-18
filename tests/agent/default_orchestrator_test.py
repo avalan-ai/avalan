@@ -347,7 +347,17 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertIsInstance(result, OrchestratorResponse)
-        self.assertEqual([token.token for token in tokens], ["a", "b"])
+        self.assertTrue(
+            all(isinstance(token, CanonicalStreamItem) for token in tokens)
+        )
+        self.assertEqual(
+            [
+                token.text_delta
+                for token in tokens
+                if token.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["a", "b"],
+        )
 
         calls = event_manager.trigger.await_args_list
         self.assertTrue(
@@ -364,7 +374,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             token_events[0].payload,
             {
                 "token_id": 1,
-                "token_type": "Token",
+                "token_type": "CanonicalStreamItem",
                 "model_id": "m",
                 "token": "a",
                 "step": 0,
@@ -385,7 +395,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             token_events[1].payload,
             {
                 "token_id": 2,
-                "token_type": "Token",
+                "token_type": "CanonicalStreamItem",
                 "model_id": "m",
                 "token": "b",
                 "step": 1,

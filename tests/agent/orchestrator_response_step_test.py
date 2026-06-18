@@ -139,11 +139,19 @@ class OrchestratorResponseStepTestCase(IsolatedAsyncioTestCase):
             {},
         )
         resp.__aiter__()
-        await resp.__anext__()
+        first = await resp.__anext__()
+        self.assertIs(first.kind, StreamItemKind.STREAM_STARTED)
+        self.assertEqual(resp._step, 0)
+        second = await resp.__anext__()
+        self.assertIs(second.kind, StreamItemKind.ANSWER_DELTA)
         self.assertEqual(resp._step, 1)
-        await resp.__anext__()
+        third = await resp.__anext__()
+        self.assertIs(third.kind, StreamItemKind.ANSWER_DELTA)
         self.assertEqual(resp._step, 2)
-        with self.assertRaises(StopAsyncIteration):
-            await resp.__anext__()
+        while True:
+            try:
+                await resp.__anext__()
+            except StopAsyncIteration:
+                break
         resp.__aiter__()
         self.assertEqual(resp._step, 0)

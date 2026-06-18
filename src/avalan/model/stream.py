@@ -1501,7 +1501,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
         categories=(
             StreamLegacyBoundaryCategory.PRODUCER,
             StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.ORCHESTRATOR,
             StreamLegacyBoundaryCategory.PARSER,
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
@@ -1525,7 +1524,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
         categories=(
             StreamLegacyBoundaryCategory.PRODUCER,
             StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.ORCHESTRATOR,
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
@@ -1547,7 +1545,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
         categories=(
             StreamLegacyBoundaryCategory.PRODUCER,
             StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.ORCHESTRATOR,
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
@@ -1569,7 +1566,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
         categories=(
             StreamLegacyBoundaryCategory.PRODUCER,
             StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.ORCHESTRATOR,
             StreamLegacyBoundaryCategory.PARSER,
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
@@ -1592,7 +1588,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
         categories=(
             StreamLegacyBoundaryCategory.PRODUCER,
             StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.ORCHESTRATOR,
             StreamLegacyBoundaryCategory.PARSER,
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
@@ -1613,7 +1608,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
         surface=StreamLegacySurface.EVENT,
         classification=StreamLegacySurfaceClassification.REMOVE_NOW,
         categories=(
-            StreamLegacyBoundaryCategory.ORCHESTRATOR,
             StreamLegacyBoundaryCategory.PARSER,
             StreamLegacyBoundaryCategory.EVENTING,
             StreamLegacyBoundaryCategory.MCP,
@@ -1687,23 +1681,6 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
         removal_condition=(
             "Anthropic non-stream response content is projected through "
             "canonical response items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.agent.orchestrator.response.orchestrator_response",
-        qualname="OrchestratorResponse._stream_item_projection",
-        surfaces=(
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-            StreamLegacySurface.EVENT,
-        ),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.ORCHESTRATOR,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="agent.orchestrator",
-        removal_condition=(
-            "Orchestrator public iteration and parser queues carry canonical "
-            "stream projections instead of legacy token or event items."
         ),
     ),
     StreamLegacyClassifierInventoryEntry(
@@ -1915,57 +1892,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         ),
         "model.stream",
         "String parser adapter is removed after local producers emit events.",
-    ),
-    _runtime_boundary(
-        "avalan.agent.orchestrator.response.orchestrator_response",
-        "OrchestratorResponse",
-        (
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.EVENT,
-        ),
-        StreamLegacyBoundaryCategory.ORCHESTRATOR,
-        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
-        "agent.orchestrator",
-        "Orchestrator iteration surface is canonical-only.",
-    ),
-    _runtime_boundary(
-        "avalan.agent.orchestrator.response.orchestrator_response",
-        "OrchestratorResponse._stream_item_projection",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-            StreamLegacySurface.EVENT,
-        ),
-        StreamLegacyBoundaryCategory.ORCHESTRATOR,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "agent.orchestrator",
-        "Orchestrator projection accepts canonical items only.",
-    ),
-    _runtime_boundary(
-        "avalan.agent.orchestrator.response.orchestrator_response",
-        "OrchestratorResponse._emit",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-            StreamLegacySurface.EVENT,
-        ),
-        StreamLegacyBoundaryCategory.ORCHESTRATOR,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.EMITS,
-        ),
-        "agent.orchestrator",
-        "Orchestrator emit surface accepts canonical items only.",
     ),
     _runtime_boundary(
         "avalan.agent.orchestrator.response.orchestrator_response",

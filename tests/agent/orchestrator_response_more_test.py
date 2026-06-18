@@ -13,11 +13,16 @@ from avalan.entities import (
     Input,
     Message,
     MessageRole,
-    Token,
 )
-from avalan.event import Event, EventType
+from avalan.event import EventType
 from avalan.model.call import ModelCallContext
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamProviderEvent,
+)
 from avalan.tool.manager import ToolManager
 
 
@@ -51,6 +56,30 @@ def _empty_response() -> TextGenerationResponse:
 
     return TextGenerationResponse(
         lambda: gen(), logger=getLogger(), use_async_generator=True
+    )
+
+
+def _canonical_item(
+    kind: StreamItemKind,
+    sequence: int,
+    *,
+    text_delta: str | None = None,
+    data: object | None = None,
+) -> CanonicalStreamItem:
+    channel = (
+        StreamChannel.ANSWER
+        if kind in {StreamItemKind.ANSWER_DELTA, StreamItemKind.ANSWER_DONE}
+        else StreamChannel.CONTROL
+    )
+    return CanonicalStreamItem(
+        stream_session_id="more-stream",
+        run_id="more-run",
+        turn_id="more-turn",
+        sequence=sequence,
+        kind=kind,
+        channel=channel,
+        text_delta=text_delta,
+        data=data,
     )
 
 
@@ -92,8 +121,18 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
             {},
         )
         resp.__aiter__()
-        resp._parser_queue.put("queued")
-        self.assertEqual(await resp.__anext__(), "queued")
+        queued = _canonical_item(
+            StreamItemKind.ANSWER_DELTA,
+            0,
+            text_delta="queued",
+        )
+        resp._parser_queue.put(queued)
+        self.assertIs(
+            (await resp.__anext__()).kind, StreamItemKind.STREAM_STARTED
+        )
+        item = await resp.__anext__()
+        self.assertIs(item.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(item.text_delta, "queued")
 
     async def test_flush_after_stop(self):
         engine = _DummyEngine()
@@ -111,11 +150,26 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
             tool=tool,
         )
         resp._tool_parser = MagicMock()
-        flushed = [Event(type=EventType.END), Token(id=1, token="x")]
-        resp._tool_parser.flush = AsyncMock(return_value=flushed)
+        flushed = [
+            _canonical_item(
+                StreamItemKind.ANSWER_DELTA,
+                0,
+                text_delta="x",
+            )
+        ]
+        resp._tool_parser.flush = AsyncMock(side_effect=[flushed, []])
         resp.__aiter__()
-        self.assertEqual(await resp.__anext__(), flushed[1])
-        self.assertEqual(resp._tool_process_events.get_nowait(), flushed[0])
+        items = []
+        while True:
+            try:
+                items.append(await resp.__anext__())
+            except StopAsyncIteration:
+                break
+
+        self.assertEqual(
+            [item.text_delta for item in items if item.text_delta],
+            ["x"],
+        )
 
     async def test_flush_queues_diagnostic_after_plain_tokens(self):
         engine = _DummyEngine()
@@ -133,13 +187,32 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
             tool=tool,
         )
         resp._tool_parser = MagicMock()
-        diagnostic = Event(type=EventType.TOOL_DIAGNOSTIC)
-        token = Token(id=1, token="x")
-        resp._tool_parser.flush = AsyncMock(return_value=[diagnostic, token])
+        diagnostic = StreamProviderEvent(
+            kind=StreamItemKind.STREAM_DIAGNOSTIC,
+            data={"event_type": EventType.TOOL_DIAGNOSTIC.value},
+        )
+        item = _canonical_item(
+            StreamItemKind.ANSWER_DELTA,
+            0,
+            text_delta="x",
+        )
+        resp._tool_parser.flush = AsyncMock(
+            side_effect=[[diagnostic, item], []]
+        )
         resp.__aiter__()
 
-        self.assertEqual(await resp.__anext__(), token)
-        self.assertEqual(await resp.__anext__(), diagnostic)
+        items = []
+        while True:
+            try:
+                items.append(await resp.__anext__())
+            except StopAsyncIteration:
+                break
+
+        self.assertIn(
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            [item.kind for item in items],
+        )
+        self.assertIn("x", [item.text_delta for item in items])
 
     async def test_emit_parsed_event(self):
         engine = _DummyEngine()
@@ -157,10 +230,27 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
             tool=tool,
         )
         resp.__aiter__()
-        event = Event(type=EventType.END)
         resp._tool_parser = MagicMock()
-        resp._tool_parser.push = AsyncMock(return_value=[event])
-        self.assertIs(await resp._emit("text"), event)
+        resp._tool_parser.push = AsyncMock(
+            return_value=[
+                _canonical_item(
+                    StreamItemKind.STREAM_DIAGNOSTIC,
+                    0,
+                    data={"code": "parser.push"},
+                )
+            ]
+        )
+        await resp._process_canonical_response_item(
+            _canonical_item(
+                StreamItemKind.ANSWER_DELTA,
+                0,
+                text_delta="text",
+            )
+        )
+        self.assertIn(
+            StreamItemKind.STREAM_DIAGNOSTIC,
+            [item.kind for item in resp.canonical_items],
+        )
 
     async def test_tool_parser_disabled(self):
         engine = _DummyEngine()
@@ -204,15 +294,15 @@ class OrchestratorResponseMoreCoverageTestCase(IsolatedAsyncioTestCase):
             OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
         )
         self.assertEqual(
-            resp._tool_call_events.maxsize,
+            resp._tool_call_ready_items.maxsize,
             OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
         )
         self.assertEqual(
-            resp._tool_process_events.maxsize,
+            resp._pending_tool_call_ready_items.maxsize,
             OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
         )
         self.assertEqual(
-            resp._tool_result_events.maxsize,
+            resp._tool_result_outcomes.maxsize,
             OrchestratorResponse._MAXIMUM_STAGING_QUEUE_ITEMS,
         )
 
