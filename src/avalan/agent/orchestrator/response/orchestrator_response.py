@@ -48,7 +48,9 @@ from asyncio import (
     CancelledError,
     Task,
     create_task,
+    ensure_future,
     gather,
+    sleep,
     wait,
 )
 from asyncio import (
@@ -60,10 +62,11 @@ from inspect import isawaitable
 from json import JSONDecodeError, dumps, loads
 from queue import Full, Queue
 from time import perf_counter
-from typing import Any, AsyncIterator, Awaitable, Callable, cast
+from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar, cast
 from uuid import UUID, uuid4
 
 _ToolConfirmationAction = Awaitable[str | bool | None] | str | bool | None
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -226,6 +229,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _MAXIMUM_TOOL_CYCLES = 8
     _MAXIMUM_CONSECUTIVE_NON_EXECUTED_CYCLES = 2
     _MAXIMUM_STAGING_QUEUE_ITEMS = 4096
+    _CANCELLATION_POLL_INTERVAL_SECONDS = 0.01
 
     _response: TextGenerationResponse
     _response_iterator: AsyncIterator[Any] | None
@@ -567,27 +571,77 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             raise StreamValidationError(self._LEGACY_STREAM_ERROR)
         return item
 
+    async def _process_canonical_text_tool_call_parser_stage(
+        self,
+        item: CanonicalStreamItem,
+        *,
+        after_parser_output: Callable[[int], None] | None = None,
+    ) -> bool:
+        if not self._tool_parser_canonicalizes_answer_delta(item):
+            return False
+
+        assert self._tool_parser is not None
+        assert item.text_delta is not None
+        token_item = self._canonical_token_event_item(item)
+        await self._emit_token_generated_event(token_item)
+        self._step += 1
+        collection_index = len(self._canonical_items)
+        for parser_item in await self._tool_parser.push(item.text_delta):
+            self._queue_parser_output(parser_item)
+            if after_parser_output is not None:
+                after_parser_output(collection_index)
+                collection_index = len(self._canonical_items)
+        return True
+
+    def _tool_parser_canonicalizes_answer_delta(
+        self,
+        item: CanonicalStreamItem,
+    ) -> bool:
+        if (
+            item.kind is not StreamItemKind.ANSWER_DELTA
+            or item.text_delta is None
+            or self._tool_parser is None
+        ):
+            return False
+        canonicalizes = getattr(
+            self._tool_parser,
+            "canonicalizes_answer_deltas",
+            False,
+        )
+        return canonicalizes if isinstance(canonicalizes, bool) else False
+
+    def _canonical_token_event_item(
+        self,
+        item: CanonicalStreamItem,
+    ) -> CanonicalStreamItem:
+        return replace(
+            item,
+            stream_session_id=self._canonical_stream_session_id,
+            run_id=self._canonical_run_id,
+            turn_id=self._canonical_turn_id,
+            sequence=self._canonical_sequence,
+            channel=stream_channel_for_kind(item.kind),
+        )
+
+    async def _flush_canonical_text_tool_call_parser_stage(
+        self,
+        *,
+        after_parser_output: Callable[[int], None] | None = None,
+    ) -> None:
+        if self._tool_parser is None:
+            return
+        collection_index = len(self._canonical_items)
+        for item in await self._tool_parser.flush():
+            self._queue_parser_output(item)
+            if after_parser_output is not None:
+                after_parser_output(collection_index)
+                collection_index = len(self._canonical_items)
+
     async def _process_canonical_response_item(
         self,
         item: CanonicalStreamItem,
     ) -> None:
-        if (
-            item.kind is StreamItemKind.ANSWER_DELTA
-            and item.text_delta is not None
-            and type(self._tool_parser) is ToolCallResponseParser
-        ):
-            token_item = replace(
-                item,
-                stream_session_id=self._canonical_stream_session_id,
-                run_id=self._canonical_run_id,
-                turn_id=self._canonical_turn_id,
-                sequence=self._canonical_sequence,
-                channel=stream_channel_for_kind(item.kind),
-            )
-            await self._emit_token_generated_event(token_item)
-            self._step += 1
-            for parser_item in await self._tool_parser.push(item.text_delta):
-                self._queue_parser_output(parser_item)
+        if await self._process_canonical_text_tool_call_parser_stage(item):
             return
 
         canonical_item = self._append_canonical_response_item(item)
@@ -1196,6 +1250,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     async def _next_item(self) -> None:
         assert self._response_iterator
 
+        await self._propagate_cancellation_to_pending_work()
+
         if self._parser_queue and not self._parser_queue.empty():
             self._append_canonical_response_item(self._parser_queue.get())
             return None
@@ -1303,7 +1359,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 )
                 if self._event_manager:
                     await self._event_manager.trigger(event_tool_model_run)
-                inner_response = await self._engine_agent(model_context)
+                inner_response = await self._await_with_session_cancellation(
+                    self._engine_agent(model_context)
+                )
             except CancelledError:
                 self._append_canonical_model_continuation(
                     StreamItemKind.MODEL_CONTINUATION_CANCELLED,
@@ -1351,7 +1409,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             return None
 
         try:
-            item = await self._response_iterator.__anext__()
+            response_item = self._response_iterator.__anext__()
+            item = (
+                await self._await_with_session_cancellation(response_item)
+                if self._active_model_continuation_id is not None
+                else await response_item
+            )
             canonical_item = self._canonical_item_from_response_item(item)
             await self._process_canonical_response_item(canonical_item)
         except StopAsyncIteration:
@@ -1359,19 +1422,17 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
             )
-            if self._tool_parser:
-                try:
-                    for item in await self._tool_parser.flush():
-                        self._queue_parser_output(item)
-                except Exception as exc:
-                    self._finish_canonical_stream(
-                        StreamItemKind.STREAM_ERRORED,
-                        data={
-                            "error_type": exc.__class__.__name__,
-                            "message": str(exc),
-                        },
-                    )
-                    raise
+            try:
+                await self._flush_canonical_text_tool_call_parser_stage()
+            except Exception as exc:
+                self._finish_canonical_stream(
+                    StreamItemKind.STREAM_ERRORED,
+                    data={
+                        "error_type": exc.__class__.__name__,
+                        "message": str(exc),
+                    },
+                )
+                raise
             self._finalize_incomplete_canonical_tool_calls()
             if (
                 not self._calls.empty()
@@ -1385,6 +1446,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._finish_canonical_stream(StreamItemKind.STREAM_COMPLETED)
             raise
         except CancelledError:
+            await self._cancel_active_model_continuation_response()
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_CANCELLED
             )
@@ -1409,6 +1471,60 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
 
         return None
 
+    async def _watch_session_cancellation(self) -> None:
+        assert self._cancellation_checker is not None
+        while True:
+            await self._raise_if_cancelled(finish_stream=False)
+            await sleep(self._CANCELLATION_POLL_INTERVAL_SECONDS)
+
+    async def _await_with_session_cancellation(
+        self,
+        awaitable: Awaitable[_T],
+    ) -> _T:
+        if self._cancellation_checker is None:
+            return await awaitable
+
+        operation_task = ensure_future(awaitable)
+        cancellation_task = create_task(self._watch_session_cancellation())
+        try:
+            done, _ = await wait(
+                {operation_task, cancellation_task},
+                return_when=FIRST_COMPLETED,
+            )
+            if cancellation_task in done:
+                await cancellation_task
+            assert operation_task in done
+            return operation_task.result()
+        except (CancelledError, Exception):
+            if not operation_task.done():
+                operation_task.cancel()
+                await gather(operation_task, return_exceptions=True)
+            raise
+        finally:
+            if not cancellation_task.done():
+                cancellation_task.cancel()
+                await gather(cancellation_task, return_exceptions=True)
+
+    async def _propagate_cancellation_to_pending_work(self) -> None:
+        if self._cancellation_checker is None:
+            return
+        if (
+            self._pending_tool_batch_task is None
+            and self._active_model_continuation_id is None
+        ):
+            return
+
+        try:
+            await self._raise_if_cancelled(finish_stream=False)
+        except CancelledError:
+            await self._cancel_pending_tool_batch()
+            await self._cancel_active_model_continuation_response()
+            self._finish_active_model_continuation(
+                StreamItemKind.MODEL_CONTINUATION_CANCELLED
+            )
+            self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
+            raise
+
     async def _await_pending_tool_batch(self) -> None:
         task = self._pending_tool_batch_task
         assert task is not None
@@ -1418,22 +1534,37 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             return
 
         item_task = create_task(self._canonical_item_available.wait())
+        cancellation_task = (
+            create_task(self._watch_session_cancellation())
+            if self._cancellation_checker is not None
+            else None
+        )
         try:
+            wait_tasks: set[Any] = {task, item_task}
+            if cancellation_task is not None:
+                wait_tasks.add(cancellation_task)
             done, pending = await wait(
-                {task, item_task},
+                wait_tasks,
                 return_when=FIRST_COMPLETED,
             )
+            if cancellation_task is not None and cancellation_task in done:
+                await cancellation_task
         except CancelledError:
             item_task.cancel()
-            if not task.done():
-                task.cancel()
-                await gather(task, return_exceptions=True)
-            self._pending_tool_batch_task = None
+            await gather(item_task, return_exceptions=True)
+            if cancellation_task is not None:
+                cancellation_task.cancel()
+                await gather(cancellation_task, return_exceptions=True)
+            await self._cancel_pending_tool_batch()
+            self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
             raise
 
         if item_task in pending:
             item_task.cancel()
             await gather(item_task, return_exceptions=True)
+        if cancellation_task is not None and cancellation_task in pending:
+            cancellation_task.cancel()
+            await gather(cancellation_task, return_exceptions=True)
 
         if task not in done:
             return
@@ -1441,6 +1572,20 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         if self._canonical_yield_index < len(self._canonical_items):
             return
         self._consume_pending_tool_batch(task)
+
+    async def _cancel_pending_tool_batch(self) -> None:
+        task = self._pending_tool_batch_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+            await gather(task, return_exceptions=True)
+        self._pending_tool_batch_task = None
+
+    async def _cancel_active_model_continuation_response(self) -> None:
+        if self._active_model_continuation_id is None:
+            return
+        await self._response.cancel()
 
     def _consume_pending_tool_batch(
         self,
@@ -1512,12 +1657,15 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 batch, pending_calls = self._split_tool_call_batch(
                     pending_calls
                 )
-                outcomes = await self._execute_tool_call_batch(
-                    batch,
-                    confirm=True,
-                    abort_on_reject=False,
-                    emit_ready=True,
+                outcomes = await self._await_with_session_cancellation(
+                    self._execute_tool_call_batch(
+                        batch,
+                        confirm=True,
+                        abort_on_reject=False,
+                        emit_ready=True,
+                    )
                 )
+                await self._raise_if_cancelled(finish_stream=False)
                 for outcome in sorted(
                     outcomes, key=lambda item: item.planned_index
                 ):
@@ -1530,6 +1678,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             if next_response is None:
                 break
             current_response = next_response
+            self._response = current_response
             new_text, structured_calls = await self._response_text_and_calls(
                 current_response
             )
@@ -1983,46 +2132,55 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._begin_tool_call_lifecycle_response()
         try:
             if not response.is_async_generator:
-                text = await response.to_str()
+                text = (
+                    await self._await_with_session_cancellation(
+                        response.to_str()
+                    )
+                    if self._active_model_continuation_id is not None
+                    else await response.to_str()
+                )
+                text, calls = await self._non_stream_response_text_and_calls(
+                    text
+                )
                 self._finish_active_model_continuation(
                     StreamItemKind.MODEL_CONTINUATION_COMPLETED
                 )
-                return text, []
+                return text, calls
 
             self._begin_tool_call_lifecycle_response()
             self._calls = self._make_staging_queue()
             text_parts: list[str] = []
-            calls: list[ToolCall] = []
-            async for item in response:
+            streamed_calls: list[ToolCall] = []
+
+            def collect_parser_output(start_index: int) -> None:
+                self._collect_response_text_and_calls(
+                    start_index,
+                    text_parts,
+                    streamed_calls,
+                )
+
+            response_iterator = aiter(response)
+            while True:
+                try:
+                    response_item = response_iterator.__anext__()
+                    item = (
+                        await self._await_with_session_cancellation(
+                            response_item
+                        )
+                        if self._active_model_continuation_id is not None
+                        else await response_item
+                    )
+                except StopAsyncIteration:
+                    break
                 await self._raise_if_cancelled(finish_stream=False)
                 canonical_item = self._canonical_item_from_response_item(item)
-                if (
-                    canonical_item.kind is StreamItemKind.ANSWER_DELTA
-                    and canonical_item.text_delta is not None
-                    and type(self._tool_parser) is ToolCallResponseParser
+                collection_index = len(self._canonical_items)
+                if await self._process_canonical_text_tool_call_parser_stage(
+                    canonical_item,
+                    after_parser_output=collect_parser_output,
                 ):
-                    token_item = replace(
-                        canonical_item,
-                        stream_session_id=self._canonical_stream_session_id,
-                        run_id=self._canonical_run_id,
-                        turn_id=self._canonical_turn_id,
-                        sequence=self._canonical_sequence,
-                        channel=stream_channel_for_kind(canonical_item.kind),
-                    )
-                    await self._emit_token_generated_event(token_item)
-                    self._step += 1
-                    collection_index = len(self._canonical_items)
-                    for parser_item in await self._tool_parser.push(
-                        canonical_item.text_delta
-                    ):
-                        self._queue_parser_output(parser_item)
-                        self._collect_response_text_and_calls(
-                            collection_index, text_parts, calls
-                        )
-                        collection_index = len(self._canonical_items)
                     continue
 
-                collection_index = len(self._canonical_items)
                 appended_item = self._append_canonical_response_item(
                     canonical_item
                 )
@@ -2036,23 +2194,19 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     self._step += 1
                     text_parts.append(appended_item.text_delta)
                 self._collect_response_text_and_calls(
-                    collection_index + 1, text_parts, calls
+                    collection_index + 1, text_parts, streamed_calls
                 )
-            if self._tool_parser is not None:
-                collection_index = len(self._canonical_items)
-                for parser_item in await self._tool_parser.flush():
-                    self._queue_parser_output(parser_item)
-                    self._collect_response_text_and_calls(
-                        collection_index, text_parts, calls
-                    )
-                    collection_index = len(self._canonical_items)
+            await self._flush_canonical_text_tool_call_parser_stage(
+                after_parser_output=collect_parser_output,
+            )
             self._finalize_incomplete_canonical_tool_calls()
-            self._drain_reconstructed_tool_calls(calls)
+            self._drain_reconstructed_tool_calls(streamed_calls)
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
             )
-            return "".join(text_parts), calls
+            return "".join(text_parts), streamed_calls
         except CancelledError:
+            await self._cancel_active_model_continuation_response()
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_CANCELLED
             )
@@ -2066,6 +2220,47 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 },
             )
             raise
+
+    async def _non_stream_response_text_and_calls(
+        self,
+        text: str,
+    ) -> tuple[str, list[ToolCall]]:
+        if self._tool_parser is None:
+            return text, []
+
+        item = CanonicalStreamItem(
+            stream_session_id=self._canonical_stream_session_id,
+            run_id=self._canonical_run_id,
+            turn_id=self._canonical_turn_id,
+            sequence=self._canonical_sequence,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta=text,
+        )
+        if not self._tool_parser_canonicalizes_answer_delta(item):
+            return text, []
+
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+
+        def collect_parser_output(start_index: int) -> None:
+            self._collect_response_text_and_calls(
+                start_index,
+                text_parts,
+                calls,
+            )
+
+        processed = await self._process_canonical_text_tool_call_parser_stage(
+            item,
+            after_parser_output=collect_parser_output,
+        )
+        assert processed
+        await self._flush_canonical_text_tool_call_parser_stage(
+            after_parser_output=collect_parser_output,
+        )
+        self._finalize_incomplete_canonical_tool_calls()
+        self._drain_reconstructed_tool_calls(calls)
+        return "".join(text_parts), calls
 
     def _collect_response_text_and_calls(
         self,
@@ -2224,7 +2419,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
             if self._event_manager:
                 await self._event_manager.trigger(event_tool_model_run)
-            response = await self._engine_agent(context)
+            response = await self._await_with_session_cancellation(
+                self._engine_agent(context)
+            )
         except CancelledError:
             self._append_canonical_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_CANCELLED,
@@ -2278,7 +2475,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 message=(
                     "Tool cycle stopped without model-facing observations."
                 ),
-                details={"outcome_count": len(outcomes)},
+                details={
+                    "attempted_call_signatures": (
+                        self._attempted_call_signature_details()
+                    ),
+                    "outcome_count": len(outcomes),
+                },
             )
             return False
 
@@ -2288,6 +2490,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 code="orchestrator.tool_cycle.duplicate_observation",
                 message="Tool cycle stopped after repeated observations.",
                 details={
+                    "attempted_call_signatures": (
+                        self._attempted_call_signature_details()
+                    ),
                     "cycle_count": self._tool_cycle_count,
                     "signature": cycle_signature,
                 },
@@ -2299,6 +2504,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 code="orchestrator.tool_cycle.limit_exceeded",
                 message="Tool cycle stopped after reaching the cycle limit.",
                 details={
+                    "attempted_call_signatures": (
+                        self._attempted_call_signature_details()
+                    ),
                     "cycle_count": self._tool_cycle_count,
                     "maximum_cycles": self._MAXIMUM_TOOL_CYCLES,
                 },
@@ -2324,6 +2532,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     "tool attempts."
                 ),
                 details={
+                    "attempted_call_signatures": (
+                        self._attempted_call_signature_details()
+                    ),
                     "consecutive_non_executed_cycles": (
                         self._consecutive_non_executed_cycles
                     ),
@@ -2337,6 +2548,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._tool_cycle_signatures.add(cycle_signature)
         self._tool_cycle_count += 1
         return True
+
+    def _attempted_call_signature_details(self) -> list[str]:
+        return sorted(self._attempted_call_signatures)
 
     def _record_tool_outcome(self, result: ToolCallOutcome | None) -> None:
         if isinstance(result, (ToolCallResult, ToolCallError)):
@@ -2372,7 +2586,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     def _repeated_call_diagnostic(
         self, call: ToolCall
     ) -> ToolCallDiagnostic | None:
-        if self._call_signature(call) not in self._attempted_call_signatures:
+        signature = self._call_signature(call)
+        if signature not in self._attempted_call_signatures:
             return None
         return ToolCallDiagnostic(
             id=uuid4(),
@@ -2381,6 +2596,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             code=ToolCallDiagnosticCode.REPEATED_CALL,
             stage=ToolCallDiagnosticStage.GUARD,
             message="Tool call repeats a previous attempt.",
+            details={
+                "attempted_call_signature": signature,
+                "attempted_call_signatures": cast(
+                    Any,
+                    sorted(self._attempted_call_signatures),
+                ),
+                "signature": signature,
+            },
         )
 
     @classmethod
@@ -2832,13 +3055,13 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_CANCELLED,
                 call,
-                tool_call_diagnostic_payload(result),
+                self._canonical_tool_diagnostic_payload(call, result),
             )
         elif isinstance(result, ToolCallDiagnostic):
             self._append_canonical_tool_execution_result(
                 StreamItemKind.TOOL_EXECUTION_ERROR,
                 call,
-                tool_call_diagnostic_payload(result),
+                self._canonical_tool_diagnostic_payload(call, result),
             )
         elif isinstance(result, ToolCallResult):
             self._append_canonical_tool_execution_result(
@@ -2910,6 +3133,57 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         return (
             isinstance(result, ToolCallDiagnostic)
             and result.code is ToolCallDiagnosticCode.CANCELLED
+        )
+
+    @classmethod
+    def _canonical_tool_diagnostic_payload(
+        cls,
+        call: ToolCall,
+        diagnostic: ToolCallDiagnostic,
+    ) -> dict[str, Any]:
+        enriched = cls._tool_diagnostic_with_call_signature(
+            call,
+            diagnostic,
+        )
+        payload = tool_call_diagnostic_payload(enriched)
+        if enriched.code is not ToolCallDiagnosticCode.REPEATED_CALL:
+            return payload
+
+        if "details" in payload:
+            payload = dict(payload)
+            del payload["details"]
+        details: dict[str, Any] = {}
+        for key in ("attempted_call_signature", "signature"):
+            value = enriched.details.get(key)
+            if isinstance(value, str):
+                details[key] = value
+        attempted_signatures = enriched.details.get(
+            "attempted_call_signatures"
+        )
+        if isinstance(attempted_signatures, list) and all(
+            isinstance(signature, str) for signature in attempted_signatures
+        ):
+            details["attempted_call_signatures"] = attempted_signatures
+        if details:
+            payload["details"] = details
+        return payload
+
+    @classmethod
+    def _tool_diagnostic_with_call_signature(
+        cls,
+        call: ToolCall,
+        diagnostic: ToolCallDiagnostic,
+    ) -> ToolCallDiagnostic:
+        if (
+            diagnostic.code is not ToolCallDiagnosticCode.REPEATED_CALL
+            or "signature" in diagnostic.details
+        ):
+            return diagnostic
+        details: dict[str, Any] = dict(diagnostic.details)
+        details["signature"] = cls._call_signature(call)
+        return replace(
+            diagnostic,
+            details=cast(Any, details),
         )
 
     def _make_tool_stream_event_callback(

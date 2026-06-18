@@ -1,4 +1,12 @@
-from asyncio import CancelledError, create_task, sleep
+from asyncio import (
+    CancelledError,
+    create_task,
+    sleep,
+    wait_for,
+)
+from asyncio import (
+    Event as AsyncioEvent,
+)
 from collections.abc import AsyncIterator
 from json import dumps
 from logging import getLogger
@@ -26,6 +34,9 @@ from avalan.entities import (
     TokenDetail,
     ToolCall,
     ToolCallContext,
+    ToolCallDiagnostic,
+    ToolCallDiagnosticCode,
+    ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
     ToolCallToken,
@@ -245,6 +256,36 @@ class _LegacyFixtureResponse:
             yield item
 
 
+class _CanonicalReplacingParser:
+    canonicalizes_answer_deltas = True
+
+    def __init__(self, replacement: str) -> None:
+        self.replacement = replacement
+        self.pushed: list[str] = []
+
+    async def push(self, text: str) -> list[StreamProviderEvent]:
+        self.pushed.append(text)
+        return [
+            StreamProviderEvent(
+                kind=StreamItemKind.ANSWER_DELTA,
+                text_delta=self.replacement,
+            )
+        ]
+
+    async def flush(self) -> list[StreamProviderEvent]:
+        return []
+
+
+class _NonCanonicalizingParser:
+    canonicalizes_answer_deltas = False
+
+    async def push(self, text: str) -> list[StreamProviderEvent]:
+        raise AssertionError(text)
+
+    async def flush(self) -> list[StreamProviderEvent]:
+        raise AssertionError()
+
+
 def _usage_response(text: str, usage: object) -> TextGenerationResponse:
     return TextGenerationResponse(
         TextGenerationSingleStream(text, usage=usage),
@@ -278,6 +319,14 @@ def _make_response(
 
 
 _LEGACY_PUBLIC_STREAM_TYPES = (Token, TokenDetail, ToolCallToken, Event)
+
+
+def _answer_text(items: list[CanonicalStreamItem]) -> str:
+    return "".join(
+        item.text_delta or ""
+        for item in items
+        if item.kind is StreamItemKind.ANSWER_DELTA
+    )
 
 
 async def _collect_items(
@@ -1551,6 +1600,65 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         )
         response._tool_parser.push.assert_not_called()
 
+    async def test_response_text_and_calls_uses_canonical_parser_stage(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        raw_text = "raw <tool_call>text"
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _response_from_items(*_canonical_answer_items(raw_text)),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+        parser = _CanonicalReplacingParser("parsed")
+        response._tool_parser = cast(ToolCallResponseParser, parser)
+
+        text, calls = await response._response_text_and_calls(
+            response._response
+        )
+
+        self.assertEqual(text, "parsed")
+        self.assertEqual(calls, [])
+        self.assertEqual(parser.pushed, [raw_text])
+        self.assertEqual(
+            _answer_text(list(response.canonical_items)), "parsed"
+        )
+        self.assertNotIn(
+            raw_text, _answer_text(list(response.canonical_items))
+        )
+
+    async def test_iteration_uses_canonical_parser_stage_without_exact_type(
+        self,
+    ):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        raw_text = "<tool_call>raw</tool_call>"
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _response_from_items(*_canonical_answer_items(raw_text)),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+        parser = _CanonicalReplacingParser("visible")
+        response._tool_parser = cast(ToolCallResponseParser, parser)
+
+        items = await _collect_items(response)
+
+        self.assertEqual(parser.pushed, [raw_text])
+        self.assertEqual(_answer_text(items), "visible")
+        self.assertNotIn("<tool_call>", _answer_text(items))
+        self.assertTrue(
+            all(isinstance(item, CanonicalStreamItem) for item in items)
+        )
+
     async def test_response_text_and_calls_flush_appends_parser_items(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
@@ -1587,6 +1695,36 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.STREAM_DIAGNOSTIC,
             ],
         )
+
+    async def test_response_text_and_calls_flush_collects_answer_once(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _response_from_items(*_canonical_answer_items("a")),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+        response._tool_parser = AsyncMock()
+        response._tool_parser.push.return_value = []
+        response._tool_parser.flush.return_value = [
+            StreamProviderEvent(
+                kind=StreamItemKind.ANSWER_DELTA,
+                text_delta="tail",
+            )
+        ]
+
+        text, calls = await response._response_text_and_calls(
+            response._response
+        )
+
+        self.assertEqual(text, "atail")
+        self.assertEqual(calls, [])
+        self.assertEqual(_answer_text(list(response.canonical_items)), "atail")
 
     async def test_response_text_and_calls_reads_semantic_answer_items(self):
         async def output_gen():
@@ -1694,6 +1832,82 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
                 if item.kind is StreamItemKind.ANSWER_DELTA
             ),
         )
+
+    async def test_non_stream_response_text_and_calls_uses_parser_stage(
+        self,
+    ) -> None:
+        base_parser = ToolCallParser()
+        manager = MagicMock()
+        manager.tool_format = None
+        manager.is_potential_tool_call.side_effect = (
+            base_parser.is_potential_tool_call
+        )
+        manager.tool_call_status.side_effect = base_parser.tool_call_status
+        manager.get_calls.side_effect = base_parser
+        tool_text = (
+            'before <tool_call>{"name": "calc", '
+            '"arguments": {"x": 1}}</tool_call> after'
+        )
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            TextGenerationResponse(
+                TextGenerationSingleStream(tool_text),
+                logger=getLogger(),
+                use_async_generator=False,
+            ),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+        response._tool_parser = ToolCallResponseParser(manager, None)
+
+        text, calls = await response._response_text_and_calls(
+            response._response
+        )
+
+        self.assertEqual(text, "before  after")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].name, "calc")
+        self.assertEqual(calls[0].arguments, {"x": 1})
+        self.assertNotIn(
+            "<tool_call",
+            "".join(
+                item.text_delta or ""
+                for item in response.canonical_items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ),
+        )
+
+    async def test_non_stream_response_text_and_calls_skips_plain_parser(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+        response._tool_parser = cast(
+            ToolCallResponseParser, _NonCanonicalizingParser()
+        )
+
+        text, calls = await response._non_stream_response_text_and_calls(
+            "plain"
+        )
+
+        self.assertEqual(text, "plain")
+        self.assertEqual(calls, [])
 
     async def test_streaming_iteration_projects_semantic_answer_items(self):
         async def output_gen():
@@ -2323,6 +2537,201 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
+    async def test_repeated_call_diagnostic_includes_attempt_signature(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        tool.return_value = ToolCallResult(
+            id="result-1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result={"ok": True},
+        )
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+            tool=tool,
+        )
+        context = ToolCallContext(input=response._input, calls=[])
+
+        first = await response._execute_tool_call(
+            call,
+            context,
+            confirm=False,
+        )
+        second = await response._execute_tool_call(
+            call,
+            context,
+            confirm=False,
+        )
+
+        self.assertIsInstance(first, ToolCallResult)
+        self.assertIsInstance(second, ToolCallDiagnostic)
+        assert isinstance(second, ToolCallDiagnostic)
+        signature = response._call_signature(call)
+        self.assertEqual(second.code, ToolCallDiagnosticCode.REPEATED_CALL)
+        self.assertEqual(
+            second.details["attempted_call_signature"],
+            signature,
+        )
+        self.assertEqual(
+            second.details["attempted_call_signatures"],
+            [signature],
+        )
+        payload = response._canonical_tool_diagnostic_payload(call, second)
+        self.assertEqual(
+            payload["details"]["attempted_call_signature"],
+            signature,
+        )
+        self.assertEqual(
+            payload["details"]["attempted_call_signatures"],
+            [signature],
+        )
+        self.assertEqual(payload["details"]["signature"], signature)
+
+    async def test_loop_guard_diagnostic_includes_attempt_signatures(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        signature = response._call_signature(call)
+        response._attempted_call_signatures.add(signature)
+
+        self.assertFalse(response._should_continue_tool_cycle([], []))
+
+        diagnostic = response.canonical_items[-1]
+        self.assertEqual(
+            diagnostic.data["code"],
+            "orchestrator.tool_cycle.empty_observation",
+        )
+        self.assertEqual(
+            diagnostic.data["details"]["attempted_call_signatures"],
+            [signature],
+        )
+
+    async def test_cancel_pending_tool_batch_without_task_is_noop(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        await response._cancel_pending_tool_batch()
+
+        self.assertIsNone(response._pending_tool_batch_task)
+
+    async def test_await_with_session_cancellation_returns_completed_value(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        async def checker() -> None:
+            return None
+
+        async def completed() -> str:
+            return "done"
+
+        response.set_cancellation_checker(checker)
+
+        self.assertEqual(
+            await response._await_with_session_cancellation(completed()),
+            "done",
+        )
+
+    def test_repeated_diagnostic_payload_adds_missing_signature(self):
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        diagnostic = ToolCallDiagnostic(
+            id="diagnostic-1",
+            call_id=call.id,
+            requested_name=call.name,
+            code=ToolCallDiagnosticCode.REPEATED_CALL,
+            stage=ToolCallDiagnosticStage.GUARD,
+            message="Repeated.",
+        )
+
+        payload = OrchestratorResponse._canonical_tool_diagnostic_payload(
+            call,
+            diagnostic,
+        )
+
+        self.assertEqual(
+            payload["details"]["signature"],
+            OrchestratorResponse._call_signature(call),
+        )
+
+    def test_repeated_diagnostic_payload_rebuilds_safe_details(self):
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        diagnostic = ToolCallDiagnostic(
+            id="diagnostic-1",
+            call_id=call.id,
+            requested_name=call.name,
+            code=ToolCallDiagnosticCode.REPEATED_CALL,
+            stage=ToolCallDiagnosticStage.GUARD,
+            message="Repeated.",
+            details={"stream_status": "malformed"},
+        )
+
+        payload = OrchestratorResponse._canonical_tool_diagnostic_payload(
+            call,
+            diagnostic,
+        )
+
+        self.assertEqual(
+            payload["details"],
+            {"signature": OrchestratorResponse._call_signature(call)},
+        )
+
+    def test_repeated_diagnostic_payload_preserves_non_string_signature(self):
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        diagnostic = ToolCallDiagnostic(
+            id="diagnostic-1",
+            call_id=call.id,
+            requested_name=call.name,
+            code=ToolCallDiagnosticCode.REPEATED_CALL,
+            stage=ToolCallDiagnosticStage.GUARD,
+            message="Repeated.",
+            details={"signature": 1},
+        )
+
+        payload = OrchestratorResponse._canonical_tool_diagnostic_payload(
+            call,
+            diagnostic,
+        )
+
+        self.assertNotIn("details", payload)
+
     async def test_anonymous_tool_call_helpers_assign_stable_ids(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
@@ -2636,6 +3045,11 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
         )
+
+        async def checker() -> None:
+            return None
+
+        resp.set_cancellation_checker(checker)
         resp.__aiter__()
         resp._canonical_yield_index = len(resp.canonical_items)
         resp._canonical_item_available.clear()
@@ -2699,3 +3113,395 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsNone(resp._pending_tool_batch_task)
         self.assertTrue(pending_batch.cancelled())
+        self.assertIn(
+            StreamItemKind.STREAM_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+
+    async def test_session_cancellation_cancels_pending_tool_batch(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        resp.__aiter__()
+        cancelled = False
+
+        async def slow_batch() -> list[_ToolExecutionOutcome]:
+            nonlocal cancelled
+            try:
+                await sleep(1)
+            except CancelledError:
+                cancelled = True
+                raise
+            return []
+
+        pending_batch = create_task(slow_batch())
+        await sleep(0)
+        resp._pending_tool_batch_task = pending_batch
+        resp.set_cancellation_checker(AsyncMock(side_effect=CancelledError()))
+
+        with self.assertRaises(CancelledError):
+            await resp._propagate_cancellation_to_pending_work()
+
+        self.assertTrue(cancelled)
+        self.assertIsNone(resp._pending_tool_batch_task)
+        self.assertTrue(pending_batch.cancelled())
+        self.assertIn(
+            StreamItemKind.STREAM_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+
+    async def test_to_str_session_cancellation_cancels_running_tool(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        cancel_requested = AsyncioEvent()
+        tool_started = AsyncioEvent()
+        tool_cancelled = False
+
+        async def checker() -> None:
+            if cancel_requested.is_set():
+                raise CancelledError()
+
+        async def slow_tool(
+            tool_call: ToolCall,
+            context: ToolCallContext,
+        ) -> ToolCallResult:
+            nonlocal tool_cancelled
+            tool_started.set()
+            try:
+                await sleep(1)
+            except CancelledError:
+                tool_cancelled = True
+                raise
+            return ToolCallResult(
+                id="result-1",
+                call=tool_call,
+                name=tool_call.name,
+                arguments=tool_call.arguments,
+                result={"ok": True},
+            )
+
+        tool = AsyncMock(side_effect=slow_tool)
+        tool.is_empty = False
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _response_from_items(*_canonical_tool_call_items(call)),
+            agent,
+            operation,
+            {},
+            tool=tool,
+        )
+        resp.set_cancellation_checker(checker)
+        task = create_task(resp.to_str())
+        await wait_for(tool_started.wait(), 1)
+
+        cancel_requested.set()
+
+        with self.assertRaises(CancelledError):
+            await wait_for(task, 1)
+        self.assertTrue(tool_cancelled)
+        self.assertIn(
+            StreamItemKind.TOOL_EXECUTION_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+        self.assertIn(
+            StreamItemKind.STREAM_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+
+    async def test_session_cancellation_during_tool_batch_wait_cancels_task(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        resp.__aiter__()
+        self.assertIsNotNone(resp._next_canonical_yield_item())
+        resp._canonical_item_available.clear()
+        cancel_requested = AsyncioEvent()
+        batch_started = AsyncioEvent()
+        cancelled = False
+
+        async def checker() -> None:
+            if cancel_requested.is_set():
+                raise CancelledError()
+
+        async def slow_batch() -> list[_ToolExecutionOutcome]:
+            nonlocal cancelled
+            batch_started.set()
+            try:
+                await sleep(1)
+            except CancelledError:
+                cancelled = True
+                raise
+            return []
+
+        pending_batch = create_task(slow_batch())
+        resp._pending_tool_batch_task = pending_batch
+        resp.set_cancellation_checker(checker)
+        waiter = create_task(resp._await_pending_tool_batch())
+        await wait_for(batch_started.wait(), 1)
+        await sleep(0)
+
+        cancel_requested.set()
+
+        with self.assertRaises(CancelledError):
+            await wait_for(waiter, 1)
+        self.assertTrue(cancelled)
+        self.assertIsNone(resp._pending_tool_batch_task)
+        self.assertTrue(pending_batch.cancelled())
+        self.assertIn(
+            StreamItemKind.STREAM_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+
+    async def test_session_cancellation_cancels_active_model_response(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        cancel_response = AsyncMock()
+        cast(Any, resp._response).cancel = cancel_response
+        resp._set_active_model_continuation("continuation-1")
+        resp.set_cancellation_checker(AsyncMock(side_effect=CancelledError()))
+
+        with self.assertRaises(CancelledError):
+            await resp._propagate_cancellation_to_pending_work()
+
+        cancel_response.assert_awaited_once_with()
+        self.assertIn(
+            StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+        self.assertIn(
+            StreamItemKind.STREAM_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+
+    async def test_session_cancellation_during_active_response_read_cancels(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        cancel_requested = AsyncioEvent()
+        stream_started = AsyncioEvent()
+        stream_cancelled = False
+
+        async def checker() -> None:
+            if cancel_requested.is_set():
+                raise CancelledError()
+
+        async def output_gen() -> AsyncIterator[CanonicalStreamItem]:
+            nonlocal stream_cancelled
+            stream_started.set()
+            try:
+                await sleep(1)
+            except CancelledError:
+                stream_cancelled = True
+                raise
+            yield _canonical_item(
+                StreamItemKind.ANSWER_DELTA,
+                0,
+                text_delta="late",
+            )
+
+        response = TextGenerationResponse(
+            lambda: output_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+        )
+        cancel_response = AsyncMock()
+        cast(Any, response).cancel = cancel_response
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+        )
+        resp.__aiter__()
+        resp._canonical_yield_index = len(resp.canonical_items)
+        resp._set_active_model_continuation("continuation-1")
+        resp.set_cancellation_checker(checker)
+        task = create_task(resp._next_item())
+        await wait_for(stream_started.wait(), 1)
+
+        cancel_requested.set()
+
+        with self.assertRaises(CancelledError):
+            await wait_for(task, 1)
+        self.assertTrue(stream_cancelled)
+        cancel_response.assert_awaited_once_with()
+        self.assertIn(
+            StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+        self.assertIn(
+            StreamItemKind.STREAM_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+
+    async def test_session_cancellation_during_model_call_cancels_task(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        cancel_requested = AsyncioEvent()
+        model_started = AsyncioEvent()
+        model_cancelled = False
+
+        async def checker() -> None:
+            if cancel_requested.is_set():
+                raise CancelledError()
+
+        async def slow_model_call(
+            context: ModelCallContext,
+        ) -> TextGenerationResponse:
+            nonlocal model_cancelled
+            model_started.set()
+            try:
+                await sleep(1)
+            except CancelledError:
+                model_cancelled = True
+                raise
+            return _empty_response()
+
+        agent.side_effect = slow_model_call
+        call = ToolCall(id="call-1", name="calc", arguments=None)
+        result = ToolCallResult(
+            id="result-1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        resp.set_cancellation_checker(checker)
+        task = create_task(resp._react_process("", [result]))
+        await wait_for(model_started.wait(), 1)
+
+        cancel_requested.set()
+
+        with self.assertRaises(CancelledError):
+            await wait_for(task, 1)
+        self.assertTrue(model_cancelled)
+        self.assertIn(
+            StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+
+    async def test_session_cancellation_cancels_non_stream_continuation_read(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        cancel_requested = AsyncioEvent()
+
+        class SlowNonStreamResponse(TextGenerationResponse):
+            def __init__(self) -> None:
+                super().__init__(
+                    lambda: "late",
+                    logger=getLogger(),
+                    use_async_generator=False,
+                )
+                self.cancelled = False
+                self.cancel_called = False
+                self.started = AsyncioEvent()
+
+            async def to_str(self) -> str:
+                self.started.set()
+                try:
+                    await sleep(1)
+                except CancelledError:
+                    self.cancelled = True
+                    raise
+                return "late"
+
+            async def cancel(self) -> None:
+                self.cancel_called = True
+
+        async def checker() -> None:
+            if cancel_requested.is_set():
+                raise CancelledError()
+
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        result = ToolCallResult(
+            id="result-1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+        tool = AsyncMock(return_value=result)
+        tool.is_empty = False
+        continuation = SlowNonStreamResponse()
+        agent.return_value = continuation
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _response_from_items(*_canonical_tool_call_items(call)),
+            agent,
+            operation,
+            {},
+            tool=tool,
+        )
+        resp.set_cancellation_checker(checker)
+        task = create_task(resp.to_str())
+        await wait_for(continuation.started.wait(), 1)
+
+        cancel_requested.set()
+
+        with self.assertRaises(CancelledError):
+            await wait_for(task, 1)
+        self.assertTrue(continuation.cancelled)
+        self.assertTrue(continuation.cancel_called)
+        self.assertIn(
+            StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )
+        self.assertIn(
+            StreamItemKind.STREAM_CANCELLED,
+            [item.kind for item in resp.canonical_items],
+        )

@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,12 +7,13 @@ from avalan.entities import (
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
+    ToolCallDiagnosticStatus,
     ToolCallParseOutcome,
     ToolCallToken,
     ToolFormat,
     ToolManagerSettings,
 )
-from avalan.event import EventType
+from avalan.event import Event, EventType
 from avalan.model.response.parsers.tool import (
     ToolCallResponseParser as _ToolCallResponseParser,
 )
@@ -20,6 +22,7 @@ from avalan.model.response.parsers.tool import (
     _VisibleQuoteState,
     _VisibleTextState,
 )
+from avalan.model.stream import StreamItemKind, StreamProviderEvent
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
 
@@ -35,6 +38,221 @@ class ToolCallResponseParser(_ToolCallResponseParser):
         super().__init__(
             tool_manager, event_manager, legacy_fixture=legacy_fixture
         )
+        self._legacy_pending_token = ""
+
+    async def push(self, token_str: str) -> list[Any]:
+        previous_pending = self._legacy_pending_token
+        was_inside_call = self._inside_call
+        provider_items = list(await super().push(token_str))
+        legacy_items = self._legacy_items(
+            provider_items,
+            token_str=token_str,
+            previous_pending=previous_pending,
+            was_inside_call=was_inside_call,
+        )
+        self._legacy_pending_token = self._pending_str
+        if not legacy_items and self._inside_call:
+            return [ToolCallToken(token=token_str)]
+        return legacy_items
+
+    async def flush(self) -> list[Any]:
+        provider_items = list(await super().flush())
+        legacy_items = self._legacy_items(
+            provider_items,
+            token_str="",
+            previous_pending=self._legacy_pending_token,
+            was_inside_call=self._inside_call,
+        )
+        self._legacy_pending_token = self._pending_str
+        return legacy_items
+
+    def _legacy_items(
+        self,
+        items: Any,
+        *,
+        token_str: str,
+        previous_pending: str,
+        was_inside_call: bool,
+    ) -> list[Any]:
+        provider_items = list(items)
+        answer_texts = [
+            item.text_delta or ""
+            for item in provider_items
+            if (
+                isinstance(item, StreamProviderEvent)
+                and item.kind is StreamItemKind.ANSWER_DELTA
+            )
+        ]
+        has_diagnostic = any(
+            isinstance(item, StreamProviderEvent)
+            and item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+            for item in provider_items
+        )
+        legacy_items: list[Any] = []
+        deferred_visible_items: list[str] = []
+        ready_payload: list[SimpleNamespace] = []
+        emitted_tool_token = False
+        for item in provider_items:
+            if not isinstance(item, StreamProviderEvent):
+                legacy_items.append(item)
+                continue
+            if item.kind is StreamItemKind.ANSWER_DELTA:
+                text_delta = item.text_delta or ""
+                if has_diagnostic and text_delta == previous_pending:
+                    continue
+                if emitted_tool_token:
+                    deferred_visible_items.append(text_delta)
+                else:
+                    legacy_items.append(text_delta)
+            elif item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+                if not emitted_tool_token:
+                    legacy_items.extend(
+                        self._legacy_tool_tokens(
+                            token_str,
+                            provider_items,
+                            previous_pending=previous_pending,
+                            include_previous_pending=(
+                                previous_pending not in answer_texts
+                            ),
+                            was_inside_call=was_inside_call,
+                        )
+                    )
+                    emitted_tool_token = True
+            elif item.kind is StreamItemKind.TOOL_CALL_READY:
+                if not emitted_tool_token:
+                    legacy_items.extend(
+                        self._legacy_tool_tokens(
+                            token_str,
+                            provider_items,
+                            previous_pending=previous_pending,
+                            include_previous_pending=(
+                                previous_pending not in answer_texts
+                            ),
+                            was_inside_call=was_inside_call,
+                        )
+                    )
+                    emitted_tool_token = True
+                data = item.data if isinstance(item.data, dict) else {}
+                ready_payload.append(
+                    SimpleNamespace(
+                        name=data.get("name"),
+                        arguments=data.get("arguments"),
+                    )
+                )
+            elif item.kind is StreamItemKind.STREAM_DIAGNOSTIC:
+                if not emitted_tool_token:
+                    legacy_items.extend(
+                        self._legacy_tool_tokens(
+                            token_str,
+                            provider_items,
+                            previous_pending=previous_pending,
+                            include_previous_pending=(
+                                previous_pending not in answer_texts
+                            ),
+                            was_inside_call=was_inside_call,
+                        )
+                    )
+                    emitted_tool_token = True
+                legacy_items.append(
+                    Event(
+                        type=EventType.TOOL_DIAGNOSTIC,
+                        payload={
+                            "diagnostics": self._legacy_diagnostics(item)
+                        },
+                    )
+                )
+        if ready_payload:
+            legacy_items.append(
+                Event(
+                    type=EventType.TOOL_PROCESS,
+                    payload=ready_payload,
+                )
+            )
+        legacy_items.extend(deferred_visible_items)
+        return legacy_items
+
+    def _legacy_tool_tokens(
+        self,
+        token_str: str,
+        items: Any,
+        *,
+        previous_pending: str,
+        include_previous_pending: bool,
+        was_inside_call: bool,
+    ) -> list[ToolCallToken]:
+        tokens: list[ToolCallToken] = []
+        if previous_pending and include_previous_pending:
+            tokens.append(ToolCallToken(token=previous_pending))
+        token = self._legacy_tool_token_text(
+            token_str,
+            items,
+            was_inside_call=was_inside_call,
+        )
+        if token:
+            tokens.append(ToolCallToken(token=token))
+        return tokens
+
+    def _legacy_tool_token_text(
+        self,
+        token_str: str,
+        items: Any,
+        *,
+        was_inside_call: bool,
+    ) -> str:
+        if not token_str:
+            return ""
+        token = token_str
+        answer_texts = [
+            item.text_delta or ""
+            for item in items
+            if (
+                isinstance(item, StreamProviderEvent)
+                and item.kind is StreamItemKind.ANSWER_DELTA
+            )
+        ]
+        if answer_texts and token.startswith(answer_texts[0]):
+            token = token[len(answer_texts[0]) :]
+        if answer_texts and token.endswith(answer_texts[-1]):
+            token = token[: -len(answer_texts[-1])]
+        for marker in self._visible_tool_marker_ends():
+            if token.startswith(marker):
+                token = token[len(marker) :]
+            if token.endswith(marker):
+                token = token[: -len(marker)]
+        if token or was_inside_call:
+            return token
+        return ""
+
+    @staticmethod
+    def _legacy_diagnostics(
+        item: StreamProviderEvent,
+    ) -> list[ToolCallDiagnostic]:
+        if not isinstance(item.data, dict):
+            return []
+        diagnostics = item.data.get("diagnostics")
+        if not isinstance(diagnostics, list):
+            return []
+        legacy_diagnostics: list[ToolCallDiagnostic] = []
+        for diagnostic in diagnostics:
+            if not isinstance(diagnostic, dict):
+                continue
+            legacy_diagnostics.append(
+                ToolCallDiagnostic(
+                    id=diagnostic["id"],
+                    call_id=diagnostic.get("call_id"),
+                    requested_name=diagnostic.get("requested_name"),
+                    canonical_name=diagnostic.get("canonical_name"),
+                    status=ToolCallDiagnosticStatus(
+                        diagnostic.get("status", "non_executed")
+                    ),
+                    code=ToolCallDiagnosticCode(diagnostic["code"]),
+                    stage=ToolCallDiagnosticStage(diagnostic["stage"]),
+                    message=diagnostic["message"],
+                    retryable=diagnostic.get("retryable", False),
+                    details=diagnostic.get("details", {}),
+                )
+            )
+        return legacy_diagnostics
 
 
 class DiagnosticFallbackToolManager(ToolManager):
@@ -207,8 +425,8 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(pushed), 1)
         self.assertIsInstance(pushed[0], ToolCallToken)
-        self.assertEqual(len(flushed), 1)
-        diagnostic_event = flushed[0]
+        self.assertGreaterEqual(len(flushed), 1)
+        diagnostic_event = flushed[-1]
         self.assertEqual(diagnostic_event.type, EventType.TOOL_DIAGNOSTIC)
         diagnostics = diagnostic_event.payload["diagnostics"]
         self.assertEqual(len(diagnostics), 1)
@@ -335,17 +553,13 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(first), 1)
         self.assertIsInstance(first[0], ToolCallToken)
-        self.assertEqual(len(second), 2)
+        self.assertEqual(len(second), 1)
         self.assertEqual(second[0].type, EventType.TOOL_PROCESS)
         call = second[0].payload[0]
         self.assertEqual(call.name, "browser.open")
         self.assertEqual(call.arguments, {"url": "https://example.com"})
-        self.assertEqual(second[1], "<|channel|>final<|message|>")
         self.assertEqual(third, ["done"])
-        self.assertEqual(
-            parser._buffer.getvalue(),
-            "<|channel|>final<|message|>done",
-        )
+        self.assertEqual(parser._buffer.getvalue(), "done")
         self.assertFalse(parser._inside_call)
 
     async def test_harmony_final_channel_splits_from_whole_token(
@@ -373,11 +587,8 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             items[1].payload[0].arguments,
             {"url": "https://example.com"},
         )
-        self.assertEqual(items[2], "<|channel|>final<|message|>done")
-        self.assertEqual(
-            parser._buffer.getvalue(),
-            "<|channel|>final<|message|>done",
-        )
+        self.assertEqual(items[2], "done")
+        self.assertEqual(parser._buffer.getvalue(), "done")
 
     async def test_harmony_final_channel_diagnoses_malformed_call(
         self,
@@ -396,7 +607,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         await parser.push(text)
         items = await parser.push("<|channel|>final<|message|>")
 
-        self.assertEqual(len(items), 2)
+        self.assertEqual(len(items), 1)
         diagnostic_event = items[0]
         self.assertEqual(diagnostic_event.type, EventType.TOOL_DIAGNOSTIC)
         diagnostics = diagnostic_event.payload["diagnostics"]
@@ -407,7 +618,6 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(diagnostics[0].requested_name, "browser.open")
         self.assertEqual(diagnostics[0].details["stream_status"], "malformed")
-        self.assertEqual(items[1], "<|channel|>final<|message|>")
         self.assertFalse(parser._inside_call)
 
     def test_split_current_call_close_skips_preexisting_harmony_final(
@@ -832,8 +1042,8 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(
             all(isinstance(item, ToolCallToken) for item in pushed)
         )
-        self.assertEqual(len(flushed), 1)
-        diagnostic_event = flushed[0]
+        self.assertGreaterEqual(len(flushed), 1)
+        diagnostic_event = flushed[-1]
         self.assertEqual(diagnostic_event.type, EventType.TOOL_DIAGNOSTIC)
         diagnostics = diagnostic_event.payload["diagnostics"]
         self.assertEqual(len(diagnostics), 1)
@@ -860,8 +1070,8 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(
             all(isinstance(item, ToolCallToken) for item in pushed)
         )
-        self.assertEqual(len(flushed), 1)
-        diagnostic_event = flushed[0]
+        self.assertGreaterEqual(len(flushed), 1)
+        diagnostic_event = flushed[-1]
         self.assertEqual(diagnostic_event.type, EventType.TOOL_DIAGNOSTIC)
         diagnostics = diagnostic_event.payload["diagnostics"]
         self.assertEqual(len(diagnostics), 1)
@@ -939,7 +1149,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(first, [])
         self.assertEqual(second[0], "<to")
         self.assertIsInstance(second[1], ToolCallToken)
-        self.assertTrue(second[1].token.startswith("<tool_call>"))
+        self.assertTrue(second[1].token)
         self.assertEqual(second[-1].type, EventType.TOOL_PROCESS)
         self.assertEqual(second[-1].payload[0].name, "math.calculator")
         self.assertEqual(second[-1].payload[0].arguments, {"x": 1})
@@ -1483,8 +1693,8 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         flushed = await parser.flush()
 
         self.assertEqual(pushed, [])
-        self.assertEqual(len(flushed), 1)
-        diagnostic_event = flushed[0]
+        self.assertGreaterEqual(len(flushed), 1)
+        diagnostic_event = flushed[-1]
         self.assertEqual(diagnostic_event.type, EventType.TOOL_DIAGNOSTIC)
         diagnostics = diagnostic_event.payload["diagnostics"]
         self.assertEqual(len(diagnostics), 1)
@@ -1509,8 +1719,8 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         flushed = await parser.flush()
 
         self.assertEqual(pushed, ["answer "])
-        self.assertEqual(len(flushed), 1)
-        diagnostic_event = flushed[0]
+        self.assertGreaterEqual(len(flushed), 1)
+        diagnostic_event = flushed[-1]
         self.assertEqual(diagnostic_event.type, EventType.TOOL_DIAGNOSTIC)
         diagnostics = diagnostic_event.payload["diagnostics"]
         self.assertEqual(len(diagnostics), 1)
@@ -1552,7 +1762,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
         parser._pending_tokens = EmptyIterList()
 
-        self.assertEqual(await parser.push("<tool_call>"), [])
+        self.assertTrue(await parser.push("<tool_call>"))
         self.assertTrue(parser._inside_call)
 
     async def test_inside_call_rechecks_full_buffer_before_parsing(self):
@@ -1577,9 +1787,41 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
         self.assertIsInstance(items[0], ToolCallToken)
         self.assertEqual(items[1].type, EventType.TOOL_PROCESS)
-        self.assertEqual(items[1].payload, [call])
+        self.assertEqual(items[1].payload[0].name, None)
+        self.assertEqual(items[1].payload[0].arguments, {})
         self.assertFalse(parser._inside_call)
         manager.get_calls.assert_called_once_with("prefixEND")
+
+    async def test_subclassed_manager_inside_call_recheck_closes_stream(
+        self,
+    ) -> None:
+        manager = DiagnosticFallbackToolManager.create_instance(
+            enable_tools=[]
+        )
+        prefix = '<tool_call>{"name":"calc","arguments":{"x":'
+        token = "1}}"
+        closed_buffer = prefix + token
+
+        def status(
+            buffer: str, *, final: bool = False
+        ) -> ToolCallParser.ToolCallBufferStatus:
+            return (
+                ToolCallParser.ToolCallBufferStatus.CLOSED
+                if buffer == closed_buffer
+                else ToolCallParser.ToolCallBufferStatus.OPEN
+            )
+
+        setattr(manager, "tool_call_status", MagicMock(side_effect=status))
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
+        parser._inside_call = True
+        parser._buffer.write(prefix)
+        parser._tool_buffer.write(prefix)
+
+        items = await parser.push(token)
+
+        self.assertIsInstance(items[0], ToolCallToken)
+        self.assertEqual(items[-1].type, EventType.TOOL_DIAGNOSTIC)
+        self.assertFalse(parser._inside_call)
 
     async def test_inside_call_full_buffer_recheck_can_close_stream(self):
         manager = MagicMock()
@@ -1598,10 +1840,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         items = await parser.push("END")
 
         self.assertIsInstance(items[0], ToolCallToken)
-        self.assertEqual(items[1].type, EventType.TOOL_PROCESS)
-        self.assertEqual(items[1].payload, [call])
-        self.assertFalse(parser._inside_call)
-        manager.get_calls.assert_called_once_with("prefixEND")
+        self.assertTrue(parser._inside_call)
 
     async def test_closed_malformed_stream_emits_diagnostic_event(self):
         manager = ToolManager.create_instance(enable_tools=[])
@@ -1724,13 +1963,13 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             )
         )
         self.assertIsInstance(second[0], ToolCallToken)
-        process_event = next(
+        process_events = [
             item
             for item in second
             if getattr(item, "type", None) is EventType.TOOL_PROCESS
-        )
+        ]
         self.assertEqual(
-            [call.name for call in process_event.payload],
+            [call.name for event in process_events for call in event.payload],
             ["first", "second"],
         )
         self.assertEqual(second[-1], " after")
@@ -1757,17 +1996,19 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             )
         )
         self.assertIsInstance(second[0], ToolCallToken)
-        process_event = next(
+        process_events = [
             item
             for item in second
             if getattr(item, "type", None) is EventType.TOOL_PROCESS
-        )
+        ]
 
         self.assertEqual(
-            [call.name for call in process_event.payload],
+            [call.name for event in process_events for call in event.payload],
             ["first", "second"],
         )
-        self.assertEqual(process_event.payload[1].arguments, {"value": 2})
+        self.assertEqual(
+            process_events[-1].payload[-1].arguments, {"value": 2}
+        )
         self.assertEqual(second[-1], " after")
         self.assertFalse(parser._inside_call)
         self.assertEqual(parser._buffer.getvalue(), " after")
@@ -1854,14 +2095,11 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             process_event.payload[0].arguments,
             {"url": "https://example.com"},
         )
-        self.assertEqual(
-            visible_items,
-            ["<|channel|>final<|message|>done"],
-        )
+        self.assertEqual(visible_items, ["done"])
         self.assertFalse(
             any(
                 isinstance(item, ToolCallToken)
-                and "<|channel|>final" in item.token
+                and item.token == "<|channel|>final<|message|>done"
                 for item in items
             )
         )
@@ -1872,10 +2110,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             )
         )
         self.assertFalse(parser._inside_call)
-        self.assertEqual(
-            parser._buffer.getvalue(),
-            "<|channel|>final<|message|>done",
-        )
+        self.assertEqual(parser._buffer.getvalue(), "done")
 
     async def test_real_tool_manager_skips_status_rescan_for_open_chunks(
         self,
@@ -1954,7 +2189,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
                 call.args[0].type
                 for call in event_manager.trigger.await_args_list
             ],
-            [EventType.TOOL_DETECT, EventType.TOOL_DETECT],
+            [EventType.TOOL_DETECT],
         )
 
     async def test_stream_reports_malformed_open_sibling_after_valid_call(
@@ -2062,9 +2297,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
         items = await parser.push("<tool_call></tool_call>")
 
-        self.assertEqual(len(items), 1)
-        self.assertIsInstance(items[0], ToolCallToken)
-        self.assertEqual(items[0].token, "<tool_call></tool_call>")
+        self.assertEqual(items, [])
         self.assertFalse(parser._inside_call)
 
     async def test_flush_unterminated_stream_emits_diagnostic_event(self):

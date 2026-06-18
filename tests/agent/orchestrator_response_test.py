@@ -1181,6 +1181,68 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         )
         validate_canonical_stream_items(resp.canonical_items)
 
+    async def test_harmony_final_channel_marker_stays_out_of_answer_text(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        engine.tokenizer.encode.return_value = [1]
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+
+        settings = GenerationSettings()
+        response = _response_from_items(
+            *_canonical_answer_items(
+                "<|start|>assistant<|channel|>commentary "
+                "to=functions.browser.open <|constrain|>json<|message|>"
+                '{"url":"https://example.com"}',
+                "<|channel|>final<|message|>done",
+            ),
+            settings=settings,
+        )
+
+        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
+        tool_manager = AsyncMock(spec=ToolManager)
+        tool_manager.is_potential_tool_call.side_effect = (
+            base_parser.is_potential_tool_call
+        )
+        tool_manager.tool_call_status.side_effect = (
+            base_parser.tool_call_status
+        )
+        tool_manager.get_calls.side_effect = base_parser
+        tool_manager.tool_format = ToolFormat.HARMONY
+        tool_manager.is_empty = False
+        tool_manager.return_value = None
+
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            response,
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool_manager,
+        )
+
+        items = await _collect_stream_items(resp)
+
+        self.assertEqual(_answer_text(items), "done")
+        self.assertFalse(
+            any(
+                item.kind is StreamItemKind.ANSWER_DELTA
+                and item.text_delta
+                and "<|channel|>final<|message|>" in item.text_delta
+                for item in items
+            )
+        )
+        self.assertIn(
+            StreamItemKind.TOOL_CALL_READY,
+            [item.kind for item in items],
+        )
+        validate_canonical_stream_items(resp.canonical_items)
+
     async def test_real_tool_parser_text_tool_call_stays_canonical(
         self,
     ) -> None:
@@ -8494,8 +8556,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.TOOL_CALL_DONE,
                 StreamItemKind.TOOL_EXECUTION_STARTED,
                 StreamItemKind.TOOL_EXECUTION_COMPLETED,
-                StreamItemKind.MODEL_CONTINUATION_STARTED,
-                StreamItemKind.MODEL_CONTINUATION_CANCELLED,
                 StreamItemKind.STREAM_CANCELLED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -8808,8 +8868,16 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(first, ToolCallResult)
         self.assertIsInstance(second, ToolCallDiagnostic)
         assert isinstance(second, ToolCallDiagnostic)
+        signature = resp._call_signature(call)
         self.assertEqual(second.code, ToolCallDiagnosticCode.REPEATED_CALL)
         self.assertEqual(second.stage, ToolCallDiagnosticStage.GUARD)
+        self.assertEqual(second.details["signature"], signature)
+        self.assertIn(signature, second.details["attempted_call_signatures"])
+        resp._append_canonical_tool_execution_started(call)
+        resp._append_canonical_tool_execution_terminal(call, second)
+        terminal = resp.canonical_items[-1]
+        self.assertIs(terminal.kind, StreamItemKind.TOOL_EXECUTION_ERROR)
+        self.assertEqual(terminal.data["details"]["signature"], signature)
         tool.assert_awaited_once()
 
     async def test_repeated_empty_tool_attempt_returns_guard_diagnostic(self):

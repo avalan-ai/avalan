@@ -1,6 +1,6 @@
 """Parser emitting canonical events for detected tool calls."""
 
-from ....entities import ToolCallDiagnostic, ToolCallToken, ToolFormat
+from ....entities import ToolCallDiagnostic, ToolFormat
 from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....tool.dsml import DsmlTools
@@ -17,7 +17,10 @@ from dataclasses import dataclass
 from io import StringIO
 from json import JSONDecodeError, JSONDecoder, dumps
 from time import perf_counter
-from typing import Any, Iterable, cast
+from typing import Any, Iterable, TypeAlias, cast
+
+ToolCallResponseParserOutput: TypeAlias = StreamProviderEvent
+_ToolCallResponseParserItem: TypeAlias = ToolCallResponseParserOutput
 
 
 class _MarkdownFenceState:
@@ -390,9 +393,9 @@ class ToolCallResponseParser:
         *,
         legacy_fixture: bool = False,
     ) -> None:
+        assert isinstance(legacy_fixture, bool)
         self._tool_manager = tool_manager
         self._event_manager = event_manager
-        self._legacy_fixture = legacy_fixture
         self._buffer = StringIO()
         self._tool_buffer = StringIO()
         self._tag_buffer = ""
@@ -407,7 +410,13 @@ class ToolCallResponseParser:
         self._tool_argument_text_by_id: dict[str, str] = {}
         self._visible_state = _VisibleTextState()
 
-    async def push(self, token_str: str) -> Iterable[Any]:
+    @property
+    def canonicalizes_answer_deltas(self) -> bool:
+        return True
+
+    async def push(
+        self, token_str: str
+    ) -> Iterable[_ToolCallResponseParserItem]:
         buffer_value = self._buffer.getvalue()
         should_check = self._tool_manager.is_potential_tool_call(
             buffer_value, token_str
@@ -424,7 +433,7 @@ class ToolCallResponseParser:
         if len(self._tag_buffer) > 64:
             self._tag_buffer = self._tag_buffer[-64:]
 
-        result: list[Any] = []
+        result: list[_ToolCallResponseParserItem] = []
         terminal_status: ToolCallParser.ToolCallBufferStatus | None = None
         visible_suffix = ""
 
@@ -597,7 +606,7 @@ class ToolCallResponseParser:
 
     async def _diagnostic_events(
         self, diagnostics: list[ToolCallDiagnostic]
-    ) -> list[Event | StreamProviderEvent]:
+    ) -> list[_ToolCallResponseParserItem]:
         return [
             await self._diagnostic_event(group, tool_call_id=tool_call_id)
             for tool_call_id, group in self._diagnostic_groups(diagnostics)
@@ -608,17 +617,7 @@ class ToolCallResponseParser:
         diagnostics: list[ToolCallDiagnostic],
         *,
         tool_call_id: str | None = None,
-    ) -> Event | StreamProviderEvent:
-        if self._legacy_fixture:
-            event = Event(
-                type=EventType.TOOL_DIAGNOSTIC,
-                payload={"diagnostics": cast(Any, diagnostics)},
-                started=perf_counter(),
-            )
-            if self._event_manager:
-                await self._event_manager.trigger(event)
-            return event
-
+    ) -> ToolCallResponseParserOutput:
         tool_call_id = (
             tool_call_id
             or self._diagnostic_tool_call_id(diagnostics)
@@ -655,20 +654,8 @@ class ToolCallResponseParser:
         self,
         calls: list[Any],
         diagnostics: list[ToolCallDiagnostic],
-    ) -> list[Event | StreamProviderEvent]:
-        events: list[Event | StreamProviderEvent] = []
-        if self._legacy_fixture:
-            if diagnostics:
-                events.append(await self._diagnostic_event(diagnostics))
-            events.append(
-                Event(
-                    type=EventType.TOOL_PROCESS,
-                    payload=cast(Any, calls),
-                    started=perf_counter(),
-                )
-            )
-            return events
-
+    ) -> list[_ToolCallResponseParserItem]:
+        events: list[_ToolCallResponseParserItem] = []
         for tool_call_id, group in self._diagnostic_groups(diagnostics):
             events.append(
                 await self._diagnostic_event(group, tool_call_id=tool_call_id)
@@ -707,8 +694,11 @@ class ToolCallResponseParser:
         return events
 
     async def _finish_closed_segment(
-        self, items: list[Any], visible_suffix: str
-    ) -> list[Any]:
+        self,
+        items: list[_ToolCallResponseParserItem],
+        visible_suffix: str,
+    ) -> list[_ToolCallResponseParserItem]:
+        visible_suffix = self._visible_tool_suffix_text(visible_suffix)
         if not visible_suffix or not self._has_unfenced_tool_marker(
             "", visible_suffix
         ):
@@ -719,8 +709,8 @@ class ToolCallResponseParser:
         suffix_items = await self.push(visible_suffix)
         return items + list(suffix_items)
 
-    async def flush(self) -> Iterable[Any]:
-        result: list[Any] = []
+    async def flush(self) -> Iterable[_ToolCallResponseParserItem]:
+        result: list[_ToolCallResponseParserItem] = []
         if self._inside_call:
             buffer_text = self._parse_text()
             calls: list[Any] | None = None
@@ -758,11 +748,12 @@ class ToolCallResponseParser:
             self._tool_buffer = StringIO()
         return result
 
-    def _append_visible_output(self, items: list[Any], text: str) -> None:
+    def _append_visible_output(
+        self,
+        items: list[_ToolCallResponseParserItem],
+        text: str,
+    ) -> None:
         if not text:
-            return
-        if self._legacy_fixture:
-            items.append(text)
             return
         items.append(
             StreamProviderEvent(
@@ -772,7 +763,9 @@ class ToolCallResponseParser:
         )
 
     def _extend_visible_output(
-        self, items: list[Any], texts: list[str]
+        self,
+        items: list[_ToolCallResponseParserItem],
+        texts: list[str],
     ) -> None:
         for text in texts:
             self._append_visible_output(items, text)
@@ -844,9 +837,7 @@ class ToolCallResponseParser:
 
     def _tool_argument_delta(
         self, token: str
-    ) -> ToolCallToken | StreamProviderEvent | None:
-        if self._legacy_fixture:
-            return ToolCallToken(token=token)
+    ) -> ToolCallResponseParserOutput | None:
         if getattr(self._tool_manager, "tool_format", None) is ToolFormat.DSML:
             return self._dsml_tool_argument_delta(token)
 
@@ -868,7 +859,7 @@ class ToolCallResponseParser:
 
     def _dsml_tool_argument_delta(
         self, token: str
-    ) -> StreamProviderEvent | None:
+    ) -> ToolCallResponseParserOutput | None:
         text = self._tool_buffer.getvalue() + token
         deltas, emitted_until = DsmlTools.stream_argument_deltas(
             text, self._tool_argument_emitted_until
@@ -890,7 +881,7 @@ class ToolCallResponseParser:
     @staticmethod
     def _tool_argument_delta_text(call: Any) -> str:
         arguments = getattr(call, "arguments", None)
-        if arguments is None:
+        if not isinstance(arguments, dict):
             return ""
         return dumps(arguments, separators=(",", ":"))
 
@@ -1001,9 +992,11 @@ class ToolCallResponseParser:
 
     @staticmethod
     def _tool_call_data(call: Any) -> dict[str, Any]:
+        name = getattr(call, "name", None)
+        arguments = getattr(call, "arguments", None)
         return {
-            "name": getattr(call, "name", None),
-            "arguments": getattr(call, "arguments", None) or {},
+            "name": name if isinstance(name, str) else None,
+            "arguments": arguments if isinstance(arguments, dict) else {},
         }
 
     @staticmethod
@@ -1383,14 +1376,22 @@ class ToolCallResponseParser:
             return ("<|channel|>final<|message|>",)
         return ()
 
+    def _visible_tool_suffix_text(self, visible_suffix: str) -> str:
+        for marker in self._visible_tool_marker_ends():
+            if visible_suffix.startswith(marker):
+                return visible_suffix[len(marker) :]
+        return visible_suffix
+
     def _sorted_visible_tool_marker_ends(self) -> tuple[str, ...]:
         return tuple(
             sorted(self._visible_tool_marker_ends(), key=len, reverse=True)
         )
 
     def _append_visible_suffix(
-        self, items: list[Any], visible_suffix: str
-    ) -> list[Any]:
+        self,
+        items: list[_ToolCallResponseParserItem],
+        visible_suffix: str,
+    ) -> list[_ToolCallResponseParserItem]:
         self._append_visible_output(items, visible_suffix)
         return items
 

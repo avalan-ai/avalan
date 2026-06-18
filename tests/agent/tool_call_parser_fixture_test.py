@@ -5,12 +5,11 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import (
     ToolCallDiagnosticCode,
-    ToolCallToken,
     ToolFormat,
     ToolManagerSettings,
 )
-from avalan.event import EventType
 from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.model.stream import StreamItemKind, StreamProviderEvent
 from avalan.tool.manager import ToolManager
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "tool_parsing"
@@ -21,6 +20,28 @@ def read_json_fixture(name: str) -> Any:
 
 
 class ToolCallParserFixtureTestCase(IsolatedAsyncioTestCase):
+    @staticmethod
+    def _answer_texts(items: list[Any]) -> list[str | None]:
+        return [
+            item.text_delta
+            for item in items
+            if (
+                isinstance(item, StreamProviderEvent)
+                and item.kind is StreamItemKind.ANSWER_DELTA
+            )
+        ]
+
+    @staticmethod
+    def _provider_events(
+        items: list[Any],
+        kind: StreamItemKind,
+    ) -> list[StreamProviderEvent]:
+        return [
+            item
+            for item in items
+            if isinstance(item, StreamProviderEvent) and item.kind is kind
+        ]
+
     async def test_marker_stream_boundaries(self) -> None:
         cases = read_json_fixture("stream_marker_boundaries.json")
 
@@ -39,42 +60,44 @@ class ToolCallParserFixtureTestCase(IsolatedAsyncioTestCase):
 
                 event_name = case["event"]
                 if event_name is None:
-                    self.assertEqual(items, case["strings"])
+                    self.assertEqual(
+                        self._answer_texts(items),
+                        case["strings"],
+                    )
                     continue
 
-                event_type = (
-                    EventType.TOOL_PROCESS
-                    if event_name == "tool_process"
-                    else EventType.TOOL_DIAGNOSTIC
+                self.assertEqual(
+                    self._answer_texts(items),
+                    case.get("strings", []),
                 )
-                event = next(
-                    item
-                    for item in items
-                    if getattr(item, "type", None) is event_type
-                )
-                self.assertEqual(event.type, event_type)
 
-                strings = [item for item in items if isinstance(item, str)]
-                self.assertEqual(strings, case.get("strings", []))
-
-                if event_type is EventType.TOOL_PROCESS:
-                    call = event.payload[0]
-                    self.assertEqual(call.name, case["call"]["name"])
+                if event_name == "tool_process":
+                    ready = self._provider_events(
+                        items,
+                        StreamItemKind.TOOL_CALL_READY,
+                    )[0]
+                    assert isinstance(ready.data, dict)
+                    self.assertEqual(ready.data["name"], case["call"]["name"])
                     self.assertEqual(
-                        call.arguments,
+                        ready.data["arguments"],
                         case["call"]["arguments"],
                     )
                     continue
 
-                diagnostics = event.payload["diagnostics"]
+                diagnostic = self._provider_events(
+                    items,
+                    StreamItemKind.STREAM_DIAGNOSTIC,
+                )[0]
+                assert isinstance(diagnostic.data, dict)
+                diagnostics = diagnostic.data["diagnostics"]
                 self.assertEqual(len(diagnostics), 1)
                 self.assertEqual(
-                    diagnostics[0].code,
-                    ToolCallDiagnosticCode[case["diagnostic_code"]],
+                    diagnostics[0]["code"],
+                    ToolCallDiagnosticCode[case["diagnostic_code"]].value,
                 )
                 if "stream_status" in case:
                     self.assertEqual(
-                        diagnostics[0].details["stream_status"],
+                        diagnostics[0]["details"]["stream_status"],
                         case["stream_status"],
                     )
 
@@ -90,17 +113,20 @@ class ToolCallParserFixtureTestCase(IsolatedAsyncioTestCase):
         for token in fixture["tokens"]:
             items.extend(await parser.push(token))
 
-        event = next(
-            item
-            for item in items
-            if getattr(item, "type", None) is EventType.TOOL_PROCESS
-        )
-        call = event.payload[0]
+        ready = self._provider_events(
+            items,
+            StreamItemKind.TOOL_CALL_READY,
+        )[0]
+        assert isinstance(ready.data, dict)
 
-        self.assertEqual(call.name, fixture["call"]["name"])
-        self.assertEqual(call.arguments, fixture["call"]["arguments"])
+        self.assertEqual(ready.data["name"], fixture["call"]["name"])
+        self.assertEqual(ready.data["arguments"], fixture["call"]["arguments"])
         self.assertEqual(
-            [item for item in items if isinstance(item, str)],
+            self._answer_texts(items),
             fixture["strings"],
         )
-        self.assertTrue(any(isinstance(item, ToolCallToken) for item in items))
+        self.assertTrue(
+            self._provider_events(
+                items, StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+            )
+        )
