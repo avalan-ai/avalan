@@ -1,5 +1,7 @@
 from ast import (
     AST,
+    AnnAssign,
+    Assign,
     AsyncFunctionDef,
     Attribute,
     BinOp,
@@ -7,6 +9,8 @@ from ast import (
     Call,
     ClassDef,
     FunctionDef,
+    Import,
+    ImportFrom,
     Name,
     NodeVisitor,
     Tuple,
@@ -50,7 +54,11 @@ from avalan.model.stream import (
     StreamGoldenTrace,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamLegacyBoundaryCategory,
+    StreamLegacyBoundaryDirection,
     StreamLegacyClassifierInventoryEntry,
+    StreamLegacyInventoryScope,
+    StreamLegacyRuntimeBoundaryInventoryEntry,
     StreamLegacySurface,
     StreamLegacySurfaceClassification,
     StreamLegacySurfaceInventoryEntry,
@@ -77,11 +85,13 @@ from avalan.model.stream import (
     canonical_item_from_consumer_projection,
     canonical_item_from_token,
     classify_legacy_stream_classifier,
+    classify_legacy_stream_runtime_boundary,
     classify_legacy_stream_surface,
     is_stream_terminal_kind,
     is_tool_execution_terminal_kind,
     iter_stream_consumer_projections,
     legacy_stream_classifier_inventory,
+    legacy_stream_runtime_boundary_inventory,
     legacy_stream_surface_inventory,
     normalize_local_stream,
     normalize_provider_stream,
@@ -304,7 +314,10 @@ _LEGACY_CLASSIFIER_MODULE_PATHS = {
     "avalan.server.routers.mcp": Path("src/avalan/server/routers/mcp.py"),
     "avalan.server.a2a.router": Path("src/avalan/server/a2a/router.py"),
 }
-_LEGACY_CLASSIFIER_SCAN_ROOTS = (Path("src/avalan/server"),)
+_LEGACY_CLASSIFIER_SCAN_ROOTS = (
+    Path("src/avalan/model/nlp/text"),
+    Path("src/avalan/server"),
+)
 
 _LEGACY_CLASSIFIER_SYMBOL_SURFACES = {
     "Token": StreamLegacySurface.TOKEN,
@@ -316,12 +329,52 @@ _LEGACY_CLASSIFIER_SYMBOL_SURFACES = {
 
 _LEGACY_CLASSIFIER_STRING_SITES = {
     (
+        "avalan.model.nlp.text.vendor.anthropic",
+        "AnthropicClient._non_stream_response_content",
+    ),
+    (
+        "avalan.model.nlp.text.vendor.openai",
+        "OpenAIClient._non_stream_response_content",
+    ),
+    ("avalan.model.nlp.text.mlxlm", "MlxLmModel._stream_generator"),
+    ("avalan.model.nlp.text.vllm", "VllmModel._stream_generator"),
+    ("avalan.model.response.text", "_text_from_non_stream_result"),
+    ("avalan.model.response.text", "TextGenerationResponse.__aiter__"),
+    ("avalan.model.response.text", "TextGenerationResponse.__anext__"),
+    (
         "avalan.agent.orchestrator.response.orchestrator_response",
         "OrchestratorResponse._stream_item_projection",
     ),
     ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
+    ("avalan.server.routers.mcp", "_MCPLegacyStreamAdapter.map"),
+    ("avalan.server.routers.mcp", "_extract_append_streams"),
     ("avalan.model.stream", "_LegacyTokenStreamAdapter.item_from_token"),
     ("avalan.model.stream", "_LegacyTokenStreamAdapter.events_from_token"),
+}
+_LEGACY_CLASSIFIER_STRING_CONTEXT_MARKERS = (
+    "stream_",
+    "_stream",
+    "project_stream",
+)
+
+_PRODUCTION_LEGACY_BOUNDARY_CATEGORIES = {
+    StreamLegacyBoundaryCategory.PRODUCER,
+    StreamLegacyBoundaryCategory.SDK_RESPONSE,
+    StreamLegacyBoundaryCategory.ORCHESTRATOR,
+    StreamLegacyBoundaryCategory.PARSER,
+    StreamLegacyBoundaryCategory.EVENTING,
+    StreamLegacyBoundaryCategory.CLI_STDOUT,
+    StreamLegacyBoundaryCategory.CHAT_SSE,
+    StreamLegacyBoundaryCategory.RESPONSES_SSE,
+    StreamLegacyBoundaryCategory.MCP,
+    StreamLegacyBoundaryCategory.A2A,
+    StreamLegacyBoundaryCategory.FLOW,
+    StreamLegacyBoundaryCategory.HELPER_ONLY,
+}
+
+_TEMPORARY_LEGACY_SURFACE_CLASSIFICATIONS = {
+    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM,
+    StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM,
 }
 
 
@@ -364,8 +417,10 @@ class _LegacyStreamClassifierVisitor(NodeVisitor):
         key: tuple[str, str],
     ) -> set[StreamLegacySurface]:
         if isinstance(node, Name):
-            if node.id == "str" and key in _LEGACY_CLASSIFIER_STRING_SITES:
-                return {StreamLegacySurface.STRING}
+            if node.id == "str":
+                if self._tracks_string_classifier(key):
+                    return {StreamLegacySurface.STRING}
+                return set()
             surface = _LEGACY_CLASSIFIER_SYMBOL_SURFACES.get(node.id)
             return set() if surface is None else {surface}
         if isinstance(node, Attribute):
@@ -381,6 +436,19 @@ class _LegacyStreamClassifierVisitor(NodeVisitor):
                 node.left, key
             ) | self._surfaces_for_node(node.right, key)
         return set()
+
+    @staticmethod
+    def _tracks_string_classifier(key: tuple[str, str]) -> bool:
+        if key in _LEGACY_CLASSIFIER_STRING_SITES:
+            return True
+        full_qualname = key[1].lower()
+        qualname = full_qualname.rsplit(".", maxsplit=1)[-1]
+        if qualname == "map" and "streamadapter" in full_qualname:
+            return True
+        return any(
+            marker in qualname
+            for marker in _LEGACY_CLASSIFIER_STRING_CONTEXT_MARKERS
+        )
 
 
 def _legacy_stream_classifier_sites(
@@ -433,6 +501,42 @@ def _inventory_legacy_stream_classifier_sites() -> (
         if class_surfaces:
             sites[key] = class_surfaces
     return {key: frozenset(value) for key, value in sites.items()}
+
+
+def _module_source_path(root: Path, module: str) -> Path:
+    return root / Path("src").joinpath(*module.split(".")).with_suffix(".py")
+
+
+def _add_defined_target_name(names: set[str], target: AST) -> None:
+    if isinstance(target, Name):
+        names.add(target.id)
+        return
+    if isinstance(target, Tuple):
+        for element in target.elts:
+            _add_defined_target_name(names, element)
+
+
+def _module_defined_qualnames(tree: AST) -> set[str]:
+    names: set[str] = set()
+    for node in getattr(tree, "body", ()):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            names.add(node.name)
+        if isinstance(node, ClassDef):
+            for child in node.body:
+                if isinstance(child, (FunctionDef, AsyncFunctionDef)):
+                    names.add(f"{node.name}.{child.name}")
+            continue
+        if isinstance(node, Assign):
+            for target in node.targets:
+                _add_defined_target_name(names, target)
+            continue
+        if isinstance(node, AnnAssign):
+            _add_defined_target_name(names, node.target)
+            continue
+        if isinstance(node, (Import, ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".", maxsplit=1)[0])
+    return names
 
 
 class StreamContractTestCase(TestCase):
@@ -6541,14 +6645,50 @@ class StreamContractTestCase(TestCase):
         inventory = legacy_stream_surface_inventory()
 
         self.assertEqual(
+            {category.value for category in StreamLegacyBoundaryCategory},
+            {
+                "producer",
+                "sdk_response",
+                "orchestrator",
+                "parser",
+                "eventing",
+                "cli_stdout",
+                "chat_sse",
+                "responses_sse",
+                "mcp",
+                "a2a",
+                "flow",
+                "test_fixture",
+                "helper_only",
+            },
+        )
+        self.assertEqual(
+            {scope.value for scope in StreamLegacyInventoryScope},
+            {"production_runtime", "test_fixture", "helper_only"},
+        )
+        self.assertEqual(
+            {direction.value for direction in StreamLegacyBoundaryDirection},
+            {
+                "accepts",
+                "emits",
+                "projects",
+                "public_return_type",
+                "control",
+            },
+        )
+        self.assertEqual(
             {entry.surface for entry in inventory},
             set(StreamLegacySurface),
         )
         self.assertEqual(
             len(inventory), len({entry.surface for entry in inventory})
         )
+        self.assertEqual(
+            {category for entry in inventory for category in entry.categories},
+            _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES,
+        )
 
-        shim_surfaces = {
+        canonical_surface_kinds = {
             StreamLegacySurface.STRING,
             StreamLegacySurface.TOKEN,
             StreamLegacySurface.TOKEN_DETAIL,
@@ -6562,37 +6702,35 @@ class StreamContractTestCase(TestCase):
                 )
                 self.assertTrue(entry.owner)
                 self.assertTrue(entry.removal_condition)
-                if entry.surface in shim_surfaces:
-                    self.assertIs(
-                        entry.classification,
-                        (
-                            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-                        ),
+                self.assertIs(
+                    entry.scope,
+                    StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+                )
+                self.assertIs(
+                    entry.classification,
+                    StreamLegacySurfaceClassification.REMOVE_NOW,
+                )
+                self.assertNotIn(
+                    entry.classification,
+                    _TEMPORARY_LEGACY_SURFACE_CLASSIFICATIONS,
+                )
+                self.assertTrue(entry.categories)
+                self.assertTrue(
+                    set(entry.categories).issubset(
+                        _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
                     )
-                    self.assertEqual(
-                        entry.ingestion_shim, "canonical_item_from_token"
-                    )
+                )
+                self.assertIsNone(entry.ingestion_shim)
+                if entry.surface in canonical_surface_kinds:
                     assert entry.canonical_kind is not None
                     self.assertIs(
                         entry.canonical_channel,
                         stream_channel_for_kind(entry.canonical_kind),
                     )
                 elif entry.surface is StreamLegacySurface.EVENT:
-                    self.assertIs(
-                        entry.classification,
-                        (
-                            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
-                        ),
-                    )
-                    self.assertIsNone(entry.ingestion_shim)
                     self.assertIsNone(entry.canonical_kind)
                     self.assertIsNone(entry.canonical_channel)
                 else:
-                    self.assertIs(
-                        entry.classification,
-                        StreamLegacySurfaceClassification.MIGRATE_LATER,
-                    )
-                    self.assertIsNone(entry.ingestion_shim)
                     self.assertIsNone(entry.canonical_kind)
                     self.assertIsNone(entry.canonical_channel)
 
@@ -6603,114 +6741,729 @@ class StreamContractTestCase(TestCase):
                 classify_legacy_stream_surface(StreamLegacySurface.TOKEN)
 
     def test_legacy_surface_inventory_rejects_malformed_entries(self) -> None:
+        def make_entry(
+            **overrides: object,
+        ) -> StreamLegacySurfaceInventoryEntry:
+            values: dict[str, object] = {
+                "surface": StreamLegacySurface.TOKEN,
+                "classification": StreamLegacySurfaceClassification.REMOVE_NOW,
+                "categories": (StreamLegacyBoundaryCategory.PRODUCER,),
+                "scope": StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+                "owner": "model.stream",
+                "removal_condition": "done",
+                "canonical_kind": StreamItemKind.ANSWER_DELTA,
+                "canonical_channel": StreamChannel.ANSWER,
+            }
+            values.update(overrides)
+            return StreamLegacySurfaceInventoryEntry(**cast(Any, values))
+
         invalid_entries = (
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface="Token",  # type: ignore[arg-type]
+            lambda: make_entry(
+                surface="Token",
+            ),
+            lambda: make_entry(
+                classification="temporary",
+            ),
+            lambda: make_entry(
+                categories=[StreamLegacyBoundaryCategory.PRODUCER],
+            ),
+            lambda: make_entry(categories=()),
+            lambda: make_entry(
+                categories=(
+                    StreamLegacyBoundaryCategory.PRODUCER,
+                    StreamLegacyBoundaryCategory.PRODUCER,
+                ),
+            ),
+            lambda: make_entry(categories=("producer",)),
+            lambda: make_entry(scope="production_runtime"),
+            lambda: make_entry(
                 classification=(
                     StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
                 ),
-                owner="model.stream",
-                removal_condition="done",
+            ),
+            lambda: make_entry(
+                categories=(StreamLegacyBoundaryCategory.TEST_FIXTURE,),
+            ),
+            lambda: make_entry(
+                categories=(StreamLegacyBoundaryCategory.PRODUCER,),
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                ),
                 ingestion_shim="canonical_item_from_token",
-                canonical_kind=StreamItemKind.ANSWER_DELTA,
-                canonical_channel=StreamChannel.ANSWER,
             ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.TOKEN,
-                classification="temporary",  # type: ignore[arg-type]
-                owner="model.stream",
-                removal_condition="done",
+            lambda: make_entry(
+                categories=(StreamLegacyBoundaryCategory.PRODUCER,),
+                scope=StreamLegacyInventoryScope.HELPER_ONLY,
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
             ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.TOKEN,
+            lambda: make_entry(owner=""),
+            lambda: make_entry(removal_condition=""),
+            lambda: make_entry(
+                categories=(StreamLegacyBoundaryCategory.TEST_FIXTURE,),
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
                 classification=(
                     StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
                 ),
-                owner="",
-                removal_condition="done",
-                ingestion_shim="canonical_item_from_token",
-                canonical_kind=StreamItemKind.ANSWER_DELTA,
-                canonical_channel=StreamChannel.ANSWER,
-            ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.TOKEN,
-                classification=(
-                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-                ),
-                owner="model.stream",
-                removal_condition="",
-                ingestion_shim="canonical_item_from_token",
-                canonical_kind=StreamItemKind.ANSWER_DELTA,
-                canonical_channel=StreamChannel.ANSWER,
-            ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.TOKEN,
-                classification=(
-                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-                ),
-                owner="model.stream",
-                removal_condition="done",
                 ingestion_shim="",
-                canonical_kind=StreamItemKind.ANSWER_DELTA,
-                canonical_channel=StreamChannel.ANSWER,
             ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.TOKEN,
-                classification=(
-                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-                ),
-                owner="model.stream",
-                removal_condition="done",
-                ingestion_shim="canonical_item_from_token",
-                canonical_kind="answer.delta",  # type: ignore[arg-type]
-                canonical_channel=StreamChannel.ANSWER,
+            lambda: make_entry(
+                canonical_kind="answer.delta",
             ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.TOKEN,
-                classification=(
-                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-                ),
-                owner="model.stream",
-                removal_condition="done",
-                ingestion_shim="canonical_item_from_token",
-                canonical_kind=StreamItemKind.ANSWER_DELTA,
-                canonical_channel="answer",  # type: ignore[arg-type]
+            lambda: make_entry(
+                canonical_channel="answer",
             ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.TOKEN,
-                classification=(
-                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-                ),
-                owner="model.stream",
-                removal_condition="done",
-                ingestion_shim="canonical_item_from_token",
-                canonical_kind=StreamItemKind.ANSWER_DELTA,
+            lambda: make_entry(
                 canonical_channel=StreamChannel.REASONING,
             ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.TOKEN,
+            lambda: make_entry(canonical_kind=None),
+            lambda: make_entry(canonical_channel=None),
+            lambda: make_entry(
+                ingestion_shim="canonical_item_from_token",
+            ),
+            lambda: make_entry(
+                categories=(StreamLegacyBoundaryCategory.TEST_FIXTURE,),
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
                 classification=(
                     StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
                 ),
-                owner="model.stream",
-                removal_condition="done",
                 ingestion_shim=None,
-                canonical_kind=StreamItemKind.ANSWER_DELTA,
-                canonical_channel=StreamChannel.ANSWER,
             ),
-            lambda: StreamLegacySurfaceInventoryEntry(
-                surface=StreamLegacySurface.EVENT,
-                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="event",
-                removal_condition="done",
+            lambda: make_entry(
+                categories=(StreamLegacyBoundaryCategory.TEST_FIXTURE,),
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+                ),
                 ingestion_shim="canonical_item_from_token",
             ),
         )
 
-        for build_entry in invalid_entries:
-            with self.subTest(build_entry=build_entry):
+        for build_invalid_entry in invalid_entries:
+            with self.subTest(build_entry=build_invalid_entry):
                 with self.assertRaises(AssertionError):
-                    build_entry()
+                    build_invalid_entry()
+
+        fixture_entry = StreamLegacySurfaceInventoryEntry(
+            surface=StreamLegacySurface.TOKEN,
+            classification=(
+                StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+            ),
+            categories=(StreamLegacyBoundaryCategory.TEST_FIXTURE,),
+            scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+            owner="tests",
+            removal_condition="legacy rejection fixture",
+            ingestion_shim="legacy_rejection_fixture",
+            canonical_kind=StreamItemKind.ANSWER_DELTA,
+            canonical_channel=StreamChannel.ANSWER,
+        )
+        self.assertIs(
+            fixture_entry.scope, StreamLegacyInventoryScope.TEST_FIXTURE
+        )
+
+        helper_entry = StreamLegacySurfaceInventoryEntry(
+            surface=StreamLegacySurface.STRING,
+            classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+            categories=(StreamLegacyBoundaryCategory.HELPER_ONLY,),
+            scope=StreamLegacyInventoryScope.HELPER_ONLY,
+            owner="tests",
+            removal_condition="private migration helper",
+        )
+        self.assertIs(
+            helper_entry.scope, StreamLegacyInventoryScope.HELPER_ONLY
+        )
+
+    def test_legacy_runtime_boundary_inventory_classifies_live_paths(
+        self,
+    ) -> None:
+        inventory = legacy_stream_runtime_boundary_inventory()
+
+        self.assertEqual(
+            len(inventory),
+            len({(entry.module, entry.qualname) for entry in inventory}),
+        )
+        self.assertEqual(
+            {entry.scope for entry in inventory},
+            {StreamLegacyInventoryScope.PRODUCTION_RUNTIME},
+        )
+        self.assertEqual(
+            {entry.classification for entry in inventory},
+            {StreamLegacySurfaceClassification.REMOVE_NOW},
+        )
+        self.assertEqual(
+            {entry.category for entry in inventory},
+            _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES,
+        )
+        self.assertEqual(
+            {
+                direction
+                for entry in inventory
+                for direction in entry.directions
+            },
+            set(StreamLegacyBoundaryDirection),
+        )
+        self.assertEqual(
+            {surface for entry in inventory for surface in entry.surfaces},
+            set(StreamLegacySurface),
+        )
+        surface_inventory = {
+            entry.surface: entry for entry in legacy_stream_surface_inventory()
+        }
+        for entry in inventory:
+            for surface in entry.surfaces:
+                with self.subTest(
+                    surface=surface,
+                    category=entry.category,
+                    qualname=entry.qualname,
+                ):
+                    self.assertIn(
+                        entry.category,
+                        surface_inventory[surface].categories,
+                    )
+
+        expected_boundaries = {
+            ("avalan.model.stream", "TextGenerationStream.__aiter__"),
+            ("avalan.model.stream", "TextGenerationSingleStream.__call__"),
+            ("avalan.model.stream", "TextGenerationSingleStream.__aiter__"),
+            ("avalan.model.stream", "TextGenerationSingleStream.__anext__"),
+            ("avalan.model.vendor", "TextGenerationVendor.__call__"),
+            ("avalan.model.vendor", "TextGenerationVendorStream.__anext__"),
+            ("avalan.model.vendor", "TextGenerationVendorStream.__init__"),
+            ("avalan.model.vendor", "TextGenerationVendorStream.__call__"),
+            ("avalan.model.vendor", "TextGenerationVendorStream.__aiter__"),
+            (
+                "avalan.model.nlp.text.vendor.openai",
+                "OpenAIStream.__anext__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.openai",
+                "OpenAIClient.__call__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.anthropic",
+                "AnthropicStream.__anext__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.anthropic",
+                "AnthropicClient.__call__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.bedrock",
+                "BedrockStream.__anext__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.bedrock",
+                "BedrockClient.__call__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.litellm",
+                "LiteLLMClient.__call__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.google",
+                "GoogleClient.__call__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.ollama",
+                "OllamaStream.__anext__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.ollama",
+                "OllamaClient.__call__",
+            ),
+            (
+                "avalan.model.nlp.text.vendor.huggingface",
+                "HuggingfaceClient.__call__",
+            ),
+            ("avalan.model.nlp.text.mlxlm", "MlxLmStream.__anext__"),
+            ("avalan.model.nlp.text.vllm", "VllmStream.__anext__"),
+            (
+                "avalan.model.nlp.text.ds4",
+                "Ds4Worker.stream",
+            ),
+            (
+                "avalan.model.nlp.text.ds4",
+                "Ds4Model._generation_stream",
+            ),
+            (
+                "avalan.model.nlp.text.generation",
+                "TextGenerationModel._stream_generator",
+            ),
+            ("avalan.model.stream", "normalize_local_stream"),
+            ("avalan.model.stream", "stream_consumer_projection_from_token"),
+            ("avalan.model.stream", "project_stream_consumer_item"),
+            ("avalan.model.stream", "StreamProjectionState.project"),
+            ("avalan.model.stream", "StreamProjectionState.project_many"),
+            (
+                "avalan.model.stream",
+                "_LegacyTokenStreamAdapter.item_from_token",
+            ),
+            (
+                "avalan.model.stream",
+                "_LegacyTokenStreamAdapter.events_from_token",
+            ),
+            (
+                "avalan.model.response.text",
+                "_canonical_item_from_output_item",
+            ),
+            (
+                "avalan.model.response.text",
+                "_text_from_non_stream_result",
+            ),
+            ("avalan.model.response.text", "OutputItem"),
+            (
+                "avalan.model.response.text",
+                "TextGenerationResponse.__aiter__",
+            ),
+            (
+                "avalan.model.response.text",
+                "TextGenerationResponse.canonical_stream",
+            ),
+            (
+                "avalan.model.response.text",
+                "TextGenerationResponse._canonical_stream_from_output",
+            ),
+            (
+                "avalan.model.response.text",
+                "TextGenerationResponse.__anext__",
+            ),
+            (
+                "avalan.model.response.text",
+                "TextGenerationResponse._record_returned_token",
+            ),
+            (
+                "avalan.agent.orchestrator.response.orchestrator_response",
+                "OrchestratorResponse",
+            ),
+            (
+                "avalan.agent.orchestrator.response.orchestrator_response",
+                "OrchestratorResponse._stream_item_projection",
+            ),
+            (
+                "avalan.agent.orchestrator.response.orchestrator_response",
+                "OrchestratorResponse._emit",
+            ),
+            (
+                "avalan.agent.orchestrator.response.orchestrator_response",
+                "_legacy_tool_event",
+            ),
+            ("avalan.event.manager", "EventManager.trigger"),
+            ("avalan.event.manager", "EventManager.listen"),
+            (
+                "avalan.model.response.parsers.reasoning",
+                "ReasoningParser",
+            ),
+            (
+                "avalan.model.response.parsers.tool",
+                "ToolCallResponseParser",
+            ),
+            ("avalan.cli.commands.model", "_stream_projection"),
+            ("avalan.server.routers.chat", "_stream_projection"),
+            ("avalan.server.routers.responses", "_stream_projection"),
+            ("avalan.server.routers.mcp", "ResponseItem"),
+            ("avalan.server.routers.mcp", "_MCPLegacyStreamAdapter.map"),
+            ("avalan.server.routers.mcp", "_extract_append_streams"),
+            ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
+            ("avalan.flow.stream", "FlowEventSink"),
+            ("avalan.flow.stream", "FlowCanonicalEventListener.__call__"),
+        }
+        inventory_keys = {
+            (entry.module, entry.qualname) for entry in inventory
+        }
+        self.assertEqual(expected_boundaries, inventory_keys)
+
+        vendor_init_boundary = classify_legacy_stream_runtime_boundary(
+            "avalan.model.vendor",
+            "TextGenerationVendorStream.__init__",
+        )
+        self.assertEqual(
+            vendor_init_boundary.surfaces,
+            (
+                StreamLegacySurface.STRING,
+                StreamLegacySurface.TOKEN,
+                StreamLegacySurface.TOKEN_DETAIL,
+            ),
+        )
+        self.assertEqual(
+            vendor_init_boundary.directions,
+            (StreamLegacyBoundaryDirection.ACCEPTS,),
+        )
+        for qualname in (
+            "TextGenerationVendorStream.__call__",
+            "TextGenerationVendorStream.__aiter__",
+        ):
+            with self.subTest(qualname=qualname):
+                vendor_public_boundary = (
+                    classify_legacy_stream_runtime_boundary(
+                        "avalan.model.vendor",
+                        qualname,
+                    )
+                )
+                self.assertEqual(
+                    vendor_public_boundary.directions,
+                    (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+                )
+
+        for qualname in (
+            "AnthropicStream.__anext__",
+            "AnthropicClient.__call__",
+        ):
+            with self.subTest(qualname=qualname):
+                anthropic_boundary = classify_legacy_stream_runtime_boundary(
+                    "avalan.model.nlp.text.vendor.anthropic",
+                    qualname,
+                )
+                self.assertEqual(
+                    anthropic_boundary.surfaces,
+                    (
+                        StreamLegacySurface.STRING,
+                        StreamLegacySurface.TOKEN,
+                        StreamLegacySurface.REASONING_TOKEN,
+                        StreamLegacySurface.TOOL_CALL_TOKEN,
+                    ),
+                )
+
+        boundary_expectations = {
+            (
+                "avalan.model.nlp.text.vendor.openai",
+                "OpenAIStream.__anext__",
+            ): (
+                (
+                    StreamLegacySurface.STRING,
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.TOKEN_DETAIL,
+                    StreamLegacySurface.REASONING_TOKEN,
+                    StreamLegacySurface.TOOL_CALL_TOKEN,
+                ),
+                StreamLegacyBoundaryCategory.PRODUCER,
+                (StreamLegacyBoundaryDirection.EMITS,),
+            ),
+            (
+                "avalan.model.nlp.text.vendor.bedrock",
+                "BedrockStream.__anext__",
+            ): (
+                (
+                    StreamLegacySurface.STRING,
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.TOKEN_DETAIL,
+                    StreamLegacySurface.REASONING_TOKEN,
+                    StreamLegacySurface.TOOL_CALL_TOKEN,
+                ),
+                StreamLegacyBoundaryCategory.PRODUCER,
+                (StreamLegacyBoundaryDirection.EMITS,),
+            ),
+            ("avalan.model.nlp.text.ds4", "Ds4Worker.stream"): (
+                (
+                    StreamLegacySurface.STRING,
+                    StreamLegacySurface.TOKEN_DETAIL,
+                    StreamLegacySurface.TOOL_CALL_TOKEN,
+                ),
+                StreamLegacyBoundaryCategory.PRODUCER,
+                (StreamLegacyBoundaryDirection.EMITS,),
+            ),
+            (
+                "avalan.model.response.text",
+                "TextGenerationResponse.__anext__",
+            ): (
+                (
+                    StreamLegacySurface.STRING,
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.TOKEN_DETAIL,
+                    StreamLegacySurface.REASONING_TOKEN,
+                    StreamLegacySurface.TOOL_CALL_TOKEN,
+                ),
+                StreamLegacyBoundaryCategory.SDK_RESPONSE,
+                (
+                    StreamLegacyBoundaryDirection.ACCEPTS,
+                    StreamLegacyBoundaryDirection.EMITS,
+                ),
+            ),
+            (
+                "avalan.agent.orchestrator.response.orchestrator_response",
+                "OrchestratorResponse._emit",
+            ): (
+                (
+                    StreamLegacySurface.STRING,
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.TOKEN_DETAIL,
+                    StreamLegacySurface.REASONING_TOKEN,
+                    StreamLegacySurface.TOOL_CALL_TOKEN,
+                    StreamLegacySurface.EVENT,
+                ),
+                StreamLegacyBoundaryCategory.ORCHESTRATOR,
+                (
+                    StreamLegacyBoundaryDirection.ACCEPTS,
+                    StreamLegacyBoundaryDirection.EMITS,
+                ),
+            ),
+            ("avalan.event.manager", "EventManager.listen"): (
+                (StreamLegacySurface.EVENT,),
+                StreamLegacyBoundaryCategory.EVENTING,
+                (
+                    StreamLegacyBoundaryDirection.EMITS,
+                    StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+                ),
+            ),
+            ("avalan.server.routers.mcp", "ResponseItem"): (
+                (
+                    StreamLegacySurface.STRING,
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.EVENT,
+                ),
+                StreamLegacyBoundaryCategory.MCP,
+                (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+            ),
+            (
+                "avalan.server.a2a.router",
+                "_A2ALegacyStreamAdapter.map",
+            ): (
+                (
+                    StreamLegacySurface.STRING,
+                    StreamLegacySurface.TOKEN,
+                    StreamLegacySurface.TOKEN_DETAIL,
+                    StreamLegacySurface.REASONING_TOKEN,
+                    StreamLegacySurface.TOOL_CALL_TOKEN,
+                ),
+                StreamLegacyBoundaryCategory.A2A,
+                (
+                    StreamLegacyBoundaryDirection.ACCEPTS,
+                    StreamLegacyBoundaryDirection.PROJECTS,
+                ),
+            ),
+            ("avalan.flow.stream", "FlowCanonicalEventListener.__call__"): (
+                (StreamLegacySurface.EVENT,),
+                StreamLegacyBoundaryCategory.FLOW,
+                (
+                    StreamLegacyBoundaryDirection.ACCEPTS,
+                    StreamLegacyBoundaryDirection.PROJECTS,
+                ),
+            ),
+        }
+        for (
+            module,
+            qualname,
+        ), (
+            surfaces,
+            category,
+            directions,
+        ) in boundary_expectations.items():
+            with self.subTest(module=module, qualname=qualname):
+                boundary = classify_legacy_stream_runtime_boundary(
+                    module, qualname
+                )
+                self.assertEqual(boundary.surfaces, surfaces)
+                self.assertIs(boundary.category, category)
+                self.assertEqual(boundary.directions, directions)
+
+        for entry in inventory:
+            with self.subTest(module=entry.module, qualname=entry.qualname):
+                self.assertIs(
+                    classify_legacy_stream_runtime_boundary(
+                        entry.module, entry.qualname
+                    ),
+                    entry,
+                )
+                self.assertTrue(entry.owner)
+                self.assertTrue(entry.removal_condition)
+                self.assertNotIn(
+                    entry.classification,
+                    _TEMPORARY_LEGACY_SURFACE_CLASSIFICATIONS,
+                )
+                self.assertEqual(len(entry.surfaces), len(set(entry.surfaces)))
+                self.assertEqual(
+                    len(entry.directions), len(set(entry.directions))
+                )
+
+        with self.assertRaises(AssertionError):
+            classify_legacy_stream_runtime_boundary("", "qualname")
+        with self.assertRaises(AssertionError):
+            classify_legacy_stream_runtime_boundary("module", "")
+        with patch(
+            "avalan.model.stream._LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY",
+            (),
+        ):
+            with self.assertRaises(StreamValidationError):
+                classify_legacy_stream_runtime_boundary(
+                    "avalan.model.response.text",
+                    "TextGenerationResponse.__anext__",
+                )
+
+    def test_legacy_runtime_boundary_inventory_entries_resolve_to_source(
+        self,
+    ) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        module_names: dict[str, set[str]] = {}
+        for entry in legacy_stream_runtime_boundary_inventory():
+            if entry.module not in module_names:
+                module_path = _module_source_path(
+                    repository_root, entry.module
+                )
+                self.assertTrue(
+                    module_path.exists(),
+                    f"{entry.module} resolves to {module_path}",
+                )
+                module_names[entry.module] = _module_defined_qualnames(
+                    parse(module_path.read_text(encoding="utf-8"))
+                )
+
+            with self.subTest(module=entry.module, qualname=entry.qualname):
+                self.assertIn(entry.qualname, module_names[entry.module])
+
+    def test_runtime_source_does_not_import_legacy_test_fixtures(self) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        for path in (repository_root / "src" / "avalan").rglob("*.py"):
+            relative_path = path.relative_to(repository_root)
+            source = path.read_text(encoding="utf-8")
+            tree = parse(source)
+            with self.subTest(path=relative_path):
+                for node in getattr(tree, "body", ()):
+                    if isinstance(node, Import):
+                        imported_modules = {alias.name for alias in node.names}
+                        self.assertFalse(
+                            any(
+                                module == "tests"
+                                or module.startswith("tests.")
+                                for module in imported_modules
+                            )
+                        )
+                    if isinstance(node, ImportFrom):
+                        module = node.module or ""
+                        self.assertFalse(
+                            module == "tests" or module.startswith("tests.")
+                        )
+
+    def test_legacy_runtime_boundary_inventory_rejects_malformed_entries(
+        self,
+    ) -> None:
+        def make_entry(
+            **overrides: object,
+        ) -> StreamLegacyRuntimeBoundaryInventoryEntry:
+            values: dict[str, object] = {
+                "module": "avalan.model.stream",
+                "qualname": "TextGenerationStream.__aiter__",
+                "surfaces": (StreamLegacySurface.STRING,),
+                "classification": StreamLegacySurfaceClassification.REMOVE_NOW,
+                "category": StreamLegacyBoundaryCategory.PRODUCER,
+                "scope": StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+                "directions": (StreamLegacyBoundaryDirection.EMITS,),
+                "owner": "model.stream",
+                "removal_condition": "done",
+            }
+            values.update(overrides)
+            return StreamLegacyRuntimeBoundaryInventoryEntry(
+                **cast(Any, values)
+            )
+
+        invalid_entries = (
+            lambda: make_entry(module=""),
+            lambda: make_entry(qualname=""),
+            lambda: make_entry(surfaces=[StreamLegacySurface.STRING]),
+            lambda: make_entry(surfaces=()),
+            lambda: make_entry(
+                surfaces=(
+                    StreamLegacySurface.STRING,
+                    StreamLegacySurface.STRING,
+                ),
+            ),
+            lambda: make_entry(surfaces=("str",)),
+            lambda: make_entry(classification="remove_now"),
+            lambda: make_entry(
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                ),
+            ),
+            lambda: make_entry(category="producer"),
+            lambda: make_entry(scope="production_runtime"),
+            lambda: make_entry(
+                module="tests.model.model_stream_contract_test",
+                qualname="legacy_rejection_fixture",
+                category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+            ),
+            lambda: make_entry(
+                module="avalan.model.stream",
+                qualname="legacy_helper_projection",
+                category=StreamLegacyBoundaryCategory.HELPER_ONLY,
+                scope=StreamLegacyInventoryScope.HELPER_ONLY,
+                classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+            ),
+            lambda: make_entry(
+                directions=[StreamLegacyBoundaryDirection.EMITS]
+            ),
+            lambda: make_entry(directions=()),
+            lambda: make_entry(
+                directions=(
+                    StreamLegacyBoundaryDirection.EMITS,
+                    StreamLegacyBoundaryDirection.EMITS,
+                ),
+            ),
+            lambda: make_entry(directions=("emits",)),
+            lambda: make_entry(owner=""),
+            lambda: make_entry(removal_condition=""),
+            lambda: make_entry(
+                module="avalan.model.stream",
+                qualname="legacy_rejection_fixture",
+                category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                ),
+            ),
+            lambda: make_entry(
+                module="tests.model.model_stream_contract_test",
+                qualname="fixture",
+                category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                ),
+            ),
+            lambda: make_entry(
+                module="tests.model.model_stream_contract_test",
+                qualname="helper",
+                category=StreamLegacyBoundaryCategory.HELPER_ONLY,
+                scope=StreamLegacyInventoryScope.HELPER_ONLY,
+                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+            ),
+        )
+
+        for build_invalid_entry in invalid_entries:
+            with self.subTest(build_entry=build_invalid_entry):
+                with self.assertRaises(AssertionError):
+                    build_invalid_entry()
+
+        fixture_entry = StreamLegacyRuntimeBoundaryInventoryEntry(
+            module="tests.model.model_stream_contract_test",
+            qualname="legacy_rejection_fixture",
+            surfaces=(StreamLegacySurface.TOKEN,),
+            classification=(
+                StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+            ),
+            category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+            scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+            directions=(StreamLegacyBoundaryDirection.ACCEPTS,),
+            owner="tests",
+            removal_condition="negative legacy fixture",
+        )
+        self.assertIs(
+            fixture_entry.scope, StreamLegacyInventoryScope.TEST_FIXTURE
+        )
+
+        helper_entry = StreamLegacyRuntimeBoundaryInventoryEntry(
+            module="avalan.model.stream",
+            qualname="legacy_helper_projection",
+            surfaces=(StreamLegacySurface.STRING,),
+            classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+            category=StreamLegacyBoundaryCategory.HELPER_ONLY,
+            scope=StreamLegacyInventoryScope.HELPER_ONLY,
+            directions=(StreamLegacyBoundaryDirection.PROJECTS,),
+            owner="tests",
+            removal_condition="private migration helper",
+        )
+        self.assertIs(
+            helper_entry.scope, StreamLegacyInventoryScope.HELPER_ONLY
+        )
 
     def test_legacy_classifier_inventory_matches_source(self) -> None:
         repository_root = Path(__file__).resolve().parents[2]
@@ -6731,21 +7484,32 @@ class StreamContractTestCase(TestCase):
                 for entry in inventory
             )
         )
-        self.assertTrue(
-            any(
-                entry.classification
-                is (
-                    StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
-                )
-                for entry in inventory
-            )
+        self.assertEqual(
+            {entry.scope for entry in inventory},
+            {StreamLegacyInventoryScope.PRODUCTION_RUNTIME},
         )
-        self.assertTrue(
-            any(
+        self.assertEqual(
+            {entry.classification for entry in inventory},
+            {StreamLegacySurfaceClassification.REMOVE_NOW},
+        )
+        self.assertFalse(
+            {
                 entry.classification
-                is StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
                 for entry in inventory
-            )
+                if entry.classification
+                in _TEMPORARY_LEGACY_SURFACE_CLASSIFICATIONS
+            }
+        )
+        self.assertEqual(
+            {entry.category for entry in inventory},
+            {
+                StreamLegacyBoundaryCategory.PRODUCER,
+                StreamLegacyBoundaryCategory.PARSER,
+                StreamLegacyBoundaryCategory.SDK_RESPONSE,
+                StreamLegacyBoundaryCategory.ORCHESTRATOR,
+                StreamLegacyBoundaryCategory.A2A,
+                StreamLegacyBoundaryCategory.MCP,
+            },
         )
         self.assertNotIn(
             ("avalan.cli.commands.model", "_token_stream"),
@@ -6754,6 +7518,14 @@ class StreamContractTestCase(TestCase):
         inventory_keys = {
             (entry.module, entry.qualname) for entry in inventory
         }
+        self.assertEqual(
+            {
+                (entry.module, entry.qualname)
+                for entry in inventory
+                if StreamLegacySurface.STRING in entry.surfaces
+            },
+            _LEGACY_CLASSIFIER_STRING_SITES,
+        )
         for qualname in (
             "OrchestratorResponse._next_item",
             "OrchestratorResponse._response_text_and_calls",
@@ -6811,6 +7583,10 @@ class StreamContractTestCase(TestCase):
                 StreamLegacySurface.TOOL_CALL_TOKEN,
             ),
         )
+        self.assertIs(
+            adapter_entry.category,
+            StreamLegacyBoundaryCategory.PRODUCER,
+        )
         events_entry = classify_legacy_stream_classifier(
             "avalan.model.stream",
             "_LegacyTokenStreamAdapter.events_from_token",
@@ -6818,6 +7594,10 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(
             events_entry.surfaces,
             (StreamLegacySurface.STRING,),
+        )
+        self.assertIs(
+            events_entry.category,
+            StreamLegacyBoundaryCategory.PARSER,
         )
         orchestrator_entry = classify_legacy_stream_classifier(
             "avalan.agent.orchestrator.response.orchestrator_response",
@@ -6830,6 +7610,10 @@ class StreamContractTestCase(TestCase):
                 StreamLegacySurface.TOOL_CALL_TOKEN,
                 StreamLegacySurface.EVENT,
             ),
+        )
+        self.assertIs(
+            orchestrator_entry.category,
+            StreamLegacyBoundaryCategory.ORCHESTRATOR,
         )
         a2a_entry = classify_legacy_stream_classifier(
             "avalan.server.a2a.router",
@@ -6845,16 +7629,17 @@ class StreamContractTestCase(TestCase):
                 StreamLegacySurface.TOOL_CALL_TOKEN,
             ),
         )
-        self.assertNotIn(
-            StreamLegacySurfaceClassification.MIGRATE_LATER,
-            {entry.classification for entry in inventory},
+        self.assertIs(
+            a2a_entry.category,
+            StreamLegacyBoundaryCategory.A2A,
         )
-        self.assertEqual(
-            {
-                StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM,
-                StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM,
-            },
-            {entry.classification for entry in inventory},
+        mcp_entry = classify_legacy_stream_classifier(
+            "avalan.server.routers.mcp",
+            "_MCPLegacyStreamAdapter.map",
+        )
+        self.assertIs(
+            mcp_entry.category,
+            StreamLegacyBoundaryCategory.MCP,
         )
         for entry in inventory:
             with self.subTest(module=entry.module, qualname=entry.qualname):
@@ -6867,6 +7652,9 @@ class StreamContractTestCase(TestCase):
                 self.assertTrue(entry.owner)
                 self.assertTrue(entry.removal_condition)
                 self.assertEqual(len(entry.surfaces), len(set(entry.surfaces)))
+                self.assertIn(
+                    entry.category, _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
+                )
 
         with self.assertRaises(AssertionError):
             classify_legacy_stream_classifier("", "qualname")
@@ -6933,99 +7721,181 @@ def validate_name(value):
             },
         )
 
+    def test_legacy_classifier_guard_detects_new_streaming_string_classifiers(
+        self,
+    ) -> None:
+        tree = parse("""
+def stream_mapper(item):
+    if isinstance(item, str):
+        return item
+    return None
+
+def project_stream_mapper(item):
+    if isinstance(item, str):
+        return item
+    return None
+
+class _NewStreamAdapter:
+    def map(self, item):
+        if isinstance(item, str):
+            return item
+        return None
+
+def validate_name(value):
+    assert isinstance(value, str)
+""")
+
+        sites = _legacy_stream_classifier_sites("avalan.new_consumer", tree)
+
+        self.assertEqual(
+            sites,
+            {
+                ("avalan.new_consumer", "stream_mapper"): {
+                    StreamLegacySurface.STRING
+                },
+                ("avalan.new_consumer", "project_stream_mapper"): {
+                    StreamLegacySurface.STRING
+                },
+                ("avalan.new_consumer", "_NewStreamAdapter.map"): {
+                    StreamLegacySurface.STRING
+                },
+            },
+        )
+        self.assertNotIn(
+            ("avalan.new_consumer", "stream_mapper"),
+            _inventory_legacy_stream_classifier_sites(),
+        )
+        self.assertNotIn(
+            ("avalan.new_consumer", "project_stream_mapper"),
+            _inventory_legacy_stream_classifier_sites(),
+        )
+        self.assertNotIn(
+            ("avalan.new_consumer", "_NewStreamAdapter.map"),
+            _inventory_legacy_stream_classifier_sites(),
+        )
+
     def test_legacy_classifier_inventory_rejects_malformed_entries(
         self,
     ) -> None:
+        def make_entry(
+            **overrides: object,
+        ) -> StreamLegacyClassifierInventoryEntry:
+            values: dict[str, object] = {
+                "module": "avalan.model.stream",
+                "qualname": "function",
+                "surfaces": (StreamLegacySurface.TOKEN,),
+                "classification": StreamLegacySurfaceClassification.REMOVE_NOW,
+                "category": StreamLegacyBoundaryCategory.PRODUCER,
+                "scope": StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+                "owner": "model.stream",
+                "removal_condition": "done",
+            }
+            values.update(overrides)
+            return StreamLegacyClassifierInventoryEntry(**cast(Any, values))
+
         invalid_entries = (
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="",
-                qualname="function",
-                surfaces=(StreamLegacySurface.TOKEN,),
-                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="model.stream",
-                removal_condition="done",
-            ),
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="avalan.model.stream",
-                qualname="",
-                surfaces=(StreamLegacySurface.TOKEN,),
-                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="model.stream",
-                removal_condition="done",
-            ),
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="avalan.model.stream",
-                qualname="function",
-                surfaces=[StreamLegacySurface.TOKEN],  # type: ignore[arg-type]
-                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="model.stream",
-                removal_condition="done",
-            ),
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="avalan.model.stream",
-                qualname="function",
-                surfaces=(),
-                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="model.stream",
-                removal_condition="done",
-            ),
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="avalan.model.stream",
-                qualname="function",
+            lambda: make_entry(module=""),
+            lambda: make_entry(qualname=""),
+            lambda: make_entry(surfaces=[StreamLegacySurface.TOKEN]),
+            lambda: make_entry(surfaces=()),
+            lambda: make_entry(
                 surfaces=(
                     StreamLegacySurface.TOKEN,
                     StreamLegacySurface.TOKEN,
                 ),
+            ),
+            lambda: make_entry(surfaces=("Token",)),
+            lambda: make_entry(classification="temporary"),
+            lambda: make_entry(category="producer"),
+            lambda: make_entry(scope="production_runtime"),
+            lambda: make_entry(
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                ),
+            ),
+            lambda: make_entry(
+                category=StreamLegacyBoundaryCategory.TEST_FIXTURE
+            ),
+            lambda: make_entry(
+                category=StreamLegacyBoundaryCategory.PRODUCER,
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                ),
+            ),
+            lambda: make_entry(
+                category=StreamLegacyBoundaryCategory.PRODUCER,
+                scope=StreamLegacyInventoryScope.HELPER_ONLY,
                 classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="model.stream",
-                removal_condition="done",
             ),
-            lambda: StreamLegacyClassifierInventoryEntry(
+            lambda: make_entry(
+                category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+            ),
+            lambda: make_entry(
                 module="avalan.model.stream",
-                qualname="function",
-                surfaces=("Token",),  # type: ignore[arg-type]
+                qualname="legacy_rejection_fixture",
+                category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                ),
+            ),
+            lambda: make_entry(
+                module="tests.model.model_stream_contract_test",
+                qualname="fixture",
+                category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+                scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+                classification=(
+                    StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+                ),
+            ),
+            lambda: make_entry(
+                module="tests.model.model_stream_contract_test",
+                qualname="helper",
+                category=StreamLegacyBoundaryCategory.HELPER_ONLY,
+                scope=StreamLegacyInventoryScope.HELPER_ONLY,
                 classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="model.stream",
-                removal_condition="done",
             ),
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="avalan.model.stream",
-                qualname="function",
-                surfaces=(StreamLegacySurface.TOKEN,),
-                classification="temporary",  # type: ignore[arg-type]
-                owner="model.stream",
-                removal_condition="done",
-            ),
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="avalan.model.stream",
-                qualname="function",
-                surfaces=(StreamLegacySurface.TOKEN,),
-                classification=(StreamLegacySurfaceClassification.REMOVE_NOW),
-                owner="model.stream",
-                removal_condition="done",
-            ),
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="avalan.model.stream",
-                qualname="function",
-                surfaces=(StreamLegacySurface.TOKEN,),
-                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="",
-                removal_condition="done",
-            ),
-            lambda: StreamLegacyClassifierInventoryEntry(
-                module="avalan.model.stream",
-                qualname="function",
-                surfaces=(StreamLegacySurface.TOKEN,),
-                classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
-                owner="model.stream",
-                removal_condition="",
-            ),
+            lambda: make_entry(owner=""),
+            lambda: make_entry(removal_condition=""),
         )
 
-        for build_entry in invalid_entries:
-            with self.subTest(build_entry=build_entry):
+        for build_invalid_entry in invalid_entries:
+            with self.subTest(build_entry=build_invalid_entry):
                 with self.assertRaises(AssertionError):
-                    build_entry()
+                    build_invalid_entry()
+
+        fixture_entry = StreamLegacyClassifierInventoryEntry(
+            module="tests.model.model_stream_contract_test",
+            qualname="legacy_rejection_fixture",
+            surfaces=(StreamLegacySurface.TOKEN,),
+            classification=(
+                StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+            ),
+            category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+            scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+            owner="tests",
+            removal_condition="negative legacy fixture",
+        )
+        self.assertIs(
+            fixture_entry.scope, StreamLegacyInventoryScope.TEST_FIXTURE
+        )
+
+        helper_entry = StreamLegacyClassifierInventoryEntry(
+            module="avalan.model.stream",
+            qualname="legacy_helper_projection",
+            surfaces=(StreamLegacySurface.STRING,),
+            classification=StreamLegacySurfaceClassification.MIGRATE_LATER,
+            category=StreamLegacyBoundaryCategory.HELPER_ONLY,
+            scope=StreamLegacyInventoryScope.HELPER_ONLY,
+            owner="tests",
+            removal_condition="private migration helper",
+        )
+        self.assertIs(
+            helper_entry.scope, StreamLegacyInventoryScope.HELPER_ONLY
+        )
 
     def test_legacy_token_canonical_projection_separates_channels(
         self,
