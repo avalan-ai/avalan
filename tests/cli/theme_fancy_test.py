@@ -898,20 +898,35 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             event_type: EventType,
             kind: str,
             correlation: dict[str, str],
+            *,
+            summary: dict[str, object] | None = None,
+            usage: dict[str, object] | None = None,
+            terminal_outcome: str | None = None,
+            derived: bool | None = None,
         ) -> Event:
+            data: dict[str, object] = {
+                "stream_session_id": "stream-1",
+                "run_id": "run-1",
+                "turn_id": "turn-1",
+                "sequence": 1,
+                "kind": kind,
+                "channel": "tool.execution",
+                "visibility": "public",
+                "correlation": correlation,
+                "data": {"secret": "raw legacy payload"},
+            }
+            if summary is not None:
+                data["summary"] = summary
+            if usage is not None:
+                data["usage"] = usage
+            if terminal_outcome is not None:
+                data["terminal_outcome"] = terminal_outcome
+            if derived is not None:
+                data["derived"] = derived
             return Event.from_observability_payload(
                 type=event_type,
                 observability_payload=EventObservabilityPayload.canonical_stream(
-                    {
-                        "stream_session_id": "stream-1",
-                        "run_id": "run-1",
-                        "turn_id": "turn-1",
-                        "sequence": 1,
-                        "kind": kind,
-                        "channel": "tool.execution",
-                        "visibility": "public",
-                        "correlation": correlation,
-                    }
+                    data
                 ),
             )
 
@@ -920,6 +935,8 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 EventType.TOOL_EXECUTE,
                 "tool.execution.started",
                 {"tool_call_id": "call-1"},
+                summary={"data_keys": ["name", "arguments"]},
+                derived=True,
             ),
             event(
                 EventType.TOOL_MODEL_RUN,
@@ -935,6 +952,8 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
                 EventType.TOOL_RESULT,
                 "tool.execution.completed",
                 {"tool_call_id": "call-1"},
+                usage={"output_tokens": 3},
+                terminal_outcome="completed",
             ),
             event(
                 EventType.TOOL_DIAGNOSTIC,
@@ -959,12 +978,123 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
 
         assert log is not None
         self.assertEqual(len(log), 6)
-        self.assertIn("tool_execute", log[0])
+        self.assertIn("Canonical event", log[0])
+        self.assertIn("kind=", log[0])
+        self.assertIn("channel=", log[0])
         self.assertIn("tool.execution.started", log[0])
-        self.assertIn("call #call-1", log[0])
-        self.assertIn("tool_model_response", log[2])
-        self.assertIn("continuation #cont-1", log[2])
-        self.assertIn("tool_progress", log[5])
+        self.assertIn("correlation=", log[0])
+        self.assertIn("tool_call_id", log[0])
+        self.assertIn("summary=", log[0])
+        self.assertIn("derived=", log[0])
+        self.assertIn("true", log[0])
+        self.assertIn("model.continuation.completed", log[2])
+        self.assertIn("model_continuation_id", log[2])
+        self.assertIn("usage=", log[3])
+        self.assertIn("terminal_outcome=", log[3])
+        self.assertIn("completed", log[3])
+        self.assertIn("tool.execution.progress", log[5])
+        self.assertNotIn("raw legacy payload", "\n".join(log))
+
+    def test_events_log_canonical_payloads_route_by_projection(self):
+        def event(kind: str, channel: str) -> Event:
+            return Event.from_observability_payload(
+                type=EventType.TOKEN_GENERATED,
+                observability_payload=EventObservabilityPayload.canonical_stream(
+                    {
+                        "stream_session_id": "stream-1",
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "sequence": 1,
+                        "kind": kind,
+                        "channel": channel,
+                        "visibility": "public",
+                    }
+                ),
+            )
+
+        tool_log = self.theme._events_log(
+            [
+                event("answer.delta", "answer"),
+                event("tool_call.ready", "tool_call"),
+            ],
+            events_limit=None,
+            include_tokens=False,
+            include_tool_detect=False,
+            include_tools=True,
+            include_non_tools=False,
+        )
+        event_log = self.theme._events_log(
+            [
+                event("stream.diagnostic", "control"),
+                event("tool_execution.started", "tool_execution"),
+            ],
+            events_limit=None,
+            include_tokens=True,
+            include_tool_detect=False,
+            include_tools=False,
+            include_non_tools=True,
+        )
+
+        self.assertEqual(len(tool_log or []), 1)
+        self.assertIn("tool_call.ready", tool_log[0] if tool_log else "")
+        self.assertEqual(len(event_log or []), 1)
+        self.assertIn("stream.diagnostic", event_log[0] if event_log else "")
+
+    async def test_events_render_canonical_observability_panels(self) -> None:
+        def event(event_type: EventType, kind: str, channel: str) -> Event:
+            return Event.from_observability_payload(
+                type=event_type,
+                observability_payload=EventObservabilityPayload.canonical_stream(
+                    {
+                        "stream_session_id": "stream-1",
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "sequence": 1,
+                        "kind": kind,
+                        "channel": channel,
+                        "visibility": "diagnostic",
+                    }
+                ),
+            )
+
+        events = [
+            event(EventType.TOOL_DETECT, "stream.diagnostic", "control"),
+            event(EventType.START, "tool.call.ready", "control"),
+        ]
+
+        diagnostics_panel = self.theme.events(
+            events,
+            events_limit=None,
+            include_tokens=False,
+            include_tool_detect=False,
+            include_tools=False,
+            include_non_tools=True,
+        )
+        tools_panel = self.theme.events(
+            events,
+            events_limit=None,
+            include_tokens=False,
+            include_tool_detect=False,
+            include_tools=True,
+            include_non_tools=False,
+            tool_view=True,
+        )
+
+        assert diagnostics_panel is not None
+        assert tools_panel is not None
+        diagnostics_console = Console(file=StringIO(), record=True, width=120)
+        tools_console = Console(file=StringIO(), record=True, width=120)
+        diagnostics_console.print(diagnostics_panel)
+        tools_console.print(tools_panel)
+        diagnostics_output = diagnostics_console.export_text()
+        tools_output = tools_console.export_text()
+
+        self.assertIn("Events", diagnostics_output)
+        self.assertIn("stream.diagnostic", diagnostics_output)
+        self.assertNotIn("tool.call.ready", diagnostics_output)
+        self.assertIn("Tool calls", tools_output)
+        self.assertIn("tool.call.ready", tools_output)
+        self.assertNotIn("stream.diagnostic", tools_output)
 
     def test_canonical_event_payload_helpers_cover_fallbacks(self):
         self.assertIsNone(self.theme._canonical_event_payload("bad"))
@@ -989,6 +1119,13 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             ),
             "",
         )
+        self.assertEqual(
+            self.theme._canonical_event_correlation_detail(
+                {"correlation": {"tool_call_id": "call-123456"}}
+            ),
+            " for call #call-123",
+        )
+        self.assertIn("42", self.theme._canonical_event_value(42))
 
     def test_tool_diagnostic_from_payload_variants(self):
         diagnostic = ToolCallDiagnostic(

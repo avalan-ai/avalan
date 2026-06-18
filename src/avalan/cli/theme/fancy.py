@@ -58,6 +58,7 @@ from rich import box
 from rich.align import Align
 from rich.columns import Columns
 from rich.console import Group, RenderableType
+from rich.markup import escape
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.progress import (
@@ -85,6 +86,23 @@ def norm(value: object) -> Any:
 
 
 class FancyTheme(Theme):
+    _CANONICAL_TOOL_CHANNELS = frozenset(
+        {
+            "tool_call",
+            "tool_execution",
+            "tool.call",
+            "tool.execution",
+        }
+    )
+    _CANONICAL_TOOL_KIND_PREFIXES = (
+        "tool.call.",
+        "tool_call.",
+        "tool.execution.",
+        "tool_execution.",
+        "model.continuation.",
+        "model_continuation.",
+    )
+
     @property
     def icons(self) -> dict[Data, str]:
         return {
@@ -2370,6 +2388,26 @@ class FancyTheme(Theme):
 
         event_log: list[str] = []
         for event in events:
+            payload = cast(Any, event.payload)
+            canonical_payload = self._canonical_event_payload(payload)
+            if canonical_payload is not None:
+                tool_view = self._canonical_event_tool_view(canonical_payload)
+                if tool_view:
+                    should_include = include_tools and (
+                        event.type != EventType.TOOL_DETECT
+                        or include_tool_detect
+                    )
+                else:
+                    should_include = include_non_tools and (
+                        event.type != EventType.TOKEN_GENERATED
+                        or include_tokens
+                    )
+                if should_include:
+                    event_log.append(
+                        self._canonical_event_log(event, canonical_payload)
+                    )
+                continue
+
             if (
                 include_tools
                 and event.type in TOOL_TYPES
@@ -2381,13 +2419,7 @@ class FancyTheme(Theme):
                 and event.type not in TOOL_TYPES
                 and (event.type != EventType.TOKEN_GENERATED or include_tokens)
             ):
-                payload = cast(Any, event.payload)
-                canonical_payload = self._canonical_event_payload(payload)
-                if canonical_payload is not None:
-                    event_log.append(
-                        self._canonical_event_log(event, canonical_payload)
-                    )
-                elif (
+                if (
                     event.type == EventType.TOOL_EXECUTE
                     and isinstance(payload, Mapping)
                     and "call" in payload
@@ -2553,23 +2585,39 @@ class FancyTheme(Theme):
             return None
         return cast(Mapping[str, Any], payload)
 
+    @classmethod
+    def _canonical_event_tool_view(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> bool:
+        channel = payload.get("channel")
+        if channel in cls._CANONICAL_TOOL_CHANNELS:
+            return True
+        kind = payload.get("kind")
+        return isinstance(kind, str) and kind.startswith(
+            cls._CANONICAL_TOOL_KIND_PREFIXES
+        )
+
     def _canonical_event_log(
         self,
-        event: Event,
+        _event: Event,
         payload: Mapping[str, Any],
     ) -> str:
-        event_type = (
-            event.type.value
-            if isinstance(event.type, EventType)
-            else event.type
-        )
         kind = payload.get("kind")
-        kind_label = kind if isinstance(kind, str) else "canonical stream item"
-        detail = self._canonical_event_correlation_detail(payload)
-        return self._("Tool event {event_type} from {kind}{detail}.").format(
-            event_type=event_type,
-            kind=kind_label,
-            detail=detail,
+        channel = payload.get("channel")
+        details = [
+            self._canonical_event_field_detail("correlation", payload),
+            self._canonical_event_field_detail("summary", payload),
+            self._canonical_event_field_detail("usage", payload),
+            self._canonical_event_scalar_detail("terminal_outcome", payload),
+            self._canonical_event_scalar_detail("derived", payload),
+        ]
+        return self._(
+            "Canonical event kind={kind} channel={channel}{details}."
+        ).format(
+            kind=self._canonical_event_value(kind),
+            channel=self._canonical_event_value(channel),
+            details="".join(_lf(details)),
         )
 
     @staticmethod
@@ -2587,6 +2635,43 @@ class FancyTheme(Theme):
             if isinstance(value, str) and value:
                 return f" for {label} #{value[:8]}"
         return ""
+
+    @classmethod
+    def _canonical_event_field_detail(
+        cls,
+        field_name: str,
+        payload: Mapping[str, Any],
+    ) -> str | None:
+        value = payload.get(field_name)
+        if not isinstance(value, Mapping):
+            return None
+        return (
+            f" {field_name}="
+            f"{cls._canonical_event_value(cast(Any, dict(value)))}"
+        )
+
+    @classmethod
+    def _canonical_event_scalar_detail(
+        cls,
+        field_name: str,
+        payload: Mapping[str, Any],
+    ) -> str | None:
+        if field_name not in payload:
+            return None
+        value = cls._canonical_event_value(payload[field_name])
+        return f" {field_name}={value}"
+
+    @staticmethod
+    def _canonical_event_value(value: Any) -> str:
+        if isinstance(value, str):
+            text = value
+        elif isinstance(value, bool):
+            text = "true" if value else "false"
+        elif isinstance(value, int | float) or value is None:
+            text = "null" if value is None else str(value)
+        else:
+            text = to_json(value)
+        return "[gray78]" + escape(text) + "[/gray78]"
 
     def _tool_diagnostic_from_payload(
         self, payload: Any

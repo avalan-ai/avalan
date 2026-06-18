@@ -11,7 +11,7 @@ from ...entities import (
     Model,
     Token,
 )
-from ...event import TOOL_TYPES, EventStats
+from ...event import TOOL_TYPES, Event, EventStats
 from ...model.call import ModelCall, ModelCallContext
 from ...model.criteria import KeywordStoppingCriteria  # noqa: F401
 from ...model.input import input_files
@@ -39,6 +39,7 @@ from . import ModelSettings, get_model_settings, is_ds4_backend_selected
 from argparse import Namespace
 from asyncio import (
     CancelledError,
+    Lock,
     as_completed,
     create_task,
     gather,
@@ -48,6 +49,7 @@ from asyncio import (
 from asyncio import (
     Event as EventSignal,
 )
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import partial
@@ -97,6 +99,7 @@ class _FrameRateRenderer:
         group_index: int | None,
         *,
         refresh_per_second: int,
+        render_lock: Lock | None = None,
     ) -> None:
         assert refresh_per_second > 0
         self._args = args
@@ -105,6 +108,7 @@ class _FrameRateRenderer:
         self._group = group
         self._group_index = group_index
         self._interval = 1 / refresh_per_second
+        self._render_lock = render_lock
         self._dirty = EventSignal()
         self._latest_frame: RenderableType | None = None
         self._latest_version = 0
@@ -134,15 +138,7 @@ class _FrameRateRenderer:
             frame = self._latest_frame
             assert frame is not None
             version = self._latest_version
-            await to_thread(
-                _render_frame,
-                self._args,
-                self._console,
-                self._live,
-                frame,
-                self._group,
-                self._group_index,
-            )
+            await self._render(frame)
             self._rendered_version = version
 
             if (
@@ -151,6 +147,24 @@ class _FrameRateRenderer:
             ):
                 return
             await sleep(self._interval)
+
+    async def _render(self, frame: RenderableType) -> None:
+        if self._render_lock is None:
+            await self._render_unlocked(frame)
+            return
+        async with self._render_lock:
+            await self._render_unlocked(frame)
+
+    async def _render_unlocked(self, frame: RenderableType) -> None:
+        await to_thread(
+            _render_frame,
+            self._args,
+            self._console,
+            self._live,
+            frame,
+            self._group,
+            self._group_index,
+        )
 
 
 async def _coerce_token_frame_stream(
@@ -592,6 +606,7 @@ async def token_generation(
         return
 
     stop_signal = EventSignal()
+    render_lock = Lock()
 
     # From here on, display includes stats and may include token probabilities
 
@@ -625,6 +640,7 @@ async def token_generation(
                     stop_signal=stop_signal,
                     tool_events_limit=tool_events_limit,
                     with_stats=with_stats,
+                    render_lock=render_lock,
                 )
         finally:
             if live_container is not None:
@@ -660,6 +676,8 @@ async def token_generation(
                         events_height=events_height,
                         tools_height=tools_height,
                         stop_signal=stop_signal,
+                        refresh_per_second=refresh_per_second,
+                        render_lock=render_lock,
                     )
                 )
                 token_task = create_task(
@@ -682,6 +700,7 @@ async def token_generation(
                         stop_signal=stop_signal,
                         tool_events_limit=tool_events_limit,
                         with_stats=with_stats,
+                        render_lock=render_lock,
                     )
                 )
                 token_error: BaseException | None = None
@@ -721,6 +740,8 @@ async def _event_stream(
     events_height: int = 6,
     tools_height: int = 10,
     stop_signal: EventSignal,
+    refresh_per_second: int = 12,
+    render_lock: Lock | None = None,
 ) -> None:
     event_manager = orchestrator.event_manager
     if not event_manager or (
@@ -728,34 +749,109 @@ async def _event_stream(
     ):
         return
 
-    async for e in event_manager.listen(stop_signal=stop_signal):
-        tool_view = e.type in TOOL_TYPES
-        if (tool_view and not args.display_tools) or (
-            not tool_view and not args.display_events
-        ):
-            continue
-
-        events_renderable = theme.events(
-            event_manager.history,
-            events_limit=6 if tool_view else 4,
-            height=tools_height if tool_view else events_height,
-            include_tokens=False,
-            include_tools=tool_view,
-            include_tool_detect=False,
-            include_non_tools=not tool_view,
-            tool_view=tool_view,
-        )
-        if not events_renderable:
-            continue
-
-        _render_frame(
+    events_renderer = (
+        _FrameRateRenderer(
             args,
             console,
             live,
-            events_renderable,
             group,
-            tools_group_index if tool_view else events_group_index,
+            events_group_index,
+            refresh_per_second=refresh_per_second,
+            render_lock=render_lock,
         )
+        if args.display_events
+        else None
+    )
+    tools_renderer = (
+        _FrameRateRenderer(
+            args,
+            console,
+            live,
+            group,
+            tools_group_index,
+            refresh_per_second=refresh_per_second,
+            render_lock=render_lock,
+        )
+        if args.display_tools
+        else None
+    )
+    try:
+        async for e in event_manager.listen(stop_signal=stop_signal):
+            tool_view = _event_targets_tool_panel(e)
+            if (tool_view and not args.display_tools) or (
+                not tool_view and not args.display_events
+            ):
+                continue
+
+            events_renderable = theme.events(
+                event_manager.history,
+                events_limit=6 if tool_view else 4,
+                height=tools_height if tool_view else events_height,
+                include_tokens=False,
+                include_tools=tool_view,
+                include_tool_detect=False,
+                include_non_tools=not tool_view,
+                tool_view=tool_view,
+            )
+            if not events_renderable:
+                continue
+
+            renderer = tools_renderer if tool_view else events_renderer
+            assert renderer is not None
+            renderer.mark_dirty(events_renderable)
+    finally:
+        close_tasks = [
+            renderer.close()
+            for renderer in (events_renderer, tools_renderer)
+            if renderer is not None
+        ]
+        if close_tasks:
+            await gather(*close_tasks)
+
+
+_CANONICAL_TOOL_EVENT_CHANNELS = frozenset(
+    {
+        "tool_call",
+        "tool_execution",
+        "tool.call",
+        "tool.execution",
+    }
+)
+_CANONICAL_TOOL_EVENT_KIND_PREFIXES = (
+    "tool.call.",
+    "tool_call.",
+    "tool.execution.",
+    "tool_execution.",
+    "model.continuation.",
+    "model_continuation.",
+)
+
+
+def _event_targets_tool_panel(event: Event) -> bool:
+    canonical_payload = _canonical_event_payload(event)
+    if canonical_payload is None:
+        return event.type in TOOL_TYPES
+    channel = canonical_payload.get("channel")
+    if channel in _CANONICAL_TOOL_EVENT_CHANNELS:
+        return True
+    kind = canonical_payload.get("kind")
+    return isinstance(kind, str) and kind.startswith(
+        _CANONICAL_TOOL_EVENT_KIND_PREFIXES
+    )
+
+
+def _canonical_event_payload(event: Event) -> Mapping[str, Any] | None:
+    payload = event.payload
+    if not isinstance(payload, Mapping):
+        return None
+    if not all(
+        isinstance(payload.get(key), str)
+        for key in ("stream_session_id", "run_id", "turn_id", "kind")
+    ):
+        return None
+    if not isinstance(payload.get("channel"), str):
+        return None
+    return cast(Mapping[str, Any], payload)
 
 
 async def _token_stream(
@@ -778,6 +874,7 @@ async def _token_stream(
     stop_signal: EventSignal | None,
     tool_events_limit: int | None,
     with_stats: bool = True,
+    render_lock: Lock | None = None,
 ) -> None:
     display_time_to_n_token = args.display_time_to_n_token
     display_reasoning_time = not getattr(args, "skip_display_reasoning_time")
@@ -841,6 +938,7 @@ async def _token_stream(
         group,
         tokens_group_index,
         refresh_per_second=refresh_per_second,
+        render_lock=render_lock,
     )
 
     try:
