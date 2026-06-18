@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import nullcontext
 from dataclasses import asdict
 from unittest import IsolatedAsyncioTestCase, main
@@ -67,6 +68,54 @@ class TextGenerationModelCallTestCase(IsolatedAsyncioTestCase):
         self.assertIs(response._output_fn, stream_output)
         self.assertFalse(response._kwargs["settings"].do_sample)
         self.assertTrue(response._use_async_generator)
+
+    async def test_stream_response_consumes_canonical_transformer_items(self):
+        tok_inputs = {"input_ids": tensor([[3]])}
+        self.model._tokenize_input = MagicMock(return_value=tok_inputs)
+        self.model._log = MagicMock()
+
+        class DummyStreamer:
+            def __init__(self, *args, **kwargs):
+                self.stop_signal = object()
+                self.text_queue = asyncio.Queue()
+                self.loop = asyncio.get_running_loop()
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                value = await self.text_queue.get()
+                if value is self.stop_signal:
+                    raise StopAsyncIteration
+                return value
+
+        def gen_side_effect(*args, streamer=None, **kwargs):
+            streamer.on_finalized_text("a")
+            streamer.on_finalized_text("b")
+            streamer.on_finalized_text("", stream_end=True)
+
+        with (
+            patch(
+                "avalan.model.nlp.text.generation.AsyncTextIteratorStreamer",
+                DummyStreamer,
+            ),
+            patch.object(
+                TextGenerationModel,
+                "_generate_output",
+                side_effect=gen_side_effect,
+            ),
+        ):
+            response = await self.model(
+                "go",
+                settings=GenerationSettings(
+                    temperature=None,
+                    use_async_generator=True,
+                ),
+            )
+            result = await response.to_str()
+
+        self.assertEqual(result, "ab")
+        self.assertEqual(response.provider_family, "transformers")
 
     async def test_instructions_are_tokenized_as_prompt_material(self):
         tok_inputs = {"input_ids": [[7]]}

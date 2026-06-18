@@ -163,7 +163,14 @@ class VllmCoverageTestCase(IsolatedAsyncioTestCase):
                 "prompt", GenerationSettings()
             )
         ]
-        self.assertEqual(chunks, ["chunk"])
+        self.assertEqual(
+            [
+                chunk.text_delta
+                for chunk in chunks
+                if chunk.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["chunk"],
+        )
 
     async def test_call_returns_stream_wrapper_with_canonical_items(
         self,
@@ -177,11 +184,7 @@ class VllmCoverageTestCase(IsolatedAsyncioTestCase):
         )
         model._prompt = MagicMock(return_value="prompt")
 
-        async def simple_stream(*args, **kwargs):
-            del args, kwargs
-            yield "x"
-
-        stream = simple_stream()
+        stream = VllmStream(iter(["x"]))
         with patch.object(model, "_stream_generator", return_value=stream):
             result = await model(
                 "input", settings=GenerationSettings(use_async_generator=True)

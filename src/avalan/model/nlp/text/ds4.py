@@ -28,12 +28,24 @@ from ....entities import (
     ReasoningEffort,
     Token,
     TokenDetail,
-    ToolCallToken,
+    ToolCall,
     TransformerEngineSettings,
 )
 from ....model.response.text import TextGenerationResponse
+from ....model.stream import (
+    CanonicalStreamItem,
+    LocalTextStreamEventParser,
+    StreamItemCorrelation,
+    StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+    normalize_provider_stream,
+    stream_token_metadata,
+)
 from ....tool.dsml import DsmlParseResult, DsmlPromptMessage, DsmlTools
 from ....tool.manager import ToolManager
+from ....types import LooseJsonValue
 from .generation import TextGenerationModel
 
 import asyncio
@@ -48,14 +60,16 @@ from collections.abc import (
     Coroutine,
     Iterable,
 )
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from inspect import Parameter, signature
 from logging import Logger, getLogger
 from math import exp
 from pathlib import Path
 from queue import Queue
+from re import DOTALL, Match, compile
 from threading import Thread
 from typing import Any, Protocol, TypeVar, cast
+from uuid import uuid4
 
 _CPU_WARNING = (
     "DS4 CPU backend is debug/reference only and is not recommended for "
@@ -82,6 +96,13 @@ _CONTEXT_ERROR_MARKERS = (
 _WORKER_JOIN_TIMEOUT_SECONDS = 2.0
 _BYTES_PER_MIB = 1024 * 1024
 _DS4_TOOL_REPLAY_MAX_ENTRIES = 10000
+_DS4_DSML_INVOKE_OPEN_RE = compile(r"<(?:｜DSML｜|DSML｜)?invoke\b[^>]*>")
+_DS4_DSML_INVOKE_CLOSE_RE = compile(r"</(?:｜DSML｜|DSML｜)?invoke>")
+_DS4_DSML_PARAMETER_RE = compile(
+    r"<(?:｜DSML｜|DSML｜)?parameter\b[^>]*>(.*?)"
+    r"</(?:｜DSML｜|DSML｜)?parameter>",
+    DOTALL,
+)
 _TOKEN_SCORE_MODE_VALUES = {
     "TOKEN_LOGPROB": "token_logprob",
     "TOKEN_LOGPROB_AND_TOP_LOGPROBS": "token_logprob_and_top_logprobs",
@@ -139,6 +160,32 @@ class _Ds4Step:
     is_eos: bool
     token_bytes: bytes | None
     token_detail: TokenDetail | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Ds4GeneratedChunk:
+    text: str
+    metadata: dict[str, LooseJsonValue]
+
+
+@dataclass(slots=True)
+class _Ds4DsmlArgumentStream:
+    emitted_counts: dict[int, int] = field(default_factory=dict)
+    tool_call_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class _Ds4Usage:
+    input_tokens: int
+    output_tokens: int = 0
+
+    def to_payload(self) -> dict[str, object]:
+        """Return canonical usage for the generated DS4 turn."""
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.input_tokens + self.output_tokens,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +311,53 @@ class _StopStringBufferProtocol(Protocol):
     def push(self, text: str) -> Iterable[str]: ...
 
     def flush(self) -> Iterable[str]: ...
+
+
+class _Ds4CanonicalStream:
+    _DEFAULT_STREAM_SESSION_ID = "ds4-stream"
+    _DEFAULT_RUN_ID = "ds4-run"
+    _DEFAULT_TURN_ID = "ds4-turn"
+
+    def __init__(
+        self,
+        worker: "Ds4Worker",
+        prompt_tokens: list[int],
+        generation_plan: _Ds4GenerationPlan,
+    ) -> None:
+        self._worker = worker
+        self._prompt_tokens = prompt_tokens
+        self._generation_plan = generation_plan
+
+    def __call__(
+        self, *args: object, **kwargs: object
+    ) -> AsyncGenerator[CanonicalStreamItem, None]:
+        _ = args, kwargs
+        return self.canonical_stream(
+            stream_session_id=self._DEFAULT_STREAM_SESSION_ID,
+            run_id=self._DEFAULT_RUN_ID,
+            turn_id=self._DEFAULT_TURN_ID,
+        )
+
+    def canonical_stream(
+        self,
+        *,
+        stream_session_id: str,
+        run_id: str,
+        turn_id: str,
+        provider_family: str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncGenerator[CanonicalStreamItem, None]:
+        return self._worker.stream(
+            self._prompt_tokens,
+            self._generation_plan,
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family,
+            capabilities=capabilities,
+            close_after_terminal=close_after_terminal,
+        )
 
 
 class Ds4Worker:
@@ -419,34 +513,34 @@ class Ds4Worker:
         self,
         prompt_tokens: list[int],
         generation_plan: _Ds4GenerationPlan,
-    ) -> AsyncGenerator[str | TokenDetail | ToolCallToken, None]:
-        """Yield DS4 output chunks from the pyds4 async facade."""
+        *,
+        stream_session_id: str = "ds4-stream",
+        run_id: str = "ds4-run",
+        turn_id: str = "ds4-turn",
+        provider_family: str | None = None,
+        capabilities: StreamProviderCapabilities | None = None,
+        close_after_terminal: bool = True,
+    ) -> AsyncGenerator[CanonicalStreamItem, None]:
+        """Yield canonical DS4 stream items from the async facade."""
         if self._closed:
             raise Ds4LoadError("DS4 worker is closed.")
 
-        recovery_snapshot: bytes | None = None
+        canonical_items = normalize_provider_stream(
+            self._stream_events(prompt_tokens, generation_plan),
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            provider_family=provider_family or "ds4",
+            capabilities=capabilities or self._stream_capabilities(),
+            close_after_terminal=close_after_terminal,
+        )
         try:
-            session = self._require_session()
-            restored = await self._restore_disk_cache(session, prompt_tokens)
-            if not restored:
-                await self._call_async(session, "sync", list(prompt_tokens))
-                await self._store_disk_cache(session, prompt_tokens)
-            recovery_snapshot = await self._save_snapshot(session)
-            async for chunk in self._generate_chunks(session, generation_plan):
-                yield chunk
-        except (CancelledError, GeneratorExit):
-            self._schedule_reset(invalidate=True, snapshot=recovery_snapshot)
-            raise
-        except BaseException as error:
-            reset_error = await self._reset_session(
-                invalidate=True, snapshot=recovery_snapshot
-            )
-            if reset_error is not None:
-                error.add_note(
-                    "DS4 session reset after generation failure failed: "
-                    f"{reset_error}"
-                )
-            raise
+            async for item in canonical_items:
+                yield item
+        finally:
+            aclose = getattr(canonical_items, "aclose", None)
+            if callable(aclose):
+                await aclose()
 
     def generate_string(
         self,
@@ -464,16 +558,68 @@ class Ds4Worker:
         generation_plan: _Ds4GenerationPlan,
     ) -> str:
         """Return complete DS4 output text from the async generation core."""
-        return "".join(
-            [
-                (
-                    chunk.token
-                    if isinstance(chunk, (TokenDetail, ToolCallToken))
-                    else chunk
+        chunks: list[str] = []
+        async for item in self.stream(prompt_tokens, generation_plan):
+            if (
+                item.kind is StreamItemKind.ANSWER_DELTA
+                and item.text_delta is not None
+            ):
+                chunks.append(item.text_delta)
+            elif item.kind in {
+                StreamItemKind.STREAM_CANCELLED,
+                StreamItemKind.STREAM_ERRORED,
+            }:
+                raise self._exception_from_terminal_item(item)
+        return "".join(chunks)
+
+    async def _stream_events(
+        self,
+        prompt_tokens: list[int],
+        generation_plan: _Ds4GenerationPlan,
+    ) -> AsyncGenerator[StreamProviderEvent, None]:
+        recovery_snapshot: bytes | None = None
+        usage = _Ds4Usage(input_tokens=len(prompt_tokens))
+        try:
+            session = self._require_session()
+            restored = await self._restore_disk_cache(session, prompt_tokens)
+            if not restored:
+                await self._call_async(session, "sync", list(prompt_tokens))
+                await self._store_disk_cache(session, prompt_tokens)
+            recovery_snapshot = await self._save_snapshot(session)
+            async for event in self._generate_events(
+                session, generation_plan, usage
+            ):
+                yield event
+            yield StreamProviderEvent(
+                kind=StreamItemKind.USAGE_COMPLETED,
+                usage=cast(LooseJsonValue, usage.to_payload()),
+                provider_event_type="ds4.usage",
+            )
+        except (CancelledError, GeneratorExit):
+            reset_error = await self._reset_session(
+                invalidate=True, snapshot=recovery_snapshot
+            )
+            if reset_error is not None:
+                self._logger.warning(
+                    "DS4 session reset after generation cancellation failed: "
+                    "%s",
+                    reset_error,
                 )
-                async for chunk in self.stream(prompt_tokens, generation_plan)
-            ]
-        )
+            raise
+        except Exception as error:
+            reset_error = await self._reset_session(
+                invalidate=True, snapshot=recovery_snapshot
+            )
+            if reset_error is not None:
+                error.add_note(
+                    "DS4 session reset after generation failure failed: "
+                    f"{reset_error}"
+                )
+            yield StreamProviderEvent(
+                kind=StreamItemKind.STREAM_ERRORED,
+                data=self._error_data(error),
+                provider_event_type="ds4.error",
+            )
 
     async def _open(self) -> None:
         self._binding = import_compatible_binding(
@@ -526,36 +672,55 @@ class Ds4Worker:
             self._require_engine(), "create_session", self._ctx_size
         )
 
-    async def _generate_chunks(
-        self, session: object, generation_plan: _Ds4GenerationPlan
-    ) -> AsyncGenerator[str | TokenDetail | ToolCallToken, None]:
+    async def _generate_events(
+        self,
+        session: object,
+        generation_plan: _Ds4GenerationPlan,
+        usage: _Ds4Usage,
+    ) -> AsyncGenerator[StreamProviderEvent, None]:
         if generation_plan.parse_dsml_tools:
-            async for chunk in self._generate_dsml_tool_chunks(
-                session, generation_plan
+            async for event in self._generate_dsml_tool_events(
+                session, generation_plan, usage
             ):
-                yield chunk
+                yield event
             return
 
-        async for text_chunk in self._generate_text_chunks(
-            session, generation_plan
+        async for event in self._generate_text_events(
+            session, generation_plan, usage
         ):
-            yield text_chunk
+            yield event
 
-    async def _generate_dsml_tool_chunks(
-        self, session: object, generation_plan: _Ds4GenerationPlan
-    ) -> AsyncGenerator[str | ToolCallToken, None]:
+    async def _generate_text_events(
+        self,
+        session: object,
+        generation_plan: _Ds4GenerationPlan,
+        usage: _Ds4Usage,
+    ) -> AsyncGenerator[StreamProviderEvent, None]:
+        parser = LocalTextStreamEventParser()
+        async for chunk in self._generate_text_chunks(
+            session, generation_plan, usage
+        ):
+            for event in parser.push(chunk.text):
+                yield self._event_with_metadata(event, chunk.metadata)
+        for event in parser.flush():
+            yield event
+
+    async def _generate_dsml_tool_events(
+        self,
+        session: object,
+        generation_plan: _Ds4GenerationPlan,
+        usage: _Ds4Usage,
+    ) -> AsyncGenerator[StreamProviderEvent, None]:
         buffered: list[str] = []
         dsml_start: int | None = None
-        argument_emitted_until = 0
         content_emitted_until = 0
+        parser = LocalTextStreamEventParser()
+        argument_stream = _Ds4DsmlArgumentStream()
 
         async for chunk in self._generate_text_chunks(
-            session, generation_plan
+            session, generation_plan, usage
         ):
-            text_chunk = (
-                chunk.token if isinstance(chunk, TokenDetail) else chunk
-            )
-            buffered.append(text_chunk)
+            buffered.append(chunk.text)
             text = "".join(buffered)
 
             if dsml_start is None:
@@ -566,31 +731,59 @@ class Ds4Worker:
                     )
                     safe_end = len(text) - suffix_length
                     if content_emitted_until < safe_end:
-                        yield text[content_emitted_until:safe_end]
+                        for event in parser.push(
+                            text[content_emitted_until:safe_end]
+                        ):
+                            yield self._event_with_metadata(
+                                event, chunk.metadata
+                            )
                         content_emitted_until = safe_end
                     continue
                 dsml_start = start_span[0]
                 content_end = len(text[:dsml_start].rstrip())
                 if content_emitted_until < content_end:
-                    yield text[content_emitted_until:content_end]
+                    for event in parser.push(
+                        text[content_emitted_until:content_end]
+                    ):
+                        yield self._event_with_metadata(event, chunk.metadata)
                     content_emitted_until = content_end
+                for event in parser.flush():
+                    yield event
 
             raw_dsml = text[dsml_start:]
-            deltas, argument_emitted_until = DsmlTools.stream_argument_deltas(
-                raw_dsml, argument_emitted_until
-            )
-            for delta in deltas:
-                yield ToolCallToken(token=delta)
+            for event in self._dsml_argument_delta_events(
+                raw_dsml, argument_stream
+            ):
+                yield event
 
         text = "".join(buffered)
         parsed = DsmlTools.parse_generated_message(text)
         if parsed is None:
             raise Ds4GenerationError("DS4 generated malformed DSML.")
-        self._remember_dsml_tool_replay(parsed)
         if dsml_start is None and content_emitted_until < len(text):
-            yield text[content_emitted_until:]
-        for call in parsed.calls:
-            yield ToolCallToken(token="", call=call)
+            for event in parser.push(text[content_emitted_until:]):
+                yield event
+            for event in parser.flush():
+                yield event
+
+        calls = self._correlated_tool_calls(
+            parsed.calls, argument_stream.tool_call_ids
+        )
+        self._remember_dsml_tool_replay(replace(parsed, calls=calls))
+        for call in calls:
+            assert call.id is not None
+            call_correlation = StreamItemCorrelation(tool_call_id=str(call.id))
+            yield StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_READY,
+                data=self._tool_call_data(call),
+                correlation=call_correlation,
+                provider_event_type="ds4.dsml.tool_call_ready",
+            )
+            yield StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                correlation=call_correlation,
+                provider_event_type="ds4.dsml.tool_call_done",
+            )
 
     def _remember_dsml_tool_replay(self, parsed: DsmlParseResult) -> None:
         if not parsed.raw_dsml or not parsed.calls:
@@ -602,8 +795,11 @@ class Ds4Worker:
                 del self._tool_dsml_replay[oldest]
 
     async def _generate_text_chunks(
-        self, session: object, generation_plan: _Ds4GenerationPlan
-    ) -> AsyncGenerator[str | TokenDetail, None]:
+        self,
+        session: object,
+        generation_plan: _Ds4GenerationPlan,
+        usage: _Ds4Usage | None = None,
+    ) -> AsyncGenerator[_Ds4GeneratedChunk, None]:
         engine = self._require_engine()
         stop_buffer = self._stop_string_buffer(generation_plan.stop_strings)
 
@@ -620,18 +816,213 @@ class Ds4Worker:
             if bool(getattr(step, "is_eos", False)):
                 break
 
+            if usage is not None:
+                usage.output_tokens += 1
             text = await self._token_text(engine, step)
             for chunk in stop_buffer.push(text):
                 detail = getattr(step, "token_detail", None)
-                if isinstance(detail, TokenDetail) and chunk == detail.token:
-                    yield detail
+                if detail is not None and chunk == detail.token:
+                    yield _Ds4GeneratedChunk(
+                        chunk,
+                        self._metadata_from_token_detail(detail),
+                    )
                 else:
-                    yield chunk
+                    yield _Ds4GeneratedChunk(chunk, {})
             if stop_buffer.stopped:
                 break
 
         for chunk in stop_buffer.flush():
-            yield chunk
+            yield _Ds4GeneratedChunk(chunk, {})
+
+    @staticmethod
+    def _metadata_from_token_detail(
+        detail: TokenDetail,
+    ) -> dict[str, LooseJsonValue]:
+        return stream_token_metadata(
+            token_id=Ds4Worker._metadata_token_id(detail.id),
+            probability=detail.probability,
+            step=detail.step,
+            probability_distribution=detail.probability_distribution,
+            candidates=(
+                (
+                    (
+                        candidate.token,
+                        Ds4Worker._metadata_token_id(candidate.id),
+                        candidate.probability,
+                    )
+                    for candidate in detail.tokens
+                )
+                if detail.tokens is not None
+                else None
+            ),
+            provider_name="ds4",
+        )
+
+    @staticmethod
+    def _metadata_token_id(value: object) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value if value >= 0 else None
+
+    @staticmethod
+    def _event_with_metadata(
+        event: StreamProviderEvent,
+        metadata: dict[str, LooseJsonValue],
+    ) -> StreamProviderEvent:
+        if not metadata or event.text_delta is None:
+            return event
+        return replace(event, metadata={**event.metadata, **metadata})
+
+    @staticmethod
+    def _new_tool_call_id() -> str:
+        return f"ds4_tool_{uuid4().hex}"
+
+    @classmethod
+    def _dsml_argument_delta_events(
+        cls,
+        raw_dsml: str,
+        stream: _Ds4DsmlArgumentStream,
+    ) -> tuple[StreamProviderEvent, ...]:
+        argument_values = cls._dsml_invocation_argument_values(raw_dsml)
+        events: list[StreamProviderEvent] = []
+        for call_index, values in enumerate(argument_values):
+            emitted_count = stream.emitted_counts.get(call_index, 0)
+            if emitted_count >= len(values):
+                continue
+            tool_call_id = cls._dsml_tool_call_id(
+                stream.tool_call_ids, call_index
+            )
+            for value in values[emitted_count:]:
+                events.append(
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        text_delta=value,
+                        correlation=StreamItemCorrelation(
+                            tool_call_id=tool_call_id
+                        ),
+                        provider_event_type="ds4.dsml.argument_delta",
+                    )
+                )
+            stream.emitted_counts[call_index] = len(values)
+        return tuple(events)
+
+    @classmethod
+    def _dsml_invocation_argument_values(
+        cls,
+        raw_dsml: str,
+    ) -> tuple[tuple[str, ...], ...]:
+        invoke_matches = tuple(_DS4_DSML_INVOKE_OPEN_RE.finditer(raw_dsml))
+        values: list[tuple[str, ...]] = []
+        for index, match in enumerate(invoke_matches):
+            body_end = cls._dsml_invocation_body_end(
+                raw_dsml, invoke_matches, index
+            )
+            body = raw_dsml[match.end() : body_end]
+            values.append(
+                tuple(
+                    parameter_match.group(1)
+                    for parameter_match in _DS4_DSML_PARAMETER_RE.finditer(
+                        body
+                    )
+                )
+            )
+        return tuple(values)
+
+    @staticmethod
+    def _dsml_invocation_body_end(
+        raw_dsml: str,
+        invoke_matches: tuple[Match[str], ...],
+        index: int,
+    ) -> int:
+        next_start = (
+            invoke_matches[index + 1].start()
+            if index + 1 < len(invoke_matches)
+            else len(raw_dsml)
+        )
+        close_match = _DS4_DSML_INVOKE_CLOSE_RE.search(
+            raw_dsml, invoke_matches[index].end()
+        )
+        if close_match is None:
+            return next_start
+        return min(close_match.start(), next_start)
+
+    @classmethod
+    def _dsml_tool_call_id(
+        cls,
+        tool_call_ids: list[str],
+        index: int,
+    ) -> str:
+        while len(tool_call_ids) <= index:
+            tool_call_ids.append(cls._new_tool_call_id())
+        return tool_call_ids[index]
+
+    @classmethod
+    def _correlated_tool_calls(
+        cls,
+        calls: tuple[ToolCall, ...],
+        streamed_tool_call_ids: list[str],
+    ) -> tuple[ToolCall, ...]:
+        correlated: list[ToolCall] = []
+        for index, call in enumerate(calls):
+            call_id = (
+                streamed_tool_call_ids[index]
+                if index < len(streamed_tool_call_ids)
+                else str(call.id or cls._new_tool_call_id())
+            )
+            correlated.append(replace(call, id=call_id))
+        return tuple(correlated)
+
+    @staticmethod
+    def _tool_call_data(call: ToolCall) -> LooseJsonValue:
+        return {
+            "name": call.name,
+            "arguments": call.arguments or {},
+        }
+
+    @staticmethod
+    def _stream_capabilities() -> StreamProviderCapabilities:
+        return StreamProviderCapabilities(
+            backend=StreamProducerBackend.LOCAL,
+            provider_family="ds4",
+            supports_reasoning=True,
+            supports_tool_calls=True,
+            supports_usage=True,
+            supports_terminal_events=True,
+            supports_cancellation=True,
+        )
+
+    @staticmethod
+    def _error_data(error: Exception) -> LooseJsonValue:
+        notes = getattr(error, "__notes__", ())
+        data: dict[str, object] = {
+            "error_type": error.__class__.__name__,
+            "message": str(error),
+        }
+        if notes:
+            data["notes"] = list(notes)
+        return data
+
+    @staticmethod
+    def _exception_from_terminal_item(
+        item: CanonicalStreamItem,
+    ) -> BaseException:
+        data = item.data if isinstance(item.data, dict) else {}
+        message = str(data.get("message") or item.kind.value)
+        if item.kind is StreamItemKind.STREAM_CANCELLED:
+            return CancelledError(message)
+
+        error_type = data.get("error_type")
+        if error_type == "Ds4ContextError":
+            return Ds4ContextError(message)
+        if error_type == "Ds4LoadError":
+            return Ds4LoadError(message)
+        if error_type == "Ds4InvalidModel":
+            return Ds4InvalidModel(message)
+        if error_type == "Ds4BackendUnavailable":
+            return Ds4BackendUnavailable(message)
+        if error_type == "NotImplementedError":
+            return NotImplementedError(message)
+        return Ds4GenerationError(message)
 
     def _stop_string_buffer(
         self, stop_strings: tuple[str, ...]
@@ -1465,14 +1856,28 @@ class Ds4Model(TextGenerationModel):
             generation_settings, do_sample=generation_plan.use_sampling
         )
 
+        if generation_settings.use_async_generator:
+            return TextGenerationResponse(
+                _Ds4CanonicalStream(
+                    self._ds4_worker(), prompt_tokens, generation_plan
+                ),
+                inputs=prompt_tokens,
+                logger=self._logger,
+                generation_settings=generation_settings,
+                settings=generation_settings,
+                use_async_generator=True,
+                bos_token=None,
+                provider_family="ds4",
+            )
+
         return TextGenerationResponse(
-            self._generation_stream,
+            self._generation_string,
             inputs=prompt_tokens,
             logger=self._logger,
             generation_settings=generation_settings,
             generation_plan=generation_plan,
             settings=generation_settings,
-            use_async_generator=True,
+            use_async_generator=False,
             bos_token=None,
             provider_family="ds4",
         )
@@ -1757,9 +2162,9 @@ class Ds4Model(TextGenerationModel):
         inputs: list[int],
         generation_plan: _Ds4GenerationPlan,
         settings: GenerationSettings | None = None,
-    ) -> AsyncGenerator[str | TokenDetail | ToolCallToken, None]:
-        async for chunk in self._ds4_worker().stream(inputs, generation_plan):
-            yield chunk
+    ) -> AsyncGenerator[CanonicalStreamItem, None]:
+        async for item in self._ds4_worker().stream(inputs, generation_plan):
+            yield item
 
     def _generation_string(
         self,

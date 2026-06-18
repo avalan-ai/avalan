@@ -9,13 +9,21 @@ from ....entities import (
     MessageRole,
     ProbabilityDistribution,
     TextGenerationLoaderClass,
-    Token,
-    TokenDetail,
     TransformerEngineSettings,
 )
 from ....model.engine import Engine
 from ....model.nlp import BaseNLPModel
 from ....model.response.text import TextGenerationResponse
+from ....model.stream import (
+    CanonicalStreamItem,
+    LocalTextStreamEventParser,
+    StreamItemKind,
+    StreamProducerBackend,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
+    normalize_provider_stream,
+    stream_token_metadata,
+)
 from ....model.vendor import TextGenerationVendor
 from ....tool.manager import ToolManager
 from ....tool.parser import ToolCallParser
@@ -33,6 +41,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncGenerator,
+    AsyncIterable,
     AsyncIterator,
     Literal,
     TypeAlias,
@@ -123,6 +132,10 @@ _TOOL_MESSAGE_PARSER = ToolCallParser()
 _STREAMER_TIMEOUT_SECONDS = 0.1
 _STREAM_THREAD_JOIN_TIMEOUT_SECONDS = 2.0
 _STREAM_HANDOFF_MAX_QUEUE_SIZE = 64
+_TRANSFORMERS_PROVIDER_FAMILY = "transformers"
+_TRANSFORMERS_STREAM_SESSION_ID = "transformers-stream"
+_TRANSFORMERS_RUN_ID = "transformers-run"
+_TRANSFORMERS_TURN_ID = "transformers-turn"
 
 
 class _StopOnEventCriteria(StoppingCriteria):
@@ -170,6 +183,65 @@ def _configure_lossless_streamer_handoff(
 
     setattr(streamer, "on_finalized_text", on_finalized_text)
     return max_queue_size
+
+
+def _local_stream_capabilities(
+    provider_family: str,
+    *,
+    max_queue_depth: int | None = None,
+) -> StreamProviderCapabilities:
+    return StreamProviderCapabilities(
+        backend=StreamProducerBackend.LOCAL,
+        provider_family=provider_family,
+        supports_reasoning=True,
+        supports_tool_calls=True,
+        supports_cancellation=True,
+        max_queue_depth=max_queue_depth,
+    )
+
+
+async def _canonical_transformers_stream(
+    events: AsyncIterable[StreamProviderEvent],
+    *,
+    max_queue_depth: int | None = None,
+) -> AsyncIterator[CanonicalStreamItem]:
+    stream = normalize_provider_stream(
+        events,
+        stream_session_id=_TRANSFORMERS_STREAM_SESSION_ID,
+        run_id=_TRANSFORMERS_RUN_ID,
+        turn_id=_TRANSFORMERS_TURN_ID,
+        provider_family=_TRANSFORMERS_PROVIDER_FAMILY,
+        capabilities=_local_stream_capabilities(
+            _TRANSFORMERS_PROVIDER_FAMILY,
+            max_queue_depth=max_queue_depth,
+        ),
+    )
+    try:
+        async for item in stream:
+            yield item
+    except (CancelledError, GeneratorExit):
+        await cast(Any, stream).aclose()
+        raise
+
+
+def _non_negative_token_id(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    item = getattr(value, "item", None)
+    if callable(item):
+        return _non_negative_token_id(item())
+    return None
+
+
+def _probability_value(value: object) -> float:
+    item = getattr(value, "item", None)
+    if callable(item):
+        value = item()
+    assert isinstance(value, (int, float))
+    assert not isinstance(value, bool)
+    return float(value)
 
 
 class TextGenerationModel(BaseNLPModel):
@@ -352,7 +424,7 @@ class TextGenerationModel(BaseNLPModel):
         stopping_criterias: list[StoppingCriteria] | None,
         skip_special_tokens: bool,
         **kwargs: object,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[CanonicalStreamItem, None]:
         _l = self._log
         stop_event = ThreadEvent()
         thread_errors: list[BaseException] = []
@@ -417,36 +489,55 @@ class TextGenerationModel(BaseNLPModel):
 
         _l(f"Generation thread #{thread.ident} ({thread.name}) started")
 
-        stream = cast(AsyncIterator[str], streamer)
-        try:
-            while True:
+        async def events() -> AsyncGenerator[StreamProviderEvent, None]:
+            parser = LocalTextStreamEventParser()
+            stream = cast(AsyncIterator[str], streamer)
+            try:
+                while True:
+                    if thread_errors:
+                        raise thread_errors[0]
+                    try:
+                        chunk = await stream.__anext__()
+                        if thread_errors:
+                            raise thread_errors[0]
+                        if chunk:
+                            for event in parser.push(chunk):
+                                yield event
+                    except TimeoutError:
+                        if thread_errors:
+                            raise thread_errors[0]
+                        if not thread.is_alive():
+                            break
+                    except StopAsyncIteration:
+                        break
+
                 if thread_errors:
                     raise thread_errors[0]
-                try:
-                    chunk = await stream.__anext__()
-                    if thread_errors:
-                        raise thread_errors[0]
-                    yield chunk
-                except TimeoutError:
-                    if thread_errors:
-                        raise thread_errors[0]
-                    if not thread.is_alive():
-                        break
-                except StopAsyncIteration:
-                    break
+
+                for event in parser.flush():
+                    yield event
+            except (CancelledError, GeneratorExit):
+                stop_event.set()
+                raise
+            finally:
+                stop_event.set()
+                await self._wait_for_stream_thread(thread)
+
+            _l(f"Generation thread #{thread.ident} ({thread.name}) finished")
+
+        canonical_stream = _canonical_transformers_stream(
+            events(),
+            max_queue_depth=queue_size,
+        )
+        try:
+            async for item in canonical_stream:
+                yield item
         except (CancelledError, GeneratorExit):
-            stop_event.set()
+            await cast(Any, canonical_stream).aclose()
             raise
         finally:
             stop_event.set()
             await self._wait_for_stream_thread(thread)
-
-        if thread_errors:
-            raise thread_errors[0]
-
-        await self._wait_for_stream_thread(thread)
-
-        _l(f"Generation thread #{thread.ident} ({thread.name}) finished")
 
     @staticmethod
     async def _wait_for_stream_thread(thread: Thread) -> None:
@@ -482,12 +573,38 @@ class TextGenerationModel(BaseNLPModel):
         pick: int | None,
         probability_distribution: ProbabilityDistribution = "softmax",
         **kwargs: object,
-    ) -> AsyncGenerator[Token | TokenDetail, None]:
+    ) -> AsyncGenerator[CanonicalStreamItem, None]:
+        async for item in _canonical_transformers_stream(
+            self._token_provider_events(
+                inputs,
+                settings,
+                stopping_criterias,
+                skip_special_tokens,
+                pick,
+                probability_distribution,
+            ),
+        ):
+            yield item
+
+    async def _token_provider_events(
+        self,
+        inputs: dict[str, Tensor] | Tensor,
+        settings: GenerationSettings,
+        stopping_criterias: list[StoppingCriteria] | None,
+        skip_special_tokens: bool,
+        pick: int | None,
+        probability_distribution: ProbabilityDistribution = "softmax",
+    ) -> AsyncGenerator[StreamProviderEvent, None]:
         assert isinstance(inputs, dict)
         assert not settings.temperature or (
             settings.temperature >= 0 and settings.temperature <= 1
         ), "temperature should be [0, 1]"
         assert not pick or pick >= 0
+        temperature = (
+            settings.temperature
+            if settings.temperature is not None and settings.temperature > 0
+            else 1.0
+        )
 
         _l = self._log
 
@@ -535,7 +652,7 @@ class TextGenerationModel(BaseNLPModel):
                 else (
                     gumbel_softmax(
                         logits,
-                        tau=settings.temperature or 1.0,
+                        tau=temperature,
                         hard=False,
                         dim=-1,
                     )
@@ -548,43 +665,72 @@ class TextGenerationModel(BaseNLPModel):
                             entmax.entmax15(logits, dim=-1)
                             if enable_entmax
                             and probability_distribution == "entmax"
-                            else softmax(logits / settings.temperature, dim=-1)
+                            else softmax(logits / temperature, dim=-1)
                         )
                     )
                 )
             )
 
-            tokens: list[Token] | None = None
+            token_id_value = _non_negative_token_id(token_id)
+            token_decode_id = (
+                token_id_value if token_id_value is not None else token_id
+            )
+            token_text = self._tokenizer.decode(
+                token_decode_id,
+                skip_special_tokens=skip_special_tokens,
+            )
+
+            candidate_metadata: (
+                list[tuple[str, int | None, float | None]] | None
+            ) = None
             pick_count = pick or 0
             if pick_count > 0:
                 picked_logits = topk(logits_probs, pick_count)
                 picked_logits_ids = picked_logits.indices.tolist()
                 picked_logits_probs = picked_logits.values.tolist()
-                tokens = [
-                    Token(
-                        id=token_id,
-                        token=self._tokenizer.decode(
-                            token_id, skip_special_tokens=skip_special_tokens
-                        ),
-                        probability=picked_logits_probs[i],
+                candidate_metadata = []
+                for i, candidate_id in enumerate(picked_logits_ids):
+                    candidate_token_id = _non_negative_token_id(candidate_id)
+                    candidate_decode_id = (
+                        candidate_token_id
+                        if candidate_token_id is not None
+                        else candidate_id
                     )
-                    for i, token_id in enumerate(picked_logits_ids)
-                ]
+                    candidate_text = self._tokenizer.decode(
+                        candidate_decode_id,
+                        skip_special_tokens=skip_special_tokens,
+                    )
+                    if not candidate_text:
+                        continue
+                    candidate_metadata.append(
+                        (
+                            candidate_text,
+                            candidate_token_id,
+                            _probability_value(picked_logits_probs[i]),
+                        )
+                    )
 
-            raw_token = TokenDetail(
-                id=token_id,
-                token=self._tokenizer.decode(
-                    token_id, skip_special_tokens=skip_special_tokens
-                ),
-                probability=logits_probs[token_id].item(),
+            metadata = stream_token_metadata(
+                token_id=token_id_value,
+                probability=_probability_value(logits_probs[token_id]),
                 step=step,
                 probability_distribution=probability_distribution,
-                tokens=tokens,
+                candidates=(
+                    tuple(candidate_metadata)
+                    if candidate_metadata is not None
+                    else None
+                ),
             )
 
-            _l(f"Yielding step {step} token detail {raw_token.__repr__()}")
+            _l(f"Yielding step {step} token metadata {metadata.__repr__()}")
 
-            yield raw_token
+            if token_text:
+                yield StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=token_text,
+                    metadata=metadata,
+                    provider_event_type="transformers.token",
+                )
 
             total_tokens = total_tokens + 1
 

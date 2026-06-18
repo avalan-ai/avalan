@@ -1664,57 +1664,6 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
         ),
     ),
     StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.ds4",
-        qualname="Ds4Worker._generate_dsml_tool_chunks",
-        surfaces=(StreamLegacySurface.TOKEN_DETAIL,),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PRODUCER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.ds4",
-        removal_condition=(
-            "DS4 worker tool chunks are emitted as canonical stream items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.ds4",
-        qualname="Ds4Worker._generate_text_chunks",
-        surfaces=(StreamLegacySurface.TOKEN_DETAIL,),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PRODUCER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.ds4",
-        removal_condition=(
-            "DS4 worker text chunks are emitted as canonical stream items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.ds4",
-        qualname="Ds4Worker.generate_string_async",
-        surfaces=(
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PRODUCER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.ds4",
-        removal_condition=(
-            "DS4 final text accumulation reads canonical answer items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.vllm",
-        qualname="VllmModel._stream_generator",
-        surfaces=(StreamLegacySurface.STRING,),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PRODUCER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.vllm",
-        removal_condition=(
-            "vLLM model generation emits canonical stream items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
         module="avalan.model.nlp.text.vendor.openai",
         qualname="OpenAIClient._non_stream_response_content",
         surfaces=(StreamLegacySurface.STRING,),
@@ -1901,41 +1850,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
         "model.vendor",
         "Vendor call surfaces return canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.ds4",
-        "Ds4Worker.stream",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.local.ds4",
-        "DS4 worker streaming yields canonical stream items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.ds4",
-        "Ds4Model._generation_stream",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.local.ds4",
-        "DS4 model streaming yields canonical stream items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.generation",
-        "TextGenerationModel._stream_generator",
-        (StreamLegacySurface.STRING,),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.local.transformers",
-        "Local transformer generation yields canonical stream items.",
     ),
     _runtime_boundary(
         "avalan.model.stream",
@@ -3978,6 +3892,73 @@ class _LocalTextStreamParser:
         self._tool_call_id = None
         self._tool_name = None
         self._tool_argument_deltas.clear()
+
+
+@dataclass(slots=True)
+class LocalTextStreamEventParser:
+    _parser: _LocalTextStreamParser = field(
+        default_factory=_LocalTextStreamParser
+    )
+
+    def push(self, text: str) -> tuple[StreamProviderEvent, ...]:
+        assert isinstance(text, str)
+        return self._parser.push(text)
+
+    def flush(self) -> tuple[StreamProviderEvent, ...]:
+        return self._parser.flush()
+
+
+def stream_token_metadata(
+    *,
+    token_id: int | None = None,
+    probability: float | None = None,
+    step: int | None = None,
+    probability_distribution: str | None = None,
+    candidates: Iterable[tuple[str, int | None, float | None]] | None = None,
+    provider_name: str | None = None,
+) -> dict[str, LooseJsonValue]:
+    if token_id is not None:
+        _assert_non_negative_int(token_id, "token_id")
+    if probability is not None:
+        assert isinstance(probability, int | float)
+        assert not isinstance(probability, bool)
+    if step is not None:
+        _assert_non_negative_int(step, "step")
+    if probability_distribution is not None:
+        _assert_non_empty_string(
+            probability_distribution, "probability_distribution"
+        )
+    if provider_name is not None:
+        _assert_non_empty_string(provider_name, "provider_name")
+
+    metadata: dict[str, LooseJsonValue] = {}
+    if token_id is not None:
+        metadata["token_id"] = token_id
+    if probability is not None:
+        metadata["probability"] = float(probability)
+    if step is not None:
+        metadata["step"] = step
+    if probability_distribution is not None:
+        metadata["probability_distribution"] = probability_distribution
+    if candidates is not None:
+        candidate_metadata: list[dict[str, LooseJsonValue]] = []
+        for token, candidate_id, candidate_probability in candidates:
+            _assert_non_empty_string(token, "candidate token")
+            if candidate_id is not None:
+                _assert_non_negative_int(candidate_id, "candidate_id")
+            if candidate_probability is not None:
+                assert isinstance(candidate_probability, int | float)
+                assert not isinstance(candidate_probability, bool)
+            candidate_entry: dict[str, LooseJsonValue] = {"token": token}
+            if candidate_id is not None:
+                candidate_entry["token_id"] = candidate_id
+            if candidate_probability is not None:
+                candidate_entry["probability"] = float(candidate_probability)
+            candidate_metadata.append(candidate_entry)
+        metadata["tokens"] = cast(LooseJsonValue, candidate_metadata)
+    if provider_name is not None:
+        metadata["provider_name"] = provider_name
+    return metadata
 
 
 async def _close_async_iterable(

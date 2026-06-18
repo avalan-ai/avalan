@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, main
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 
@@ -42,6 +42,27 @@ class VllmStreamTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
 
+    async def test_sync_iterator_does_not_advertise_cancellation(self):
+        stream = VllmStream(iter(["a"]))
+
+        started = await stream.__anext__()
+
+        capabilities = started.metadata["capabilities"]
+        assert isinstance(capabilities, dict)
+        self.assertFalse(capabilities["supports_cancellation"])
+
+    async def test_async_iterator_advertises_cancellation(self):
+        async def generator():
+            yield "a"
+
+        stream = VllmStream(generator())
+
+        started = await stream.__anext__()
+
+        capabilities = started.metadata["capabilities"]
+        assert isinstance(capabilities, dict)
+        self.assertTrue(capabilities["supports_cancellation"])
+
     async def test_placeholder_generator_is_empty(self):
         stream = VllmStream(iter([]))
 
@@ -61,6 +82,146 @@ class VllmStreamTestCase(IsolatedAsyncioTestCase):
             [items[1].text_delta, items[2].text_delta],
             ["attr", "42"],
         )
+
+    def test_chunk_text_compatibility_helper(self):
+        self.assertEqual(
+            VllmStream._chunk_text(SimpleNamespace(text="attr")), "attr"
+        )
+
+    async def test_stream_skips_none_text_and_empty_delta(self):
+        stream = VllmStream(iter(["none", "empty"]))
+
+        with patch.object(
+            VllmStream,
+            "_chunk_text_and_metadata",
+            side_effect=[(None, {}), ("", {})],
+        ):
+            items = [item async for item in stream]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+
+    async def test_stream_flushes_pending_parser_text(self):
+        stream = VllmStream(iter(["<"]))
+
+        items = [item async for item in stream]
+
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["<"],
+        )
+
+    async def test_stream_parses_split_local_events(self):
+        stream = VllmStream(
+            iter(
+                [
+                    "a<think>r",
+                    '</think><tool_call name="lookup">{}',
+                    "</tool_call>b",
+                ]
+            )
+        )
+        items = [item async for item in stream]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.REASONING_DELTA,
+                StreamItemKind.REASONING_DONE,
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+
+    async def test_stream_preserves_token_metadata(self):
+        stream = VllmStream(
+            iter(
+                [
+                    SimpleNamespace(
+                        token="tok",
+                        id=7,
+                        probability=0.25,
+                        step=3,
+                        probability_distribution="softmax",
+                        tokens=[
+                            SimpleNamespace(token="alt", id=8, probability=0.1)
+                        ],
+                    )
+                ]
+            )
+        )
+
+        started = await stream.__anext__()
+        delta = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertEqual(delta.text_delta, "tok")
+        self.assertEqual(
+            delta.metadata,
+            {
+                "token_id": 7,
+                "probability": 0.25,
+                "step": 3,
+                "probability_distribution": "softmax",
+                "tokens": [
+                    {"token": "alt", "token_id": 8, "probability": 0.1}
+                ],
+            },
+        )
+
+    async def test_stream_drops_invalid_token_metadata(self):
+        stream = VllmStream(
+            iter(
+                [
+                    SimpleNamespace(
+                        token="tok",
+                        id=True,
+                        probability=True,
+                        step=True,
+                        tokens=[
+                            SimpleNamespace(token="", id=8, probability=0.1),
+                            SimpleNamespace(
+                                token="alt", id=True, probability=True
+                            ),
+                        ],
+                    )
+                ]
+            )
+        )
+
+        _started = await stream.__anext__()
+        delta = await stream.__anext__()
+
+        self.assertEqual(delta.text_delta, "tok")
+        self.assertEqual(delta.metadata, {"tokens": [{"token": "alt"}]})
+
+    async def test_stream_emits_error_terminal_for_iterator_failure(self):
+        stream = VllmStream(iter([RuntimeError("bad vllm chunk")]))
+
+        started = await stream.__anext__()
+        errored = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(errored.data["message"], "bad vllm chunk")
 
 
 class VllmModelTestCase(IsolatedAsyncioTestCase):
@@ -210,15 +371,45 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
         iterator = iter(["x", "y"])
         model._model.generate.return_value = iterator
 
-        out = []
-        async for chunk in model._stream_generator("p", GenerationSettings()):
-            out.append(chunk)
+        stream = model._stream_generator("p", GenerationSettings())
+        self.assertIsInstance(stream, VllmStream)
+        out = [item async for item in stream]
 
         model._build_sampling_params.assert_called_once()
         model._model.generate.assert_called_once_with(
             ["p"], "params", stream=True
         )
-        self.assertEqual(out, ["x", "y"])
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in out
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["x", "y"],
+        )
+
+    async def test_stream_generator_deltas_cumulative_output_text(self):
+        model = self._make_model()
+        model._model = MagicMock()
+        model._build_sampling_params = MagicMock(return_value="params")
+        model._model.generate.return_value = iter(
+            [
+                SimpleNamespace(outputs=[SimpleNamespace(text="hel")]),
+                SimpleNamespace(outputs=[SimpleNamespace(text="hello")]),
+            ]
+        )
+
+        stream = model._stream_generator("p", GenerationSettings())
+        out = [item async for item in stream]
+
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in out
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            ],
+            ["hel", "lo"],
+        )
 
     def test_string_output(self):
         model = self._make_model()
@@ -232,29 +423,21 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_use_async_generator_true(self):
         model = self._make_model()
-
-        async def stream_gen(prompt, settings):
-            return "stream"
-
-        model._stream_generator = AsyncMock(side_effect=stream_gen)
+        stream = VllmStream(iter(["stream"]))
+        model._stream_generator = MagicMock(return_value=stream)
         model._string_output = MagicMock()
         model._prompt = MagicMock(return_value="p")
         settings = GenerationSettings(use_async_generator=True)
         result = await model("input", settings=settings)
-        model._stream_generator.assert_awaited_once()
-        self.assertEqual(result, "stream")
+        model._stream_generator.assert_called_once()
+        self.assertIs(result, stream)
         model._string_output.assert_not_called()
 
-    async def test_call_wraps_awaitable_async_generator_stream(self):
+    async def test_call_returns_canonical_stream_items(self):
         model = self._make_model()
-
-        async def agen():
-            yield "stream"
-
-        async def stream_gen(prompt, settings):
-            return agen()
-
-        model._stream_generator = AsyncMock(side_effect=stream_gen)
+        model._stream_generator = MagicMock(
+            return_value=VllmStream(iter(["stream"]))
+        )
         model._string_output = MagicMock()
         model._prompt = MagicMock(return_value="p")
         settings = GenerationSettings(use_async_generator=True)
@@ -278,7 +461,7 @@ class VllmModelTestCase(IsolatedAsyncioTestCase):
 
     async def test_call_use_async_generator_false(self):
         model = self._make_model()
-        model._stream_generator = AsyncMock(return_value="stream")
+        model._stream_generator = MagicMock(return_value=VllmStream(iter([])))
         model._string_output = MagicMock(return_value="string")
         model._prompt = MagicMock(return_value="p")
         settings = GenerationSettings(use_async_generator=False)

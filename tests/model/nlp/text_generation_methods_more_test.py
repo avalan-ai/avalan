@@ -21,6 +21,15 @@ from avalan.model.nlp.text.generation import (
     _configure_lossless_streamer_handoff,
     _is_event_loop_closed_error,
 )
+from avalan.model.stream import CanonicalStreamItem, StreamItemKind
+
+
+def _answer_deltas(items: list[CanonicalStreamItem]) -> list[str]:
+    return [
+        item.text_delta or ""
+        for item in items
+        if item.kind is StreamItemKind.ANSWER_DELTA
+    ]
 
 
 class EventLoopClosedErrorTestCase(TestCase):
@@ -28,6 +37,12 @@ class EventLoopClosedErrorTestCase(TestCase):
         self.assertTrue(
             _is_event_loop_closed_error(RuntimeError("Event loop is closed"))
         )
+
+
+class TokenMetadataHelperTestCase(TestCase):
+    def test_non_negative_token_id_rejects_bool_and_unknown_values(self):
+        self.assertIsNone(generation_module._non_negative_token_id(True))
+        self.assertIsNone(generation_module._non_negative_token_id(object()))
 
 
 class LazyExternalProxyTestCase(TestCase):
@@ -345,7 +360,90 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
                 out.append(token)
 
         gen.assert_called_once()
-        self.assertEqual(out, ["a", "b"])
+        self.assertEqual(
+            [item.kind for item in out],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(_answer_deltas(out), ["a", "b"])
+
+    async def test_stream_generator_flushes_pending_parser_text(self):
+        model = TextGenerationModel(
+            "m",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
+        )
+        model._model = MagicMock()
+        model._tokenizer = MagicMock()
+        model._log = MagicMock()
+
+        class DummyStreamer:
+            def __init__(self, *args, **kwargs):
+                self.stop_signal = object()
+                self.queue = asyncio.Queue()
+
+            def put(self, value):
+                self.queue.put_nowait(value)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                val = await self.queue.get()
+                if val is self.stop_signal:
+                    raise StopAsyncIteration
+                return val
+
+        class DummyThread:
+            def __init__(self, target, name=None, daemon=None):
+                self.target = target
+                self.name = name
+                self.daemon = daemon
+                self.ident = 1
+                self._alive = False
+
+            def start(self):
+                self._alive = True
+                self.target()
+                self._alive = False
+
+            def is_alive(self):
+                return self._alive
+
+        def gen_side_effect(*args, streamer=None, **kwargs):
+            streamer.put("<")
+            streamer.put(streamer.stop_signal)
+
+        with (
+            patch(
+                "avalan.model.nlp.text.generation.AsyncTextIteratorStreamer",
+                DummyStreamer,
+            ),
+            patch("avalan.model.nlp.text.generation.Thread", DummyThread),
+            patch.object(
+                TextGenerationModel,
+                "_generate_output",
+                side_effect=gen_side_effect,
+            ),
+        ):
+            out = []
+            async for token in model._stream_generator(
+                {"input_ids": torch.tensor([[1, 2]])},
+                GenerationSettings(max_new_tokens=1),
+                None,
+                False,
+            ):
+                out.append(token)
+
+        self.assertEqual(_answer_deltas(out), ["<"])
 
     async def test_stream_generator_uses_bounded_handoff(self):
         model = self._model()
@@ -390,7 +488,13 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
                 chunks.append(chunk)
 
         gen.assert_called_once()
-        self.assertEqual(chunks, ["a", ""])
+        self.assertEqual(_answer_deltas(chunks), ["a"])
+        self.assertEqual(
+            chunks[0].metadata["capabilities"]["backend"], "local"
+        )
+        self.assertEqual(
+            chunks[0].metadata["capabilities"]["max_queue_depth"], 64
+        )
         model._log.assert_any_call(
             "Created generator async text token streamer with 64 queued chunks"
         )
@@ -447,9 +551,11 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
                 None,
                 False,
             )
+            started = await stream.__anext__()
             first = await stream.__anext__()
 
-            self.assertEqual(first, "chunk-0")
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            self.assertEqual(first.text_delta, "chunk-0")
             self.assertTrue(
                 await asyncio.to_thread(queued_before_last.wait, 1.0)
             )
@@ -477,8 +583,8 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(generation_completed.is_set())
         self.assertEqual(
-            chunks,
-            [f"chunk-{index}" for index in range(66)] + [""],
+            _answer_deltas(chunks),
+            [f"chunk-{index}" for index in range(66)],
         )
 
     async def test_stream_generator_stops_thread_when_closed(self):
@@ -541,12 +647,16 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
             gen_settings = GenerationSettings(max_new_tokens=2)
             inputs = {"input_ids": torch.tensor([[1, 2]])}
             stream = model._stream_generator(inputs, gen_settings, None, False)
-            self.assertEqual(await stream.__anext__(), "a")
+            self.assertIs(
+                (await stream.__anext__()).kind,
+                StreamItemKind.STREAM_STARTED,
+            )
+            self.assertEqual((await stream.__anext__()).text_delta, "a")
             await stream.aclose()
 
         self.assertTrue(stopped.wait(1))
 
-    async def test_stream_generator_raises_worker_error(self):
+    async def test_stream_generator_emits_worker_error_terminal(self):
         model = TextGenerationModel(
             "m",
             TransformerEngineSettings(
@@ -594,8 +704,13 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
             gen_settings = GenerationSettings(max_new_tokens=2)
             inputs = {"input_ids": torch.tensor([[1, 2]])}
             stream = model._stream_generator(inputs, gen_settings, None, False)
-            with self.assertRaisesRegex(ValueError, "bad generation"):
-                await stream.__anext__()
+            started = await stream.__anext__()
+            errored = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(errored.data["message"], "bad generation")
 
     async def test_stream_generator_ignores_closed_loop_after_stop(self):
         model = self._model()
@@ -652,9 +767,16 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
             ):
                 chunks.append(chunk)
 
-        self.assertEqual(chunks, [])
+        self.assertEqual(
+            [chunk.kind for chunk in chunks],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
 
-    async def test_stream_generator_raises_worker_error_after_timeout(self):
+    async def test_stream_generator_emits_worker_error_after_timeout(self):
         model = self._model()
         threads = []
 
@@ -707,10 +829,15 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
                 None,
                 False,
             )
-            with self.assertRaisesRegex(ValueError, "late generation failure"):
-                await stream.__anext__()
+            started = await stream.__anext__()
+            errored = await stream.__anext__()
 
-    async def test_stream_generator_raises_worker_error_after_chunk(self):
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(errored.data["message"], "late generation failure")
+
+    async def test_stream_generator_emits_worker_error_after_chunk(self):
         model = self._model()
         threads = []
 
@@ -763,12 +890,15 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
                 None,
                 False,
             )
-            with self.assertRaisesRegex(
-                ValueError, "chunk generation failure"
-            ):
-                await stream.__anext__()
+            started = await stream.__anext__()
+            errored = await stream.__anext__()
 
-    async def test_stream_generator_raises_worker_error_after_stop(self):
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(errored.data["message"], "chunk generation failure")
+
+    async def test_stream_generator_emits_worker_error_after_stop(self):
         model = self._model()
         threads = []
 
@@ -821,10 +951,13 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
                 None,
                 False,
             )
-            with self.assertRaisesRegex(
-                ValueError, "stopped generation failure"
-            ):
-                await stream.__anext__()
+            started = await stream.__anext__()
+            errored = await stream.__anext__()
+
+        self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
+        assert isinstance(errored.data, dict)
+        self.assertEqual(errored.data["message"], "stopped generation failure")
 
     async def test_stream_generator_reraises_finish_stream_runtime_error(self):
         model = self._model()
@@ -995,7 +1128,7 @@ class TokenGeneratorTestCase(IsolatedAsyncioTestCase):
         return model, outputs, patches
 
     async def test_token_generator_with_entmax(self):
-        model, outputs, patches = await self._setup(True)
+        model, _outputs, patches = await self._setup(True)
         for p in patches:
             p.start()
         try:
@@ -1014,17 +1147,25 @@ class TokenGeneratorTestCase(IsolatedAsyncioTestCase):
         finally:
             for p in reversed(patches):
                 p.stop()
-        self.assertEqual(len(result), 2)
-        self.assertEqual([t.id for t in result], [1, 2])
-        self.assertEqual([t.token for t in result], ["t1", "t2"])
-        for got, expected in zip([t.probability for t in result], [0.3, 0.1]):
+        deltas = [
+            item for item in result if item.kind is StreamItemKind.ANSWER_DELTA
+        ]
+        self.assertEqual([item.text_delta for item in deltas], ["t1", "t2"])
+        self.assertEqual(
+            [item.metadata["token_id"] for item in deltas], [1, 2]
+        )
+        for got, expected in zip(
+            [item.metadata["probability"] for item in deltas],
+            [0.3, 0.1],
+        ):
             self.assertAlmostEqual(got, expected, places=3)
-        self.assertTrue(
-            all(t.probability_distribution == "entmax" for t in result)
+        self.assertEqual(
+            {item.metadata["probability_distribution"] for item in deltas},
+            {"entmax"},
         )
 
     async def test_token_generator_without_entmax(self):
-        model, outputs, patches = await self._setup(False)
+        model, _outputs, patches = await self._setup(False)
         for p in patches:
             p.start()
         try:
@@ -1043,10 +1184,128 @@ class TokenGeneratorTestCase(IsolatedAsyncioTestCase):
         finally:
             for p in reversed(patches):
                 p.stop()
-        self.assertEqual(len(result), 2)
-        self.assertEqual([t.id for t in result], [1, 2])
-        self.assertTrue(
-            all(t.probability_distribution == "entmax" for t in result)
+        deltas = [
+            item for item in result if item.kind is StreamItemKind.ANSWER_DELTA
+        ]
+        self.assertEqual(
+            [item.metadata["token_id"] for item in deltas], [1, 2]
+        )
+        self.assertEqual(
+            {item.metadata["probability_distribution"] for item in deltas},
+            {"entmax"},
+        )
+
+    async def test_token_generator_consumes_with_none_temperature(self):
+        model, _outputs, patches = await self._setup(False)
+        for p in patches:
+            p.start()
+        try:
+            settings = GenerationSettings(max_new_tokens=2, temperature=None)
+            inputs = {"input_ids": torch.tensor([[5]])}
+            result = []
+            async for t in model._token_generator(
+                inputs,
+                settings,
+                None,
+                False,
+                pick=0,
+                probability_distribution="softmax",
+            ):
+                result.append(t)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+        deltas = [
+            item for item in result if item.kind is StreamItemKind.ANSWER_DELTA
+        ]
+        self.assertEqual([item.text_delta for item in deltas], ["t1", "t2"])
+        for got, expected in zip(
+            [item.metadata["probability"] for item in deltas],
+            [0.2, 0.1],
+        ):
+            self.assertAlmostEqual(got, expected)
+
+    async def test_token_generator_enriches_candidate_metadata(self):
+        model, _outputs, patches = await self._setup(False)
+        for p in patches:
+            p.start()
+        try:
+            settings = GenerationSettings(max_new_tokens=2, temperature=1.0)
+            inputs = {"input_ids": torch.tensor([[5]])}
+            result = []
+            async for t in model._token_generator(
+                inputs,
+                settings,
+                None,
+                False,
+                pick=2,
+                probability_distribution="softmax",
+            ):
+                result.append(t)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+        first_delta = next(
+            item for item in result if item.kind is StreamItemKind.ANSWER_DELTA
+        )
+        candidates = first_delta.metadata["tokens"]
+        assert isinstance(candidates, list)
+        self.assertEqual(
+            [
+                {
+                    "token": candidate["token"],
+                    "token_id": candidate["token_id"],
+                }
+                for candidate in candidates
+            ],
+            [
+                {"token": "t0", "token_id": 0},
+                {"token": "t1", "token_id": 1},
+            ],
+        )
+        self.assertAlmostEqual(candidates[0]["probability"], 0.7)
+        self.assertAlmostEqual(candidates[1]["probability"], 0.2)
+
+    async def test_token_generator_skips_empty_candidate_text(self):
+        model, _outputs, patches = await self._setup(False)
+        model._tokenizer.decode.side_effect = (
+            lambda i, skip_special_tokens=False: ("" if i == 0 else f"t{i}")
+        )
+        for p in patches:
+            p.start()
+        try:
+            settings = GenerationSettings(max_new_tokens=2, temperature=1.0)
+            inputs = {"input_ids": torch.tensor([[5]])}
+            result = []
+            async for t in model._token_generator(
+                inputs,
+                settings,
+                None,
+                False,
+                pick=2,
+                probability_distribution="softmax",
+            ):
+                result.append(t)
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+        first_delta = next(
+            item for item in result if item.kind is StreamItemKind.ANSWER_DELTA
+        )
+        candidates = first_delta.metadata["tokens"]
+        assert isinstance(candidates, list)
+        self.assertEqual(
+            [
+                {
+                    "token": candidate["token"],
+                    "token_id": candidate["token_id"],
+                }
+                for candidate in candidates
+            ],
+            [{"token": "t1", "token_id": 1}],
         )
 
 
