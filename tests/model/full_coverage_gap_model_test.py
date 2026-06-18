@@ -13,7 +13,6 @@ from avalan.entities import (
     MessageContentText,
     MessageRole,
     Modality,
-    ReasoningToken,
     Token,
     TransformerEngineSettings,
 )
@@ -26,6 +25,7 @@ from avalan.model.nlp.text.vllm import VllmModel, VllmStream
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     StreamItemKind,
+    StreamValidationError,
     accumulate_canonical_stream_items,
 )
 from avalan.model.transformer import TransformerModel
@@ -288,7 +288,7 @@ class TransformerCoverageTestCase(TestCase):
 
 
 class TextGenerationResponseCoverageTestCase(IsolatedAsyncioTestCase):
-    async def test_reasoning_token_without_id_defaults_minus_one(self) -> None:
+    async def test_legacy_reasoning_tokens_are_rejected(self) -> None:
         async def output_fn(**kwargs):
             del kwargs
             for value in [Token(token="<think>"), Token(token="x")]:
@@ -300,14 +300,13 @@ class TextGenerationResponseCoverageTestCase(IsolatedAsyncioTestCase):
             use_async_generator=True,
             generation_settings=GenerationSettings(),
         )
-        response._reasoning_parser.push = AsyncMock(  # type: ignore[union-attr]
-            return_value=[ReasoningToken(token="x")]
-        )
 
         response.__aiter__()
-        token = await response.__anext__()
-        self.assertIsInstance(token, ReasoningToken)
-        self.assertEqual(token.id, -1)
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await response.__anext__()
 
 
 class TransformerAdditionalCoverageTestCase(TestCase):

@@ -9,7 +9,6 @@ from torch import tensor
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
-    ReasoningToken,
     Token,
     TokenDetail,
     ToolCall,
@@ -606,8 +605,53 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
     async def test_callback_counts_and_to_str(self) -> None:
         async def gen():
-            for t in ("a", "b"):
-                yield t
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="a",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=2,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="b",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=3,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=4,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -629,14 +673,15 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, "ab")
         self.assertEqual(called, 1)
         self.assertEqual(resp.input_token_count, 2)
-        self.assertEqual(resp.output_token_count, 2)
+        self.assertEqual(resp.output_token_count, 5)
         # calling again should not trigger callback again
         await resp.to_str()
         self.assertEqual(called, 1)
 
     async def test_done_callbacks_are_appended_and_run_once(self) -> None:
         async def gen():
-            yield "ok"
+            for item in self._complete_canonical_items():
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -667,7 +712,8 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
     async def test_done_callback_awaits_generic_awaitable(self) -> None:
         async def gen():
-            yield "ok"
+            for item in self._complete_canonical_items():
+                yield item
 
         class ProbeAwaitable:
             def __init__(self) -> None:
@@ -886,7 +932,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
 
     async def test_canonical_stream_accepts_empty_async_output(self) -> None:
-        async def gen():
+        async def gen() -> AsyncIterator[str]:
             if False:
                 yield "unused"
 
@@ -915,6 +961,24 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(resp.output_token_count, 0)
 
+    async def test_to_str_accepts_empty_async_output(self) -> None:
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            if False:
+                yield self._complete_canonical_items()[0]
+
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        self.assertEqual(await resp.to_str(), "")
+        self.assertEqual(await resp.to_str(), "")
+        self.assertEqual(resp.output_token_count, 0)
+
     async def test_canonical_stream_rejects_legacy_after_semantic_output(
         self,
     ) -> None:
@@ -933,7 +997,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             StreamValidationError,
-            "legacy stream item after canonical stream item",
+            "unsupported legacy SDK response stream item",
         ):
             tuple(
                 [
@@ -1216,10 +1280,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             settings=settings,
             provider_family="transformers",
         )
-        self.assertEqual(
-            await response_text.to_str(),
-            "alpha  omega <thinking> visible",
-        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await response_text.to_str()
 
     async def test_consumer_projections_legacy_rejection_closes_output(
         self,
@@ -1536,12 +1601,8 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
     async def test_to_str_uses_answer_channel_accumulation(self) -> None:
         async def gen():
-            yield "answer "
-            yield "<think>"
-            yield "private"
-            yield "</think>"
-            yield ToolCallToken(token='{"expression":"2+2"}')
-            yield "done"
+            for item in self._semantic_answer_items():
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -1554,15 +1615,77 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         result = await resp.to_str()
 
-        self.assertEqual(result, "answer done")
-        self.assertEqual(resp.output_token_count, 6)
+        self.assertEqual(result, "final answer")
+        self.assertEqual(resp.output_token_count, 15)
 
     async def test_to_str_preserves_split_reasoning_answer_whitespace(
         self,
     ) -> None:
         async def gen():
-            for character in "lead <think> private </think> tail":
-                yield character
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="lead ",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=2,
+                    kind=StreamItemKind.REASONING_DELTA,
+                    channel=StreamChannel.REASONING,
+                    text_delta="<think> private </think>",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=3,
+                    kind=StreamItemKind.REASONING_DONE,
+                    channel=StreamChannel.REASONING,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta=" tail",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=5,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=6,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -1573,32 +1696,81 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        tokens = [token async for token in resp]
-
-        self.assertEqual(
-            "".join(
-                token
-                for token in tokens
-                if not isinstance(token, ReasoningToken)
-            ),
-            "lead  tail",
-        )
-        self.assertEqual(
-            "".join(
-                token.token
-                for token in tokens
-                if isinstance(token, ReasoningToken)
-            ),
-            "<think> private </think>",
-        )
         self.assertEqual(await resp.to_str(), "lead  tail")
+        accumulator = resp._stream_accumulator
+        assert accumulator is not None
+        self.assertEqual(
+            accumulator.reasoning_text, "<think> private </think>"
+        )
 
     async def test_to_str_handles_adjacent_reasoning_sections(
         self,
     ) -> None:
         async def gen():
-            for character in "x<think>a</think><think>b</think>y":
-                yield character
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="x",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=2,
+                    kind=StreamItemKind.REASONING_DELTA,
+                    channel=StreamChannel.REASONING,
+                    text_delta="<think>a</think><think>b</think>",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=3,
+                    kind=StreamItemKind.REASONING_DONE,
+                    channel=StreamChannel.REASONING,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="y",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=5,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=6,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -1609,33 +1781,19 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        tokens = [token async for token in resp]
-
+        self.assertEqual(await resp.to_str(), "xy")
+        accumulator = resp._stream_accumulator
+        assert accumulator is not None
         self.assertEqual(
-            "".join(
-                token
-                for token in tokens
-                if not isinstance(token, ReasoningToken)
-            ),
-            "xy",
-        )
-        self.assertEqual(
-            "".join(
-                token.token
-                for token in tokens
-                if isinstance(token, ReasoningToken)
-            ),
+            accumulator.reasoning_text,
             "<think>a</think><think>b</think>",
         )
-        self.assertEqual(await resp.to_str(), "xy")
 
     async def test_to_str_preserves_empty_chunk_split_reasoning_marker(
         self,
     ) -> None:
         async def gen():
             yield "alpha <thi"
-            yield ""
-            yield "nk>hidden</think> omega"
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -1646,7 +1804,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        self.assertEqual(await resp.to_str(), "alpha  omega")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await resp.to_str()
 
     async def test_consumer_projections_preserve_split_reasoning_whitespace(
         self,
@@ -1927,7 +2089,21 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 settings=settings,
             )
 
-        for shape in ("legacy", "canonical", "projection"):
+        legacy_response = make_response("legacy")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [item async for item in legacy_response]
+
+        legacy_to_str_response = make_response("legacy")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await legacy_to_str_response.to_str()
+
+        for shape in ("canonical", "projection"):
             with self.subTest(shape=shape):
                 stream_response = make_response(shape)
                 _ = [item async for item in stream_response]
@@ -1945,7 +2121,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 self.assertIn("private", accumulator.reasoning_text)
                 self.assertEqual(
                     accumulator.tool_execution_outputs.get("call-1"),
-                    "stdout" if shape != "legacy" else None,
+                    "stdout",
                 )
 
     async def test_to_str_preserves_stream_terminal_failure_semantics(
@@ -2035,24 +2211,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        tokens = [token async for token in resp]
-
-        accumulator = resp._stream_accumulator
-        assert accumulator is not None
-        self.assertEqual(tokens[0], "answer ")
-        self.assertIsInstance(tokens[1], ReasoningToken)
-        self.assertIsInstance(tokens[4], ToolCallToken)
-        self.assertEqual(accumulator.answer_text, "answer done")
-        self.assertEqual(accumulator.final_usage, usage)
-        self.assertIn("private", accumulator.reasoning_text)
-        self.assertEqual(
-            accumulator.tool_call_arguments,
-            {"call_1": '{"expression":"2+2"}'},
-        )
-        item_count = len(accumulator.items)
-        resp._finalize_legacy_stream_accumulator()
-        self.assertEqual(len(accumulator.items), item_count)
-        self.assertEqual(await resp.to_str(), "answer done")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [item async for item in resp]
         self.assertEqual(resp.usage, usage)
 
     async def test_async_iteration_prefers_canonical_usage_over_provider_usage(
@@ -2493,7 +2656,10 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(output.closed)
         self.assertFalse(consumed)
-        with self.assertRaisesRegex(RuntimeError, "provider failed"):
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
             await resp.to_str()
 
     async def test_async_iteration_terminal_cancel_keeps_to_str_failure(
@@ -2951,11 +3117,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         cases = (
             (
                 (first_semantic_item, "legacy"),
-                "legacy stream item after canonical stream item",
+                "unsupported legacy SDK response stream item",
             ),
             (
                 ("legacy", first_semantic_item),
-                "canonical stream item after legacy stream item",
+                "unsupported legacy SDK response stream item",
             ),
         )
 
@@ -2995,12 +3161,65 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 )
                 iterator = resp.__aiter__()
 
-                await iterator.__anext__()
+                if isinstance(items[0], CanonicalStreamItem):
+                    await iterator.__anext__()
+                    self.assertEqual(resp.output_token_count, 1)
+                else:
+                    self.assertEqual(resp.output_token_count, 0)
                 with self.assertRaisesRegex(StreamValidationError, message):
                     await iterator.__anext__()
 
                 self.assertEqual(output.close_count, 1)
-                self.assertEqual(resp.output_token_count, 1)
+
+    async def test_async_iteration_closes_on_unexpected_record_error(
+        self,
+    ) -> None:
+        item = CanonicalStreamItem(
+            stream_session_id="response-stream",
+            run_id="response-run",
+            turn_id="response-turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+
+        class Output:
+            def __init__(self) -> None:
+                self.items = iter((item,))
+                self.close_count = 0
+
+            def __aiter__(self) -> "Output":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                try:
+                    return next(self.items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        class FailingAccumulator:
+            def add(self, _: CanonicalStreamItem) -> None:
+                raise RuntimeError("accumulator failed")
+
+        output = Output()
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: output,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        resp.__aiter__()
+        resp._stream_accumulator = cast(Any, FailingAccumulator())
+
+        with self.assertRaisesRegex(RuntimeError, "accumulator failed"):
+            await resp.__anext__()
+
+        self.assertEqual(output.close_count, 1)
 
     async def test_async_iteration_rejects_semantic_output_missing_terminal(
         self,
@@ -3083,6 +3302,43 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 self.assertEqual(resp.output_token_count, 2)
                 self.assertFalse(consumed)
 
+    async def test_async_iteration_closes_on_unexpected_stop_validation_error(
+        self,
+    ) -> None:
+        class Output:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            def __aiter__(self) -> "Output":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        class FailingAccumulator:
+            def validate_complete(self) -> None:
+                raise RuntimeError("validate failed")
+
+        output = Output()
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: output,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        resp.__aiter__()
+        resp._stream_accumulator = cast(Any, FailingAccumulator())
+
+        with self.assertRaisesRegex(RuntimeError, "validate failed"):
+            await resp.__anext__()
+
+        self.assertEqual(output.close_count, 1)
+
     async def test_to_str_rejects_semantic_after_legacy_output(self) -> None:
         async def gen():
             yield "legacy"
@@ -3099,7 +3355,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             StreamValidationError,
-            "canonical stream item after legacy stream item",
+            "unsupported legacy SDK response stream item",
         ):
             await resp.to_str()
 
@@ -3119,7 +3375,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             StreamValidationError,
-            "legacy stream item after canonical stream item",
+            "unsupported legacy SDK response stream item",
         ):
             await resp.to_str()
 
@@ -3189,11 +3445,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
         iterator = resp.__aiter__()
 
-        self.assertEqual(await iterator.__anext__(), "answer ")
-        self.assertIsInstance(await iterator.__anext__(), ReasoningToken)
-        self.assertIsInstance(await iterator.__anext__(), ReasoningToken)
-
-        self.assertEqual(await resp.to_str(), "answer done")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await iterator.__anext__()
 
     async def test_to_str_after_partial_tool_iteration_uses_answer_only(
         self,
@@ -3213,10 +3469,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
         iterator = resp.__aiter__()
 
-        self.assertEqual(await iterator.__anext__(), "answer ")
-        self.assertIsInstance(await iterator.__anext__(), ToolCallToken)
-
-        self.assertEqual(await resp.to_str(), "answer done")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await iterator.__anext__()
 
     async def test_to_json_patterns(self) -> None:
         settings = GenerationSettings()
@@ -3272,10 +3529,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             generation_settings=gs,
             settings=gs,
         )
-        tokens: list = []
-        async for t in resp:
-            tokens.append(t)
-        self.assertEqual(tokens[-1], "b")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [item async for item in resp]
 
         async def gen_limit():
             for t in ("<think>", "a", "b"):
@@ -3294,9 +3552,10 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             settings=gs_limit,
         )
         it = resp_limit.__aiter__()
-        first = await it.__anext__()
-        self.assertIsInstance(first, ReasoningToken)
-        with self.assertRaises(StopAsyncIteration):
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
             await it.__anext__()
 
     async def test_reasoning_limit_closes_underlying_output(self) -> None:
@@ -3333,13 +3592,13 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
 
         iterator = resp.__aiter__()
-        first = await iterator.__anext__()
-        self.assertIsInstance(first, ReasoningToken)
-
-        with self.assertRaises(StopAsyncIteration):
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
             await iterator.__anext__()
 
-        self.assertEqual(output.read_count, 2)
+        self.assertEqual(output.read_count, 1)
         self.assertTrue(output.closed)
 
     async def test_to_str_closes_underlying_output_on_error(self) -> None:
@@ -3370,18 +3629,21 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        with self.assertRaisesRegex(RuntimeError, "provider failed"):
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
             await resp.to_str()
 
-        self.assertEqual(output.read_count, 2)
+        self.assertEqual(output.read_count, 1)
         self.assertTrue(output.closed)
 
     async def test_restarted_iteration_resets_response_accumulation(
         self,
     ) -> None:
         async def gen():
-            yield "a"
-            yield "b"
+            for item in self._complete_canonical_items():
+                yield item
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
@@ -3393,20 +3655,64 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
 
         iterator = resp.__aiter__()
-        self.assertEqual(await iterator.__anext__(), "a")
+        self.assertIs(
+            (await iterator.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
 
         tokens = [token async for token in resp]
 
-        self.assertEqual(tokens, ["a", "b"])
-        self.assertEqual(await resp.to_str(), "ab")
-        self.assertEqual(resp.output_token_count, 2)
+        self.assertEqual(
+            [token.kind for token in tokens],
+            [item.kind for item in self._complete_canonical_items()],
+        )
+        self.assertEqual(await resp.to_str(), "ok")
+        self.assertEqual(resp.output_token_count, 4)
 
     async def test_restarted_iteration_clears_cached_final_text(self) -> None:
         values = iter(("first", "second"))
 
         def output_fn(**_: object):
             async def gen():
-                yield next(values)
+                text = next(values)
+                for item in (
+                    CanonicalStreamItem(
+                        stream_session_id="response-stream",
+                        run_id="response-run",
+                        turn_id="response-turn",
+                        sequence=0,
+                        kind=StreamItemKind.STREAM_STARTED,
+                        channel=StreamChannel.CONTROL,
+                    ),
+                    CanonicalStreamItem(
+                        stream_session_id="response-stream",
+                        run_id="response-run",
+                        turn_id="response-turn",
+                        sequence=1,
+                        kind=StreamItemKind.ANSWER_DELTA,
+                        channel=StreamChannel.ANSWER,
+                        text_delta=text,
+                    ),
+                    CanonicalStreamItem(
+                        stream_session_id="response-stream",
+                        run_id="response-run",
+                        turn_id="response-turn",
+                        sequence=2,
+                        kind=StreamItemKind.ANSWER_DONE,
+                        channel=StreamChannel.ANSWER,
+                    ),
+                    CanonicalStreamItem(
+                        stream_session_id="response-stream",
+                        run_id="response-run",
+                        turn_id="response-turn",
+                        sequence=3,
+                        kind=StreamItemKind.STREAM_COMPLETED,
+                        channel=StreamChannel.CONTROL,
+                        usage={},
+                        terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                    ),
+                ):
+                    yield item
 
             return gen()
 
@@ -3421,6 +3727,10 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(await resp.to_str(), "first")
         iterator = resp.__aiter__()
-        self.assertEqual(await iterator.__anext__(), "second")
+        self.assertIs(
+            (await iterator.__anext__()).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        self.assertEqual((await iterator.__anext__()).text_delta, "second")
 
         self.assertEqual(await resp.to_str(), "second")

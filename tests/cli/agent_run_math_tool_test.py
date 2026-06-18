@@ -1,6 +1,7 @@
 import unittest
 from argparse import Namespace
 from logging import getLogger
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from avalan.agent import (
@@ -28,8 +29,95 @@ from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.tool.manager import ToolManager, ToolManagerSettings
 from avalan.tool.math import MathToolSet
+
+
+def _canonical_answer_response(*text_deltas: str) -> TextGenerationResponse:
+    async def gen():
+        sequence = 0
+        yield CanonicalStreamItem(
+            stream_session_id="cli-math-stream",
+            run_id="cli-math-run",
+            turn_id="cli-math-turn",
+            sequence=sequence,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        sequence += 1
+        for text_delta in text_deltas:
+            yield CanonicalStreamItem(
+                stream_session_id="cli-math-stream",
+                run_id="cli-math-run",
+                turn_id="cli-math-turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=text_delta,
+            )
+            sequence += 1
+        if text_deltas:
+            yield CanonicalStreamItem(
+                stream_session_id="cli-math-stream",
+                run_id="cli-math-run",
+                turn_id="cli-math-turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            sequence += 1
+        yield CanonicalStreamItem(
+            stream_session_id="cli-math-stream",
+            run_id="cli-math-run",
+            turn_id="cli-math-turn",
+            sequence=sequence,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+
+    return TextGenerationResponse(
+        lambda: gen(), logger=getLogger(), use_async_generator=True
+    )
+
+
+class _LegacyFixtureToolCallResponse:
+    is_async_generator = True
+    input_token_count = 0
+    output_token_count = 0
+    usage = None
+
+    def __init__(self, call: ToolCall) -> None:
+        self._call = call
+
+    def add_done_callback(self, _: object) -> None:
+        return None
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        yield ToolCallToken(token="", call=self._call)
+
+
+def _legacy_fixture_tool_call_response() -> TextGenerationResponse:
+    return cast(
+        TextGenerationResponse,
+        _LegacyFixtureToolCallResponse(
+            ToolCall(
+                id="cli_math_tool_call_1",
+                name="math.calculator",
+                arguments={"expression": "(4 + 6) * 5 / 2"},
+            )
+        ),
+    )
 
 
 class DummyEngine:
@@ -41,29 +129,12 @@ class DummyEngine:
     async def __call__(self, input, *, tool=None):
         DummyEngine.last_tool = tool
         if isinstance(input, Message):
-
-            async def gen():
-                yield "<tool_call>"
-                yield (
-                    '{"name": "math.calculator", "arguments": {"expression":'
-                    ' "(4 + 6) * 5 / 2"}}'
-                )
-                yield "</tool_call>"
-
-            return TextGenerationResponse(
-                lambda: gen(), logger=getLogger(), use_async_generator=True
-            )
+            return _legacy_fixture_tool_call_response()
         else:
             result = (
                 input[-1].content if isinstance(input, list) else str(input)
             )
-
-            async def gen():
-                yield f"The result is {result}."
-
-            return TextGenerationResponse(
-                lambda: gen(), logger=getLogger(), use_async_generator=True
-            )
+            return _canonical_answer_response(f"The result is {result}.")
 
     def input_token_count(self, *_a, **_k):
         return 0
@@ -77,20 +148,7 @@ class DummyDs4Engine(DummyEngine):
     async def __call__(self, input, *, tool=None):
         DummyEngine.last_tool = tool
         if isinstance(input, Message):
-
-            async def gen():
-                yield ToolCallToken(
-                    token="",
-                    call=ToolCall(
-                        id="ds4_tool_call_1",
-                        name="math.calculator",
-                        arguments={"expression": "(4 + 6) * 5 / 2"},
-                    ),
-                )
-
-            return TextGenerationResponse(
-                lambda: gen(), logger=getLogger(), use_async_generator=True
-            )
+            return _legacy_fixture_tool_call_response()
         return await super().__call__(input, tool=tool)
 
 
@@ -312,7 +370,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 for t in tokens
             )
         )
-        self.assertTrue(any(isinstance(t, str) and "25" in t for t in tokens))
+        self.assertTrue(any("25" in getattr(t, "token", "") for t in tokens))
 
     async def test_cli_conversation_with_piped_input_exits_without_tty(self):
         args = make_args()
@@ -464,7 +522,7 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
                 for t in tokens
             )
         )
-        self.assertTrue(any(isinstance(t, str) and "25" in t for t in tokens))
+        self.assertTrue(any("25" in getattr(t, "token", "") for t in tokens))
 
 
 if __name__ == "__main__":

@@ -927,12 +927,14 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
             parser._remaining_tool_argument_delta_text("call-1", ""), ""
         )
         self.assertIsNone(parser._current_explicit_tool_call_id("plain"))
+        self.assertIsNone(parser._stream_tool_argument_text("plain"))
         self.assertIsNone(
             parser._stream_tool_argument_text(
                 '<tool_call>{"name":"bad..name","arguments":{}}'
             )
         )
         self.assertIsNone(parser._decode_json_object(""))
+        self.assertIsNone(parser._decode_json_object('{"ok": true} trailing'))
 
     def test_stream_payload_helper_edges(self) -> None:
         harmony_manager = MagicMock()

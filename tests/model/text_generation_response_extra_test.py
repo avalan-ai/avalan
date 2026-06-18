@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 from avalan.entities import (
     GenerationSettings,
     ReasoningSettings,
-    ReasoningToken,
     Token,
     TokenDetail,
     ToolCallToken,
@@ -17,6 +16,8 @@ from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamTerminalOutcome,
+    StreamValidationError,
 )
 from avalan.tool.parser import ToolCallParser
 
@@ -80,27 +81,11 @@ class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        tokens = []
-        async for t in resp:
-            tokens.append(t)
-
-        self.assertEqual(
-            len([t for t in tokens if isinstance(t, ReasoningToken)]),
-            4,
-        )
-        self.assertEqual(
-            len([t for t in tokens if isinstance(t, ToolCallToken)]),
-            3,
-        )
-        self.assertEqual(
-            len([t for t in tokens if isinstance(t, TokenDetail)]),
-            1,
-        )
-        self.assertGreaterEqual(
-            len([t for t in tokens if type(t) is Token]),
-            2,
-        )
-        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 1)
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [item async for item in resp]
 
     async def test_flush_pending_public_reasoning_prefix(self) -> None:
         async def gen():
@@ -115,14 +100,80 @@ class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        self.assertEqual([item async for item in response], ["<thi"])
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [item async for item in response]
 
     async def test_reasoning_done_precedes_following_answer_delta(
         self,
     ) -> None:
         async def gen():
-            for token in ("x", "<think>", "r", "</think>", "y"):
-                yield token
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="x",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=2,
+                    kind=StreamItemKind.REASONING_DELTA,
+                    channel=StreamChannel.REASONING,
+                    text_delta="r",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=3,
+                    kind=StreamItemKind.REASONING_DONE,
+                    channel=StreamChannel.REASONING,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="y",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=5,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=6,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
 
         settings = GenerationSettings()
         response = TextGenerationResponse(
@@ -157,18 +208,70 @@ class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         async def gen():
-            for token in (
-                "x",
-                "<think>",
-                "a",
-                "</think>",
-                " \n ",
-                "<think>",
-                "b",
-                "</think>",
-                "y",
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="x",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=2,
+                    kind=StreamItemKind.REASONING_DELTA,
+                    channel=StreamChannel.REASONING,
+                    text_delta="<think>a</think><think>b</think>",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=3,
+                    kind=StreamItemKind.REASONING_DONE,
+                    channel=StreamChannel.REASONING,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta=" \n y",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=5,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=6,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
             ):
-                yield token
+                yield item
 
         settings = GenerationSettings()
         response = TextGenerationResponse(
@@ -197,33 +300,69 @@ class TextGenerationResponseParsersTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         async def gen():
-            yield "answer"
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=1,
+                    kind=StreamItemKind.REASONING_DELTA,
+                    channel=StreamChannel.REASONING,
+                    text_delta="private",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=2,
+                    kind=StreamItemKind.REASONING_DONE,
+                    channel=StreamChannel.REASONING,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=3,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="answer",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="response-stream",
+                    run_id="response-run",
+                    turn_id="response-turn",
+                    sequence=5,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
 
         response = TextGenerationResponse(
             lambda **_: gen(),
             logger=getLogger(),
             use_async_generator=True,
         )
-        response.__aiter__()
-        accumulator = response._ensure_legacy_stream_accumulator()
-        accumulator.add(
-            CanonicalStreamItem(
-                stream_session_id="response-stream",
-                run_id="response-run",
-                turn_id="response-turn",
-                sequence=1,
-                kind=StreamItemKind.REASONING_DELTA,
-                channel=StreamChannel.REASONING,
-                text_delta="private",
-            )
-        )
-        response._stream_accumulator_sequence = 2
-        response._legacy_reasoning_delta_seen = True
-        response._pending_legacy_reasoning_done = True
+        items = [item async for item in response]
 
-        self.assertEqual(await response.__anext__(), "answer")
-
-        items = accumulator.items
         reasoning_done_index = next(
             index
             for index, item in enumerate(items)

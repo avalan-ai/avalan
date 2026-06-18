@@ -1,8 +1,4 @@
-from ..entities import (
-    ImageEntity,
-    Token,
-    TokenDetail,
-)
+from ..entities import ImageEntity
 from .call import ModelCall as ModelCall
 from .call import ModelCallContext as ModelCallContext
 from .file_delivery import FileDeliveryDecision as FileDeliveryDecision
@@ -20,6 +16,7 @@ from .file_delivery import (
 )
 from .input import input_files as input_files
 from .response.text import TextGenerationResponse
+from .stream import CanonicalStreamItem
 from .vendor import TextGenerationVendorStream
 
 from typing import (
@@ -27,7 +24,6 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
-    Generator,
     TypeAlias,
 )
 
@@ -40,14 +36,12 @@ else:
             return Any
 
 
-OutputGenerator = AsyncGenerator[Token | TokenDetail | str, None]
-OutputFunction = Callable[..., OutputGenerator | str]
+OutputGenerator = AsyncGenerator[CanonicalStreamItem, None]
+OutputFunction = Callable[..., object]
 
 EngineResponse: TypeAlias = (
     TextGenerationResponse
     | TextGenerationVendorStream
-    | Generator[str, None, None]
-    | Generator[Token | TokenDetail, None, None]
     | ImageEntity
     | list[ImageEntity]
     | list[str]

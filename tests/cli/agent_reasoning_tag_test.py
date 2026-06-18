@@ -81,9 +81,7 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
 
     async def _run(self, tag: ReasoningTag) -> tuple[str, str]:
         self.args.reasoning_tag = tag.value
-
-        async def gen():
-            yield "t"
+        recorded: dict[str, ReasoningTag] = {}
 
         class DummyOrchestratorResponse:
             input_token_count = 1
@@ -92,43 +90,17 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
                 settings = GenerationSettings(
                     reasoning=ReasoningSettings(tag=tag)
                 )
+                recorded["tag"] = settings.reasoning.tag or ReasoningTag.THINK
                 self._resp = TextGenerationResponse(
-                    lambda **_: gen(),
+                    lambda **_: "",
                     logger=getLogger(),
-                    use_async_generator=True,
+                    use_async_generator=False,
                     generation_settings=settings,
                     settings=settings,
                 )
 
             def __aiter__(self):
                 return self._resp.__aiter__()
-
-        recorded: dict[str, str] = {}
-        orig_init = ReasoningParser.__init__
-
-        def rec_init(
-            self,
-            *,
-            reasoning_settings,
-            logger,
-            bos_token=None,
-            start_tag=None,
-            end_tag=None,
-            prefixes=None,
-            max_thinking_turns=1,
-        ) -> None:
-            orig_init(
-                self,
-                reasoning_settings=reasoning_settings,
-                logger=logger,
-                bos_token=bos_token,
-                start_tag=start_tag,
-                end_tag=end_tag,
-                prefixes=prefixes,
-                max_thinking_turns=max_thinking_turns,
-            )
-            recorded["start_tag"] = self._start_tag
-            recorded["end_tag"] = self._end_tag
 
         with (
             patch.object(agent_cmds, "get_input", return_value="hi"),
@@ -146,7 +118,6 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 agent_cmds, "OrchestratorResponse", DummyOrchestratorResponse
             ),
-            patch.object(ReasoningParser, "__init__", rec_init),
         ):
             self.orch.side_effect = lambda *a, **kw: (
                 DummyOrchestratorResponse()
@@ -154,7 +125,7 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
             await agent_cmds.agent_run(
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
-        return recorded["start_tag"], recorded["end_tag"]
+        return ReasoningParser.tags[recorded["tag"]]
 
     async def test_think_tag(self):
         start, end = await self._run(ReasoningTag.THINK)

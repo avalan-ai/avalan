@@ -324,9 +324,6 @@ _LEGACY_CLASSIFIER_STRING_SITES = {
         "avalan.model.nlp.text.vendor.openai",
         "OpenAIClient._non_stream_response_content",
     ),
-    ("avalan.model.response.text", "_text_from_non_stream_result"),
-    ("avalan.model.response.text", "TextGenerationResponse.__aiter__"),
-    ("avalan.model.response.text", "TextGenerationResponse.__anext__"),
     (
         "avalan.agent.orchestrator.response.orchestrator_response",
         "OrchestratorResponse._stream_item_projection",
@@ -402,30 +399,6 @@ _PHASE_1_1_LEGACY_CLASSIFIER_DEBT_CEILING = {
         "OpenAIClient._non_stream_response_content",
     ): frozenset({StreamLegacySurface.STRING}),
     (
-        "avalan.model.response.text",
-        "TextGenerationResponse.__aiter__",
-    ): frozenset({StreamLegacySurface.STRING}),
-    (
-        "avalan.model.response.text",
-        "TextGenerationResponse.__anext__",
-    ): frozenset(
-        {
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        }
-    ),
-    (
-        "avalan.model.response.text",
-        "TextGenerationResponse._record_returned_token",
-    ): frozenset({StreamLegacySurface.TOOL_CALL_TOKEN}),
-    (
-        "avalan.model.response.text",
-        "_text_from_non_stream_result",
-    ): frozenset({StreamLegacySurface.STRING}),
-    (
         "avalan.model.stream",
         "_LegacyTokenStreamAdapter.events_from_token",
     ): frozenset({StreamLegacySurface.STRING}),
@@ -489,6 +462,7 @@ _STREAMING_RETURN_CONTAINER_NAMES = {
     "AsyncIterator",
     "AsyncGenerator",
     "AsyncIterable",
+    "Generator",
     "Iterator",
 }
 _STREAMING_RETURN_ALIAS_NAMES = {"OutputGenerator"}
@@ -531,41 +505,6 @@ _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING = {
     ("avalan.event.manager", "EventManager.listen", "return"): frozenset(
         {"Event"}
     ),
-    ("avalan.model.__init__", "OutputGenerator", "alias"): frozenset(
-        {
-            "Token",
-            "TokenDetail",
-            "str",
-        }
-    ),
-    ("avalan.model.__init__", "OutputFunction", "alias"): frozenset(
-        {"OutputGenerator"}
-    ),
-    (
-        "avalan.model.response.text",
-        "OutputGenerator",
-        "alias",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.response.text",
-        "OutputFunction",
-        "alias",
-    ): frozenset({"OutputGenerator"}),
-    (
-        "avalan.model.response.text",
-        "TextGenerationResponse",
-        "base",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.response.text",
-        "TextGenerationResponse.__aiter__",
-        "return",
-    ): frozenset({"Token", "TokenDetail", "str"}),
-    (
-        "avalan.model.response.text",
-        "TextGenerationResponse._string_output_generator",
-        "return",
-    ): frozenset({"OutputGenerator"}),
     (
         "avalan.server.routers.mcp",
         "StreamResponse._response_iterator",
@@ -8132,7 +8071,8 @@ class StreamContractTestCase(TestCase):
         )
         self.assertEqual(
             {entry.category for entry in inventory},
-            _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES,
+            _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
+            - {StreamLegacyBoundaryCategory.SDK_RESPONSE},
         )
         self.assertEqual(
             {
@@ -8177,35 +8117,6 @@ class StreamContractTestCase(TestCase):
                 "_LegacyTokenStreamAdapter.events_from_token",
             ),
             (
-                "avalan.model.response.text",
-                "_canonical_item_from_output_item",
-            ),
-            (
-                "avalan.model.response.text",
-                "_text_from_non_stream_result",
-            ),
-            ("avalan.model.response.text", "OutputItem"),
-            (
-                "avalan.model.response.text",
-                "TextGenerationResponse.__aiter__",
-            ),
-            (
-                "avalan.model.response.text",
-                "TextGenerationResponse.canonical_stream",
-            ),
-            (
-                "avalan.model.response.text",
-                "TextGenerationResponse._canonical_stream_from_output",
-            ),
-            (
-                "avalan.model.response.text",
-                "TextGenerationResponse.__anext__",
-            ),
-            (
-                "avalan.model.response.text",
-                "TextGenerationResponse._record_returned_token",
-            ),
-            (
                 "avalan.agent.orchestrator.response.orchestrator_response",
                 "OrchestratorResponse",
             ),
@@ -8247,23 +8158,6 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(expected_boundaries, inventory_keys)
 
         boundary_expectations = {
-            (
-                "avalan.model.response.text",
-                "TextGenerationResponse.__anext__",
-            ): (
-                (
-                    StreamLegacySurface.STRING,
-                    StreamLegacySurface.TOKEN,
-                    StreamLegacySurface.TOKEN_DETAIL,
-                    StreamLegacySurface.REASONING_TOKEN,
-                    StreamLegacySurface.TOOL_CALL_TOKEN,
-                ),
-                StreamLegacyBoundaryCategory.SDK_RESPONSE,
-                (
-                    StreamLegacyBoundaryDirection.ACCEPTS,
-                    StreamLegacyBoundaryDirection.EMITS,
-                ),
-            ),
             (
                 "avalan.agent.orchestrator.response.orchestrator_response",
                 "OrchestratorResponse._emit",
@@ -8370,8 +8264,8 @@ class StreamContractTestCase(TestCase):
         ):
             with self.assertRaises(StreamValidationError):
                 classify_legacy_stream_runtime_boundary(
-                    "avalan.model.response.text",
-                    "TextGenerationResponse.__anext__",
+                    "avalan.model.stream",
+                    "StreamProjectionState.project",
                 )
 
     def test_legacy_runtime_boundary_inventory_entries_resolve_to_source(

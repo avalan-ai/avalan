@@ -13,11 +13,16 @@ from avalan.entities import (
     Input,
     Message,
     MessageRole,
-    Token,
     TransformerEngineSettings,
 )
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 
 
 class _DummyEngine:
@@ -45,12 +50,50 @@ def _dummy_operation() -> AgentOperation:
 
 def _dummy_response() -> TextGenerationResponse:
     async def output_gen():
-        yield "a"
-        yield Token(id=1, token="b")
+        for sequence, text in enumerate(("a", "b"), start=1):
+            yield CanonicalStreamItem(
+                stream_session_id="step-stream",
+                run_id="step-run",
+                turn_id="step-turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=text,
+            )
+
+    async def canonical_output_gen():
+        yield CanonicalStreamItem(
+            stream_session_id="step-stream",
+            run_id="step-run",
+            turn_id="step-turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        async for item in output_gen():
+            yield item
+        yield CanonicalStreamItem(
+            stream_session_id="step-stream",
+            run_id="step-run",
+            turn_id="step-turn",
+            sequence=3,
+            kind=StreamItemKind.ANSWER_DONE,
+            channel=StreamChannel.ANSWER,
+        )
+        yield CanonicalStreamItem(
+            stream_session_id="step-stream",
+            run_id="step-run",
+            turn_id="step-turn",
+            sequence=4,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
 
     settings = GenerationSettings()
     return TextGenerationResponse(
-        lambda **_: output_gen(),
+        lambda **_: canonical_output_gen(),
         logger=getLogger(),
         use_async_generator=True,
         generation_settings=settings,

@@ -3,7 +3,7 @@ import importlib
 import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -109,17 +109,22 @@ def _legacy_fixture_tool_event_orchestrator_response() -> OrchestratorResponse:
         arguments={"value": 1},
     )
 
-    async def gen() -> AsyncIterator[ToolCallToken]:
-        yield ToolCallToken(token="", call=call)
+    class LegacyFixtureToolResponse:
+        is_async_generator = True
+        input_token_count = 0
+        output_token_count = 0
+        usage = None
 
-    settings = GenerationSettings()
-    response = TextGenerationResponse(
-        lambda **_: gen(),
-        logger=logging.getLogger(),
-        use_async_generator=True,
-        generation_settings=settings,
-        settings=settings,
-    )
+        def add_done_callback(self, _: object) -> None:
+            return None
+
+        def __aiter__(self) -> AsyncIterator[ToolCallToken]:
+            return self._gen()
+
+        async def _gen(self) -> AsyncIterator[ToolCallToken]:
+            yield ToolCallToken(token="", call=call)
+
+    response = cast(TextGenerationResponse, LegacyFixtureToolResponse())
     agent = AsyncMock(spec=EngineAgent)
     agent.engine = SimpleNamespace(model_id="model", tokenizer=None)
     tool = AsyncMock()

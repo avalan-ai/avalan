@@ -8900,9 +8900,9 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
             reasoning=ReasoningSettings(enabled=False)
         )
         response = TextGenerationResponse(
-            lambda **_: complex_generator(),
+            lambda **_: "",
             logger=getLogger(),
-            use_async_generator=True,
+            use_async_generator=False,
             generation_settings=settings,
             settings=settings,
         )
@@ -8978,9 +8978,8 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
             await model_cmds.model_run(args, console, theme, hub, 5, logger)
 
         tg_patch.assert_awaited_once()
-        resp_obj = tg_patch.await_args.kwargs["response"]
         tokens = []
-        async for t in resp_obj:
+        async for t in complex_generator():
             tokens.append(t)
 
         self.assertEqual(

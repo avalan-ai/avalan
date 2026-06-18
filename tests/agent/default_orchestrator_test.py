@@ -24,7 +24,63 @@ from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.model import TextGenerationResponse
 from avalan.model.manager import ModelManager
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.tool.manager import ToolManager
+
+
+def _canonical_response(*text_deltas: str) -> TextGenerationResponse:
+    async def output_gen():
+        sequence = 0
+        yield CanonicalStreamItem(
+            stream_session_id="default-test-stream",
+            run_id="default-test-run",
+            turn_id="default-test-turn",
+            sequence=sequence,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+        sequence += 1
+        for text_delta in text_deltas:
+            yield CanonicalStreamItem(
+                stream_session_id="default-test-stream",
+                run_id="default-test-run",
+                turn_id="default-test-turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=text_delta,
+            )
+            sequence += 1
+        yield CanonicalStreamItem(
+            stream_session_id="default-test-stream",
+            run_id="default-test-run",
+            turn_id="default-test-turn",
+            sequence=sequence,
+            kind=StreamItemKind.ANSWER_DONE,
+            channel=StreamChannel.ANSWER,
+        )
+        sequence += 1
+        yield CanonicalStreamItem(
+            stream_session_id="default-test-stream",
+            run_id="default-test-run",
+            turn_id="default-test-turn",
+            sequence=sequence,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+
+    return TextGenerationResponse(
+        lambda **_: output_gen(),
+        logger=getLogger(),
+        use_async_generator=True,
+    )
 
 
 class DefaultOrchestratorInitTestCase(TestCase):
@@ -231,16 +287,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         engine.tokenizer.encode.side_effect = [[1], [2]]
         model_manager.load_engine.return_value = engine
 
-        async def output_gen():
-            yield "a"
-            yield "b"
-
-        def output_fn(*args, **kwargs):
-            return output_gen()
-
-        response = TextGenerationResponse(
-            output_fn, logger=getLogger(), use_async_generator=True
-        )
+        response = _canonical_response("a", "b")
 
         agent_mock = AsyncMock(spec=TemplateEngineAgent)
         agent_mock.engine = engine
@@ -300,7 +347,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertIsInstance(result, OrchestratorResponse)
-        self.assertEqual(tokens, ["a", "b"])
+        self.assertEqual([token.token for token in tokens], ["a", "b"])
 
         calls = event_manager.trigger.await_args_list
         self.assertTrue(
@@ -317,7 +364,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             token_events[0].payload,
             {
                 "token_id": 1,
-                "token_type": "str",
+                "token_type": "Token",
                 "model_id": "m",
                 "token": "a",
                 "step": 0,
@@ -338,7 +385,7 @@ class DefaultOrchestratorTestCase(IsolatedAsyncioTestCase):
             token_events[1].payload,
             {
                 "token_id": 2,
-                "token_type": "str",
+                "token_type": "Token",
                 "model_id": "m",
                 "token": "b",
                 "step": 1,

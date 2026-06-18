@@ -1,5 +1,6 @@
+from collections.abc import AsyncIterator
 from logging import getLogger
-from typing import cast
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -33,7 +34,9 @@ from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
+    StreamItemCorrelation,
     StreamItemKind,
+    StreamProviderEvent,
     StreamTerminalOutcome,
     StreamValidationError,
     TextGenerationSingleStream,
@@ -72,10 +75,67 @@ def _dummy_operation() -> AgentOperation:
     return AgentOperation(specification=spec, environment=env)
 
 
-def _dummy_response(async_gen: bool = True) -> TextGenerationResponse:
+def _canonical_item(
+    kind: StreamItemKind,
+    sequence: int,
+    *,
+    text_delta: str | None = None,
+    usage: object | None = None,
+    terminal_outcome: StreamTerminalOutcome | None = None,
+) -> CanonicalStreamItem:
+    outcomes = {
+        StreamItemKind.STREAM_COMPLETED: StreamTerminalOutcome.COMPLETED,
+        StreamItemKind.STREAM_ERRORED: StreamTerminalOutcome.ERRORED,
+        StreamItemKind.STREAM_CANCELLED: StreamTerminalOutcome.CANCELLED,
+    }
+    return CanonicalStreamItem(
+        stream_session_id="additional-stream",
+        run_id="additional-run",
+        turn_id="additional-turn",
+        sequence=sequence,
+        kind=kind,
+        channel=stream_channel_for_kind(kind),
+        text_delta=text_delta,
+        usage=cast(Any, usage),
+        terminal_outcome=terminal_outcome or outcomes.get(kind),
+    )
+
+
+def _canonical_answer_items(
+    *text_deltas: str,
+    usage: object | None = None,
+) -> tuple[CanonicalStreamItem, ...]:
+    items = [_canonical_item(StreamItemKind.STREAM_STARTED, 0)]
+    sequence = 1
+    for text_delta in text_deltas:
+        items.append(
+            _canonical_item(
+                StreamItemKind.ANSWER_DELTA,
+                sequence,
+                text_delta=text_delta,
+            )
+        )
+        sequence += 1
+    if text_deltas:
+        items.append(_canonical_item(StreamItemKind.ANSWER_DONE, sequence))
+        sequence += 1
+    items.append(
+        _canonical_item(
+            StreamItemKind.STREAM_COMPLETED,
+            sequence,
+            usage=usage or {},
+        )
+    )
+    return tuple(items)
+
+
+def _response_from_items(
+    *items: CanonicalStreamItem,
+    async_gen: bool = True,
+) -> TextGenerationResponse:
     async def output_gen():
-        yield "a"
-        yield Token(id=5, token="b")
+        for item in items:
+            yield item
 
     def output_fn():
         return output_gen()
@@ -85,17 +145,38 @@ def _dummy_response(async_gen: bool = True) -> TextGenerationResponse:
     )
 
 
-def _empty_response() -> TextGenerationResponse:
-    async def output_gen():
-        for token in ():
-            yield token
-
-    def output_fn():
-        return output_gen()
-
-    return TextGenerationResponse(
-        output_fn, logger=getLogger(), use_async_generator=True
+def _dummy_response(async_gen: bool = True) -> TextGenerationResponse:
+    if not async_gen:
+        return TextGenerationResponse(
+            lambda: "ab", logger=getLogger(), use_async_generator=False
+        )
+    return _response_from_items(
+        *_canonical_answer_items("a", "b"), async_gen=async_gen
     )
+
+
+def _empty_response() -> TextGenerationResponse:
+    return _response_from_items()
+
+
+class _LegacyFixtureResponse:
+    is_async_generator = True
+    input_token_count = 0
+    output_token_count = 0
+    usage = None
+
+    def __init__(self, *items: Token | ToolCallToken) -> None:
+        self._items = items
+
+    def add_done_callback(self, _: object) -> None:
+        return None
+
+    def __aiter__(self) -> AsyncIterator[Token | ToolCallToken]:
+        return self._output_gen()
+
+    async def _output_gen(self) -> AsyncIterator[Token | ToolCallToken]:
+        for item in self._items:
+            yield item
 
 
 def _usage_response(text: str, usage: object) -> TextGenerationResponse:
@@ -208,6 +289,139 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaises(AssertionError):
             response._stream_item_projection(object(), 0)
+
+    async def test_provider_event_legacy_bridge_variants(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+        ready_event = StreamProviderEvent(
+            kind=StreamItemKind.TOOL_CALL_READY,
+            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            data={"name": "calc", "arguments": {"x": 1}},
+        )
+
+        delta_item = response._legacy_parser_item_from_provider_event(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                text_delta='{"x":',
+            )
+        )
+        ready_item = response._legacy_parser_item_from_provider_event(
+            ready_event
+        )
+        done_item = response._legacy_parser_item_from_provider_event(
+            StreamProviderEvent(kind=StreamItemKind.TOOL_CALL_DONE)
+        )
+
+        self.assertIsInstance(delta_item, ToolCallToken)
+        assert isinstance(delta_item, ToolCallToken)
+        self.assertEqual(delta_item.token, '{"x":')
+        self.assertIsInstance(ready_item, Event)
+        assert isinstance(ready_item, Event)
+        self.assertEqual(ready_item.type, EventType.TOOL_PROCESS)
+        self.assertIsNone(done_item)
+
+        response._queue_parser_output(
+            StreamProviderEvent(kind=StreamItemKind.TOOL_CALL_DONE)
+        )
+        self.assertTrue(response._parser_queue.empty())
+
+        response.__aiter__()
+        response._queue_parser_output(ready_event)
+        self.assertTrue(response._parser_queue.empty())
+        self.assertFalse(response._tool_process_events.empty())
+
+        with self.assertRaises(AssertionError):
+            response._legacy_parser_item_from_provider_event(
+                StreamProviderEvent(kind=StreamItemKind.ANSWER_DELTA)
+            )
+
+    async def test_parser_flush_bridges_provider_ready_and_done_events(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        response._tool_parser = AsyncMock()
+        response._tool_parser.flush.return_value = [
+            StreamProviderEvent(kind=StreamItemKind.TOOL_CALL_DONE),
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_READY,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                data={"name": "calc", "arguments": {"x": 1}},
+            ),
+        ]
+        response.__aiter__()
+
+        item = await response.__anext__()
+
+        self.assertIsInstance(item, Event)
+        assert isinstance(item, Event)
+        self.assertEqual(item.type, EventType.TOOL_PROCESS)
+
+    async def test_emit_returns_none_when_parser_has_no_items(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+        response._tool_parser = AsyncMock()
+        response._tool_parser.push.return_value = []
+
+        self.assertIsNone(await response._emit("raw"))
+
+    async def test_response_text_and_calls_collects_streamed_tool_deltas(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        call = ToolCall(id="call-1", name="calc", arguments=None)
+        legacy_response = _LegacyFixtureResponse(
+            ToolCallToken(token='{"x":', call=None),
+            ToolCallToken(token="1}", call=call),
+        )
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            cast(TextGenerationResponse, legacy_response),
+            agent,
+            operation,
+            {},
+        )
+
+        text, calls = await response._response_text_and_calls(
+            cast(TextGenerationResponse, legacy_response)
+        )
+
+        self.assertEqual(text, "")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].name, "calc")
+        self.assertTrue(
+            any(
+                item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+                and item.text_delta == '{"x":'
+                for item in response.canonical_items
+            )
+        )
 
     async def test_projection_reuses_recorded_tool_lifecycle_item(self):
         engine = _DummyEngine()
@@ -895,11 +1109,9 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         call = ToolCall(id=uuid4(), name="calc", arguments=None)
 
-        async def output_gen():
-            yield ToolCallToken(token="c", call=call)
-
-        response = TextGenerationResponse(
-            output_gen, logger=getLogger(), use_async_generator=True
+        response = cast(
+            TextGenerationResponse,
+            _LegacyFixtureResponse(ToolCallToken(token="c", call=call)),
         )
 
         event_manager = MagicMock(spec=EventManager)

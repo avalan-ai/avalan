@@ -26,6 +26,12 @@ from avalan.entities import (
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 from avalan.tool.manager import ToolManager
 
 
@@ -57,8 +63,47 @@ def _string_response(text: str, *, async_gen: bool = False):
         if async_gen:
 
             async def gen():
+                sequence = 0
+                yield CanonicalStreamItem(
+                    stream_session_id="binary-test-stream",
+                    run_id="binary-test-run",
+                    turn_id="binary-test-turn",
+                    sequence=sequence,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                )
+                sequence += 1
                 for ch in text:
-                    yield ch
+                    yield CanonicalStreamItem(
+                        stream_session_id="binary-test-stream",
+                        run_id="binary-test-run",
+                        turn_id="binary-test-turn",
+                        sequence=sequence,
+                        kind=StreamItemKind.ANSWER_DELTA,
+                        channel=StreamChannel.ANSWER,
+                        text_delta=ch,
+                    )
+                    sequence += 1
+                if text:
+                    yield CanonicalStreamItem(
+                        stream_session_id="binary-test-stream",
+                        run_id="binary-test-run",
+                        turn_id="binary-test-turn",
+                        sequence=sequence,
+                        kind=StreamItemKind.ANSWER_DONE,
+                        channel=StreamChannel.ANSWER,
+                    )
+                    sequence += 1
+                yield CanonicalStreamItem(
+                    stream_session_id="binary-test-stream",
+                    run_id="binary-test-run",
+                    turn_id="binary-test-turn",
+                    sequence=sequence,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    usage={},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                )
 
             return gen()
         return text
@@ -115,21 +160,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "q"
-            yield "u"
-            yield "e"
-            yield "r"
-            yield "y"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("query", async_gen=True)
 
         binary_data = b"\x89PDF\x0d\x0a\x1a\x0a\x00\x00\x00\x0d"
         tool = AsyncMock(spec=ToolManager)
@@ -151,18 +182,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "o"
-            yield "k"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("ok", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()
@@ -209,17 +229,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "fetch"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("fetch", async_gen=True)
 
         bytearray_data = bytearray(b"test bytearray content")
         tool = AsyncMock(spec=ToolManager)
@@ -241,17 +251,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "done"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("done", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()
@@ -293,17 +293,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "get"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("get", async_gen=True)
 
         binary1 = b"\x00\x01\x02\x03"
         binary2 = b"\xff\xfe\xfd\xfc"
@@ -332,17 +322,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "ok"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("ok", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()
@@ -394,17 +374,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "x"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("x", async_gen=True)
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
@@ -425,17 +395,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "y"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("y", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()
@@ -475,17 +435,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "call"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("call", async_gen=True)
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
@@ -514,17 +464,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "done"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("done", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()
@@ -574,17 +514,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "query"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("query", async_gen=True)
 
         memview_data = memoryview(b"memoryview content")
         tool = AsyncMock(spec=ToolManager)
@@ -606,17 +536,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "ok"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("ok", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()
@@ -659,17 +579,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "fetch"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("fetch", async_gen=True)
 
         memview1 = memoryview(b"\x11\x22\x33\x44")
         memview2 = memoryview(b"\xaa\xbb\xcc\xdd")
@@ -697,17 +607,7 @@ class OrchestratorResponseBinaryDataTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "done"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("done", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()
@@ -769,17 +669,7 @@ class OrchestratorResponseBinaryDataclassTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "dc"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("dc", async_gen=True)
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
@@ -800,17 +690,7 @@ class OrchestratorResponseBinaryDataclassTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "ok"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("ok", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()

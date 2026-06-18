@@ -5,7 +5,6 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import (
     GenerationSettings,
-    ReasoningToken,
     Token,
     ToolCall,
     ToolCallToken,
@@ -517,7 +516,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             StreamValidationError,
-            "canonical stream item after legacy stream item",
+            "unsupported legacy SDK response stream item",
         ):
             await response.to_str()
 
@@ -1432,8 +1431,8 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
             yield Token(token="<think>")
 
         response = _response(lambda **_: gen())
-        tokens = [token async for token in response]
-
-        self.assertEqual(len(tokens), 1)
-        self.assertIsInstance(tokens[0], ReasoningToken)
-        self.assertEqual(tokens[0].id, -1)
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [token async for token in response]

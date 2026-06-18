@@ -53,46 +53,22 @@ class CliModelReasoningTagTestCase(IsolatedAsyncioTestCase):
         manager.parse_uri = MagicMock(return_value=engine_uri)
         manager.load = MagicMock(return_value=load_cm)
 
+        recorded: dict[str, ReasoningTag] = {}
+
         async def manager_call(self, model_task):
             operation = model_task.operation
-
-            async def gen():
-                yield "t"
+            recorded["tag"] = (
+                operation.generation_settings.reasoning.tag
+                or ReasoningTag.THINK
+            )
 
             return TextGenerationResponse(
-                lambda **_: gen(),
+                lambda **_: "",
                 logger=getLogger(),
-                use_async_generator=True,
+                use_async_generator=False,
                 generation_settings=operation.generation_settings,
                 settings=operation.generation_settings,
             )
-
-        recorded: dict[str, str] = {}
-        orig_init = ReasoningParser.__init__
-
-        def rec_init(
-            self,
-            *,
-            reasoning_settings,
-            logger,
-            bos_token=None,
-            start_tag=None,
-            end_tag=None,
-            prefixes=None,
-            max_thinking_turns=1,
-        ) -> None:
-            orig_init(
-                self,
-                reasoning_settings=reasoning_settings,
-                logger=logger,
-                bos_token=bos_token,
-                start_tag=start_tag,
-                end_tag=end_tag,
-                prefixes=prefixes,
-                max_thinking_turns=max_thinking_turns,
-            )
-            recorded["start_tag"] = self._start_tag
-            recorded["end_tag"] = self._end_tag
 
         with (
             patch.object(model_cmds, "ModelManager", return_value=manager),
@@ -114,10 +90,9 @@ class CliModelReasoningTagTestCase(IsolatedAsyncioTestCase):
             patch.object(
                 model_cmds, "token_generation", new_callable=AsyncMock
             ),
-            patch.object(ReasoningParser, "__init__", rec_init),
         ):
             await model_cmds.model_run(args, console, theme, hub, 5, logger)
-        return recorded["start_tag"], recorded["end_tag"]
+        return ReasoningParser.tags[recorded["tag"]]
 
     async def test_think_tag(self):
         start, end = await self._run(ReasoningTag.THINK)

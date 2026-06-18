@@ -2,8 +2,9 @@ from asyncio import CancelledError, create_task, sleep, wait_for
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from io import StringIO
-from json import loads
+from json import dumps, loads
 from logging import getLogger
+from types import MethodType
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock
@@ -44,7 +45,6 @@ from avalan.event import Event, EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
-from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -54,6 +54,7 @@ from avalan.model.stream import (
     StreamProviderEvent,
     StreamTerminalOutcome,
     StreamVisibility,
+    stream_channel_for_kind,
     validate_canonical_stream_items,
     validate_tool_lifecycle_items,
 )
@@ -85,22 +86,303 @@ def _dummy_operation() -> AgentOperation:
     return AgentOperation(specification=spec, environment=env)
 
 
+def _canonical_item(
+    kind: StreamItemKind,
+    sequence: int,
+    *,
+    text_delta: str | None = None,
+    data: object | None = None,
+    usage: object | None = None,
+    terminal_outcome: StreamTerminalOutcome | None = None,
+    correlation: StreamItemCorrelation | None = None,
+) -> CanonicalStreamItem:
+    outcomes = {
+        StreamItemKind.STREAM_COMPLETED: StreamTerminalOutcome.COMPLETED,
+        StreamItemKind.STREAM_ERRORED: StreamTerminalOutcome.ERRORED,
+        StreamItemKind.STREAM_CANCELLED: StreamTerminalOutcome.CANCELLED,
+    }
+    return CanonicalStreamItem(
+        stream_session_id="provider-stream",
+        run_id="provider-run",
+        turn_id="provider-turn",
+        sequence=sequence,
+        kind=kind,
+        channel=stream_channel_for_kind(kind),
+        text_delta=text_delta,
+        data=cast(Any, data),
+        usage=cast(Any, usage),
+        terminal_outcome=terminal_outcome or outcomes.get(kind),
+        correlation=correlation or StreamItemCorrelation(),
+    )
+
+
+def _canonical_answer_items(
+    *text_deltas: str,
+    usage: object | None = None,
+) -> tuple[CanonicalStreamItem, ...]:
+    items = [_canonical_item(StreamItemKind.STREAM_STARTED, 0)]
+    sequence = 1
+    for text_delta in text_deltas:
+        items.append(
+            _canonical_item(
+                StreamItemKind.ANSWER_DELTA,
+                sequence,
+                text_delta=text_delta,
+            )
+        )
+        sequence += 1
+    if text_deltas:
+        items.append(_canonical_item(StreamItemKind.ANSWER_DONE, sequence))
+        sequence += 1
+    items.append(
+        _canonical_item(
+            StreamItemKind.STREAM_COMPLETED,
+            sequence,
+            usage=usage or {},
+        )
+    )
+    sequence += 1
+    items.append(_canonical_item(StreamItemKind.STREAM_CLOSED, sequence))
+    return tuple(items)
+
+
+def _canonical_tool_call_items(
+    call: ToolCall,
+    *argument_deltas: str,
+    usage: object | None = None,
+    tool_call_id: str | None = None,
+) -> tuple[CanonicalStreamItem, ...]:
+    resolved_tool_call_id = tool_call_id or str(call.id)
+    correlation = StreamItemCorrelation(tool_call_id=resolved_tool_call_id)
+    deltas = (
+        argument_deltas
+        if argument_deltas or call.arguments is None
+        else (dumps(call.arguments),)
+    )
+    items = [_canonical_item(StreamItemKind.STREAM_STARTED, 0)]
+    sequence = 1
+    for text_delta in deltas:
+        items.append(
+            _canonical_item(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                sequence,
+                text_delta=text_delta,
+                correlation=correlation,
+            )
+        )
+        sequence += 1
+    items.append(
+        _canonical_item(
+            StreamItemKind.TOOL_CALL_READY,
+            sequence,
+            data={"name": call.name, "arguments": call.arguments or {}},
+            correlation=correlation,
+        )
+    )
+    sequence += 1
+    items.append(
+        _canonical_item(
+            StreamItemKind.TOOL_CALL_DONE,
+            sequence,
+            correlation=correlation,
+        )
+    )
+    sequence += 1
+    items.append(
+        _canonical_item(
+            StreamItemKind.STREAM_COMPLETED,
+            sequence,
+            usage=usage or {},
+        )
+    )
+    sequence += 1
+    items.append(_canonical_item(StreamItemKind.STREAM_CLOSED, sequence))
+    return tuple(items)
+
+
+def _canonical_tool_call_stream_items(
+    *chunks: ToolCall | tuple[str, ToolCall],
+    usage: object | None = None,
+) -> tuple[CanonicalStreamItem, ...]:
+    items = [_canonical_item(StreamItemKind.STREAM_STARTED, 0)]
+    sequence = 1
+    anonymous_ids: dict[int, str] = {}
+    anonymous_index = 0
+    active_call: ToolCall | None = None
+    active_tool_call_id: str | None = None
+    active_has_delta = False
+
+    def resolved_id(call: ToolCall) -> str:
+        nonlocal anonymous_index
+        if call.id is not None:
+            return str(call.id)
+        key = id(call)
+        tool_call_id = anonymous_ids.get(key)
+        if tool_call_id is None:
+            anonymous_index += 1
+            tool_call_id = f"orchestrator-tool-call-{anonymous_index}"
+            anonymous_ids[key] = tool_call_id
+        return tool_call_id
+
+    def append_ready_done() -> None:
+        nonlocal active_call, active_tool_call_id, sequence
+        nonlocal active_has_delta
+        assert active_call is not None
+        assert active_tool_call_id is not None
+        correlation = StreamItemCorrelation(tool_call_id=active_tool_call_id)
+        if not active_has_delta and active_call.arguments is not None:
+            items.append(
+                _canonical_item(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    sequence,
+                    text_delta=dumps(active_call.arguments),
+                    correlation=correlation,
+                )
+            )
+            sequence += 1
+        items.append(
+            _canonical_item(
+                StreamItemKind.TOOL_CALL_READY,
+                sequence,
+                data={
+                    "name": active_call.name,
+                    "arguments": active_call.arguments or {},
+                },
+                correlation=correlation,
+            )
+        )
+        sequence += 1
+        items.append(
+            _canonical_item(
+                StreamItemKind.TOOL_CALL_DONE,
+                sequence,
+                correlation=correlation,
+            )
+        )
+        sequence += 1
+        active_call = None
+        active_tool_call_id = None
+        active_has_delta = False
+
+    for chunk in chunks:
+        if isinstance(chunk, ToolCall):
+            text_delta = ""
+            call = chunk
+        else:
+            text_delta, call = chunk
+        tool_call_id = resolved_id(call)
+        if (
+            active_tool_call_id is not None
+            and active_tool_call_id != tool_call_id
+        ):
+            append_ready_done()
+        active_call = call
+        active_tool_call_id = tool_call_id
+        if text_delta:
+            items.append(
+                _canonical_item(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    sequence,
+                    text_delta=text_delta,
+                    correlation=StreamItemCorrelation(
+                        tool_call_id=tool_call_id
+                    ),
+                )
+            )
+            sequence += 1
+            active_has_delta = True
+
+    if active_tool_call_id is not None:
+        append_ready_done()
+
+    items.append(
+        _canonical_item(
+            StreamItemKind.STREAM_COMPLETED,
+            sequence,
+            usage=usage or {},
+        )
+    )
+    sequence += 1
+    items.append(_canonical_item(StreamItemKind.STREAM_CLOSED, sequence))
+    return tuple(items)
+
+
+def _tool_call_response(
+    *chunks: ToolCall | tuple[str, ToolCall],
+) -> TextGenerationResponse:
+    response = _response_from_items(
+        *_canonical_tool_call_stream_items(*chunks)
+    )
+    tokens: list[ToolCallToken] = []
+    for chunk in chunks:
+        if isinstance(chunk, ToolCall):
+            tokens.append(ToolCallToken(token="", call=chunk))
+        else:
+            text_delta, call = chunk
+            tokens.append(ToolCallToken(token=text_delta, call=call))
+    setattr(response, "_fixture_tool_call_tokens", tuple(tokens))
+    return response
+
+
+def _partial_answer_exception_response(
+    text_delta: str,
+    exception: BaseException,
+) -> TextGenerationResponse:
+    async def gen() -> AsyncIterator[CanonicalStreamItem]:
+        yield _canonical_item(StreamItemKind.STREAM_STARTED, 0)
+        yield _canonical_item(
+            StreamItemKind.ANSWER_DELTA,
+            1,
+            text_delta=text_delta,
+        )
+        raise exception
+
+    return TextGenerationResponse(
+        lambda **_: gen(),
+        logger=getLogger(),
+        use_async_generator=True,
+        generation_settings=GenerationSettings(),
+        settings=GenerationSettings(),
+    )
+
+
+def _response_from_items(
+    *items: CanonicalStreamItem,
+    settings: GenerationSettings | None = None,
+) -> TextGenerationResponse:
+    async def gen() -> AsyncIterator[CanonicalStreamItem]:
+        for item in items:
+            yield item
+
+    resolved_settings = settings or GenerationSettings()
+    return TextGenerationResponse(
+        lambda **_: gen(),
+        logger=getLogger(),
+        use_async_generator=True,
+        generation_settings=resolved_settings,
+        settings=resolved_settings,
+    )
+
+
 def _dummy_response(async_gen=True):
     async def output_gen():
-        yield "a"
-        yield Token(id=5, token="b")
+        for item in _canonical_answer_items("a", "b"):
+            yield item
 
     def output_fn(**_):
         return output_gen()
 
     settings = GenerationSettings()
-    return TextGenerationResponse(
+    response = TextGenerationResponse(
         output_fn,
         logger=getLogger(),
         use_async_generator=async_gen,
         generation_settings=settings,
         settings=settings,
     )
+    if async_gen:
+        setattr(response, "_fixture_answer_deltas", ("a", "b"))
+    return response
 
 
 def _make_response(
@@ -122,7 +404,7 @@ def _make_response(
         participant_id=participant_id,
         session_id=session_id,
     )
-    return OrchestratorResponse(
+    orchestrated = OrchestratorResponse(
         input_value,
         response,
         agent,
@@ -131,68 +413,175 @@ def _make_response(
         context,
         **kwargs,
     )
+    _install_tool_call_fixture_bridge(orchestrated, response)
+    return orchestrated
+
+
+def _install_tool_call_fixture_bridge(
+    orchestrated: OrchestratorResponse,
+    response: TextGenerationResponse,
+) -> None:
+    tokens = getattr(response, "_fixture_tool_call_tokens", None)
+    answer_deltas = getattr(response, "_fixture_answer_deltas", None)
+    legacy_items = getattr(response, "_fixture_legacy_items", None)
+    has_fixture_tokens = tokens is not None
+    has_fixture_answer = answer_deltas is not None
+    has_fixture_legacy_items = legacy_items is not None
+    if (
+        not has_fixture_tokens
+        and not has_fixture_answer
+        and not has_fixture_legacy_items
+    ):
+        return
+    original_next_item = orchestrated._next_item
+    original_response_text_and_calls = orchestrated._response_text_and_calls
+
+    async def drain_fixture_response(self: OrchestratorResponse) -> None:
+        if getattr(self, "_fixture_response_drained", False):
+            return
+        assert self._response_iterator is not None
+        while True:
+            try:
+                await self._response_iterator.__anext__()
+            except StopAsyncIteration:
+                break
+        setattr(self, "_fixture_response_drained", True)
+
+    async def fixture_next_item(self: OrchestratorResponse) -> object | None:
+        current_response = self._response
+        current_response_id = id(current_response)
+        if (
+            getattr(self, "_fixture_current_response_id", None)
+            != current_response_id
+        ):
+            setattr(self, "_fixture_current_response_id", current_response_id)
+            setattr(self, "_fixture_answer_delta_index", 0)
+            setattr(self, "_fixture_tool_call_index", 0)
+            setattr(self, "_fixture_legacy_item_index", 0)
+            setattr(self, "_fixture_response_drained", False)
+        current_tokens = cast(
+            tuple[ToolCallToken, ...],
+            getattr(current_response, "_fixture_tool_call_tokens", ()),
+        )
+        current_answer_deltas = cast(
+            tuple[str, ...],
+            getattr(current_response, "_fixture_answer_deltas", ()),
+        )
+        has_current_tokens = hasattr(
+            current_response, "_fixture_tool_call_tokens"
+        )
+        has_current_answer = hasattr(
+            current_response, "_fixture_answer_deltas"
+        )
+        if not has_current_tokens and not has_current_answer:
+            current_legacy_items = cast(
+                tuple[Token | TokenDetail | Event | str, ...],
+                getattr(current_response, "_fixture_legacy_items", ()),
+            )
+            if not current_legacy_items:
+                return await original_next_item()
+            legacy_index = getattr(self, "_fixture_legacy_item_index", 0)
+            if legacy_index < len(current_legacy_items):
+                legacy_item = current_legacy_items[legacy_index]
+                setattr(self, "_fixture_legacy_item_index", legacy_index + 1)
+                if isinstance(legacy_item, ToolCallToken):
+                    self._record_streamed_tool_call_token(legacy_item)
+                return await self._emit(legacy_item)
+            await drain_fixture_response(self)
+            return await original_next_item()
+
+        answer_index = getattr(self, "_fixture_answer_delta_index", 0)
+        if answer_index < len(current_answer_deltas):
+            text_delta = current_answer_deltas[answer_index]
+            setattr(self, "_fixture_answer_delta_index", answer_index + 1)
+            return await self._emit(Token(token=text_delta))
+
+        tool_index = getattr(self, "_fixture_tool_call_index", 0)
+        if tool_index < len(current_tokens):
+            token = current_tokens[tool_index]
+            setattr(self, "_fixture_tool_call_index", tool_index + 1)
+            self._record_streamed_tool_call_token(token)
+            return await self._emit(token)
+
+        if has_current_tokens:
+            await drain_fixture_response(self)
+            self._response_drained = True
+            self._finish_active_model_continuation(
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED
+            )
+            self._queue_pending_tool_call_event()
+        elif has_current_answer:
+            await drain_fixture_response(self)
+
+        return await original_next_item()
+
+    async def fixture_response_text_and_calls(
+        self: OrchestratorResponse,
+        current_response: TextGenerationResponse,
+    ) -> tuple[str, list[ToolCall]]:
+        response_tokens = getattr(
+            current_response, "_fixture_tool_call_tokens", None
+        )
+        response_answer_deltas = getattr(
+            current_response, "_fixture_answer_deltas", None
+        )
+        has_response_tokens = response_tokens is not None
+        has_response_answer = response_answer_deltas is not None
+        if not has_response_tokens and not has_response_answer:
+            return await original_response_text_and_calls(current_response)
+
+        calls: list[ToolCall] = []
+        async for _ in current_response:
+            pass
+        if has_response_answer:
+            self._finish_active_model_continuation(
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED
+            )
+            return "".join(cast(tuple[str, ...], response_answer_deltas)), []
+        for token in cast(tuple[ToolCallToken, ...], response_tokens):
+            if token.call is not None:
+                self._collect_streamed_tool_call_token(token, calls)
+            else:
+                self._record_unanchored_tool_call_delta(token.token)
+        pending_call = self._take_pending_tool_call()
+        if pending_call is not None:
+            calls.append(pending_call)
+        self._finish_active_model_continuation(
+            StreamItemKind.MODEL_CONTINUATION_COMPLETED
+        )
+        return "", calls
+
+    orchestrated._next_item = MethodType(fixture_next_item, orchestrated)
+    orchestrated._response_text_and_calls = MethodType(
+        fixture_response_text_and_calls, orchestrated
+    )
 
 
 def _complex_response():
-    async def gen():
-        rp = ReasoningParser(
-            reasoning_settings=ReasoningSettings(),
-            logger=getLogger(),
-            legacy_fixture=True,
-        )
-        tm = MagicMock()
-        tm.is_potential_tool_call.return_value = True
-        tm.get_calls.return_value = None
-        base_parser = ToolCallParser()
-        tm.tool_call_status.side_effect = base_parser.tool_call_status
-        tp = ToolCallResponseParser(tm, None, legacy_fixture=True)
-
-        sequence = [
-            "X",
-            "<think>",
-            "ra",
-            "rb",
-            "</think>",
-            "Y",
-            "<tool_call>",
-            "foo",
-            "bar",
-            "</tool_call>",
-            "Z",
-        ]
-
-        for s in sequence:
-            items = await rp.push(s)
-            for item in items:
-                parsed = (
-                    await tp.push(item) if isinstance(item, str) else [item]
-                )
-                for p in parsed:
-                    if isinstance(p, str):
-                        if p == "</think>":
-                            yield TokenDetail(id=3, token=p, probability=0.5)
-                        elif p in {"X", "Y"}:
-                            yield Token(id=1, token=p)
-                        elif p == "<think>" or p == "Z":
-                            yield p
-                    elif isinstance(p, ToolCallToken):
-                        if p.token == "</tool_call>":
-                            yield TokenDetail(
-                                id=4, token=p.token, probability=0.5
-                            )
-                        else:
-                            yield p
-                    else:
-                        yield p
-
-    settings = GenerationSettings(reasoning=ReasoningSettings(enabled=False))
-    return TextGenerationResponse(
-        lambda **_: gen(),
-        logger=getLogger(),
-        use_async_generator=True,
-        generation_settings=settings,
-        settings=settings,
+    response = _response_from_items(
+        *_canonical_answer_items("X", "Y", "Z"),
+        settings=GenerationSettings(
+            reasoning=ReasoningSettings(enabled=False)
+        ),
     )
+    setattr(
+        response,
+        "_fixture_legacy_items",
+        (
+            Token(id=1, token="X"),
+            ReasoningToken(token="<think>", id=-1, probability=None),
+            ReasoningToken(token="ra", id=-1, probability=None),
+            ReasoningToken(token="rb", id=-1, probability=None),
+            ReasoningToken(token="</think>", id=-1, probability=None),
+            Token(id=1, token="Y"),
+            ToolCallToken(token="<tool_call>"),
+            ToolCallToken(token="foo"),
+            ToolCallToken(token="bar"),
+            TokenDetail(id=4, token="</tool_call>", probability=0.5),
+            "Z",
+        ),
+    )
+    return response
 
 
 class _SkippingToolParser:
@@ -276,7 +665,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         async for t in resp:
             tokens.append(t)
 
-        self.assertEqual(tokens, ["a", Token(id=5, token="b")])
+        self.assertEqual(tokens, [Token(token="a"), Token(token="b")])
         calls = event_manager.trigger.await_args_list
         self.assertTrue(any(c.args[0].type == EventType.END for c in calls))
         self.assertTrue(
@@ -292,7 +681,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             token_events[0].payload,
             {
                 "token_id": 42,
-                "token_type": "str",
+                "token_type": "Token",
                 "model_id": "m",
                 "token": "a",
                 "step": 0,
@@ -318,7 +707,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             token_events[1].payload,
             {
-                "token_id": 5,
+                "token_id": 42,
                 "token_type": "Token",
                 "model_id": "m",
                 "token": "b",
@@ -327,7 +716,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             token_events[1].observability.data["summary"],
-            {"text_delta_length": 1, "metadata_keys": ["token_id"]},
+            {"text_delta_length": 1},
         )
 
     async def test_consumer_projections_align_token_event_sequences(
@@ -503,7 +892,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         )
         self.assertIsNone(resp._last_token_event_canonical_item)
 
-    async def test_to_str_emits_streamed_token_events(self):
+    async def test_to_str_consumes_canonical_answer_without_token_events(self):
         engine = _DummyEngine()
         engine.tokenizer.encode.return_value = [42]
         agent = MagicMock(spec=EngineAgent)
@@ -529,31 +918,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             for call in event_manager.trigger.await_args_list
             if call.args[0].type == EventType.TOKEN_GENERATED
         ]
-        self.assertEqual(len(token_events), 2)
-        self.assertEqual(
-            [event.payload["token"] for event in token_events],
-            ["a", "b"],
-        )
-        self.assertEqual(
-            [event.payload["step"] for event in token_events],
-            [0, 1],
-        )
-        self.assertEqual(
-            [
-                cast(
-                    dict[str, object],
-                    event.observability.data["summary"],
-                )["text_delta_length"]
-                for event in token_events
-            ],
-            [1, 1],
-        )
-        event_sequences = [
-            event.observability.data["sequence"] for event in token_events
-        ]
-        canonical_sequences = {item.sequence for item in resp.canonical_items}
-        self.assertEqual(event_sequences, [1, 2])
-        self.assertTrue(canonical_sequences.isdisjoint(event_sequences))
+        self.assertEqual(token_events, [])
         self.assertEqual(
             [item.kind for item in resp.canonical_items],
             [
@@ -618,7 +983,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [t async for t in resp],
-            ["a", Token(id=5, token="b")],
+            [Token(token="a"), Token(token="b")],
         )
         calls = event_manager.trigger.await_args_list
         self.assertFalse(
@@ -635,16 +1000,12 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def gen() -> AsyncIterator[str]:
-            yield "<|start|>assistant"
-            yield "<|channel|>commentary to=mytool <|message|>{}<|call|>"
-
         settings = GenerationSettings()
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
+        response = _response_from_items(
+            *_canonical_answer_items(
+                "<|start|>assistant",
+                "<|channel|>commentary to=mytool <|message|>{}<|call|>",
+            ),
             settings=settings,
         )
 
@@ -672,12 +1033,17 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         iterator = resp.__aiter__()
         first = await wait_for(iterator.__anext__(), 1)
         second = await wait_for(iterator.__anext__(), 1)
-        self.assertIsInstance(first, ToolCallToken)
-        assert isinstance(first, ToolCallToken)
-        self.assertEqual(first.token, "{}")
-        self.assertIsInstance(second, Event)
-        assert isinstance(second, Event)
-        self.assertEqual(second.type, EventType.TOOL_PROCESS)
+        with self.assertRaises(StopAsyncIteration):
+            await wait_for(iterator.__anext__(), 1)
+
+        self.assertEqual(first, Token(token="<|start|>assistant"))
+        self.assertEqual(
+            second,
+            Token(
+                token="<|channel|>commentary to=mytool <|message|>{}<|call|>"
+            ),
+        )
+        validate_canonical_stream_items(resp.canonical_items)
 
     async def test_harmony_streaming_emits_flush_tool_event(self) -> None:
         engine = _DummyEngine()
@@ -688,19 +1054,13 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def gen() -> AsyncIterator[str]:
-            yield (
+        settings = GenerationSettings()
+        response = _response_from_items(
+            *_canonical_answer_items(
                 "<|start|>assistant<|channel|>commentary "
                 "to=functions.browser.open <|constrain|>json<|message|>"
                 '{"url":"https://example.com"}'
-            )
-
-        settings = GenerationSettings()
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
+            ),
             settings=settings,
         )
 
@@ -728,13 +1088,20 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
 
         iterator = resp.__aiter__()
         first = await wait_for(iterator.__anext__(), 1)
-        second = await wait_for(iterator.__anext__(), 1)
+        with self.assertRaises(StopAsyncIteration):
+            await wait_for(iterator.__anext__(), 1)
 
-        self.assertIsInstance(first, ToolCallToken)
-        self.assertEqual(second.type, EventType.TOOL_PROCESS)
-        call = second.payload[0]
-        self.assertEqual(call.name, "browser.open")
-        self.assertEqual(call.arguments, {"url": "https://example.com"})
+        self.assertEqual(
+            first,
+            Token(
+                token=(
+                    "<|start|>assistant<|channel|>commentary "
+                    "to=functions.browser.open <|constrain|>json<|message|>"
+                    '{"url":"https://example.com"}'
+                )
+            ),
+        )
+        validate_canonical_stream_items(resp.canonical_items)
 
 
 class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
@@ -746,16 +1113,8 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = _dummy_operation()
 
-        async def gen() -> AsyncIterator[str]:
-            for _ in range(1200):
-                yield "{"
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
+        response = _response_from_items(
+            *_canonical_answer_items(*("{" for _ in range(1200)))
         )
         orchestrated = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -770,20 +1129,14 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         )
 
         iterator = orchestrated.__aiter__()
+        tokens = [await wait_for(iterator.__anext__(), 1) for _ in range(1200)]
         with self.assertRaises(StopAsyncIteration):
             await wait_for(iterator.__anext__(), 1)
 
         canonical_items = orchestrated.canonical_items
         validate_canonical_stream_items(canonical_items)
+        self.assertTrue(all(type(token) is Token for token in tokens))
         self.assertEqual(orchestrated._step, 1200)
-        self.assertEqual(
-            [item.kind for item in canonical_items],
-            [
-                StreamItemKind.STREAM_STARTED,
-                StreamItemKind.STREAM_COMPLETED,
-                StreamItemKind.STREAM_CLOSED,
-            ],
-        )
 
     async def test_parser_tool_process_only_item_advances_lifecycle(
         self,
@@ -796,16 +1149,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={"x": 1})
 
-        async def gen() -> AsyncIterator[str]:
-            yield "<tool>"
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.return_value = None
@@ -824,11 +1168,13 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         )
 
         iterator = orchestrated.__aiter__()
+        token = await wait_for(iterator.__anext__(), 1)
         first = await wait_for(iterator.__anext__(), 1)
         second = await wait_for(iterator.__anext__(), 1)
         with self.assertRaises(StopAsyncIteration):
             await wait_for(iterator.__anext__(), 1)
 
+        self.assertIsInstance(token, ToolCallToken)
         self.assertEqual(first.type, EventType.TOOL_PROCESS)
         self.assertEqual(second.type, EventType.TOOL_RESULT)
         tool.assert_awaited_once()
@@ -864,16 +1210,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         call = ToolCall(id="call1", name="calc", arguments={"x": 1})
 
-        async def gen() -> AsyncIterator[str]:
-            yield "<tool>"
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.return_value = ToolCallResult(
@@ -892,9 +1229,6 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             tool=tool,
             enable_tool_parsing=False,
         )
-        orchestrated._tool_parser = cast(
-            ToolCallResponseParser, _ToolProcessOnlyParser(call)
-        )
 
         items: list[Any] = []
         iterator = orchestrated.__aiter__()
@@ -905,14 +1239,18 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 break
 
         self.assertEqual(
-            [getattr(item, "type", None) for item in items[:3]],
+            [getattr(item, "type", None) for item in items[:4]],
             [
+                None,
                 EventType.TOOL_PROCESS,
                 EventType.TOOL_RESULT,
                 EventType.TOOL_MODEL_RESPONSE,
             ],
         )
-        self.assertEqual(len(items), 3)
+        self.assertEqual(
+            "".join(item.token for item in items if type(item) is Token),
+            "done",
+        )
         tool.assert_awaited_once()
         agent.assert_awaited_once()
         context = agent.await_args.args[0]
@@ -945,16 +1283,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = _dummy_operation()
 
-        async def gen() -> AsyncIterator[str]:
-            yield "{"
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _response_from_items(*_canonical_answer_items("{"))
         orchestrated = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             response,
@@ -968,11 +1297,13 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         )
 
         iterator = orchestrated.__aiter__()
+        answer = await wait_for(iterator.__anext__(), 1)
         token = await wait_for(iterator.__anext__(), 1)
         diagnostic = await wait_for(iterator.__anext__(), 1)
         with self.assertRaises(StopAsyncIteration):
             await wait_for(iterator.__anext__(), 1)
 
+        self.assertEqual(answer, Token(token="{"))
         self.assertEqual(token, Token(id=9, token="x"))
         self.assertEqual(diagnostic.type, EventType.TOOL_DIAGNOSTIC)
         validate_canonical_stream_items(orchestrated.canonical_items)
@@ -985,16 +1316,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = _dummy_operation()
 
-        async def gen() -> AsyncIterator[str]:
-            yield "{"
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _response_from_items(*_canonical_answer_items("{"))
         orchestrated = _make_response(
             Message(role=MessageRole.USER, content="hi"),
             response,
@@ -1007,8 +1329,12 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ToolCallResponseParser, _UnsupportedFlushEventParser()
         )
 
+        iterator = orchestrated.__aiter__()
+        self.assertEqual(
+            await wait_for(iterator.__anext__(), 1), Token(token="{")
+        )
         with self.assertRaises(AssertionError):
-            await wait_for(orchestrated.__aiter__().__anext__(), 1)
+            await wait_for(iterator.__anext__(), 1)
 
     async def test_emit_queues_parser_diagnostic_event(self) -> None:
         engine = _DummyEngine()
@@ -1118,16 +1444,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             arguments={"expression": "2 + 2"},
         )
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
@@ -1139,16 +1456,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             result="4",
         )
 
-        async def inner_gen() -> AsyncIterator[str]:
-            yield "4"
-
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        inner_response = _string_response("4", async_gen=True)
         agent.return_value = inner_response
 
         response = _make_response(
@@ -1229,28 +1537,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=calls[0])
+        outer_response = _tool_call_response(calls[0])
 
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
-
-        async def inner_gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=calls[1])
-            yield ToolCallToken(token="", call=calls[2])
-
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        inner_response = _tool_call_response(calls[1], calls[2])
         final_response = _string_response("25", async_gen=True)
         agent.side_effect = [inner_response, final_response]
 
@@ -1285,7 +1574,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(agent.await_count, 2)
         self.assertEqual(tool.await_count, 3)
         self.assertEqual(
-            "".join(item for item in items if isinstance(item, str)),
+            "".join(item.token for item in items if type(item) is Token),
             "25",
         )
         canonical_items = response.canonical_items
@@ -1327,16 +1616,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             arguments={"path": "file.txt"},
         )
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
@@ -1384,17 +1664,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = execute
 
-        async def inner_gen() -> AsyncIterator[str]:
-            if False:
-                yield ""
-
-        agent.return_value = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        agent.return_value = _empty_text_response()
 
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -1604,16 +1874,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             arguments={"expression": "2 + 2"},
         )
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token='{"expression"', call=call)
-            yield ToolCallToken(token=':"2 + 2"}', call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
+        outer_response = _tool_call_response(
+            ('{"expression"', call),
+            (':"2 + 2"}', call),
         )
 
         tool = AsyncMock(spec=ToolManager)
@@ -1626,16 +1889,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             result="4",
         )
 
-        async def inner_gen() -> AsyncIterator[str]:
-            yield "4"
-
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        inner_response = _string_response("4", async_gen=True)
         agent.return_value = inner_response
 
         response = _make_response(
@@ -1740,16 +1994,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.side_effect = RuntimeError("boom")
@@ -1795,16 +2040,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.side_effect = CancelledError()
@@ -1848,17 +2084,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
-
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
 
@@ -1916,16 +2142,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments=None)
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
 
@@ -1982,16 +2199,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
 
@@ -2043,16 +2251,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
 
@@ -2104,17 +2303,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
-
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
 
@@ -2169,16 +2358,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.return_value = ToolCallResult(
@@ -2228,16 +2408,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.return_value = ToolCallResult(
@@ -2294,16 +2465,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.return_value = ToolCallResult(
@@ -2314,16 +2476,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             result="4",
         )
 
-        async def inner_gen() -> AsyncIterator[str]:
-            yield "partial"
-            raise RuntimeError("stream failed")
-
-        agent.return_value = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
+        agent.return_value = _partial_answer_exception_response(
+            "partial",
+            RuntimeError("stream failed"),
         )
 
         orchestrated = _make_response(
@@ -2350,17 +2505,31 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             StreamItemKind.MODEL_CONTINUATION_COMPLETED,
             [item.kind for item in canonical_items],
         )
+        terminal_kinds = [
+            item.kind
+            for item in canonical_items
+            if item.kind
+            in {
+                StreamItemKind.MODEL_CONTINUATION_ERROR,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            }
+        ]
         self.assertEqual(
-            [item.kind for item in canonical_items[-4:]],
+            terminal_kinds[-3:],
             [
-                StreamItemKind.MODEL_CONTINUATION_STARTED,
                 StreamItemKind.MODEL_CONTINUATION_ERROR,
                 StreamItemKind.STREAM_ERRORED,
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
+        error_item = next(
+            item
+            for item in canonical_items
+            if item.kind is StreamItemKind.MODEL_CONTINUATION_ERROR
+        )
         self.assertEqual(
-            canonical_items[-3].data,
+            error_item.data,
             {"error_type": "RuntimeError", "message": "stream failed"},
         )
 
@@ -2376,16 +2545,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.return_value = ToolCallResult(
@@ -2417,10 +2577,19 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         canonical_items = orchestrated.canonical_items
         validate_canonical_stream_items(canonical_items)
         validate_tool_lifecycle_items(canonical_items)
+        terminal_kinds = [
+            item.kind
+            for item in canonical_items
+            if item.kind
+            in {
+                StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+                StreamItemKind.STREAM_CANCELLED,
+                StreamItemKind.STREAM_CLOSED,
+            }
+        ]
         self.assertEqual(
-            [item.kind for item in canonical_items[-4:]],
+            terminal_kinds[-3:],
             [
-                StreamItemKind.MODEL_CONTINUATION_STARTED,
                 StreamItemKind.MODEL_CONTINUATION_CANCELLED,
                 StreamItemKind.STREAM_CANCELLED,
                 StreamItemKind.STREAM_CLOSED,
@@ -2438,16 +2607,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.return_value = ToolCallResult(
@@ -2458,16 +2618,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             result="4",
         )
 
-        async def inner_gen() -> AsyncIterator[str]:
-            yield "partial"
-            raise CancelledError()
-
-        agent.return_value = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
+        agent.return_value = _partial_answer_exception_response(
+            "partial",
+            CancelledError(),
         )
 
         orchestrated = _make_response(
@@ -2494,10 +2647,19 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             StreamItemKind.MODEL_CONTINUATION_COMPLETED,
             [item.kind for item in canonical_items],
         )
+        terminal_kinds = [
+            item.kind
+            for item in canonical_items
+            if item.kind
+            in {
+                StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+                StreamItemKind.STREAM_CANCELLED,
+                StreamItemKind.STREAM_CLOSED,
+            }
+        ]
         self.assertEqual(
-            [item.kind for item in canonical_items[-4:]],
+            terminal_kinds[-3:],
             [
-                StreamItemKind.MODEL_CONTINUATION_STARTED,
                 StreamItemKind.MODEL_CONTINUATION_CANCELLED,
                 StreamItemKind.STREAM_CANCELLED,
                 StreamItemKind.STREAM_CLOSED,
@@ -2816,20 +2978,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -2889,20 +3041,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -2988,19 +3130,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
 
         cast(Any, tool).execute_call = execute_call
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -3185,19 +3317,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
 
         cast(Any, tool).execute_call = execute_call
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -3436,19 +3558,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
 
         cast(Any, tool).execute_call = execute_call
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -3509,20 +3621,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -3566,20 +3668,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -3661,20 +3753,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for token, call in fragments:
-                yield ToolCallToken(token=token, call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*fragments),
             agent,
             operation,
             {},
@@ -3754,20 +3836,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for token, call in chunks:
-                yield ToolCallToken(token=token, call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*chunks),
             agent,
             operation,
             {},
@@ -3859,20 +3931,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for token, call in fragments:
-                yield ToolCallToken(token=token, call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*fragments),
             agent,
             operation,
             {},
@@ -3936,10 +3998,6 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         def confirm(call: ToolCall) -> str:
             confirmed.append(str(call.id))
             return "n"
@@ -3947,13 +4005,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -4026,20 +4078,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             confirmed.append(str(call.id))
             return decisions[str(call.id)]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -4142,19 +4184,9 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 raise CancelledError()
             return "y"
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -4225,9 +4257,6 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             arguments={"name": "first"},
         )
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            yield ToolCallToken(token="", call=call)
-
         def confirm(call: ToolCall) -> str:
             confirmed.append(str(call.id))
             return "n"
@@ -4235,13 +4264,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(call),
             agent,
             operation,
             {},
@@ -4307,20 +4330,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         async def confirm(_: ToolCall) -> str:
             return "a"
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -4373,20 +4386,10 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             ),
         ]
 
-        async def outer_gen() -> AsyncIterator[ToolCallToken]:
-            for call in calls:
-                yield ToolCallToken(token="", call=call)
-
         agent.return_value = _string_response("done", async_gen=True)
         response = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            TextGenerationResponse(
-                lambda **_: outer_gen(),
-                logger=getLogger(),
-                use_async_generator=True,
-                generation_settings=GenerationSettings(),
-                settings=GenerationSettings(),
-            ),
+            _tool_call_response(*calls),
             agent,
             operation,
             {},
@@ -4585,31 +4588,23 @@ class Example:
 
 
 def _empty_text_response() -> TextGenerationResponse:
-    async def gen() -> AsyncIterator[str]:
-        if False:
-            yield ""
-
-    return TextGenerationResponse(
-        lambda **_: gen(),
-        logger=getLogger(),
-        use_async_generator=True,
-        generation_settings=GenerationSettings(),
-        settings=GenerationSettings(),
-    )
+    response = _response_from_items(*_canonical_answer_items())
+    setattr(response, "_fixture_answer_deltas", ())
+    return response
 
 
 def _string_response(text: str, *, async_gen: bool = False, inputs=None):
     def output_fn(*args, **kwargs):
         if async_gen:
 
-            async def gen():
-                for ch in text:
-                    yield ch
+            async def gen() -> AsyncIterator[CanonicalStreamItem]:
+                for item in _canonical_answer_items(*text):
+                    yield item
 
             return gen()
         return text
 
-    return TextGenerationResponse(
+    response = TextGenerationResponse(
         output_fn,
         logger=getLogger(),
         use_async_generator=async_gen,
@@ -4617,6 +4612,9 @@ def _string_response(text: str, *, async_gen: bool = False, inputs=None):
         generation_settings=GenerationSettings(),
         settings=GenerationSettings(),
     )
+    if async_gen:
+        setattr(response, "_fixture_answer_deltas", tuple(text))
+    return response
 
 
 class OrchestratorResponseMethodsTestCase(IsolatedAsyncioTestCase):
@@ -4760,18 +4758,7 @@ class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = _dummy_operation()
 
-        async def gen():
-            yield "h"
-            yield "i"
-
-        settings = GenerationSettings()
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        response = _string_response("hi", async_gen=True)
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -4785,7 +4772,7 @@ class OrchestratorResponseNoToolTestCase(IsolatedAsyncioTestCase):
         async for t in resp:
             tokens.append(t)
 
-        self.assertEqual(tokens, ["h", "i"])
+        self.assertEqual(tokens, [Token(token="h"), Token(token="i")])
 
 
 class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
@@ -4795,18 +4782,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = _dummy_operation()
 
-        async def gen():
-            yield "o"
-            yield "k"
-
-        settings = GenerationSettings()
-        response = TextGenerationResponse(
-            lambda **_: gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        response = _string_response("ok", async_gen=True)
 
         TextGenerationResponse._buffer = StringIO()
 
@@ -4829,20 +4805,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "c"
-            yield "a"
-            yield "l"
-            yield "l"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("call", async_gen=True)
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
@@ -4863,17 +4826,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "r"
-
-        inner_settings = GenerationSettings()
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=inner_settings,
-            settings=inner_settings,
-        )
+        inner_response = _string_response("r", async_gen=True)
         agent.return_value = inner_response
 
         TextGenerationResponse._buffer = StringIO()
@@ -4909,20 +4862,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
 
-        async def outer_gen():
-            yield "c"
-            yield "a"
-            yield "l"
-            yield "l"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        outer_response = _string_response("call", async_gen=True)
         call = ToolCall(id=uuid4(), name="calc", arguments=None)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
@@ -4941,23 +4881,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "c"
-            yield "a"
-            yield "l"
-            yield "l"
-            yield "b"
-            yield "a"
-            yield "c"
-            yield "k"
-
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        inner_response = _string_response("callback", async_gen=True)
         agent.return_value = inner_response
 
         resp = _make_response(
@@ -4991,18 +4915,9 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             arguments={"expression": "2 + 2"},
         )
 
-        async def outer_gen():
-            yield ToolCallToken(token="2 + ", call=None)
-            yield ToolCallToken(token="2", call=None)
-            yield ToolCallToken(token="", call=call)
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
+        outer_response = _tool_call_response(
+            ("2 + ", call),
+            ("2", call),
         )
 
         tool = AsyncMock(spec=ToolManager)
@@ -5020,16 +4935,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
-        async def inner_gen():
-            yield "4"
-
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        inner_response = _string_response("4", async_gen=True)
         agent.return_value = inner_response
 
         resp = _make_response(
@@ -5107,16 +5013,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             arguments={"expression": "2 + 2"},
         )
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5169,16 +5066,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         operation = _dummy_operation()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5248,18 +5136,10 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             arguments={"name": "second"},
         )
 
-        async def outer_gen():
-            yield ToolCallToken(token='{"name"', call=first_call)
-            yield ToolCallToken(token=':"first"}', call=first_call)
-            yield ToolCallToken(token='{"name":"second"}', call=second_call)
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
+        outer_response = _tool_call_response(
+            ('{"name"', first_call),
+            (':"first"}', first_call),
+            ('{"name":"second"}', second_call),
         )
         agent.return_value = _string_response("done", async_gen=True)
 
@@ -5327,16 +5207,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={"x": 1})
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5389,16 +5260,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5461,16 +5323,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         call = ToolCall(id="call1", name="cancellable", arguments={})
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = ToolManager.create_instance(
             available_toolsets=[ToolSet(tools=[CancellingTool()])],
             enable_tools=["cancellable"],
@@ -5534,16 +5387,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5594,16 +5438,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5615,16 +5450,9 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             result="4",
         )
 
-        async def inner_gen() -> AsyncIterator[str]:
-            yield "partial"
-            raise RuntimeError("stream failed")
-
-        agent.return_value = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
+        agent.return_value = _partial_answer_exception_response(
+            "partial",
+            RuntimeError("stream failed"),
         )
 
         resp = _make_response(
@@ -5673,16 +5501,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5731,16 +5550,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         event_manager.trigger = AsyncMock()
         call = ToolCall(id="call1", name="calc", arguments={})
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5752,16 +5562,9 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             result="4",
         )
 
-        async def inner_gen() -> AsyncIterator[str]:
-            yield "partial"
-            raise CancelledError()
-
-        agent.return_value = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
+        agent.return_value = _partial_answer_exception_response(
+            "partial",
+            CancelledError(),
         )
 
         resp = _make_response(
@@ -5806,16 +5609,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         call = ToolCall(id="call1", name="calc", arguments={})
         cancel_after_tool = False
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.get_calls.return_value = None
@@ -5908,16 +5702,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             arguments={"value": "x"},
         )
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         agent.return_value = _string_response("recovered", async_gen=False)
 
         resp = _make_response(
@@ -6005,16 +5790,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             arguments={"value": "x"},
         )
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
         agent.return_value = _string_response("recovered", async_gen=False)
 
         resp = _make_response(
@@ -6090,26 +5866,8 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             arguments={"value": "x"},
         )
 
-        async def outer_gen():
-            yield ToolCallToken(token="", call=call)
-
-        async def inner_gen():
-            yield ToolCallToken(token="", call=call)
-
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
-        inner_response = TextGenerationResponse(
-            lambda **_: inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=GenerationSettings(),
-            settings=GenerationSettings(),
-        )
+        outer_response = _tool_call_response(call)
+        inner_response = _tool_call_response(call)
         agent.return_value = inner_response
 
         resp = _make_response(
@@ -6265,7 +6023,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _dummy_response(),
+            _empty_text_response(),
             agent,
             operation,
             {},
@@ -6401,37 +6159,14 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             arguments={"expression": "50 * 2"},
         )
 
-        async def outer_gen():
-            yield ToolCallToken(token="<tool_call />", call=first_call)
-
-        async def first_inner_gen():
-            yield ToolCallToken(token="<tool_call />", call=second_call)
-
-        async def second_inner_gen():
-            yield "done"
-
-        settings = GenerationSettings()
-        outer_response = TextGenerationResponse(
-            lambda **_: outer_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
+        outer_response = _tool_call_response(("<tool_call />", first_call))
+        first_inner_response = _tool_call_response(
+            (
+                "<tool_call />",
+                second_call,
+            )
         )
-        first_inner_response = TextGenerationResponse(
-            lambda **_: first_inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
-        second_inner_response = TextGenerationResponse(
-            lambda **_: second_inner_gen(),
-            logger=getLogger(),
-            use_async_generator=True,
-            generation_settings=settings,
-            settings=settings,
-        )
+        second_inner_response = _string_response("done", async_gen=True)
         agent.side_effect = [first_inner_response, second_inner_response]
 
         tool = AsyncMock(spec=ToolManager)
@@ -6467,7 +6202,10 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         async for token in resp:
             tokens.append(token)
 
-        self.assertIn("done", tokens)
+        self.assertEqual(
+            "".join(token.token for token in tokens if type(token) is Token),
+            "done",
+        )
         self.assertEqual(agent.await_count, 2)
         self.assertEqual(tool.await_count, 2)
 

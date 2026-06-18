@@ -42,7 +42,6 @@ from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
 from avalan.model.call import ModelCall, ModelCallContext
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
-from avalan.model.response.text import TextGenerationResponse
 from avalan.tool.browser import BrowserToolSettings
 from avalan.tool.context import ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
@@ -3156,20 +3155,8 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
         class DummyOrchestratorResponse:
             input_token_count = 1
 
-            def __init__(self):
-                settings = GenerationSettings(
-                    reasoning=ReasoningSettings(enabled=False)
-                )
-                self._resp = TextGenerationResponse(
-                    lambda **_: complex_generator(),
-                    logger=getLogger(),
-                    use_async_generator=True,
-                    generation_settings=settings,
-                    settings=settings,
-                )
-
             def __aiter__(self_inner):
-                return self_inner._resp.__aiter__()
+                return complex_generator()
 
         self.orch.return_value = DummyOrchestratorResponse()
 

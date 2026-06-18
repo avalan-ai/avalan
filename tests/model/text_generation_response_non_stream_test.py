@@ -1,13 +1,33 @@
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 
-from avalan.entities import GenerationSettings, Token, TokenDetail
+from avalan.entities import (
+    GenerationSettings,
+    ReasoningToken,
+    Token,
+    TokenDetail,
+    ToolCallToken,
+)
 from avalan.model.response.text import TextGenerationResponse
-from avalan.model.stream import TextGenerationSingleStream
+from avalan.model.stream import (
+    StreamValidationError,
+    TextGenerationSingleStream,
+)
 from avalan.task.usage import UsageSource, usage_observation_from_response
 
 
 class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
+    @staticmethod
+    def _non_stream_response(result: object) -> TextGenerationResponse:
+        settings = GenerationSettings()
+        return TextGenerationResponse(
+            lambda **_: result,
+            logger=getLogger("response-legacy-result"),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=False,
+        )
+
     async def test_str_prefetches_single_stream(self) -> None:
         settings = GenerationSettings()
         usage = {"input_tokens": 2}
@@ -112,7 +132,7 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(observation.totals.total_tokens)
         self.assertEqual(observation.metadata, {"provider_family": "openai"})
 
-    async def test_prefetch_handles_token_instances(self) -> None:
+    async def test_prefetch_rejects_token_instances(self) -> None:
         settings = GenerationSettings()
         response = TextGenerationResponse(
             lambda **_: Token(token="token-result"),
@@ -121,11 +141,31 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
             settings=settings,
             use_async_generator=False,
         )
-        response._ensure_non_stream_prefetched()
-        self.assertEqual(response._prefetched_text, "token-result")
-        self.assertEqual(response.output_token_count, len("token-result"))
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            response._ensure_non_stream_prefetched()
 
-    async def test_prefetch_handles_token_detail_instances(self) -> None:
+    async def test_prefetch_rejects_token_subclasses(self) -> None:
+        class CustomToken(Token):
+            pass
+
+        settings = GenerationSettings()
+        response = TextGenerationResponse(
+            lambda **_: CustomToken(token="token-result"),
+            logger=getLogger("response-token-subclass"),
+            generation_settings=settings,
+            settings=settings,
+            use_async_generator=False,
+        )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            response._ensure_non_stream_prefetched()
+
+    async def test_prefetch_rejects_token_detail_instances(self) -> None:
         settings = GenerationSettings()
         response = TextGenerationResponse(
             lambda **_: TokenDetail(
@@ -139,9 +179,44 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
             settings=settings,
             use_async_generator=False,
         )
-        response._ensure_non_stream_prefetched()
-        self.assertEqual(response._prefetched_text, "detailed-result")
-        self.assertEqual(response.output_token_count, len("detailed-result"))
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            response._ensure_non_stream_prefetched()
+
+    async def test_non_stream_rejects_reasoning_and_tool_tokens(
+        self,
+    ) -> None:
+        cases = (
+            ("reasoning", ReasoningToken("private reasoning")),
+            ("tool", ToolCallToken(token='{"name": "calculator"}')),
+        )
+
+        for name, result in cases:
+            with self.subTest(name=name, surface="prefetch"):
+                response = self._non_stream_response(result)
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported legacy SDK response stream item",
+                ):
+                    response._ensure_non_stream_prefetched()
+
+            with self.subTest(name=name, surface="str"):
+                response = self._non_stream_response(result)
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported legacy SDK response stream item",
+                ):
+                    str(response)
+
+            with self.subTest(name=name, surface="to_str"):
+                response = self._non_stream_response(result)
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported legacy SDK response stream item",
+                ):
+                    await response.to_str()
 
     async def test_str_converts_generic_result(self) -> None:
         settings = GenerationSettings()
@@ -180,6 +255,13 @@ class TextGenerationResponseNonStreamTestCase(IsolatedAsyncioTestCase):
             use_async_generator=True,
         )
         response.__aiter__()
-        first = await response.__anext__()
-        self.assertEqual(first, "hi")
-        self.assertEqual(await response.to_str(), "hi")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await response.__anext__()
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await response.to_str()

@@ -4,7 +4,13 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import GenerationSettings, ReasoningSettings
 from avalan.model.response.text import TextGenerationResponse
-from avalan.model.vendor import TextGenerationVendorStream
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+    StreamValidationError,
+)
 
 
 @dataclass
@@ -39,25 +45,69 @@ class TextGenerationResponseAdditionalTestCase(IsolatedAsyncioTestCase):
             settings=gs,
         )
 
-        tokens = []
-        async for t in resp:
-            tokens.append(t)
-
-        self.assertEqual(tokens, ["<think>", "a", "</think>"])
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [item async for item in resp]
 
     async def test_usage_reads_completed_output_stream(self):
         usage = {"input_tokens": 2, "output_tokens": 1}
 
-        class UsageStream(TextGenerationVendorStream):
+        class UsageStream:
             def __init__(self) -> None:
-                async def gen():
-                    yield "ok"
-                    self._usage = usage
+                self._items = iter(
+                    (
+                        CanonicalStreamItem(
+                            stream_session_id="usage-stream",
+                            run_id="usage-run",
+                            turn_id="usage-turn",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="usage-stream",
+                            run_id="usage-run",
+                            turn_id="usage-turn",
+                            sequence=1,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="ok",
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="usage-stream",
+                            run_id="usage-run",
+                            turn_id="usage-turn",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="usage-stream",
+                            run_id="usage-run",
+                            turn_id="usage-turn",
+                            sequence=3,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            usage=usage,
+                            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                        ),
+                    )
+                )
+                self.usage = None
 
-                super().__init__(gen())
+            def __aiter__(self) -> "UsageStream":
+                return self
 
-            async def __anext__(self):
-                return await self._generator.__anext__()
+            async def __anext__(self) -> CanonicalStreamItem:
+                try:
+                    item = next(self._items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+                if item.is_stream_terminal:
+                    self.usage = usage
+                return item
 
         class StreamFactory:
             def __init__(self) -> None:
