@@ -58,6 +58,7 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamPerformanceBudget,
+    StreamProviderEvent,
     StreamTerminalOutcome,
     StreamValidationError,
     project_canonical_stream_item,
@@ -8988,17 +8989,26 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             len([t for t in tokens if isinstance(t, ToolCallToken)]),
-            3,
+            0,
         )
         self.assertEqual(
             len([t for t in tokens if isinstance(t, TokenDetail)]),
-            1,
+            0,
         )
-        self.assertGreaterEqual(
-            len([t for t in tokens if type(t) is Token]),
-            2,
+        self.assertEqual(len([t for t in tokens if type(t) is Token]), 0)
+        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 0)
+        answer_events = [
+            t
+            for t in tokens
+            if (
+                isinstance(t, StreamProviderEvent)
+                and t.kind is StreamItemKind.ANSWER_DELTA
+            )
+        ]
+        self.assertEqual(
+            [event.text_delta for event in answer_events],
+            ["X", "Y", "Z"],
         )
-        self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 1)
 
 
 if __name__ == "__main__":

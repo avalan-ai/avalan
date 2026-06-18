@@ -20,7 +20,10 @@ from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
     ReasoningTokenLimitExceeded,
 )
-from avalan.model.response.parsers.tool import ToolCallResponseParser
+from avalan.model.response.parsers.tool import (
+    ToolCallResponseParser,
+    ToolCallResponseParserOutput,
+)
 from avalan.model.stream import (
     StreamItemKind,
     StreamProviderEvent,
@@ -465,6 +468,52 @@ class ReasoningParserAdditionalTestCase(IsolatedAsyncioTestCase):
 
 
 class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
+    async def test_default_runtime_output_is_canonical_only(self) -> None:
+        manager = ToolManager(parser=ToolCallParser())
+        parser = ToolCallResponseParser(manager, None)
+
+        output = list(
+            await parser.push(
+                '<tool_call>{"name":"calc","arguments":{"x":1}}</tool_call>'
+            )
+        )
+
+        self.assertTrue(output)
+        self.assertTrue(parser.canonicalizes_answer_deltas)
+        self.assertTrue(
+            all(
+                isinstance(item, ToolCallResponseParserOutput)
+                for item in output
+            )
+        )
+        self.assertFalse(
+            any(isinstance(item, (Event, ToolCallToken)) for item in output)
+        )
+
+    async def test_legacy_fixture_flag_still_emits_canonical_output(
+        self,
+    ) -> None:
+        manager = ToolManager(parser=ToolCallParser())
+        parser = ToolCallResponseParser(
+            manager,
+            None,
+            legacy_fixture=True,
+        )
+
+        output = list(
+            await parser.push(
+                '<tool_call>{"name":"calc","arguments":{"x":1}}</tool_call>'
+            )
+        )
+
+        self.assertTrue(parser.canonicalizes_answer_deltas)
+        self.assertTrue(
+            all(isinstance(item, StreamProviderEvent) for item in output)
+        )
+        self.assertFalse(
+            any(isinstance(item, (Event, ToolCallToken)) for item in output)
+        )
+
     async def test_emits_events_for_tool_calls(self) -> None:
         base_parser = ToolCallParser()
         manager = MagicMock()
