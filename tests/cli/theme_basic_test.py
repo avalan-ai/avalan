@@ -419,6 +419,62 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("completed in", tool_text)
         self.assertNotIn("unknown", tool_text)
 
+    async def test_failed_calculator_error_is_hidden_until_tools_display(
+        self,
+    ) -> None:
+        source_config = _stream_config(display_tools=True)
+        builder = CliStreamSnapshotBuilder(source_config)
+        builder.add_active_tool(
+            tool_call_id="calculator-call",
+            name="math.calculator",
+            arguments={
+                "expression": "1 / 0",
+                "raw": '<tool_call>{"arguments": "hidden"}</tool_call>',
+            },
+        )
+        builder.complete_tool(
+            tool_call_id="calculator-call",
+            name="math.calculator",
+            status="error",
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="calculator-call",
+            name="math.calculator",
+            status="error",
+            result="ZeroDivisionError: division by zero",
+            arguments_count=1,
+        )
+        snapshot = builder.snapshot()
+
+        default_items = await _collect_stream_items(
+            BasicStreamPresenter(getLogger(__name__)),
+            _stream_request(_stream_config(), snapshot),
+        )
+        tools_items = await _collect_stream_items(
+            BasicStreamPresenter(getLogger(__name__)),
+            _stream_request(
+                _stream_config(display_tools=True, display_tools_events=8),
+                snapshot,
+            ),
+        )
+
+        self.assertEqual(_answer_chunks(default_items), [])
+        self.assertEqual(_frames(default_items), [])
+        tools_frames = _frames(tools_items)
+        self.assertEqual([frame.role for frame in tools_frames], ["tools"])
+        tool_text = _render_text(tools_frames[0].renderable)
+        self.assertIn("tool math.calculator error", tool_text)
+        self.assertIn("ZeroDivisionError: division by zero", tool_text)
+        for fragment in (
+            "Traceback",
+            "<tool_call>",
+            "arguments",
+            "expression",
+            "hidden",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, tool_text)
+
     async def test_requested_single_surfaces_render_only_that_surface(
         self,
     ) -> None:

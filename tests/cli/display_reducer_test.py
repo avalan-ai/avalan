@@ -306,7 +306,7 @@ class DisplayReducerTestCase(TestCase):
         self.assertEqual(clock.calls, len(projections))
 
     def test_delayed_calculator_progress_snapshots_lifecycle(self) -> None:
-        clock = FakeClock(1.0, 2.0, 3.0, 5.0, 8.0)
+        clock = FakeClock(1.0, 2.0, 3.0, 5.0, 7.0, 8.0)
         reducer = CliStreamSnapshotReducer(_config(), clock=clock)
         tool_id = "calculator-call"
 
@@ -334,18 +334,26 @@ class DisplayReducerTestCase(TestCase):
                 tool_call_id=tool_id,
             )
         )
-        running_snapshot = reducer.reduce_projection(
+        first_progress_snapshot = reducer.reduce_projection(
             _projection(
                 StreamItemKind.TOOL_EXECUTION_PROGRESS,
                 4,
-                data={"name": "math.calculator", "progress": 0.5},
+                data={"name": "math.calculator", "progress": 0.25},
+                tool_call_id=tool_id,
+            )
+        )
+        second_progress_snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_PROGRESS,
+                5,
+                data={"name": "math.calculator", "progress": 0.75},
                 tool_call_id=tool_id,
             )
         )
         completed_snapshot = reducer.reduce_projection(
             _projection(
                 StreamItemKind.TOOL_EXECUTION_COMPLETED,
-                5,
+                6,
                 data={"name": "math.calculator", "result": 25},
                 tool_call_id=tool_id,
             )
@@ -361,14 +369,39 @@ class DisplayReducerTestCase(TestCase):
         self.assertEqual(start_snapshot.completed_tools, ())
         self.assertEqual(start_snapshot.tool_results, ())
 
-        self.assertEqual(len(running_snapshot.active_tools), 1)
+        self.assertEqual(len(first_progress_snapshot.active_tools), 1)
         self.assertEqual(
-            running_snapshot.active_tools[0].name, "math.calculator"
+            first_progress_snapshot.active_tools[0].name, "math.calculator"
         )
-        self.assertEqual(running_snapshot.active_tools[0].started_at, 3.0)
-        self.assertEqual(running_snapshot.active_tools[0].updated_at, 5.0)
-        self.assertEqual(running_snapshot.completed_tools, ())
-        self.assertEqual(running_snapshot.tool_results, ())
+        self.assertEqual(
+            first_progress_snapshot.active_tools[0].started_at, 3.0
+        )
+        self.assertEqual(
+            first_progress_snapshot.active_tools[0].updated_at, 5.0
+        )
+        self.assertEqual(first_progress_snapshot.completed_tools, ())
+        self.assertEqual(first_progress_snapshot.tool_results, ())
+
+        self.assertEqual(len(second_progress_snapshot.active_tools), 1)
+        self.assertEqual(
+            second_progress_snapshot.active_tools[0].name, "math.calculator"
+        )
+        self.assertEqual(
+            second_progress_snapshot.active_tools[0].started_at, 3.0
+        )
+        self.assertLess(
+            second_progress_snapshot.active_tools[0].started_at,
+            second_progress_snapshot.active_tools[0].updated_at,
+        )
+        self.assertEqual(
+            second_progress_snapshot.active_tools[0].updated_at, 7.0
+        )
+        self.assertGreater(
+            second_progress_snapshot.active_tools[0].updated_at,
+            first_progress_snapshot.active_tools[0].updated_at,
+        )
+        self.assertEqual(second_progress_snapshot.completed_tools, ())
+        self.assertEqual(second_progress_snapshot.tool_results, ())
 
         self.assertEqual(completed_snapshot.active_tools, ())
         self.assertEqual(len(completed_snapshot.completed_tools), 1)
@@ -381,6 +414,8 @@ class DisplayReducerTestCase(TestCase):
         self.assertEqual(
             completed_snapshot.completed_tools[0].elapsed_seconds, 5.0
         )
+        self.assertEqual(completed_snapshot.completed_tools[0].started_at, 3.0)
+        self.assertEqual(completed_snapshot.completed_tools[0].updated_at, 7.0)
         self.assertEqual(len(completed_snapshot.tool_results), 1)
         self.assertEqual(
             completed_snapshot.tool_results[0].name, "math.calculator"
@@ -391,7 +426,7 @@ class DisplayReducerTestCase(TestCase):
         )
         self.assertEqual(completed_snapshot.tool_results[0].arguments_count, 1)
         self.assertIn("25", completed_snapshot.tool_results[0].result_summary)
-        self.assertEqual(clock.calls, 5)
+        self.assertEqual(clock.calls, 6)
 
     def test_side_channel_events_are_summaries_and_do_not_change_terminal(
         self,
