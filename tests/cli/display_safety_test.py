@@ -6,6 +6,7 @@ from uuid import UUID
 
 from avalan.cli import display_safety
 from avalan.cli.display_safety import (
+    MAX_SUMMARY_CHARS,
     event_type_value,
     is_sensitive_key,
     safe_data,
@@ -192,3 +193,13 @@ class DisplaySafetyTestCase(TestCase):
             '{"query": "weather"',
         )
         self.assertEqual(safe_tool_call_request_text(""), "")
+
+    def test_malformed_tool_call_request_text_is_bounded(self) -> None:
+        ordinary = safe_tool_call_request_text("x" * (MAX_SUMMARY_CHARS + 100))
+        sensitive = safe_tool_call_request_text(
+            "password=" + ("x" * (MAX_SUMMARY_CHARS + 100))
+        )
+
+        self.assertEqual(len(ordinary), MAX_SUMMARY_CHARS)
+        self.assertTrue(ordinary.endswith("..."))
+        self.assertEqual(sensitive, "<redacted>")

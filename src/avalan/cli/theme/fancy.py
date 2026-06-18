@@ -3614,20 +3614,20 @@ def _fancy_wrapped_output(
     visible_line_count: int | None = None,
     skip_blank_lines: bool = False,
 ) -> str | None:
+    visible_lines = max(
+        1,
+        (
+            visible_line_count
+            if visible_line_count is not None
+            else height - padding
+        ),
+    )
     lines = FancyTheme._wrap_lines(
         [text],
         max_width,
         skip_blank_lines=skip_blank_lines,
     )
     if limit_height:
-        visible_lines = max(
-            1,
-            (
-                visible_line_count
-                if visible_line_count is not None
-                else height - padding
-            ),
-        )
         lines = lines[-visible_lines:]
     output = "\n".join(lines).rstrip() if lines else None
     return output or None

@@ -56,6 +56,7 @@ from asyncio import (
     Task,
     as_completed,
     create_task,
+    current_task,
     gather,
     sleep,
     to_thread,
@@ -67,8 +68,13 @@ from asyncio import (
 from asyncio import (
     run as asyncio_run,
 )
-from collections.abc import AsyncIterable, Iterable, Mapping
-from dataclasses import replace
+from collections.abc import (
+    AsyncIterable,
+    Callable,
+    Iterable,
+    Mapping,
+)
+from dataclasses import dataclass, field, replace
 from functools import partial
 from logging import Logger, getLogger
 from time import perf_counter
@@ -94,6 +100,46 @@ from rich.prompt import Prompt
 
 _HAS_INPUT = has_input
 _T = TypeVar("_T")
+
+
+@dataclass(slots=True)
+class _CliStreamPresentationGate:
+    """Gate snapshot presentation to refresh interval ticks."""
+
+    refresh_per_second: int
+    clock: Callable[[], float] = field(default_factory=lambda: perf_counter)
+    last_presented_at: float | None = None
+    last_checked_at: float | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.refresh_per_second, int)
+        assert self.refresh_per_second > 0
+        assert callable(self.clock)
+
+    def should_present(self, *, force: bool = False) -> bool:
+        """Return whether presentation is due now."""
+        now = self.clock()
+        self.last_checked_at = now
+        if force or self.last_presented_at is None:
+            self.last_presented_at = now
+            return True
+        if now - self.last_presented_at < 1 / self.refresh_per_second:
+            return False
+        self.last_presented_at = now
+        return True
+
+    def delay_until_next_tick(self) -> float:
+        """Return seconds until the next presentation tick."""
+        if self.last_presented_at is None:
+            return 0.0
+        now = (
+            self.last_checked_at
+            if self.last_checked_at is not None
+            else self.clock()
+        )
+        interval = 1 / self.refresh_per_second
+        elapsed = now - self.last_presented_at
+        return max(0.0, interval - elapsed)
 
 
 class _FrameRateRenderer:
@@ -875,10 +921,86 @@ async def token_generation(
     snapshot_revision = 0
     presented_snapshot_revision = -1
     last_projection_sequence: int | None = None
+    presentation_gate = _CliStreamPresentationGate(
+        display_config.refresh_per_second
+    )
+    presentation_retry_task: Task[None] | None = None
+    presentation_retry_failure: BaseException | None = None
+    supervisor_task = current_task()
 
-    async def render_snapshot() -> None:
+    def record_presentation_retry_failure(exc: BaseException) -> None:
+        nonlocal presentation_retry_failure
+        presentation_retry_failure = exc
+        stop_signal.set()
+
+    def raise_presentation_retry_failure() -> None:
+        if presentation_retry_failure is not None:
+            raise presentation_retry_failure
+
+    def schedule_presentation_retry(delay: float) -> None:
+        nonlocal presentation_retry_failure, presentation_retry_task
+        assert isinstance(delay, float)
+        assert delay >= 0
+        if presentation_retry_task is not None:
+            if not presentation_retry_task.done():
+                return
+            presentation_retry_task = None
+        presentation_retry_task = create_task(
+            retry_pending_presentation(delay)
+        )
+
+    async def retry_pending_presentation(delay: float) -> None:
+        nonlocal presentation_retry_failure
+        pending_delay = delay
+        try:
+            while True:
+                if pending_delay > 0:
+                    await sleep(pending_delay)
+                async with render_lock:
+                    await render_snapshot()
+                    if presented_snapshot_revision == snapshot_revision:
+                        return
+                    pending_delay = presentation_gate.delay_until_next_tick()
+        except CancelledError:
+            raise
+        except BaseException as exc:
+            record_presentation_retry_failure(exc)
+            if supervisor_task is not None and not supervisor_task.done():
+                supervisor_task.cancel()
+            raise
+
+    async def stop_presentation_retry(
+        *,
+        raise_failure: bool = True,
+    ) -> None:
+        nonlocal presentation_retry_task
+        assert isinstance(raise_failure, bool)
+        task = presentation_retry_task
+        if task is None:
+            if raise_failure:
+                raise_presentation_retry_failure()
+            return
+        presentation_retry_task = None
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except CancelledError:
+            pass
+        except BaseException as exc:
+            record_presentation_retry_failure(exc)
+        if raise_failure:
+            raise_presentation_retry_failure()
+
+    async def render_snapshot(*, force: bool = False) -> None:
         nonlocal presented_snapshot_revision
+        raise_presentation_retry_failure()
         if presented_snapshot_revision == snapshot_revision:
+            return
+        if not presentation_gate.should_present(force=force):
+            schedule_presentation_retry(
+                presentation_gate.delay_until_next_tick()
+            )
             return
         snapshot = reducer.snapshot()
         request = CliStreamPresenterRequest(
@@ -898,20 +1020,25 @@ async def token_generation(
         nonlocal last_projection_sequence
         async with render_lock:
             last_projection_sequence = projection.sequence
-            reducer.reduce_projection(projection)
+            changed = reducer.apply_projection(projection)
             if projection.terminal_outcome is not None:
                 side_channel_events_enabled = False
                 stop_signal.set()
-            snapshot_revision += 1
-            await render_snapshot()
+            if changed:
+                snapshot_revision += 1
+                await render_snapshot(
+                    force=(
+                        projection.terminal_outcome is not None
+                        or _stream_projection_forces_presentation(projection)
+                    )
+                )
 
     async def reduce_event(event: Event) -> None:
         nonlocal snapshot_revision
         async with render_lock:
             if not side_channel_events_enabled:
                 return
-            reducer.reduce_event(event)
-            if _stream_event_type(event) == EventType.TOKEN_GENERATED.value:
+            if not reducer.apply_event(event):
                 return
             snapshot_revision += 1
             await render_snapshot()
@@ -940,9 +1067,9 @@ async def token_generation(
             async with render_lock:
                 if (
                     _stream_presenter_requires_completion_snapshot(presenter)
-                    and not reducer.snapshot().terminal.completed
+                    and not reducer.terminal_completed
                 ):
-                    reducer.reduce_projection(
+                    changed = reducer.apply_projection(
                         _stream_completed_projection(
                             (
                                 last_projection_sequence + 1
@@ -951,12 +1078,21 @@ async def token_generation(
                             ),
                         )
                     )
-                    snapshot_revision += 1
-                await render_snapshot()
+                    if changed:
+                        snapshot_revision += 1
+                await render_snapshot(force=True)
                 await coordinator.flush()
 
     if coordinator_container is not None:
         coordinator_container["coordinator"] = None
+
+    def _raise_stream_failures(
+        failures: list[BaseException],
+    ) -> None:
+        assert failures
+        if len(failures) == 1:
+            raise failures[0]
+        raise BaseExceptionGroup("CLI stream tasks failed", failures)
 
     async with coordinator:
         if not callable(event_listen):
@@ -968,6 +1104,7 @@ async def token_generation(
                 stop_signal.set()
                 raise
             finally:
+                await stop_presentation_retry()
                 if coordinator_container is not None:
                     coordinator_container["coordinator"] = None
             return
@@ -976,7 +1113,7 @@ async def token_generation(
         response_task = create_task(response_stream())
 
         def _completed_task_failures(
-            done_tasks: set[Task[None]],
+            done_tasks: set[Task[Any]],
         ) -> list[BaseException]:
             failures: list[BaseException] = []
             for task in (event_task, response_task):
@@ -990,20 +1127,16 @@ async def token_generation(
                     failures.append(exc)
             return failures
 
-        def _raise_stream_failures(
-            failures: list[BaseException],
-        ) -> None:
-            if len(failures) == 1:
-                raise failures[0]
-            raise BaseExceptionGroup("CLI stream tasks failed", failures)
-
         try:
             if coordinator_container is not None:
                 coordinator_container["coordinator"] = coordinator
             if display_config.show_events or display_config.show_tools:
                 await sleep(0)
 
-            pending: set[Task[None]] = {event_task, response_task}
+            pending: set[Task[Any]] = {
+                event_task,
+                response_task,
+            }
             while pending:
                 done, pending = await wait(
                     pending,
@@ -1051,6 +1184,7 @@ async def token_generation(
                 if not task.done():
                     task.cancel()
             await gather(event_task, response_task, return_exceptions=True)
+            await stop_presentation_retry()
 
 
 def _stream_completed_projection(sequence: int) -> StreamConsumerProjection:
@@ -1065,6 +1199,19 @@ def _stream_completed_projection(sequence: int) -> StreamConsumerProjection:
         channel=StreamChannel.CONTROL,
         correlation=StreamItemCorrelation(),
         terminal_outcome=StreamTerminalOutcome.COMPLETED,
+    )
+
+
+def _stream_projection_forces_presentation(
+    projection: StreamConsumerProjection,
+) -> bool:
+    return projection.kind in (
+        StreamItemKind.TOOL_EXECUTION_STARTED,
+        StreamItemKind.TOOL_EXECUTION_OUTPUT,
+        StreamItemKind.TOOL_EXECUTION_PROGRESS,
+        StreamItemKind.TOOL_EXECUTION_COMPLETED,
+        StreamItemKind.TOOL_EXECUTION_ERROR,
+        StreamItemKind.TOOL_EXECUTION_CANCELLED,
     )
 
 

@@ -1,5 +1,6 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sized
 from dataclasses import FrozenInstanceError
+from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase
 
 from avalan.cli.display import CliStreamDisplayConfig
@@ -9,6 +10,7 @@ from avalan.cli.display_reducer import (
     iter_cli_canonical_stream_snapshots,
     iter_cli_stream_snapshots,
 )
+from avalan.cli.display_safety import MAX_SUMMARY_CHARS
 from avalan.cli.display_snapshot import CliStreamSnapshot
 from avalan.event import Event, EventType
 from avalan.model.stream import (
@@ -695,6 +697,67 @@ class DisplayReducerTestCase(TestCase):
         self.assertEqual(len(final_snapshot.completed_tools), 1)
         self.assertEqual(len(final_snapshot.tool_results), 1)
 
+    def test_apply_projection_reports_side_channel_tool_event_removal(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(display_tools=True, display_events=True),
+            clock=FakeClock(1.0),
+        )
+        reducer.apply_event(
+            Event(
+                type=EventType.TOOL_EXECUTE,
+                payload={
+                    "call": {
+                        "id": "tool-1",
+                        "name": "search",
+                    }
+                },
+            )
+        )
+        before = reducer.snapshot()
+
+        changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.TOOL_CALL_READY,
+                0,
+                tool_call_id="tool-1",
+            )
+        )
+        after = reducer.snapshot()
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            [event.tool_call_id for event in before.tool_events],
+            ["tool-1"],
+        )
+        self.assertEqual(after.tool_events, ())
+
+    def test_apply_projection_reports_stats_projection_metadata(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(stats=True),
+            clock=FakeClock(1.0),
+        )
+
+        changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.TOOL_CALL_READY,
+                0,
+                metadata={"visible": "yes"},
+                tool_call_id="tool-1",
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertTrue(changed)
+        self.assertEqual(len(snapshot.projection_metadata_summaries), 1)
+        self.assertIn(
+            "visible",
+            snapshot.projection_metadata_summaries[0].metadata_summary or "",
+        )
+
     def test_canonical_tool_projection_dedupes_batched_tool_events(
         self,
     ) -> None:
@@ -1073,6 +1136,283 @@ class DisplayReducerTestCase(TestCase):
 
         self.assertIsNone(snapshot.token_counts.input_tokens)
         self.assertEqual(snapshot.token_counts.output_tokens, 2)
+
+    def test_apply_projection_defers_snapshot_materialization(self) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(*[float(index) for index in range(10_001)]),
+        )
+
+        for index in range(10_000):
+            changed = reducer.apply_projection(
+                _projection(
+                    StreamItemKind.ANSWER_DELTA,
+                    index,
+                    text_delta="x",
+                    metadata={"token_id": index} if index == 0 else None,
+                )
+            )
+            self.assertTrue(changed)
+
+        self.assertFalse(reducer.terminal_completed)
+        changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.STREAM_COMPLETED,
+                10_000,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+        )
+        self.assertTrue(changed)
+        self.assertTrue(reducer.terminal_completed)
+        before_duplicate = reducer.snapshot()
+        duplicate_terminal = reducer.apply_projection(
+            _projection(
+                StreamItemKind.STREAM_COMPLETED,
+                10_000,
+                usage={
+                    "input_tokens": 99,
+                    "output_tokens": 999,
+                    "total_tokens": 1098,
+                },
+                metadata={"duplicate": True},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+        )
+        self.assertFalse(duplicate_terminal)
+        after_duplicate = reducer.snapshot()
+
+        self.assertEqual(
+            after_duplicate.token_counts,
+            before_duplicate.token_counts,
+        )
+        self.assertEqual(
+            after_duplicate.display_tokens,
+            before_duplicate.display_tokens,
+        )
+        self.assertEqual(
+            after_duplicate.usage_summaries,
+            before_duplicate.usage_summaries,
+        )
+        self.assertEqual(
+            after_duplicate.projection_metadata_summaries,
+            before_duplicate.projection_metadata_summaries,
+        )
+
+        snapshot = after_duplicate
+        self.assertEqual(snapshot.answer_text, "x" * 10_000)
+        self.assertEqual(snapshot.token_counts.display_tokens, 1)
+        self.assertEqual(snapshot.build_stats.snapshots_built, 2)
+        self.assertEqual(snapshot.build_stats.answer_chunks, 10_000)
+        self.assertEqual(snapshot.build_stats.text_materializations, 6)
+
+    def test_apply_projection_duplicate_terminal_is_noop(self) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(1.0),
+        )
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.STREAM_COMPLETED,
+                0,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+        )
+
+        changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.STREAM_CANCELLED,
+                1,
+                terminal_outcome=StreamTerminalOutcome.CANCELLED,
+            )
+        )
+
+        self.assertFalse(changed)
+
+    def test_apply_event_token_generated_is_noop(self) -> None:
+        reducer = CliStreamSnapshotReducer(_config())
+
+        changed = reducer.apply_event(Event(type=EventType.TOKEN_GENERATED))
+        snapshot = reducer.snapshot()
+
+        self.assertFalse(changed)
+        self.assertEqual(snapshot.events, ())
+        self.assertEqual(snapshot.tool_events, ())
+
+    def test_apply_projection_ignores_invisible_tool_arguments(self) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(stats=False, display_tools=True),
+            clock=FakeClock(1.0, 2.0),
+        )
+
+        argument_changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                0,
+                text_delta='{"x": 1}',
+                tool_call_id="tool-1",
+            )
+        )
+        start_changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                1,
+                tool_call_id="tool-1",
+            )
+        )
+
+        self.assertFalse(argument_changed)
+        self.assertTrue(start_changed)
+
+    def test_apply_projection_reports_display_token_before_metadata(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(stats=True, display_tokens=2),
+            clock=FakeClock(1.0),
+        )
+
+        changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.REASONING_DELTA,
+                0,
+                text_delta="r",
+                metadata={"token_id": 7},
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertTrue(changed)
+        self.assertEqual(snapshot.display_tokens[0].token_id, 7)
+
+    def test_apply_event_bounds_side_channel_tool_indexes(self) -> None:
+        reducer = CliStreamSnapshotReducer(_config(display_tools_events=3))
+
+        for index in range(10):
+            changed = reducer.apply_event(
+                Event(
+                    type=EventType.TOOL_EXECUTE,
+                    payload={
+                        "call": {
+                            "id": f"tool-{index}",
+                            "name": "search",
+                        }
+                    },
+                )
+            )
+            self.assertTrue(changed)
+
+        event_order = cast(
+            Sized,
+            getattr(reducer, "_side_channel_tool_event_order"),
+        )
+        event_counts = cast(
+            dict[str, int],
+            getattr(reducer, "_side_channel_tool_event_counts"),
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertLessEqual(len(event_order), 3)
+        self.assertLessEqual(sum(event_counts.values()), 3)
+        self.assertEqual(
+            [event.tool_call_id for event in snapshot.tool_events],
+            ["tool-7", "tool-8", "tool-9"],
+        )
+
+    def test_tool_argument_display_state_is_bounded_and_cleaned(self) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(*[float(index) for index in range(42)]),
+        )
+        tool_id = "tool-1"
+
+        empty_changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                0,
+                text_delta="",
+                tool_call_id=tool_id,
+            )
+        )
+        self.assertFalse(empty_changed)
+
+        for index in range(20):
+            reducer.apply_projection(
+                _projection(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    index + 1,
+                    text_delta="x" * 50,
+                    tool_call_id=tool_id,
+                )
+            )
+
+        states = cast(
+            dict[str, object],
+            getattr(reducer, "_tool_argument_state"),
+        )
+        materialize = getattr(states[tool_id], "materialize")
+        self.assertTrue(callable(materialize))
+        retained = cast(str, materialize())
+
+        self.assertLessEqual(len(retained), MAX_SUMMARY_CHARS)
+        start_snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                21,
+                tool_call_id=tool_id,
+            )
+        )
+        self.assertLessEqual(
+            len(start_snapshot.active_tools[0].arguments_summary or ""),
+            MAX_SUMMARY_CHARS + 2,
+        )
+
+        sensitive = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(*[float(index) for index in range(10)]),
+        )
+        sensitive.apply_projection(
+            _projection(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                0,
+                text_delta="api_key",
+                tool_call_id="sensitive-tool",
+            )
+        )
+        sensitive.apply_projection(
+            _projection(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                1,
+                text_delta="=" + ("x" * MAX_SUMMARY_CHARS),
+                tool_call_id="sensitive-tool",
+            )
+        )
+        sensitive_states = cast(
+            dict[str, object],
+            getattr(sensitive, "_tool_argument_state"),
+        )
+        sensitive_materialize = getattr(
+            sensitive_states["sensitive-tool"],
+            "materialize",
+        )
+        self.assertTrue(callable(sensitive_materialize))
+        self.assertEqual(cast(str, sensitive_materialize()), "<redacted>")
+
+        final_snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                22,
+                data={"result": "ok"},
+                tool_call_id=tool_id,
+            )
+        )
+        states = cast(
+            dict[str, object],
+            getattr(reducer, "_tool_argument_state"),
+        )
+
+        self.assertNotIn(tool_id, states)
+        self.assertEqual(final_snapshot.tool_results[0].arguments_count, 1)
 
     def test_reduce_projection_uses_canonical_helper_validation(self) -> None:
         reducer = CliStreamSnapshotReducer(_config())

@@ -806,6 +806,157 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
         self.assertIn("Another word", output)
         self.assertGreaterEqual(output.count("\n"), 1)
 
+    def test_limited_wrapped_output_tails_before_wrapping(self) -> None:
+        text = "01234567" * 50
+        expected = "\n".join(FancyTheme._wrap_lines([text], 8)[-2:]).rstrip()
+
+        output = fancy_theme_module._fancy_wrapped_output(
+            text,
+            max_width=8,
+            height=3,
+            padding=1,
+            limit_height=True,
+            visible_line_count=2,
+        )
+
+        self.assertEqual(output, expected)
+
+    def test_limited_wrapped_output_tails_unaligned_unbroken_text(
+        self,
+    ) -> None:
+        text = ("01234567" * 50) + "01"
+        expected = "\n".join(FancyTheme._wrap_lines([text], 8)[-2:]).rstrip()
+
+        output = fancy_theme_module._fancy_wrapped_output(
+            text,
+            max_width=8,
+            height=3,
+            padding=1,
+            limit_height=True,
+            visible_line_count=2,
+        )
+
+        self.assertEqual(output, expected)
+
+    def test_limited_wrapped_output_tails_long_word_before_whitespace(
+        self,
+    ) -> None:
+        text = ("x" * 18) + " "
+        expected = "\n".join(FancyTheme._wrap_lines([text], 8)[-1:]).rstrip()
+
+        output = fancy_theme_module._fancy_wrapped_output(
+            text,
+            max_width=8,
+            height=2,
+            padding=1,
+            limit_height=True,
+            visible_line_count=1,
+        )
+
+        self.assertEqual(output, expected)
+
+    def test_limited_wrapped_output_tails_trailing_blank_lines(
+        self,
+    ) -> None:
+        text = ("abcd " * 20) + "\n "
+        expected = "\n".join(FancyTheme._wrap_lines([text], 4)[-3:]).rstrip()
+
+        output = fancy_theme_module._fancy_wrapped_output(
+            text,
+            max_width=4,
+            height=4,
+            padding=1,
+            limit_height=True,
+            visible_line_count=3,
+        )
+
+        self.assertEqual(output, expected)
+
+    def test_limited_wrapped_output_tails_collapsed_whitespace_context(
+        self,
+    ) -> None:
+        text = "word" + (" " * 5) + "tail"
+        expected = "\n".join(FancyTheme._wrap_lines([text], 4)[-2:]).rstrip()
+
+        output = fancy_theme_module._fancy_wrapped_output(
+            text,
+            max_width=4,
+            height=3,
+            padding=1,
+            limit_height=True,
+            visible_line_count=2,
+        )
+
+        self.assertEqual(output, expected)
+
+    def test_limited_wrapped_output_respects_skip_blank_lines_tail(
+        self,
+    ) -> None:
+        text = "aa\n "
+        expected = "\n".join(
+            FancyTheme._wrap_lines([text], 1, skip_blank_lines=True)[-2:]
+        ).rstrip()
+
+        output = fancy_theme_module._fancy_wrapped_output(
+            text,
+            max_width=1,
+            height=3,
+            padding=1,
+            limit_height=True,
+            visible_line_count=2,
+            skip_blank_lines=True,
+        )
+
+        self.assertEqual(output, expected)
+
+    def test_limited_wrapped_output_preserves_indented_tail_parity(
+        self,
+    ) -> None:
+        text = "\n  " + ("x" * 20) + "a     \t  b  tailaword"
+        expected = "\n".join(
+            FancyTheme._wrap_lines([text], 5, skip_blank_lines=True)[-5:]
+        ).rstrip()
+
+        output = fancy_theme_module._fancy_wrapped_output(
+            text,
+            max_width=5,
+            height=6,
+            padding=1,
+            limit_height=True,
+            visible_line_count=5,
+            skip_blank_lines=True,
+        )
+
+        self.assertEqual(output, expected)
+
+    async def test_answer_mode_skips_stream_panels(self) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("answer")
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        with patch.object(
+            presenter,
+            "_stream_renderable",
+            side_effect=AssertionError("stream panels should not render"),
+        ):
+            items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot(), mode="answer"),
+            )
+
+        self.assertEqual(
+            [
+                item.text
+                for item in items
+                if isinstance(
+                    item,
+                    CliStreamAnswerTextChunk,
+                )
+            ],
+            ["answer"],
+        )
+
     def test_theme_factory_returns_fancy_stream_presenter(self) -> None:
         presenter = self.theme.stream_presenter(getLogger(__name__))
 
