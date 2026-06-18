@@ -1556,7 +1556,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.MCP,
             StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.FLOW,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
@@ -1578,7 +1577,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.MCP,
             StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
@@ -1599,7 +1597,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.MCP,
             StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
@@ -1621,7 +1618,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.MCP,
             StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
@@ -1643,7 +1639,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
             StreamLegacyBoundaryCategory.CLI_STDOUT,
             StreamLegacyBoundaryCategory.CHAT_SSE,
             StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.MCP,
             StreamLegacyBoundaryCategory.A2A,
             StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
@@ -1661,7 +1656,6 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
         categories=(
             StreamLegacyBoundaryCategory.PARSER,
             StreamLegacyBoundaryCategory.EVENTING,
-            StreamLegacyBoundaryCategory.MCP,
             StreamLegacyBoundaryCategory.FLOW,
         ),
         scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
@@ -1750,35 +1744,6 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
         owner="server.a2a",
         removal_condition=(
             "A2A response streams receive canonical consumer projections."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.server.routers.mcp",
-        qualname="_MCPLegacyStreamAdapter.map",
-        surfaces=(
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.EVENT,
-        ),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.MCP,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="server.mcp",
-        removal_condition=(
-            "MCP response streams receive canonical consumer projections."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.server.routers.mcp",
-        qualname="_extract_append_streams",
-        surfaces=(StreamLegacySurface.STRING,),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.MCP,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="server.mcp",
-        removal_condition=(
-            "MCP append streams are emitted from canonical tool execution "
-            "output items."
         ),
     ),
 )
@@ -1994,47 +1959,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         (StreamLegacyBoundaryDirection.PROJECTS,),
         "cli.model",
         "CLI stdout and rendering consume canonical projections only.",
-    ),
-    _runtime_boundary(
-        "avalan.server.routers.mcp",
-        "ResponseItem",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.EVENT,
-        ),
-        StreamLegacyBoundaryCategory.MCP,
-        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
-        "server.mcp",
-        "MCP response item type is canonical-only.",
-    ),
-    _runtime_boundary(
-        "avalan.server.routers.mcp",
-        "_MCPLegacyStreamAdapter.map",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.EVENT,
-        ),
-        StreamLegacyBoundaryCategory.MCP,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "server.mcp",
-        "MCP streaming accepts canonical projections only.",
-    ),
-    _runtime_boundary(
-        "avalan.server.routers.mcp",
-        "_extract_append_streams",
-        (StreamLegacySurface.STRING,),
-        StreamLegacyBoundaryCategory.MCP,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "server.mcp",
-        "MCP append streams are projected from canonical tool output items.",
     ),
     _runtime_boundary(
         "avalan.server.a2a.router",
