@@ -1,8 +1,10 @@
 from argparse import ArgumentParser, _SubParsersAction
+from collections.abc import Iterable
 from pathlib import Path
 from unittest import TestCase, main
 
 from avalan.cli.__main__ import CLI
+from avalan.entities import ToolCallRecoveryFormat, ToolFormat
 from avalan.model import (
     FileDeliveryMode,
     LocalFileDeliveryProfile,
@@ -169,6 +171,108 @@ class TaskDocsTest(TestCase):
             with self.subTest(command="graph inspect", flag=flag):
                 self.assertIn(flag, docs)
                 self.assertIn(flag, graph_help)
+
+    def test_cli_docs_cover_agent_streaming_and_tool_format_flags(
+        self,
+    ) -> None:
+        docs = CLI_DOC.read_text(encoding="utf-8")
+        run_docs = _section_between(
+            docs, "### avalan agent run", "### avalan agent serve"
+        )
+        parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
+        run_help = _find_parser(parser, " agent run").format_help()
+        tool_format_choices = _choice_list(t.value for t in ToolFormat)
+        recovery_choices = _choice_list(
+            t.value for t in ToolCallRecoveryFormat
+        )
+
+        expected_phrases = (
+            "--sync",
+            "Don't use an async generator (streaming output)",
+            "--display-reasoning",
+            "Display streamed reasoning text in the live response panel",
+            f"--tool-format {{{tool_format_choices}}}",
+            f"--tool-recovery-format {{{recovery_choices}}}",
+            "Enable a tool-call recovery format",
+            "DS4 backend options:",
+            "--ds4-ctx DS4_CTX",
+            "--ds4-native-backend {auto,metal,cuda,cpu}",
+            "--reasoning-effort {none,minimal,low,medium,high,xhigh,max}",
+            "--run-reasoning-effort {none,minimal,low,medium,high,xhigh,max}",
+            "graph tool settings:",
+            "--tool-graph-file TOOL_GRAPH_FILE",
+            "shell tool settings:",
+            "--tool-shell-backend TOOL_SHELL_BACKEND",
+            "--tool-shell-executable-path COMMAND=PATH",
+        )
+
+        normalized_docs = _normalize_whitespace(run_docs)
+        normalized_help = _normalize_whitespace(run_help)
+        for phrase in expected_phrases:
+            normalized_phrase = _normalize_whitespace(phrase)
+            with self.subTest(phrase=phrase):
+                self.assertIn(normalized_phrase, normalized_docs)
+                self.assertIn(normalized_phrase, normalized_help)
+
+    def test_agent_run_docs_cover_parseable_streaming_tool_command(
+        self,
+    ) -> None:
+        docs = CLI_DOC.read_text(encoding="utf-8")
+        run_docs = _section_between(
+            docs, "### avalan agent run", "### avalan agent serve"
+        )
+        parser = CLI._create_parser("cpu", "/cache", "/locale", "en_US")
+        argv = [
+            "agent",
+            "run",
+            "agent.toml",
+            "--sync",
+            "--display-reasoning",
+            "--tool-format",
+            "dsml",
+            "--tool-recovery-format",
+            "fenced",
+            "--tool-recovery-format",
+            "dsml_leakage",
+            "--backend",
+            "ds4",
+            "--ds4-ctx",
+            "4096",
+            "--ds4-native-backend",
+            "cpu",
+            "--reasoning-effort",
+            "high",
+            "--tool",
+            "math.calculator",
+            "--tool-graph-file",
+            "graph.toml",
+            "--tool-shell-backend",
+            "subprocess",
+            "--tool-shell-max-stdout-bytes",
+            "2048",
+        ]
+
+        args = parser.parse_args(argv)
+
+        self.assertEqual(args.command, "agent")
+        self.assertEqual(args.agent_command, "run")
+        self.assertEqual(args.specifications_file, "agent.toml")
+        self.assertTrue(args.use_sync_generator)
+        self.assertTrue(args.display_reasoning)
+        self.assertEqual(args.tool_format, "dsml")
+        self.assertEqual(args.tool_recovery_format, ["fenced", "dsml_leakage"])
+        self.assertEqual(args.backend, "ds4")
+        self.assertEqual(args.ds4_ctx, 4096)
+        self.assertEqual(args.ds4_native_backend, "cpu")
+        self.assertEqual(args.run_reasoning_effort, "high")
+        self.assertEqual(args.tool, ["math.calculator"])
+        self.assertEqual(args.tool_graph_file, "graph.toml")
+        self.assertEqual(args.tool_shell_backend, "subprocess")
+        self.assertEqual(args.tool_shell_max_stdout_bytes, 2048)
+
+        for flag in _documented_flags(argv):
+            with self.subTest(flag=flag):
+                self.assertIn(flag, run_docs)
 
     def test_file_delivery_matrix_matches_profile_vocabulary(self) -> None:
         docs = FILE_DELIVERY_DOC.read_text(encoding="utf-8")
@@ -377,6 +481,24 @@ def _subcommands(parser: ArgumentParser) -> set[str]:
         if isinstance(action, _SubParsersAction):
             return set(action.choices)
     raise AssertionError(f"Parser {parser.prog!r} has no subcommands.")
+
+
+def _choice_list(values: Iterable[str]) -> str:
+    return ",".join(str(value) for value in values)
+
+
+def _section_between(text: str, start: str, end: str) -> str:
+    start_index = text.index(start)
+    end_index = text.index(end, start_index)
+    return text[start_index:end_index]
+
+
+def _normalize_whitespace(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _documented_flags(argv: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(arg for arg in argv if arg.startswith("--")))
 
 
 def _matrix_rows(docs: str) -> dict[str, str]:

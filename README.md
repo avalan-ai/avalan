@@ -95,22 +95,39 @@ echo "Who are you, and who is Leo Messi?" \
 
 ```python
 import asyncio
+from os import environ
 
-from avalan.model.nlp.generation import TextGenerationModel
+from avalan.entities import GenerationSettings, TransformerEngineSettings
+from avalan.model.nlp.text.vendor.openai import OpenAIModel
+from avalan.model.stream import CanonicalStreamItem, StreamItemKind
 
 async def main() -> None:
-    with TextGenerationModel("ai://env:OPENAI_API_KEY@openai/gpt-4o") as model:
-        response = await model("Give me two facts about Leo Messi.")
-        print(response)
+    api_key = environ["OPENAI_API_KEY"]
+    settings = TransformerEngineSettings(access_token=api_key)
 
-        async for token in await model(
+    with OpenAIModel("gpt-4o", settings) as model:
+        response = await model(
+            "Give me two facts about Leo Messi.",
+            settings=GenerationSettings(use_async_generator=False),
+        )
+        print(await response.to_str())
+
+        async for item in await model(
             "Give me two more facts about Leo Messi.",
-            stream=True,
+            settings=GenerationSettings(use_async_generator=True),
         ):
-            print(token, end="", flush=True)
+            assert isinstance(item, CanonicalStreamItem)
+            if (
+                item.kind is StreamItemKind.ANSWER_DELTA
+                and item.text_delta is not None
+            ):
+                print(item.text_delta, end="", flush=True)
 
 asyncio.run(main())
 ```
+
+> [!IMPORTANT]
+> Breaking change: legacy streaming items are rejected by Avalan-owned runtime APIs instead of converted. SDK consumers should read `CanonicalStreamItem` values, use `StreamItemKind.ANSWER_DELTA` with `text_delta`, or use protocol projections such as OpenAI client chunks and SSE events.
 
 ### ✅ Run a flow-backed task
 
@@ -565,21 +582,33 @@ echo "Who are you, and who is Leo Messi?" \
 Python:
 
 ```python
+import asyncio
+
 from avalan.entities import GenerationSettings
 from avalan.model.nlp.text.generation import TextGenerationModel
+from avalan.model.stream import CanonicalStreamItem, StreamItemKind
 
-with TextGenerationModel("meta-llama/Meta-Llama-3-8B-Instruct") as model:
-    async for token in await model(
-        "Who are you, and who is Leo Messi?",
-        system_prompt="You are Aurora, a helpful assistant",
-        settings=GenerationSettings(
-            max_new_tokens=100,
-            temperature=0.1,
-            top_p=0.9,
-            top_k=20
-        )
-    ):
-        print(token, end="", flush=True)
+async def main() -> None:
+    with TextGenerationModel("meta-llama/Meta-Llama-3-8B-Instruct") as model:
+        async for item in await model(
+            "Who are you, and who is Leo Messi?",
+            system_prompt="You are Aurora, a helpful assistant",
+            settings=GenerationSettings(
+                max_new_tokens=100,
+                temperature=0.1,
+                top_p=0.9,
+                top_k=20,
+                use_async_generator=True,
+            )
+        ):
+            assert isinstance(item, CanonicalStreamItem)
+            if (
+                item.kind is StreamItemKind.ANSWER_DELTA
+                and item.text_delta is not None
+            ):
+                print(item.text_delta, end="", flush=True)
+
+asyncio.run(main())
 ```
 
 Vendor APIs use the same interface. Swap in a vendor [engine URI](docs/ai_uri.md) to call an external service. The example below uses OpenAI's GPT-4o with the same parameters:
@@ -597,21 +626,37 @@ echo "Who are you, and who is Leo Messi?" \
 Python:
 
 ```python
-from avalan.entities import GenerationSettings
-from avalan.model.nlp.text.generation import TextGenerationModel
+import asyncio
+from os import environ
 
-with TextGenerationModel("ai://env:OPENAI_API_KEY@openai/gpt-4o") as model:
-    async for token in await model(
-        "Who are you, and who is Leo Messi?",
-        system_prompt="You are Aurora, a helpful assistant",
-        settings=GenerationSettings(
-            max_new_tokens=100,
-            temperature=0.1,
-            top_p=0.9,
-            top_k=20
-        )
-    ):
-        print(token, end="", flush=True)
+from avalan.entities import GenerationSettings, TransformerEngineSettings
+from avalan.model.nlp.text.vendor.openai import OpenAIModel
+from avalan.model.stream import CanonicalStreamItem, StreamItemKind
+
+async def main() -> None:
+    api_key = environ["OPENAI_API_KEY"]
+    settings = TransformerEngineSettings(access_token=api_key)
+
+    with OpenAIModel("gpt-4o", settings) as model:
+        async for item in await model(
+            "Who are you, and who is Leo Messi?",
+            system_prompt="You are Aurora, a helpful assistant",
+            settings=GenerationSettings(
+                max_new_tokens=100,
+                temperature=0.1,
+                top_p=0.9,
+                top_k=20,
+                use_async_generator=True,
+            )
+        ):
+            assert isinstance(item, CanonicalStreamItem)
+            if (
+                item.kind is StreamItemKind.ANSWER_DELTA
+                and item.text_delta is not None
+            ):
+                print(item.text_delta, end="", flush=True)
+
+asyncio.run(main())
 ```
 For a runnable script, see [docs/examples/text_generation.py](docs/examples/text_generation.py).
 
@@ -1139,7 +1184,7 @@ For a runnable script, see [docs/examples/vision_text_to_video.py](docs/examples
 
 ## Tools
 
-Avalan makes it simple to launch a chat-based agent that can call external tools while streaming tokens. Avalan ships native helpers for `math.calculator`, `graph.*`, `code.run`, `browser.open`, `database.*`, memory, and MCP integrations so agents can reason with numbers, generate charts, execute code, browse the web, and interact with SQL databases from a single prompt.
+Avalan makes it simple to launch a chat-based agent that can call external tools while emitting canonical answer deltas and tool events. Avalan ships native helpers for `math.calculator`, `graph.*`, `code.run`, `browser.open`, `database.*`, memory, and MCP integrations so agents can reason with numbers, generate charts, execute code, browse the web, and interact with SQL databases from a single prompt.
 
 > [!NOTE]
 > Keep a human in the loop by adding `--tools-confirm` when you run an agent. Avalan will ask you to confirm each tool call before it executes, so you retain control over side effects.
@@ -1732,12 +1777,12 @@ folder.
 
 ### Serving agents
 
-Avalan agents can be exposed over three open protocols: OpenAI-compatible REST endpoints (supporting completions and streaming responses), Model Context Protocol (MCP), and Agent to Agent (A2A) as first-class tools. They are provided by the same `avalan agent serve` process so you can pick what fits your stack today and evolve without lock-in.
+Avalan agents can be exposed over three open protocols: OpenAI-compatible REST endpoints (supporting completions, Chat SSE, and Responses SSE projections), Model Context Protocol (MCP), and Agent to Agent (A2A) as first-class tools. They are provided by the same `avalan agent serve` process so you can pick what fits your stack today and evolve without lock-in.
 
 > [!TIP]
 > Add one or more `--protocol` flags (for example `--protocol openai`) when running `avalan agent serve` to restrict the interfaces you expose without changing your configuration.
 
-All three interfaces support real-time reasoning plus token and tool streaming, letting you observe thoughts, tokens, tool calls, and intermediate results as they happen.
+The Avalan runtime emits a canonical stream internally; serving surfaces project that stream to OpenAI-compatible SSE chunks/events, MCP notifications/resources, or A2A task/artifact events so protocol clients can observe reasoning, answer deltas, tool calls, and intermediate results as they happen.
 
 #### OpenAI completion and responses API
 
@@ -1769,8 +1814,9 @@ avalan agent serve \
     -vvv
 ```
 
-You can call your tool streaming agent's OpenAI-compatible endpoint just like
-the real API; simply change `--base-url`:
+You can call your served agent's OpenAI-compatible endpoint just like the real
+API; simply change `--base-url`. Chat completions and Responses requests
+project Avalan's canonical stream to protocol-specific chunks or SSE events:
 
 ```sh
 echo "What is (4 + 6) and then that result times 5, divided by 2?" | \
@@ -1809,7 +1855,8 @@ echo "The attached invoice may match a customer record in the database. Find the
         --input-file docs/examples/playground/invoice.pdf
 ```
 
-Or call the OpenAI Responses endpoint directly with streaming SSE events:
+Or call the OpenAI Responses endpoint directly with SSE events projected from
+the canonical stream:
 
 ```sh
 pdf=docs/examples/playground/invoice.pdf
@@ -1841,16 +1888,18 @@ jq -n \
 
 Avalan also embeds an HTTP MCP server alongside the OpenAI-compatible
 endpoints whenever you run `avalan agent serve`. It is mounted at `/mcp` by
-default and can be changed with `--mcp-prefix`.
+default and can be changed with `--mcp-prefix`. The MCP server projects
+canonical stream items to MCP progress notifications, resources, and final
+tool results.
 
 > [!TIP]
 > Use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) and
 > enter your MCP endpoint URL, the value you configured with `--mcp-prefix`
 > when running `avalan agent serve` (default: `http://localhost:9001/mcp`).
 > Click `Connect`, then `List Tools`, run the tool that appears (it will match
-> your `--mcp-name` and `--mcp-description`), and observe the streaming
-> notifications and the final response, which includes reasoning and any tool
-> calls with their arguments and results.
+> your `--mcp-name` and `--mcp-description`), and observe MCP notifications
+> projected from canonical stream items and the final response,
+> which includes reasoning and any tool calls with their arguments and results.
 
 You can customize the MCP tool identity with `--mcp-name` (defaults to `run`) and `--mcp-description` when running `avalan agent serve`.
 
@@ -1894,15 +1943,16 @@ codex exec \
 
 Avalan also embeds an A2A-compatible server alongside the OpenAI-compatible
 endpoints whenever you run `avalan agent serve`. It is mounted at `/a2a` by
-default and can be configured with `--a2a-prefix`. The A2A surface supports
-streaming, including incremental tool calling and intermediate outputs.
+default and can be configured with `--a2a-prefix`. The A2A surface projects
+canonical stream items to A2A task, status, artifact, tool-call, and
+intermediate-output events.
 
 > [!TIP]
 > Use the [a2a inspector](https://github.com/a2aproject/a2a-inspector) and
 > enter your agent card URL, the value you configured with `--a2a-prefix`
 > when running `avalan agent serve` (default: `http://localhost:9001/a2a/agent`).
 > You can customize the agent identity with `--a2a-name` and
-> `--a2a-description`, then observe the streaming notifications, tool calls,
+> `--a2a-description`, then observe projected A2A notifications, tool calls,
 > and final responses.
 
 You can customize the A2A agent identity with `--a2a-name` (defaults to `run`)
@@ -1940,7 +1990,7 @@ register_agent_endpoints(
 )
 ```
 
-The helper composes with any existing FastAPI lifespan logic, setting up the orchestrator loader only once and wiring the same streaming endpoints that `avalan agent serve` exposes.
+The helper composes with any existing FastAPI lifespan logic, setting up the orchestrator loader only once and wiring the same protocol-projected streaming endpoints that `avalan agent serve` exposes.
 
 #### Proxy agents
 
