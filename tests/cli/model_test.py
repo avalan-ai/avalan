@@ -1,6 +1,7 @@
 import asyncio
 from argparse import Namespace
 from base64 import b64encode
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from logging import getLogger
 from pathlib import Path
@@ -44,7 +45,7 @@ from avalan.entities import (
     ToolCallToken,
     TransformerEngineSettings,
 )
-from avalan.event import Event, EventType
+from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.event.manager import EventManager
 from avalan.model.call import ModelCallContext
 from avalan.model.manager import ModelManager as RealModelManager
@@ -1972,6 +1973,117 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             ],
         )
         self.assertIsNotNone(captured[0]["ttft"])
+
+    async def test_token_generation_consumes_stream_while_render_is_slow(
+        self,
+    ) -> None:
+        render_started = asyncio.Event()
+        render_release = ThreadEvent()
+        answer_consumed = asyncio.Event()
+        consumed: list[str] = []
+
+        async def token_gen() -> AsyncIterator[CanonicalStreamItem]:
+            for item in _canonical_answer_stream_items("A", "B"):
+                if item.kind is StreamItemKind.ANSWER_DELTA:
+                    assert item.text_delta is not None
+                    consumed.append(item.text_delta)
+                yield item
+                if item.text_delta == "A":
+                    await asyncio.wait_for(render_started.wait(), timeout=1.0)
+                if item.text_delta == "B":
+                    answer_consumed.set()
+                await asyncio.sleep(0)
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+                return token_gen()
+
+        async def fake_tokens(
+            *args: object, **_kwargs: object
+        ) -> AsyncIterator[tuple[None, str]]:
+            answer_text_tokens = cast(list[str], args[9])
+            yield (None, "frame-" + "".join(answer_text_tokens))
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=None,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            display_events=True,
+            display_tools=True,
+            record=False,
+        )
+        live = MagicMock()
+        live_cm = MagicMock()
+        live_cm.__enter__.return_value = live
+        live_cm.__exit__.return_value = False
+        theme = MagicMock()
+        theme.tokens = MagicMock(side_effect=fake_tokens)
+        theme.events.return_value = None
+        rendered: list[str] = []
+        live_container: dict[str, object | None] = {}
+        loop = asyncio.get_running_loop()
+
+        def slow_render(*call_args: object) -> None:
+            frame = cast(str, call_args[3])
+            group = cast(Any, call_args[4])
+            group_index = cast(int | None, call_args[5])
+            rendered.append(frame)
+            loop.call_soon_threadsafe(render_started.set)
+            render_release.wait(2.0)
+            if group is not None and group_index is not None:
+                group.renderables[group_index] = frame
+
+        with (
+            patch.object(model_cmds, "Live", return_value=live_cm),
+            patch.object(model_cmds, "_render_frame", side_effect=slow_render),
+        ):
+            task = asyncio.create_task(
+                model_cmds.token_generation(
+                    args=args,
+                    console=MagicMock(width=80),
+                    theme=theme,
+                    logger=MagicMock(),
+                    orchestrator=SimpleNamespace(
+                        event_manager=EventManager(), input_token_count=1
+                    ),
+                    event_stats=None,
+                    lm=SimpleNamespace(
+                        model_id="m",
+                        tokenizer_config=None,
+                        input_token_count=MagicMock(return_value=1),
+                    ),
+                    input_string="prompt",
+                    response=Resp(),
+                    display_tokens=0,
+                    dtokens_pick=0,
+                    refresh_per_second=1000,
+                    tool_events_limit=None,
+                    with_stats=True,
+                    live_container=live_container,
+                )
+            )
+            await asyncio.wait_for(render_started.wait(), timeout=1.0)
+            await asyncio.wait_for(answer_consumed.wait(), timeout=1.0)
+
+            self.assertEqual(consumed, ["A", "B"])
+            self.assertFalse(task.done())
+
+            render_release.set()
+            await task
+
+        self.assertEqual(rendered[-1], "frame-AB")
+        self.assertEqual(live_container.get("live"), None)
 
     async def test_token_stream_skips_tokenizer_config_without_display_tokens(
         self,
@@ -7277,6 +7389,38 @@ class CliModelSearchTestCase(IsolatedAsyncioTestCase):
 
 
 class CliModelInternalTestCase(IsolatedAsyncioTestCase):
+    def test_canonical_event_payload_rejects_invalid_payloads(self):
+        self.assertIsNone(
+            model_cmds._canonical_event_payload(Event(type=EventType.START))
+        )
+        self.assertIsNone(
+            model_cmds._canonical_event_payload(
+                Event(
+                    type=EventType.START,
+                    payload={
+                        "stream_session_id": "stream-1",
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "channel": "control",
+                    },
+                )
+            )
+        )
+        self.assertIsNone(
+            model_cmds._canonical_event_payload(
+                Event(
+                    type=EventType.START,
+                    payload={
+                        "stream_session_id": "stream-1",
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "kind": "stream.started",
+                        "channel": 1,
+                    },
+                )
+            )
+        )
+
     async def test_event_stream_updates_and_stops(self):
         orchestrator = SimpleNamespace(event_manager=EventManager())
         events = MagicMock(name="events")
@@ -7452,6 +7596,310 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(group.renderables[1], "panel")
         self.assertEqual(theme.events.call_count, 2)
         live.refresh.assert_called()
+
+    async def test_event_stream_routes_canonical_tool_payload_to_tools_panel(
+        self,
+    ):
+        orchestrator = SimpleNamespace(event_manager=EventManager())
+        group = SimpleNamespace(
+            renderables=[MagicMock(name="events"), MagicMock(name="tools")]
+        )
+        theme = MagicMock()
+        theme.events.return_value = "tool-panel"
+        live = MagicMock()
+        stop_signal = asyncio.Event()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=False,
+            display_tools=True,
+            record=False,
+        )
+        console = MagicMock()
+        task = asyncio.create_task(
+            model_cmds._event_stream(
+                args,
+                console,
+                live,
+                group,
+                0,
+                1,
+                orchestrator,
+                theme,
+                stop_signal=stop_signal,
+            )
+        )
+        await orchestrator.event_manager.trigger(
+            Event.from_observability_payload(
+                type=EventType.START,
+                observability_payload=EventObservabilityPayload.canonical_stream(
+                    {
+                        "stream_session_id": "stream-1",
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "sequence": 1,
+                        "kind": "tool_call.ready",
+                        "channel": "tool_call",
+                        "visibility": "public",
+                    }
+                ),
+            )
+        )
+        await asyncio.sleep(0)
+        stop_signal.set()
+        await task
+
+        self.assertEqual(group.renderables[1], "tool-panel")
+        theme.events.assert_called_once()
+        self.assertTrue(theme.events.call_args.kwargs["tool_view"])
+
+    async def test_event_stream_keeps_canonical_control_off_tools_panel(
+        self,
+    ):
+        orchestrator = SimpleNamespace(event_manager=EventManager())
+        group = SimpleNamespace(
+            renderables=[MagicMock(name="events"), MagicMock(name="tools")]
+        )
+        theme = MagicMock()
+        theme.events.return_value = "panel"
+        live = MagicMock()
+        stop_signal = asyncio.Event()
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=False,
+            display_tools=True,
+            record=False,
+        )
+        console = MagicMock()
+        task = asyncio.create_task(
+            model_cmds._event_stream(
+                args,
+                console,
+                live,
+                group,
+                0,
+                1,
+                orchestrator,
+                theme,
+                stop_signal=stop_signal,
+            )
+        )
+        await orchestrator.event_manager.trigger(
+            Event.from_observability_payload(
+                type=EventType.TOOL_DETECT,
+                observability_payload=EventObservabilityPayload.canonical_stream(
+                    {
+                        "stream_session_id": "stream-1",
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "sequence": 1,
+                        "kind": "stream.diagnostic",
+                        "channel": "control",
+                        "visibility": "diagnostic",
+                    }
+                ),
+            )
+        )
+        await asyncio.sleep(0)
+        stop_signal.set()
+        await task
+
+        theme.events.assert_not_called()
+        live.refresh.assert_not_called()
+
+    async def test_event_stream_splits_canonical_diagnostics_and_tools(
+        self,
+    ) -> None:
+        orchestrator = SimpleNamespace(event_manager=EventManager())
+        group = SimpleNamespace(
+            renderables=["events-slot", "tools-slot", "tokens-slot"]
+        )
+        theme = MagicMock()
+        theme.events.side_effect = lambda _history, **kwargs: (
+            "tools-panel" if kwargs["tool_view"] else "events-panel"
+        )
+        live = MagicMock()
+        stop_signal = asyncio.Event()
+        console = MagicMock()
+        render_calls: list[tuple[int | None, object]] = []
+
+        async def immediate_to_thread(
+            func: Any, *args: object, **kwargs: object
+        ) -> None:
+            func(*args, **kwargs)
+
+        def render_frame(*call_args: object) -> None:
+            frame = call_args[3]
+            target_group = cast(Any, call_args[4])
+            group_index = cast(int | None, call_args[5])
+            render_calls.append((group_index, frame))
+            if target_group is not None and group_index is not None:
+                target_group.renderables[group_index] = frame
+            live.refresh()
+
+        def canonical_event(
+            event_type: EventType,
+            kind: str,
+            channel: str,
+            *,
+            sequence: int,
+            visibility: str = "public",
+        ) -> Event:
+            return Event.from_observability_payload(
+                type=event_type,
+                observability_payload=EventObservabilityPayload.canonical_stream(
+                    {
+                        "stream_session_id": "stream-1",
+                        "run_id": "run-1",
+                        "turn_id": "turn-1",
+                        "sequence": sequence,
+                        "kind": kind,
+                        "channel": channel,
+                        "visibility": visibility,
+                    }
+                ),
+            )
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=True,
+            display_tools=True,
+            record=False,
+        )
+
+        with (
+            patch.object(
+                model_cmds, "to_thread", side_effect=immediate_to_thread
+            ),
+            patch.object(
+                model_cmds, "_render_frame", side_effect=render_frame
+            ),
+        ):
+            task = asyncio.create_task(
+                model_cmds._event_stream(
+                    args,
+                    console,
+                    live,
+                    group,
+                    0,
+                    1,
+                    orchestrator,
+                    theme,
+                    stop_signal=stop_signal,
+                    refresh_per_second=1000,
+                )
+            )
+            await orchestrator.event_manager.trigger(
+                canonical_event(
+                    EventType.TOOL_DETECT,
+                    "stream.diagnostic",
+                    "control",
+                    sequence=1,
+                    visibility="diagnostic",
+                )
+            )
+            await orchestrator.event_manager.trigger(
+                canonical_event(
+                    EventType.START,
+                    "tool.execution.started",
+                    "control",
+                    sequence=2,
+                )
+            )
+            stop_signal.set()
+            await task
+
+        self.assertEqual(group.renderables[0], "events-panel")
+        self.assertEqual(group.renderables[1], "tools-panel")
+        self.assertCountEqual(
+            render_calls,
+            [(0, "events-panel"), (1, "tools-panel")],
+        )
+        first_call, second_call = theme.events.call_args_list
+        self.assertFalse(first_call.kwargs["tool_view"])
+        self.assertFalse(first_call.kwargs["include_tools"])
+        self.assertTrue(first_call.kwargs["include_non_tools"])
+        self.assertTrue(second_call.kwargs["tool_view"])
+        self.assertTrue(second_call.kwargs["include_tools"])
+        self.assertFalse(second_call.kwargs["include_non_tools"])
+
+    async def test_event_stream_consumes_events_while_rendering_is_slow(
+        self,
+    ):
+        orchestrator = SimpleNamespace(event_manager=EventManager())
+        group = SimpleNamespace(
+            renderables=[MagicMock(name="events"), MagicMock(name="tools")]
+        )
+        theme = MagicMock()
+        theme.events.side_effect = lambda history, **_: f"panel-{len(history)}"
+        live = MagicMock()
+        stop_signal = asyncio.Event()
+        render_started = asyncio.Event()
+        release_render = ThreadEvent()
+        rendered: list[object] = []
+        loop = asyncio.get_running_loop()
+
+        def slow_render(*call_args: object) -> None:
+            frame = call_args[3]
+            target_group = cast(Any, call_args[4])
+            group_index = cast(int | None, call_args[5])
+            rendered.append(frame)
+            if target_group is not None and group_index is not None:
+                target_group.renderables[group_index] = frame
+            loop.call_soon_threadsafe(render_started.set)
+            release_render.wait(1.0)
+
+        async def wait_for_theme_calls(total: int) -> None:
+            for _ in range(100):
+                if theme.events.call_count >= total:
+                    return
+                await asyncio.sleep(0.01)
+            self.fail(f"theme.events was called {theme.events.call_count}x")
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_events=True,
+            display_tools=False,
+            record=False,
+        )
+        console = MagicMock()
+
+        with patch.object(
+            model_cmds, "_render_frame", side_effect=slow_render
+        ):
+            task = asyncio.create_task(
+                model_cmds._event_stream(
+                    args,
+                    console,
+                    live,
+                    group,
+                    0,
+                    1,
+                    orchestrator,
+                    theme,
+                    stop_signal=stop_signal,
+                    refresh_per_second=60,
+                )
+            )
+            await orchestrator.event_manager.trigger(
+                Event(type=EventType.START)
+            )
+            await asyncio.wait_for(render_started.wait(), timeout=1.0)
+
+            await orchestrator.event_manager.trigger(Event(type=EventType.END))
+            await orchestrator.event_manager.trigger(
+                Event(type=EventType.MODEL_EXECUTE_AFTER)
+            )
+            await wait_for_theme_calls(3)
+
+            stop_signal.set()
+            release_render.set()
+            await task
+
+        self.assertEqual(theme.events.call_count, 3)
+        self.assertEqual(rendered[-1], "panel-3")
+        self.assertEqual(group.renderables[0], "panel-3")
 
     async def test_event_stream_skip_unselected_tool(self):
         orchestrator = SimpleNamespace(event_manager=EventManager())
@@ -8076,6 +8524,30 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(len(rendered), 1)
         self.assertIs(rendered[0], latest_frame)
+
+    async def test_frame_rate_renderer_uses_render_lock(self):
+        args = Namespace(skip_display_reasoning_time=False, record=False)
+        rendered: list[object] = []
+
+        def capture_render(*call_args: object) -> None:
+            rendered.append(call_args[3])
+
+        with patch.object(
+            model_cmds, "_render_frame", side_effect=capture_render
+        ):
+            renderer = model_cmds._FrameRateRenderer(
+                args,
+                MagicMock(),
+                MagicMock(),
+                None,
+                None,
+                refresh_per_second=10,
+                render_lock=asyncio.Lock(),
+            )
+            renderer.mark_dirty("locked")
+            await renderer.close()
+
+        self.assertEqual(rendered, ["locked"])
 
     async def test_frame_rate_renderer_closes_without_dirty_frame(self):
         args = Namespace(skip_display_reasoning_time=False, record=False)
