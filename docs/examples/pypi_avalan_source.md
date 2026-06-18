@@ -202,7 +202,7 @@ question and then keeps the conversation open for follow-up questions:
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
   | avalan agent run \
       --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
-      --tool "calculator" \
+      --tool "math.calculator" \
       --memory-recent \
       --run-max-new-tokens 1024 \
       --name "Tool" \

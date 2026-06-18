@@ -130,9 +130,8 @@ early.
 
 ## Agent Tools
 
-DS4 uses its native DSML tool protocol internally. You can run the same
-agent-tool flow as other local backends by pointing the engine URI at the
-DS4 GGUF:
+DS4-backed agents can use normal Avalan tools. Run the same agent-tool flow
+as other local backends by pointing the engine URI at the DS4 GGUF:
 
 ```bash
 printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
@@ -148,9 +147,9 @@ printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
       --display-tools
 ```
 
-Do not override DS4's internal tool protocol with a generic tool format.
-Avalan keeps DSML for DS4 prompt rendering and exact replay even when other
-backends use JSON, ReAct, OpenAI, or Harmony formats.
+Basic output shows answer text and hides DSML/protocol/tool-call markup from
+the final answer while preserving tool results. Add `--display-tools` when
+you want the live tool lifecycle and result diagnostics.
 
 ## Current Limitations
 
@@ -160,6 +159,9 @@ backends use JSON, ReAct, OpenAI, or Harmony formats.
   Avalan renders tool schemas, parses completed DSML tool blocks, streams
   argument deltas, and preserves exact raw DSML replay metadata for session
   alignment.
+- Do not override DS4's internal tool protocol with a generic tool format.
+  Avalan keeps DSML for DS4 prompt rendering and exact replay even when
+  other backends use JSON, ReAct, OpenAI, or Harmony formats.
 - CPU inference is a debug/reference path, not a production target.
 
 ## Integration Tests
