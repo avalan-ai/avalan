@@ -48,6 +48,7 @@ OutputItem = (
 )
 OutputGenerator = AsyncIterator[OutputItem]
 OutputFunction = Callable[..., OutputGenerator | str]
+_LEGACY_SDK_STREAM_ERROR = "unsupported legacy SDK response stream item"
 
 
 def _is_semantic_output_item(item: object | None) -> bool:
@@ -410,6 +411,10 @@ class TextGenerationResponse(AsyncIterator[OutputItem]):
                     self._final_text = accumulator.answer_text
                     await self._trigger_consumed()
                 return
+
+            if first is not None and provider_family == "local":
+                await self.aclose()
+                raise StreamValidationError(_LEGACY_SDK_STREAM_ERROR)
 
             async def tokens() -> AsyncIterator[LegacyOutputItem]:
                 try:

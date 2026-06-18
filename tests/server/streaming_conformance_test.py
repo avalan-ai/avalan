@@ -10,10 +10,14 @@ from uuid import uuid4
 
 from a2a import types as a2a_types
 from streaming_trace_fixtures import (
+    TERMINAL_ERROR_DATA,
+    TERMINAL_TRACE_USAGE,
     TOOL_CALL_ID,
     async_items,
     canonical_item,
     canonical_stream_trace,
+    stream_channel,
+    terminal_outcome_trace,
 )
 
 from avalan.cli.commands import model as model_cmds
@@ -25,6 +29,7 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     accumulate_canonical_stream_items,
     iter_stream_consumer_projections,
 )
@@ -95,6 +100,198 @@ async def _run_canonical_trace_conforms_across_public_stream_surfaces() -> (
     await _assert_a2a_projection(trace.items)
 
 
+def test_canonical_golden_trace_locks_item_semantics() -> None:
+    trace = canonical_stream_trace()
+
+    assert tuple(_canonical_semantics(item) for item in trace.items) == (
+        _semantic_entry(0, StreamItemKind.STREAM_STARTED),
+        _semantic_entry(
+            1,
+            StreamItemKind.FLOW_EVENT,
+            correlation={"flow_run_id": "flow-1", "node_id": "node-1"},
+            data={
+                "flow_id": "flow-1",
+                "node": "node-1",
+                "status": "started",
+            },
+            metadata={"event_type": "flow_node_started"},
+        ),
+        _semantic_entry(
+            2,
+            StreamItemKind.REASONING_DELTA,
+            text_delta="plan",
+            visibility=StreamVisibility.PRIVATE,
+        ),
+        _semantic_entry(
+            3,
+            StreamItemKind.REASONING_DONE,
+            visibility=StreamVisibility.PRIVATE,
+        ),
+        _semantic_entry(
+            4,
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            text_delta='{"query":"',
+            data={"name": "search", "arguments": {"query": "docs"}},
+        ),
+        _semantic_entry(
+            5,
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            text_delta='docs"}',
+            data={"name": "search", "arguments": {"query": "docs"}},
+        ),
+        _semantic_entry(
+            6,
+            StreamItemKind.TOOL_CALL_READY,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            data={"name": "search", "arguments": {"query": "docs"}},
+        ),
+        _semantic_entry(
+            7,
+            StreamItemKind.TOOL_CALL_DONE,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+        ),
+        _semantic_entry(
+            8,
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            metadata={"tool_name": "search"},
+        ),
+        _semantic_entry(
+            9,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            text_delta="live",
+            data={"category": "stdout", "content": "live"},
+            metadata={"tool_name": "search"},
+        ),
+        _semantic_entry(
+            10,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            text_delta=" warning",
+            data={"category": "stderr", "content": " warning"},
+            metadata={"tool_name": "search"},
+        ),
+        _semantic_entry(
+            11,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            text_delta=" trace",
+            data={"category": "log", "content": " trace"},
+            metadata={"tool_name": "search"},
+        ),
+        _semantic_entry(
+            12,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            data={
+                "category": "progress",
+                "content": "50%",
+                "progress": 0.5,
+            },
+            metadata={"tool_name": "search"},
+        ),
+        _semantic_entry(
+            13,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            correlation={"tool_call_id": TOOL_CALL_ID},
+            data={"result": "live warning trace"},
+            metadata={"tool_name": "search"},
+        ),
+        _semantic_entry(
+            14,
+            StreamItemKind.ANSWER_DELTA,
+            text_delta="final ",
+        ),
+        _semantic_entry(
+            15,
+            StreamItemKind.ANSWER_DELTA,
+            text_delta="answer",
+        ),
+        _semantic_entry(16, StreamItemKind.ANSWER_DONE),
+        _semantic_entry(
+            17,
+            StreamItemKind.USAGE_COMPLETED,
+            usage={
+                "input_tokens": 2,
+                "output_tokens": 5,
+                "total_tokens": 7,
+            },
+        ),
+        _semantic_entry(
+            18,
+            StreamItemKind.STREAM_COMPLETED,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+        _semantic_entry(19, StreamItemKind.STREAM_CLOSED),
+    )
+
+
+def test_terminal_outcome_traces_project_protocol_terminal_events() -> None:
+    expected = {
+        StreamTerminalOutcome.COMPLETED: (None, "response.completed"),
+        StreamTerminalOutcome.ERRORED: (
+            "chat.completion.failed",
+            "response.failed",
+        ),
+        StreamTerminalOutcome.CANCELLED: (
+            "chat.completion.cancelled",
+            "response.cancelled",
+        ),
+    }
+
+    for outcome, (chat_event_name, response_event_name) in expected.items():
+        trace = terminal_outcome_trace(outcome)
+        projections = asyncio.run(_collect_consumer_projections(trace.items))
+        accumulator = accumulate_canonical_stream_items(trace.items)
+        protocol_accumulator = ProtocolStreamAccumulator()
+        for projection in projections:
+            protocol_accumulator.add(projection)
+        snapshot = protocol_accumulator.snapshot()
+        terminal = next(
+            projection
+            for projection in projections
+            if projection.is_stream_terminal
+        )
+
+        assert accumulator.final_usage == TERMINAL_TRACE_USAGE
+        assert snapshot.usage == TERMINAL_TRACE_USAGE
+        assert snapshot.terminal_outcome is outcome
+        assert snapshot.terminal_succeeded is (
+            outcome is StreamTerminalOutcome.COMPLETED
+        )
+        assert terminal.sequence == 4
+        assert terminal.terminal_outcome is outcome
+
+        chat_message = chat._chat_terminal_event(
+            "chatcmpl-terminal",
+            1,
+            "test-model",
+            terminal,
+        )
+        if chat_event_name is None:
+            assert chat_message is None
+        else:
+            assert chat_message is not None
+            assert _sse_event_name(chat_message) == chat_event_name
+            chat_payload = _sse_event_data(chat_message)
+            assert chat_payload["type"] == chat_event_name
+            assert chat_payload["sequence_number"] == 4
+            if outcome is StreamTerminalOutcome.ERRORED:
+                assert chat_payload["error"] == TERMINAL_ERROR_DATA
+
+        response_events = responses._terminal_response_events(terminal)
+        assert len(response_events) == 1
+        response_event = response_events[0]
+        assert response_event.event == response_event_name
+        assert response_event.data["type"] == response_event_name
+        assert response_event.data["sequence_number"] == 4
+        if outcome is StreamTerminalOutcome.ERRORED:
+            assert response_event.data["error"] == TERMINAL_ERROR_DATA
+
+
 def test_canonical_trace_rejects_content_after_terminal() -> None:
     trace = canonical_stream_trace()
     invalid_items = trace.items[:-1] + (
@@ -160,6 +357,25 @@ def test_public_projection_helpers_reject_unsupported_items() -> None:
             assert message in str(exc)
         else:
             raise AssertionError(f"{message} was accepted")
+
+
+def test_default_projection_helpers_legacy_rejection_first_item() -> None:
+    for project, message in (
+        (
+            lambda: chat._stream_projection("legacy text", 0),
+            "unsupported stream item for Chat SSE projection",
+        ),
+        (
+            lambda: responses._stream_projection("legacy text", 0),
+            "unsupported stream item for Responses SSE projection",
+        ),
+    ):
+        try:
+            project()
+        except StreamValidationError as exc:
+            assert message in str(exc)
+        else:
+            raise AssertionError(f"{message} accepted a legacy string")
 
 
 def _assert_sdk_projection(
@@ -516,8 +732,8 @@ async def _assert_mcp_projection(
         for resource in structured["toolCalls"][0]["resources"]
     ] == ["stdout", "stderr", "logs", "progress"]
     assert structured["usage"] == {
-        "input_text_tokens": 0,
-        "output_text_tokens": 0,
+        "input_text_tokens": 2,
+        "output_text_tokens": 5,
         "total_tokens": 7,
     }
 
@@ -585,6 +801,69 @@ async def _assert_a2a_projection(
 
 def _sse_event_name(message: str) -> str:
     return message.split("\n", maxsplit=1)[0].split(": ", maxsplit=1)[1]
+
+
+def _sse_event_data(message: str) -> dict[str, object]:
+    for line in message.splitlines():
+        if line.startswith("data: "):
+            payload = loads(line.split(": ", maxsplit=1)[1])
+            assert isinstance(payload, dict)
+            return cast(dict[str, object], payload)
+    raise AssertionError("SSE message did not contain data")
+
+
+async def _collect_consumer_projections(
+    items: tuple[CanonicalStreamItem, ...],
+) -> tuple[StreamConsumerProjection, ...]:
+    return tuple(
+        [
+            projection
+            async for projection in iter_stream_consumer_projections(
+                async_items(items)
+            )
+        ]
+    )
+
+
+def _canonical_semantics(item: CanonicalStreamItem) -> tuple[object, ...]:
+    return (
+        item.sequence,
+        item.kind,
+        item.channel,
+        item.visibility,
+        item.correlation.to_trace_dict(),
+        item.text_delta,
+        item.data,
+        item.usage,
+        item.terminal_outcome,
+        item.metadata,
+    )
+
+
+def _semantic_entry(
+    sequence: int,
+    kind: StreamItemKind,
+    *,
+    visibility: StreamVisibility = StreamVisibility.PUBLIC,
+    correlation: dict[str, object] | None = None,
+    text_delta: str | None = None,
+    data: object | None = None,
+    usage: object | None = None,
+    terminal_outcome: StreamTerminalOutcome | None = None,
+    metadata: dict[str, object] | None = None,
+) -> tuple[object, ...]:
+    return (
+        sequence,
+        kind,
+        stream_channel(kind),
+        visibility,
+        correlation or {},
+        text_delta,
+        data,
+        usage,
+        terminal_outcome,
+        metadata or {},
+    )
 
 
 def _stream_item_data(item: StreamConsumerProjection) -> dict[str, object]:

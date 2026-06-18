@@ -12,6 +12,7 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamTerminalOutcome,
     StreamValidationError,
+    StreamVisibility,
     accumulate_canonical_stream_items,
     iter_stream_consumer_projections,
 )
@@ -32,6 +33,7 @@ def _item(
     usage: object | None = None,
     terminal_outcome: StreamTerminalOutcome | None = None,
     correlation: StreamItemCorrelation | None = None,
+    visibility: StreamVisibility = StreamVisibility.PUBLIC,
 ) -> CanonicalStreamItem:
     return CanonicalStreamItem(
         stream_session_id=_STREAM_SESSION_ID,
@@ -65,6 +67,7 @@ def _item(
         data=data,  # type: ignore[arg-type]
         usage=usage,  # type: ignore[arg-type]
         terminal_outcome=terminal_outcome,
+        visibility=visibility,
     )
 
 
@@ -73,8 +76,17 @@ def _golden_items() -> tuple[CanonicalStreamItem, ...]:
     return (
         _item(0, StreamItemKind.STREAM_STARTED),
         _item(1, StreamItemKind.ANSWER_DELTA, text_delta="lead "),
-        _item(2, StreamItemKind.REASONING_DELTA, text_delta="plan"),
-        _item(3, StreamItemKind.REASONING_DONE),
+        _item(
+            2,
+            StreamItemKind.REASONING_DELTA,
+            text_delta="plan",
+            visibility=StreamVisibility.PRIVATE,
+        ),
+        _item(
+            3,
+            StreamItemKind.REASONING_DONE,
+            visibility=StreamVisibility.PRIVATE,
+        ),
         _item(
             4,
             StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -109,14 +121,20 @@ def _golden_items() -> tuple[CanonicalStreamItem, ...]:
         ),
         _item(
             9,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            correlation=tool_correlation,
+            data={"category": "progress", "content": "50%", "progress": 0.5},
+        ),
+        _item(
+            10,
             StreamItemKind.TOOL_EXECUTION_COMPLETED,
             correlation=tool_correlation,
             data={"result": "4"},
         ),
-        _item(10, StreamItemKind.ANSWER_DELTA, text_delta="tail"),
-        _item(11, StreamItemKind.ANSWER_DONE),
+        _item(11, StreamItemKind.ANSWER_DELTA, text_delta="tail"),
+        _item(12, StreamItemKind.ANSWER_DONE),
         _item(
-            12,
+            13,
             StreamItemKind.USAGE_COMPLETED,
             usage={
                 "input_tokens": 3,
@@ -125,11 +143,11 @@ def _golden_items() -> tuple[CanonicalStreamItem, ...]:
             },
         ),
         _item(
-            13,
+            14,
             StreamItemKind.STREAM_COMPLETED,
             terminal_outcome=StreamTerminalOutcome.COMPLETED,
         ),
-        _item(14, StreamItemKind.STREAM_CLOSED),
+        _item(15, StreamItemKind.STREAM_CLOSED),
     )
 
 
@@ -203,6 +221,8 @@ class PrimaryConsumerProjectionGoldenTestCase(IsolatedAsyncioTestCase):
             [projection.sequence for projection in projections],
             list(range(len(projections))),
         )
+        self.assertIs(projections[2].visibility, StreamVisibility.PRIVATE)
+        self.assertIs(projections[3].visibility, StreamVisibility.PRIVATE)
 
         stdout_text = "".join(
             model_cmds._stream_text(projection) or ""
@@ -254,6 +274,7 @@ class PrimaryConsumerProjectionGoldenTestCase(IsolatedAsyncioTestCase):
                 "response.output_item.done",
                 "response.tool_execution.started",
                 "response.tool_execution.output",
+                "response.tool_execution.progress",
                 "response.tool_execution.completed",
                 "response.output_item.added",
                 "response.content_part.added",

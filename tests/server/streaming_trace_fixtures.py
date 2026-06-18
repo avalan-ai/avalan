@@ -7,12 +7,25 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
+    StreamVisibility,
 )
 
 STREAM_SESSION_ID = "conformance-stream"
 RUN_ID = "conformance-run"
 TURN_ID = "conformance-turn"
 TOOL_CALL_ID = "call-1"
+TERMINAL_ERROR_DATA: dict[str, object] = {
+    "code": "upstream_error",
+    "message": "upstream failed",
+}
+TERMINAL_CANCELLED_DATA: dict[str, object] = {
+    "reason": "client_cancelled",
+}
+TERMINAL_TRACE_USAGE: dict[str, object] = {
+    "input_tokens": 1,
+    "output_tokens": 2,
+    "total_tokens": 3,
+}
 
 
 def canonical_stream_trace() -> StreamGoldenTrace:
@@ -38,8 +51,13 @@ def canonical_stream_trace() -> StreamGoldenTrace:
                 2,
                 StreamItemKind.REASONING_DELTA,
                 text_delta="plan",
+                visibility=StreamVisibility.PRIVATE,
             ),
-            canonical_item(3, StreamItemKind.REASONING_DONE),
+            canonical_item(
+                3,
+                StreamItemKind.REASONING_DONE,
+                visibility=StreamVisibility.PRIVATE,
+            ),
             canonical_item(
                 4,
                 StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -147,6 +165,44 @@ def canonical_stream_trace() -> StreamGoldenTrace:
     )
 
 
+def terminal_outcome_trace(
+    outcome: StreamTerminalOutcome,
+) -> StreamGoldenTrace:
+    assert isinstance(outcome, StreamTerminalOutcome)
+    terminal_data: object | None
+    if outcome is StreamTerminalOutcome.ERRORED:
+        terminal_kind = StreamItemKind.STREAM_ERRORED
+        terminal_data = TERMINAL_ERROR_DATA
+    elif outcome is StreamTerminalOutcome.CANCELLED:
+        terminal_kind = StreamItemKind.STREAM_CANCELLED
+        terminal_data = TERMINAL_CANCELLED_DATA
+    else:
+        terminal_kind = StreamItemKind.STREAM_COMPLETED
+        terminal_data = None
+
+    return StreamGoldenTrace(
+        name=f"streaming-terminal-{outcome.value}",
+        items=(
+            canonical_item(0, StreamItemKind.STREAM_STARTED),
+            canonical_item(1, StreamItemKind.ANSWER_DELTA, text_delta="ok"),
+            canonical_item(2, StreamItemKind.ANSWER_DONE),
+            canonical_item(
+                3,
+                StreamItemKind.USAGE_COMPLETED,
+                usage=TERMINAL_TRACE_USAGE,
+            ),
+            canonical_item(
+                4,
+                terminal_kind,
+                data=terminal_data,
+                terminal_outcome=outcome,
+            ),
+            canonical_item(5, StreamItemKind.STREAM_CLOSED),
+        ),
+        description=f"Canonical trace ending with {outcome.value}.",
+    )
+
+
 def canonical_item(
     sequence: int,
     kind: StreamItemKind,
@@ -157,6 +213,7 @@ def canonical_item(
     usage: object | None = None,
     terminal_outcome: StreamTerminalOutcome | None = None,
     metadata: dict[str, object] | None = None,
+    visibility: StreamVisibility = StreamVisibility.PUBLIC,
 ) -> CanonicalStreamItem:
     return CanonicalStreamItem(
         stream_session_id=STREAM_SESSION_ID,
@@ -171,6 +228,7 @@ def canonical_item(
         usage=usage,  # type: ignore[arg-type]
         terminal_outcome=terminal_outcome,
         metadata=metadata or {},  # type: ignore[arg-type]
+        visibility=visibility,
     )
 
 

@@ -23,7 +23,10 @@ class StreamingOrchestrator(Orchestrator):
             yield "b"
 
         return TextGenerationResponse(
-            gen, logger=getLogger(), use_async_generator=True
+            gen,
+            logger=getLogger(),
+            use_async_generator=True,
+            provider_family="transformers",
         )
 
 
@@ -76,6 +79,7 @@ class EventfulServerOrchestrator(Orchestrator):
                 output_gen,
                 logger=getLogger(),
                 use_async_generator=True,
+                provider_family="transformers",
             )
 
         def output_fn(**_):

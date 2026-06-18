@@ -1215,10 +1215,16 @@ async def _stream_mcp_response(
             "model": request_model.model,
             "usage": {
                 "input_text_tokens": _usage_count(
-                    usage, "input_text_tokens", response.input_token_count
+                    usage,
+                    "input_text_tokens",
+                    response.input_token_count,
+                    aliases=("input_tokens",),
                 ),
                 "output_text_tokens": _usage_count(
-                    usage, "output_text_tokens", response.output_token_count
+                    usage,
+                    "output_text_tokens",
+                    response.output_token_count,
+                    aliases=("output_tokens",),
                 ),
                 "total_tokens": _usage_count(
                     usage,
@@ -1769,11 +1775,14 @@ def _usage_count(
     usage: object | None,
     key: str,
     fallback: int,
+    *,
+    aliases: tuple[str, ...] = (),
 ) -> int:
     if isinstance(usage, dict):
-        value = usage.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
+        for usage_key in (key, *aliases):
+            value = usage.get(usage_key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
     return fallback
 
 
