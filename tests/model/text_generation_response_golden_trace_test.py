@@ -6,8 +6,6 @@ from unittest import IsolatedAsyncioTestCase
 from avalan.entities import (
     GenerationSettings,
     Token,
-    ToolCall,
-    ToolCallToken,
 )
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
@@ -21,7 +19,6 @@ from avalan.model.stream import (
     StreamVisibility,
     accumulate_canonical_stream_items,
     assemble_tool_observations,
-    canonical_item_from_token,
 )
 
 _STREAM_SESSION_ID = "response-stream"
@@ -237,87 +234,6 @@ def _protocol_item(
         metadata={} if metadata is None else metadata,  # type: ignore[arg-type]
         visibility=visibility,
     )
-
-
-def _legacy_fixture_trace_from_tokens(
-    name: str,
-    tokens: tuple[Token | str, ...],
-    *,
-    terminal_kind: StreamItemKind = StreamItemKind.STREAM_COMPLETED,
-    usage: object | None = None,
-) -> StreamGoldenTrace:
-    items = [_control_item(StreamItemKind.STREAM_STARTED, 0)]
-    reasoning_started = False
-    tool_call_data: dict[str, dict[str, object] | None] = {}
-
-    for sequence, token in enumerate(tokens, start=1):
-        canonical_item = canonical_item_from_token(
-            token,
-            sequence,
-            stream_session_id=_STREAM_SESSION_ID,
-            run_id=_RUN_ID,
-            turn_id=_TURN_ID,
-        )
-        items.append(canonical_item)
-        if canonical_item.kind is StreamItemKind.REASONING_DELTA:
-            reasoning_started = True
-        if canonical_item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
-            tool_call_id = canonical_item.correlation.tool_call_id
-            assert tool_call_id is not None
-            data: dict[str, object] | None = None
-            if isinstance(token, ToolCallToken) and token.call is not None:
-                data = {
-                    "name": token.call.name,
-                    "arguments": token.call.arguments,
-                }
-            tool_call_data.setdefault(tool_call_id, data)
-
-    terminal_outcome = StreamTerminalOutcome.COMPLETED
-    if terminal_kind is StreamItemKind.STREAM_ERRORED:
-        terminal_outcome = StreamTerminalOutcome.ERRORED
-    elif terminal_kind is StreamItemKind.STREAM_CANCELLED:
-        terminal_outcome = StreamTerminalOutcome.CANCELLED
-
-    for tool_call_id, data in tool_call_data.items():
-        if data is not None:
-            items.append(
-                _tool_item(
-                    StreamItemKind.TOOL_CALL_READY,
-                    len(items),
-                    tool_call_id=tool_call_id,
-                    data=data,
-                )
-            )
-        items.append(
-            _tool_item(
-                StreamItemKind.TOOL_CALL_DONE,
-                len(items),
-                tool_call_id=tool_call_id,
-                metadata=(
-                    {}
-                    if data is not None
-                    else {"tool_call.close_reason": "error"}
-                ),
-            )
-        )
-
-    if reasoning_started:
-        items.append(_reasoning_done(len(items)))
-    items.append(_answer_done(len(items)))
-    items.append(
-        _control_item(
-            terminal_kind,
-            len(items),
-            usage=(
-                {}
-                if usage is None
-                and terminal_kind is StreamItemKind.STREAM_COMPLETED
-                else usage
-            ),
-            terminal_outcome=terminal_outcome,
-        )
-    )
-    return StreamGoldenTrace(name=name, items=tuple(items))
 
 
 class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
@@ -910,31 +826,63 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
             ["call-stable"] * 8,
         )
 
-    async def test_legacy_fixture_ds4_tool_call_trace_captures_current_shape(
+    async def test_ds4_tool_call_trace_captures_current_canonical_shape(
         self,
     ) -> None:
-        call = ToolCall(
-            id="ds4_tool_abc",
-            name="math.calculator",
-            arguments={"expression": "2 + 2", "precision": 2},
-        )
-        tokens: tuple[Token | str, ...] = (
-            "I will calculate.",
-            ToolCallToken(token="2 + 2"),
-            ToolCallToken(token="2"),
-            ToolCallToken(token="", call=call),
-        )
-        trace = _legacy_fixture_trace_from_tokens(
-            "legacy-fixture-ds4-tool-call-current-shape",
-            tokens,
-            usage={"output_tokens": len(tokens)},
+        tool_call_id = "ds4_tool_abc"
+        tool_call_data = {
+            "name": "math.calculator",
+            "arguments": {"expression": "2 + 2", "precision": 2},
+        }
+        trace = _golden_trace(
+            "ds4-tool-call-current-canonical-shape",
+            _control_item(StreamItemKind.STREAM_STARTED, 0),
+            _answer_delta(1, "I will calculate."),
+            _tool_item(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                2,
+                tool_call_id=tool_call_id,
+                text_delta="2 + 2",
+            ),
+            _tool_item(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                3,
+                tool_call_id=tool_call_id,
+                text_delta="2",
+            ),
+            _tool_item(
+                StreamItemKind.TOOL_CALL_READY,
+                4,
+                tool_call_id=tool_call_id,
+                data=tool_call_data,
+            ),
+            _tool_item(
+                StreamItemKind.TOOL_CALL_DONE,
+                5,
+                tool_call_id=tool_call_id,
+            ),
+            _answer_done(6),
+            _control_item(
+                StreamItemKind.STREAM_COMPLETED,
+                7,
+                usage={"output_tokens": 4},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
         )
         accumulator = accumulate_canonical_stream_items(trace.items)
 
         self.assertEqual(accumulator.answer_text, "I will calculate.")
         self.assertEqual(
             accumulator.tool_call_arguments,
-            {"legacy-tool-call": "2 + 22", "ds4_tool_abc": ""},
+            {tool_call_id: "2 + 22"},
+        )
+        self.assertEqual(
+            [
+                item.data
+                for item in trace.items
+                if item.kind is StreamItemKind.TOOL_CALL_READY
+            ],
+            [tool_call_data],
         )
         self.assertEqual(
             [
@@ -942,14 +890,7 @@ class TextGenerationResponseGoldenTraceTestCase(IsolatedAsyncioTestCase):
                 for item in trace.to_fixture()["items"]  # type: ignore[index]
                 if item["channel"] == "tool_call"
             ],
-            [
-                "legacy-tool-call",
-                "legacy-tool-call",
-                "ds4_tool_abc",
-                "legacy-tool-call",
-                "ds4_tool_abc",
-                "ds4_tool_abc",
-            ],
+            [tool_call_id] * 4,
         )
 
     async def test_usage_callbacks_and_cancelled_terminal_trace(

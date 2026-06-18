@@ -388,10 +388,7 @@ class ToolCallResponseParser:
         self,
         tool_manager: ToolManager,
         event_manager: EventManager | None,
-        *,
-        legacy_fixture: bool = False,
     ) -> None:
-        assert isinstance(legacy_fixture, bool)
         self._tool_manager = tool_manager
         self._event_manager = event_manager
         self._buffer = StringIO()

@@ -184,21 +184,22 @@ def test_base_vendor_boundary_branches() -> None:
         ["system"],
     ) == [{"role": "user", "content": "keep"}]
 
-    invalid_arguments = TextGenerationVendor.build_tool_call_token(
+    invalid_arguments = TextGenerationVendor.build_tool_call_text(
         object(), "tool", "{"
     )
-    assert invalid_arguments.call.id.startswith("<object object at ")
-    assert invalid_arguments.call.name == "tool"
-    assert invalid_arguments.call.arguments == {}
-    assert invalid_arguments.call.provider_arguments_malformed is True
+    assert invalid_arguments.startswith(
+        '<tool_call>{"name": "tool", "arguments": {}, "id": "<object'
+        " object at "
+    )
 
-    dict_arguments = TextGenerationVendor.build_tool_call_token(
+    dict_arguments = TextGenerationVendor.build_tool_call_text(
         None, "pkg__tool", {"ok": True}
     )
-    assert dict_arguments.call.id is None
-    assert dict_arguments.call.name == "pkg__tool"
-    assert dict_arguments.call.arguments == {"ok": True}
-    assert '"id"' not in dict_arguments.token
+    assert (
+        dict_arguments
+        == '<tool_call>{"name": "pkg__tool", "arguments": {"ok": true}}'
+        "</tool_call>"
+    )
 
     async def agen() -> Any:
         yield "token"

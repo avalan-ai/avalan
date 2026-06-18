@@ -23,21 +23,23 @@ from tracemalloc import (
 from typing import Any, cast
 from unittest import TestCase
 
-from avalan.entities import Token
 from avalan.model.stream import (
     CanonicalStreamAccumulator,
     CanonicalStreamItem,
+    LocalTextStreamEventParser,
     StreamChannel,
     StreamConsumerProjection,
     StreamItemKind,
     StreamPerformanceBudget,
+    StreamProducerBackend,
     StreamProjectionState,
+    StreamProviderCapabilities,
+    StreamProviderEvent,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
-    _LegacyTokenStreamAdapter,
-    _normalize_local_stream,
     iter_stream_consumer_projections,
+    normalize_provider_stream,
 )
 
 
@@ -99,6 +101,49 @@ def _long_stream_items(count: int) -> Iterable[CanonicalStreamItem]:
 async def _long_stream(count: int) -> AsyncIterator[CanonicalStreamItem]:
     for item in _long_stream_items(count):
         yield item
+
+
+async def _local_text_events(
+    chunks: AsyncIterator[str],
+) -> AsyncIterator[StreamProviderEvent]:
+    parser = LocalTextStreamEventParser()
+    chunks_exhausted = False
+    try:
+        while True:
+            try:
+                chunk = await chunks.__anext__()
+            except StopAsyncIteration:
+                chunks_exhausted = True
+                break
+            for event in parser.push(chunk):
+                yield event
+        for event in parser.flush():
+            yield event
+    finally:
+        if not chunks_exhausted:
+            await chunks.aclose()
+
+
+def _local_text_stream(
+    chunks: AsyncIterator[str],
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+) -> AsyncIterator[CanonicalStreamItem]:
+    return normalize_provider_stream(
+        _local_text_events(chunks),
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+        capabilities=StreamProviderCapabilities(
+            backend=StreamProducerBackend.LOCAL,
+            supports_reasoning=True,
+            supports_tool_calls=True,
+            supports_cancellation=True,
+            max_queue_depth=StreamPerformanceBudget().max_queue_depth,
+        ),
+    )
 
 
 async def _collect_projections(
@@ -803,7 +848,7 @@ class StreamBenchmarkRegressionTestCase(TestCase):
 
         async def consume() -> tuple[PullTrackedTokens, int, float]:
             tokens = PullTrackedTokens()
-            stream = _normalize_local_stream(
+            stream = _local_text_stream(
                 tokens,
                 stream_session_id="slow-stream",
                 run_id="slow-run",
@@ -858,7 +903,7 @@ class StreamBenchmarkRegressionTestCase(TestCase):
             float,
         ]:
             tokens = ImmediateTokens()
-            stream = _normalize_local_stream(
+            stream = _local_text_stream(
                 tokens,
                 stream_session_id="latency-stream",
                 run_id="latency-run",
@@ -928,7 +973,7 @@ class StreamBenchmarkRegressionTestCase(TestCase):
 
         async def cancel_pending_pull() -> tuple[PendingTokens, float]:
             tokens = PendingTokens()
-            stream = _normalize_local_stream(
+            stream = _local_text_stream(
                 tokens,
                 stream_session_id="cancel-stream",
                 run_id="cancel-run",
@@ -1003,39 +1048,32 @@ class StreamBenchmarkRegressionTestCase(TestCase):
         self.assertEqual(accumulator.final_usage, {"output_tokens": count})
         self.assertLessEqual(peak, budget.max_memory_bytes)
 
-    def test_cached_legacy_adapter_projection_overhead_within_budget(
+    def test_canonical_projection_hot_path_overhead_within_budget(
         self,
     ) -> None:
         count = 8192
         budget = StreamPerformanceBudget()
-        token = Token(id=1, token="x")
-        adapter = _LegacyTokenStreamAdapter(
-            stream_session_id="legacy-stream",
-            run_id="legacy-run",
-            turn_id="legacy-turn",
-        )
-        next_sequence = 0
-
-        def legacy_item_mapper(
-            item: object,
-        ) -> tuple[CanonicalStreamItem, ...]:
-            nonlocal next_sequence
-            current_sequence = next_sequence
-            next_sequence += 1
-            return (adapter.item_from_token(item, current_sequence),)
-
         state = StreamProjectionState(
-            stream_session_id="legacy-stream",
-            run_id="legacy-run",
-            turn_id="legacy-turn",
+            stream_session_id="canonical-stream",
+            run_id="canonical-run",
+            turn_id="canonical-turn",
             accumulate=False,
-            legacy_item_mapper=legacy_item_mapper,
         )
 
         started = perf_counter()
         for sequence in range(count):
+            item = _item(
+                StreamItemKind.ANSWER_DELTA,
+                sequence,
+                text_delta="x",
+            )
+            source: CanonicalStreamItem | StreamConsumerProjection = (
+                item
+                if sequence % 2 == 0
+                else StreamConsumerProjection.from_item(item)
+            )
             projection = state.project(
-                token,
+                source,
                 sequence,
                 unsupported_message="unsupported benchmark item",
             )
@@ -1043,12 +1081,11 @@ class StreamBenchmarkRegressionTestCase(TestCase):
         per_item_us = elapsed_us / count
 
         print(
-            "phase7 benchmark legacy_adapter "
+            "phase7 benchmark canonical_projection_hot_path "
             f"tokens={count} per_item_us={per_item_us:.3f}"
         )
         self.assertEqual(projection.text_delta, "x")
         self.assertEqual(projection.sequence, count - 1)
-        self.assertEqual(next_sequence, count)
         self.assertLessEqual(per_item_us, budget.per_item_overhead_us)
 
     def test_rejects_late_content_during_projection_benchmark(
@@ -1078,7 +1115,7 @@ class StreamBenchmarkRegressionTestCase(TestCase):
         ):
             run(collect_invalid())
 
-    def test_legacy_adapter_benchmark_rejects_unsupported_item(self) -> None:
+    def test_projection_benchmark_rejects_unsupported_item(self) -> None:
         state = StreamProjectionState(
             stream_session_id="legacy-stream",
             run_id="legacy-run",

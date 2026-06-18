@@ -29,7 +29,6 @@ from avalan.entities import (
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
-    ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.model.response.text import TextGenerationResponse
@@ -2903,8 +2902,8 @@ class TemplateMessagesFormatTestCase(IsolatedAsyncioTestCase):
 
         with patch.object(
             self.mod.TextGenerationVendor,
-            "build_tool_call_token",
-            return_value=ToolCallToken(token="<tool_call />"),
+            "build_tool_call_text",
+            return_value="<tool_call />",
         ) as build_token:
             client = self.mod.OpenAIClient(api_key="key", base_url="url")
             message = Message(role=MessageRole.USER, content="hi")
@@ -3137,11 +3136,10 @@ class OpenAIAdditionalCoverageTestCase(TestCase):
                 },
             ]
         }
-        token = SimpleNamespace(token="<tool>")
         with patch.object(
             self.mod.TextGenerationVendor,
-            "build_tool_call_token",
-            return_value=token,
+            "build_tool_call_text",
+            return_value="<tool>",
         ) as build:
             text = self.mod.OpenAIClient._non_stream_response_content(response)
 

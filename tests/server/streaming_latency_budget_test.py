@@ -36,13 +36,13 @@ from avalan.event.manager import (
 )
 from avalan.model.stream import (
     CanonicalStreamItem,
+    LocalTextStreamEventParser,
     StreamChannel,
     StreamItemKind,
     StreamPerformanceBudget,
     StreamProducerBackend,
     StreamProviderCapabilities,
     StreamProviderEvent,
-    _normalize_local_stream,
     normalize_provider_stream,
 )
 from avalan.server.a2a.router import _cleanup_stream_sources_safely
@@ -115,6 +115,71 @@ class _PendingLocalTokens:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+async def _local_text_events(
+    tokens: _PendingLocalTokens,
+) -> AsyncIterator[StreamProviderEvent]:
+    parser = LocalTextStreamEventParser()
+    iterator = tokens.__aiter__()
+    tokens_exhausted = False
+    try:
+        while True:
+            try:
+                token = await iterator.__anext__()
+            except StopAsyncIteration:
+                tokens_exhausted = True
+                break
+            for event in parser.push(token):
+                yield event
+        for event in parser.flush():
+            yield event
+    finally:
+        if not tokens_exhausted:
+            await iterator.aclose()
+
+
+def _local_text_stream(
+    tokens: _PendingLocalTokens,
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+) -> AsyncIterator[CanonicalStreamItem]:
+    events_exhausted = False
+
+    async def tracked_events() -> AsyncIterator[StreamProviderEvent]:
+        nonlocal events_exhausted
+        async for event in _local_text_events(tokens):
+            yield event
+        events_exhausted = True
+
+    stream = normalize_provider_stream(
+        tracked_events(),
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+        capabilities=StreamProviderCapabilities(
+            backend=StreamProducerBackend.LOCAL,
+            supports_reasoning=True,
+            supports_tool_calls=True,
+            supports_cancellation=True,
+            max_queue_depth=StreamPerformanceBudget().max_queue_depth,
+        ),
+    )
+
+    async def closeable_stream() -> AsyncIterator[CanonicalStreamItem]:
+        try:
+            async for item in stream:
+                yield item
+        finally:
+            stream_aclose = getattr(stream, "aclose", None)
+            if stream_aclose is not None:
+                await stream_aclose()
+            if not events_exhausted:
+                await tokens.aclose()
+
+    return closeable_stream()
 
 
 class _CleanupProbe:
@@ -450,7 +515,7 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
 
     async def _local_generation_cancellation_latency(self) -> float:
         tokens = _PendingLocalTokens()
-        stream = _normalize_local_stream(
+        stream = _local_text_stream(
             tokens,
             stream_session_id="local-cancel-stream",
             run_id="local-cancel-run",
@@ -472,7 +537,7 @@ class StreamingLatencyBudgetTestCase(IsolatedAsyncioTestCase):
 
     async def _local_generation_close_latency(self) -> float:
         tokens = _PendingLocalTokens()
-        stream = _normalize_local_stream(
+        stream = _local_text_stream(
             tokens,
             stream_session_id="local-close-stream",
             run_id="local-close-run",

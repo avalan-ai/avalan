@@ -1,7 +1,6 @@
 from collections.abc import AsyncIterable
 from unittest import IsolatedAsyncioTestCase
 
-from avalan.entities import Token, TokenDetail
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamItemKind,
@@ -58,7 +57,7 @@ class TextGenerationSingleStreamTestCase(IsolatedAsyncioTestCase):
     async def test_async_for_properties_and_usage(self) -> None:
         usage = {"input_tokens": 1}
         stream = TextGenerationSingleStream(
-            Token(token="foo"), provider_family="openai", usage=usage
+            "foo", provider_family="openai", usage=usage
         )
         items = []
         async for item in stream():
@@ -67,7 +66,7 @@ class TextGenerationSingleStreamTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await stream.__anext__()
         iterator = stream.__aiter__()
-        self.assertEqual(stream.content, Token(token="foo"))
+        self.assertEqual(stream.content, "foo")
         self.assertEqual(stream.provider_family, "openai")
         self.assertEqual(stream.usage, usage)
         self.assertEqual(
@@ -124,7 +123,7 @@ class TextGenerationSingleStreamTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         stream = TextGenerationSingleStream(
-            TokenDetail(id=1, token="answer", probability=0.5),
+            "answer",
             usage={"output_tokens": 1},
         )
 

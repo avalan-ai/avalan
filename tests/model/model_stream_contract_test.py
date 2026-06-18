@@ -11,10 +11,12 @@ from ast import (
     Constant,
     Dict,
     FunctionDef,
+    If,
     Import,
     ImportFrom,
     Name,
     NodeVisitor,
+    Raise,
     Subscript,
     Tuple,
     iter_child_nodes,
@@ -84,13 +86,9 @@ from avalan.model.stream import (
     StreamVisibility,
     TextGenerationSingleStream,
     TextGenerationStream,
-    _LegacyTokenStreamAdapter,
-    _normalize_local_stream,
-    _token_metadata,
     accumulate_canonical_stream_items,
     assemble_tool_observations,
     canonical_item_from_consumer_projection,
-    canonical_item_from_token,
     classify_legacy_stream_classifier,
     classify_legacy_stream_runtime_boundary,
     classify_legacy_stream_surface,
@@ -104,7 +102,6 @@ from avalan.model.stream import (
     project_canonical_stream_item,
     project_stream_consumer_item,
     stream_channel_for_kind,
-    stream_consumer_projection_from_token,
     stream_observability_payload,
     stream_projection_display_token,
     stream_projection_is_reasoning,
@@ -252,15 +249,102 @@ async def _collect_provider_items(
     )
 
 
-async def _local_tokens(
-    tokens: tuple[Token | TokenDetail | str, ...],
-) -> AsyncIterator[Token | TokenDetail | str]:
-    for token in tokens:
-        yield token
+async def _local_text_chunks(
+    chunks: tuple[str, ...],
+) -> AsyncIterator[str]:
+    for chunk in chunks:
+        yield chunk
+
+
+async def _local_text_events(
+    chunks: AsyncIterable[str],
+) -> AsyncIterator[StreamProviderEvent]:
+    parser = LocalTextStreamEventParser()
+    iterator = chunks.__aiter__()
+    chunks_exhausted = False
+
+    try:
+        while True:
+            try:
+                chunk = await iterator.__anext__()
+            except StopAsyncIteration:
+                chunks_exhausted = True
+                break
+            for event in parser.push(chunk):
+                yield event
+        for event in parser.flush():
+            yield event
+    finally:
+        if not chunks_exhausted:
+            aclose = getattr(iterator, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
+
+def _local_capabilities(
+    provider_family: str | None,
+    capabilities: StreamProviderCapabilities | None,
+) -> StreamProviderCapabilities:
+    if capabilities is not None:
+        assert capabilities.backend is StreamProducerBackend.LOCAL
+        return capabilities
+    return StreamProviderCapabilities(
+        backend=StreamProducerBackend.LOCAL,
+        provider_family=provider_family,
+        supports_reasoning=True,
+        supports_tool_calls=True,
+        supports_cancellation=True,
+        max_queue_depth=StreamPerformanceBudget().max_queue_depth,
+    )
+
+
+def _local_text_stream(
+    chunks: AsyncIterable[str],
+    *,
+    stream_session_id: str = "local-stream",
+    run_id: str = "local-run",
+    turn_id: str = "local-turn",
+    provider_family: str | None = "transformers",
+    capabilities: StreamProviderCapabilities | None = None,
+    close_after_terminal: bool = True,
+) -> AsyncIterator[CanonicalStreamItem]:
+    iterator = chunks.__aiter__()
+    events_exhausted = False
+
+    async def tracked_events() -> AsyncIterator[StreamProviderEvent]:
+        nonlocal events_exhausted
+        async for event in _local_text_events(iterator):
+            yield event
+        events_exhausted = True
+
+    stream = normalize_provider_stream(
+        tracked_events(),
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+        provider_family=provider_family,
+        capabilities=_local_capabilities(provider_family, capabilities),
+        close_after_terminal=close_after_terminal,
+    )
+
+    async def closeable_stream() -> AsyncIterator[CanonicalStreamItem]:
+        try:
+            async for item in stream:
+                yield item
+        finally:
+            stream_aclose = getattr(stream, "aclose", None)
+            if stream_aclose is not None:
+                await stream_aclose()
+            if not events_exhausted:
+                chunk_aclose = getattr(iterator, "aclose", None)
+                if chunk_aclose is not None:
+                    await chunk_aclose()
+
+    return closeable_stream()
 
 
 async def _collect_local_items(
-    tokens: AsyncIterable[Token | TokenDetail | str],
+    chunks: AsyncIterable[str],
     *,
     provider_family: str | None = "transformers",
     capabilities: StreamProviderCapabilities | None = None,
@@ -269,11 +353,8 @@ async def _collect_local_items(
     return tuple(
         [
             item
-            async for item in _normalize_local_stream(
-                tokens,
-                stream_session_id="local-stream",
-                run_id="local-run",
-                turn_id="local-turn",
+            async for item in _local_text_stream(
+                chunks,
                 provider_family=provider_family,
                 capabilities=capabilities,
                 close_after_terminal=close_after_terminal,
@@ -504,6 +585,11 @@ class _LegacyStreamClassifierVisitor(NodeVisitor):
                 self.sites.setdefault(key, set()).update(surfaces)
         self.generic_visit(node)
 
+    def visit_If(self, node: If) -> None:
+        if self._is_legacy_stream_rejection_guard(node):
+            return
+        self.generic_visit(node)
+
     def _surfaces_for_node(
         self,
         node: AST,
@@ -615,6 +701,37 @@ class _LegacyStreamClassifierVisitor(NodeVisitor):
         return any(
             marker in qualname
             for marker in _LEGACY_CLASSIFIER_STRING_CONTEXT_MARKERS
+        )
+
+    def _is_legacy_stream_rejection_guard(self, node: If) -> bool:
+        if not isinstance(node.test, Call):
+            return False
+        call = node.test
+        if not (
+            isinstance(call.func, Name)
+            and call.func.id == "isinstance"
+            and len(call.args) >= 2
+        ):
+            return False
+        key = (self.module, ".".join(self.stack))
+        surfaces = self._surfaces_for_node(call.args[1], key)
+        if not surfaces:
+            return False
+        return all(
+            self._raises_stream_validation_error(statement)
+            for statement in node.body
+        )
+
+    @staticmethod
+    def _raises_stream_validation_error(statement: AST) -> bool:
+        if not isinstance(statement, Raise):
+            return False
+        exception = statement.exc
+        if isinstance(exception, Call):
+            exception = exception.func
+        return (
+            isinstance(exception, Name)
+            and exception.id == "StreamValidationError"
         )
 
 
@@ -1598,7 +1715,7 @@ class StreamContractTestCase(TestCase):
         with self.assertRaises(AssertionError):
             stream_observability_payload(cast(Any, object()))
 
-    def test_consumer_projection_from_token_preserves_canonical_fields(
+    def test_project_canonical_stream_item_preserves_fields(
         self,
     ) -> None:
         item = _item(
@@ -1612,7 +1729,7 @@ class StreamContractTestCase(TestCase):
             provider_event_type="tool.output",
         )
 
-        projection = stream_consumer_projection_from_token(item, 99)
+        projection = project_canonical_stream_item(item)
 
         self.assertEqual(projection.stream_session_id, item.stream_session_id)
         self.assertEqual(projection.sequence, item.sequence)
@@ -1622,43 +1739,6 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(projection.tool_call_id, "call-1")
         self.assertEqual(projection.provider_family, "openai")
         self.assertEqual(projection.provider_event_type, "tool.output")
-        self.assertIs(
-            stream_consumer_projection_from_token(projection, 100),
-            projection,
-        )
-
-    def test_consumer_projection_from_legacy_tool_call_token_preserves_call(
-        self,
-    ) -> None:
-        call = ToolCall(id="call-1", name="math.add", arguments={"x": 1})
-
-        projection = stream_consumer_projection_from_token(
-            ToolCallToken(token='{"x":1}', call=call),
-            7,
-            stream_session_id="stream",
-            run_id="run",
-            turn_id="turn",
-        )
-
-        self.assertEqual(projection.stream_session_id, "stream")
-        self.assertEqual(projection.run_id, "run")
-        self.assertEqual(projection.turn_id, "turn")
-        self.assertEqual(projection.sequence, 7)
-        self.assertIs(projection.kind, StreamItemKind.TOOL_CALL_ARGUMENT_DELTA)
-        self.assertEqual(projection.tool_call_id, "call-1")
-        self.assertEqual(projection.text_delta, '{"x":1}')
-        self.assertEqual(
-            projection.data,
-            {"name": "math.add", "arguments": {"x": 1}},
-        )
-
-    def test_consumer_projection_from_token_rejects_invalid_values(
-        self,
-    ) -> None:
-        with self.assertRaises(AssertionError):
-            stream_consumer_projection_from_token(cast(Any, object()), 0)
-        with self.assertRaises(AssertionError):
-            stream_consumer_projection_from_token("a", -1)
 
     def test_stream_projection_state_projects_canonical_and_projection_items(
         self,
@@ -1707,7 +1787,6 @@ class StreamContractTestCase(TestCase):
 
         state.validate_complete()
         self.assertTrue(state.has_canonical_items)
-        self.assertFalse(state.legacy_stream_seen)
         self.assertEqual([item.sequence for item in projections], [0, 1, 2, 3])
         self.assertEqual(state.accumulator.answer_text, "answer")
         terminal = state.terminal_projection()
@@ -1822,30 +1901,6 @@ class StreamContractTestCase(TestCase):
             )
 
         self.assertFalse(state.has_canonical_items)
-        self.assertTrue(state.legacy_stream_seen)
-
-    def test_stream_projection_state_legacy_rejection_skips_default_adapter(
-        self,
-    ) -> None:
-        with patch(
-            "avalan.model.stream._LegacyTokenStreamAdapter",
-        ) as adapter_class:
-            state = StreamProjectionState(
-                stream_session_id="fallback-stream",
-                run_id="fallback-run",
-                turn_id="fallback-turn",
-            )
-            with self.assertRaisesRegex(
-                StreamValidationError,
-                "unsupported stream item",
-            ):
-                state.project(
-                    "legacy",
-                    1,
-                    unsupported_message="unsupported stream item",
-                )
-
-        adapter_class.assert_not_called()
 
     def test_stream_projection_state_rejects_legacy_per_state(
         self,
@@ -1874,7 +1929,6 @@ class StreamContractTestCase(TestCase):
                         0,
                         unsupported_message="unsupported stream item",
                     )
-                self.assertTrue(state.legacy_stream_seen)
                 self.assertFalse(state.has_canonical_items)
 
     def test_project_stream_consumer_item_uses_shared_projection_state(
@@ -1932,91 +1986,6 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(canonical_projection.sequence, 3)
         self.assertEqual(canonical_projection.text_delta, "canonical")
 
-    def test_project_stream_consumer_item_accepts_legacy_fixture_mapper(
-        self,
-    ) -> None:
-        legacy_fixture_token = Token(token="legacy")
-
-        def legacy_fixture_mapper(
-            item: object,
-        ) -> tuple[CanonicalStreamItem, ...]:
-            if item != legacy_fixture_token:
-                return ()
-            return (
-                _item(
-                    StreamItemKind.ANSWER_DELTA,
-                    5,
-                    stream_session_id="mapped-stream",
-                    run_id="mapped-run",
-                    turn_id="mapped-turn",
-                    text_delta="legacy",
-                ),
-            )
-
-        legacy_projection = project_stream_consumer_item(
-            legacy_fixture_token,
-            5,
-            stream_session_id="fallback-stream",
-            run_id="fallback-run",
-            turn_id="fallback-turn",
-            unsupported_message="unsupported helper stream item",
-            legacy_item_mapper=legacy_fixture_mapper,
-        )
-
-        self.assertEqual(legacy_projection.stream_session_id, "mapped-stream")
-        self.assertEqual(legacy_projection.sequence, 5)
-        self.assertEqual(legacy_projection.text_delta, "legacy")
-
-    def test_stream_projection_state_legacy_fixture_mapper_is_one_way(
-        self,
-    ) -> None:
-        legacy_fixture_token = Token(token="legacy")
-
-        def legacy_fixture_mapper(
-            item: object,
-        ) -> tuple[CanonicalStreamItem, ...]:
-            assert item is legacy_fixture_token
-            return (
-                _item(StreamItemKind.STREAM_STARTED, 0),
-                _item(
-                    StreamItemKind.ANSWER_DELTA,
-                    1,
-                    text_delta="legacy",
-                ),
-            )
-
-        with patch(
-            "avalan.model.stream._LegacyTokenStreamAdapter",
-        ) as adapter_class:
-            state = StreamProjectionState(
-                stream_session_id="fallback-stream",
-                run_id="fallback-run",
-                turn_id="fallback-turn",
-                legacy_item_mapper=legacy_fixture_mapper,
-            )
-            projections = state.project_many(
-                legacy_fixture_token,
-                0,
-                unsupported_message="unsupported stream item",
-            )
-            with self.assertRaisesRegex(
-                StreamValidationError,
-                "canonical stream item after legacy stream item",
-            ):
-                state.project(
-                    _item(StreamItemKind.ANSWER_DONE, 2),
-                    2,
-                    unsupported_message="unsupported stream item",
-                )
-
-        adapter_class.assert_not_called()
-        self.assertEqual(
-            [projection.sequence for projection in projections],
-            [0, 1],
-        )
-        self.assertTrue(state.legacy_stream_seen)
-        self.assertFalse(state.has_canonical_items)
-
     def test_project_stream_consumer_item_rejects_invalid_values(
         self,
     ) -> None:
@@ -2042,180 +2011,6 @@ class StreamContractTestCase(TestCase):
                 unsupported_message="unsupported helper stream item",
             )
 
-    def test_stream_projection_state_projects_mapped_legacy_items(
-        self,
-    ) -> None:
-        sentinel = object()
-
-        def legacy_fixture_mapper(
-            item: object,
-        ) -> tuple[CanonicalStreamItem, ...]:
-            if item is not sentinel:
-                return ()
-            return (
-                _item(
-                    StreamItemKind.STREAM_STARTED,
-                    0,
-                    stream_session_id="mapped-stream",
-                    run_id="mapped-run",
-                    turn_id="mapped-turn",
-                ),
-                _item(
-                    StreamItemKind.ANSWER_DELTA,
-                    1,
-                    stream_session_id="mapped-stream",
-                    run_id="mapped-run",
-                    turn_id="mapped-turn",
-                    text_delta="mapped",
-                ),
-                _item(
-                    StreamItemKind.ANSWER_DONE,
-                    2,
-                    stream_session_id="mapped-stream",
-                    run_id="mapped-run",
-                    turn_id="mapped-turn",
-                ),
-                _item(
-                    StreamItemKind.STREAM_COMPLETED,
-                    3,
-                    stream_session_id="mapped-stream",
-                    run_id="mapped-run",
-                    turn_id="mapped-turn",
-                    usage={},
-                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
-                ),
-            )
-
-        state = StreamProjectionState(
-            stream_session_id="fallback-stream",
-            run_id="fallback-run",
-            turn_id="fallback-turn",
-            legacy_item_mapper=legacy_fixture_mapper,
-        )
-
-        projections = state.project_many(
-            sentinel,
-            9,
-            unsupported_message="unsupported stream item",
-        )
-
-        state.validate_complete()
-        self.assertFalse(state.has_canonical_items)
-        self.assertTrue(state.legacy_stream_seen)
-        self.assertEqual(
-            [projection.sequence for projection in projections],
-            [0, 1, 2, 3],
-        )
-        self.assertEqual(state.accumulator.answer_text, "mapped")
-        terminal = state.terminal_projection()
-        self.assertIsNotNone(terminal)
-        self.assertEqual(
-            terminal.terminal_outcome,
-            StreamTerminalOutcome.COMPLETED,
-        )
-
-    def test_stream_projection_state_rejects_single_empty_mapped_item(
-        self,
-    ) -> None:
-        state = StreamProjectionState(
-            stream_session_id="fallback-stream",
-            run_id="fallback-run",
-            turn_id="fallback-turn",
-            legacy_item_mapper=lambda _: (),
-        )
-
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "unsupported stream item",
-        ):
-            state.project(
-                object(),
-                0,
-                unsupported_message="unsupported stream item",
-            )
-
-    def test_stream_projection_state_wraps_mapper_assertion(
-        self,
-    ) -> None:
-        def legacy_fixture_mapper(
-            _: object,
-        ) -> tuple[CanonicalStreamItem, ...]:
-            raise AssertionError("bad legacy item")
-
-        state = StreamProjectionState(
-            stream_session_id="fallback-stream",
-            run_id="fallback-run",
-            turn_id="fallback-turn",
-            legacy_item_mapper=legacy_fixture_mapper,
-        )
-
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "unsupported stream item",
-        ):
-            state.project_many(
-                object(),
-                0,
-                unsupported_message="unsupported stream item",
-            )
-
-    def test_stream_projection_state_rejects_none_mapped_legacy_items(
-        self,
-    ) -> None:
-        def legacy_fixture_mapper(
-            _: object,
-        ) -> tuple[CanonicalStreamItem, ...] | None:
-            return None
-
-        state = StreamProjectionState(
-            stream_session_id="fallback-stream",
-            run_id="fallback-run",
-            turn_id="fallback-turn",
-            legacy_item_mapper=legacy_fixture_mapper,
-        )
-
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "unsupported stream item",
-        ):
-            state.project_many(
-                object(),
-                0,
-                unsupported_message="unsupported stream item",
-            )
-
-        self.assertTrue(state.legacy_stream_seen)
-
-    def test_stream_projection_state_rejects_projection_after_legacy_item(
-        self,
-    ) -> None:
-        state = StreamProjectionState(
-            stream_session_id="fallback-stream",
-            run_id="fallback-run",
-            turn_id="fallback-turn",
-            legacy_item_mapper=lambda _: (
-                _item(StreamItemKind.STREAM_STARTED, 0),
-            ),
-        )
-        projection = StreamConsumerProjection.from_item(
-            _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="canonical")
-        )
-        state.project_many(
-            object(),
-            0,
-            unsupported_message="unsupported stream item",
-        )
-
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "canonical stream item after legacy stream item",
-        ):
-            state.project(
-                projection,
-                1,
-                unsupported_message="unsupported stream item",
-            )
-
     def test_stream_projection_state_rejects_invalid_and_mixed_items(
         self,
     ) -> None:
@@ -2233,6 +2028,23 @@ class StreamContractTestCase(TestCase):
                 0,
                 unsupported_message="unsupported stream item",
             )
+        projection = project_canonical_stream_item(
+            _item(StreamItemKind.ANSWER_DELTA, 0, text_delta="first")
+        )
+        with patch.object(
+            StreamProjectionState,
+            "project_many",
+            return_value=(projection, projection),
+        ):
+            with self.assertRaisesRegex(
+                StreamValidationError,
+                "unsupported stream item",
+            ):
+                invalid_state.project(
+                    projection,
+                    1,
+                    unsupported_message="unsupported stream item",
+                )
 
         mixed_state = StreamProjectionState(
             stream_session_id="fallback-stream",
@@ -2246,7 +2058,7 @@ class StreamContractTestCase(TestCase):
         )
         with self.assertRaisesRegex(
             StreamValidationError,
-            "legacy stream item after canonical stream item",
+            "unsupported stream item",
         ):
             mixed_state.project(
                 "legacy",
@@ -4075,7 +3887,7 @@ class StreamContractTestCase(TestCase):
 
         malformed_items = run(
             _collect_local_items(
-                _local_tokens(("<tool_call>not-json</tool_call>",))
+                _local_text_chunks(("<tool_call>not-json</tool_call>",))
             )
         )
         diagnostic = next(
@@ -4805,12 +4617,12 @@ class StreamContractTestCase(TestCase):
 
     def test_single_stream_iterates_content_and_resets(self) -> None:
         stream = TextGenerationSingleStream(
-            Token(token="one"),
+            "one",
             provider_family="openai",
             usage={"output_tokens": 1},
         )
 
-        self.assertEqual(stream.content, Token(token="one"))
+        self.assertEqual(stream.content, "one")
         self.assertEqual(stream.provider_family, "openai")
         self.assertEqual(stream.usage, {"output_tokens": 1})
         self.assertIs(stream(), stream)
@@ -4871,7 +4683,7 @@ class StreamContractTestCase(TestCase):
         self,
     ) -> None:
         stream = TextGenerationSingleStream(
-            TokenDetail(id=1, token="answer", probability=0.5),
+            "answer",
             usage={"output_tokens": 1},
         )
 
@@ -4888,6 +4700,9 @@ class StreamContractTestCase(TestCase):
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
+
+        with self.assertRaises(AssertionError):
+            TextGenerationSingleStream(cast(Any, Token(token="legacy")))
 
     def test_provider_capabilities_validate_and_serialize_metadata(
         self,
@@ -5143,7 +4958,7 @@ class StreamContractTestCase(TestCase):
         )
 
         parsed_reasoning_items = run(
-            _collect_local_items(_local_tokens(("<think>r</think>a",)))
+            _collect_local_items(_local_text_chunks(("<think>r</think>a",)))
         )
         self.assertLess(
             _first_sequence(
@@ -5156,32 +4971,12 @@ class StreamContractTestCase(TestCase):
 
         parsed_tool_items = run(
             _collect_local_items(
-                _local_tokens(("<tool_call>{}</tool_call> after",))
+                _local_text_chunks(("<tool_call>{}</tool_call> after",))
             )
         )
         self.assertLess(
             _first_sequence(parsed_tool_items, StreamItemKind.TOOL_CALL_DONE),
             _last_sequence(parsed_tool_items, StreamItemKind.ANSWER_DELTA),
-        )
-
-        legacy_call = ToolCall(id="call-1", name="math", arguments={})
-        legacy_transition_items = run(
-            _collect_local_items(
-                _local_tokens(
-                    (
-                        ToolCallToken(token="{}", call=legacy_call),
-                        Token(token=" after"),
-                    )
-                )
-            )
-        )
-        self.assertLess(
-            _first_sequence(
-                legacy_transition_items, StreamItemKind.TOOL_CALL_DONE
-            ),
-            _first_sequence(
-                legacy_transition_items, StreamItemKind.ANSWER_DELTA
-            ),
         )
 
     def test_provider_stream_normalizer_preserves_terminal_event_context(
@@ -5352,35 +5147,16 @@ class StreamContractTestCase(TestCase):
         self.assertIsNone(items[-1].provider_event_type)
         validate_canonical_stream_items(items)
 
-    def test_local_stream_normalizer_maps_legacy_tokens_losslessly(
+    def test_local_text_parser_stream_normalizer_maps_channels(
         self,
     ) -> None:
-        tool_call = ToolCall(id="call-1", name="math", arguments={})
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
-                        TokenDetail(
-                            id=7,
-                            token="answer",
-                            probability=0.75,
-                            step=2,
-                            probability_distribution="softmax",
-                            tokens=[
-                                Token(
-                                    id=8,
-                                    token="candidate",
-                                    probability=0.25,
-                                )
-                            ],
-                        ),
-                        ReasoningToken(token="private", id=9, probability=0.5),
-                        ToolCallToken(
-                            token='{"x":1}',
-                            id=10,
-                            call=tool_call,
-                            provider_name="math",
-                        ),
+                        "answer ",
+                        "<think>private</think>",
+                        '<tool_call name="math">{"x":1}</tool_call>',
                     )
                 ),
                 capabilities=StreamProviderCapabilities(
@@ -5417,48 +5193,34 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(
             items[0].metadata["capabilities"]["max_queue_depth"], 8
         )
-        self.assertEqual(items[1].metadata["token_id"], 7)
-        self.assertEqual(items[1].metadata["probability"], 0.75)
-        self.assertEqual(items[1].metadata["step"], 2)
-        self.assertEqual(
-            items[1].metadata["probability_distribution"], "softmax"
-        )
-        self.assertEqual(
-            items[1].metadata["tokens"],
-            [
-                {
-                    "token": "candidate",
-                    "token_id": 8,
-                    "probability": 0.25,
-                }
-            ],
-        )
+        self.assertEqual(items[1].text_delta, "answer ")
         self.assertIs(items[2].visibility, StreamVisibility.PRIVATE)
-        self.assertEqual(items[4].correlation.tool_call_id, "call-1")
-        self.assertEqual(items[4].metadata["provider_name"], "math")
-        self.assertEqual(items[5].data, {"name": "math", "arguments": {}})
-        self.assertEqual(items[6].correlation.tool_call_id, "call-1")
+        self.assertEqual(
+            items[4].correlation.tool_call_id, "local-tool-call-1"
+        )
+        self.assertEqual(
+            items[5].data, {"name": "math", "arguments": {"x": 1}}
+        )
+        self.assertEqual(
+            items[6].correlation.tool_call_id, "local-tool-call-1"
+        )
         accumulator = accumulate_canonical_stream_items(items)
-        self.assertEqual(accumulator.answer_text, "answer")
+        self.assertEqual(accumulator.answer_text, "answer ")
         self.assertEqual(accumulator.reasoning_text, "private")
         self.assertEqual(
-            accumulator.tool_call_arguments, {"call-1": '{"x":1}'}
+            accumulator.tool_call_arguments,
+            {"local-tool-call-1": '{"x":1}'},
         )
 
-    def test_local_stream_normalizer_marks_complete_legacy_tool_calls(
+    def test_local_text_parser_stream_normalizer_marks_complete_tool_calls(
         self,
     ) -> None:
-        tool_call = ToolCall(
-            id="call-1",
-            name="math",
-            arguments={"expression": "2+2"},
-        )
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
-                        ToolCallToken(token='{"expression"', call=tool_call),
-                        ToolCallToken(token=':"2+2"}', call=tool_call),
+                        '<tool_call name="math">{"expression"',
+                        ':"2+2"}</tool_call>',
                     )
                 )
             )
@@ -5478,7 +5240,12 @@ class StreamContractTestCase(TestCase):
         )
         self.assertEqual(
             [item.correlation.tool_call_id for item in tool_items],
-            ["call-1", "call-1", "call-1", "call-1"],
+            [
+                "local-tool-call-1",
+                "local-tool-call-1",
+                "local-tool-call-1",
+                "local-tool-call-1",
+            ],
         )
         self.assertEqual(
             tool_items[2].data,
@@ -5487,39 +5254,18 @@ class StreamContractTestCase(TestCase):
         self.assertEqual([item.sequence for item in items], list(range(7)))
         self.assertEqual(
             accumulate_canonical_stream_items(items).tool_call_arguments,
-            {"call-1": '{"expression":"2+2"}'},
+            {"local-tool-call-1": '{"expression":"2+2"}'},
         )
 
-        missing_call_items = run(
-            _collect_local_items(
-                _local_tokens((ToolCallToken(token='{"x":1}', call=None),))
-            )
-        )
-
-        self.assertFalse(
-            any(
-                item.kind is StreamItemKind.TOOL_CALL_READY
-                for item in missing_call_items
-            )
-        )
-        self.assertEqual(
-            accumulate_canonical_stream_items(
-                missing_call_items
-            ).tool_call_arguments,
-            {"legacy-tool-call": '{"x":1}'},
-        )
-
-    def test_local_stream_normalizer_closes_complete_tool_calls_before_next(
+    def test_local_text_parser_closes_tool_calls_before_next_channel(
         self,
     ) -> None:
-        first_call = ToolCall(id="call-1", name="math", arguments={"x": 1})
-        second_call = ToolCall(id="call-2", name="lookup", arguments={"q": 2})
         different_call_items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
-                        ToolCallToken(token='{"x":1}', call=first_call),
-                        ToolCallToken(token='{"q":2}', call=second_call),
+                        '<tool_call name="math">{"x":1}</tool_call>',
+                        '<tool_call name="lookup">{"q":2}</tool_call>',
                     )
                 )
             )
@@ -5546,7 +5292,14 @@ class StreamContractTestCase(TestCase):
                 item.correlation.tool_call_id
                 for item in different_call_tool_items
             ],
-            ["call-1", "call-1", "call-1", "call-2", "call-2", "call-2"],
+            [
+                "local-tool-call-1",
+                "local-tool-call-1",
+                "local-tool-call-1",
+                "local-tool-call-2",
+                "local-tool-call-2",
+                "local-tool-call-2",
+            ],
         )
         self.assertEqual(
             different_call_tool_items[1].data,
@@ -5559,9 +5312,9 @@ class StreamContractTestCase(TestCase):
 
         text_items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
-                        ToolCallToken(token='{"x":1}', call=first_call),
+                        '<tool_call name="math">{"x":1}</tool_call>',
                         "answer",
                     )
                 )
@@ -5583,10 +5336,10 @@ class StreamContractTestCase(TestCase):
 
         reasoning_items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
-                        ToolCallToken(token='{"x":1}', call=first_call),
-                        ReasoningToken(token="private"),
+                        '<tool_call name="math">{"x":1}</tool_call>',
+                        "<think>private</think>",
                     )
                 )
             )
@@ -5605,43 +5358,14 @@ class StreamContractTestCase(TestCase):
             ],
         )
 
-        token_items = run(
-            _collect_local_items(
-                _local_tokens(
-                    (
-                        ToolCallToken(token='{"x":1}', call=first_call),
-                        Token(token="answer"),
-                    )
-                )
-            )
-        )
-        self.assertEqual(
-            [item.kind for item in token_items],
-            [
-                StreamItemKind.STREAM_STARTED,
-                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                StreamItemKind.TOOL_CALL_READY,
-                StreamItemKind.TOOL_CALL_DONE,
-                StreamItemKind.ANSWER_DELTA,
-                StreamItemKind.ANSWER_DONE,
-                StreamItemKind.STREAM_COMPLETED,
-                StreamItemKind.STREAM_CLOSED,
-            ],
-        )
-        self.assertEqual(token_items[4].text_delta, "answer")
-
-    def test_local_stream_normalizer_reports_invalid_legacy_tokens(
+    def test_local_text_parser_stream_reports_invalid_chunks(
         self,
     ) -> None:
         async def invalid_tokens() -> AsyncIterator[Any]:
             yield object()
 
         items = run(
-            _collect_local_items(
-                cast(
-                    AsyncIterable[Token | TokenDetail | str], invalid_tokens()
-                )
-            )
+            _collect_local_items(cast(AsyncIterable[str], invalid_tokens()))
         )
 
         self.assertEqual(
@@ -5661,7 +5385,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "pre ",
                         "<thi",
@@ -5701,7 +5425,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "  before \n<thi",
                         "nk>\n  first",
@@ -5740,7 +5464,9 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(tuple("pre <think>\n  private\t</think> post"))
+                _local_text_chunks(
+                    tuple("pre <think>\n  private\t</think> post")
+                )
             )
         )
 
@@ -5760,7 +5486,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(tuple("x<think>a</think><think>b</think>y"))
+                _local_text_chunks(tuple("x<think>a</think><think>b</think>y"))
             )
         )
 
@@ -5788,7 +5514,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "x<thi",
                         "nk>a</thi",
@@ -5826,7 +5552,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(("x<think>a</think> \n <think>b</think>y",))
+                _local_text_chunks(("x<think>a</think> \n <think>b</think>y",))
             )
         )
 
@@ -5840,7 +5566,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(("x<think>a</think><thinking>b",))
+                _local_text_chunks(("x<think>a</think><thinking>b",))
             )
         )
 
@@ -5874,7 +5600,7 @@ class StreamContractTestCase(TestCase):
 
         for label, tokens, answer, reasoning_text in cases:
             with self.subTest(label=label):
-                items = run(_collect_local_items(_local_tokens(tokens)))
+                items = run(_collect_local_items(_local_text_chunks(tokens)))
                 accumulator = accumulate_canonical_stream_items(items)
                 reasoning_deltas = [
                     cast(str, item.text_delta)
@@ -5897,7 +5623,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(("answer ", "<think>", "private"))
+                _local_text_chunks(("answer ", "<think>", "private"))
             )
         )
 
@@ -5919,7 +5645,7 @@ class StreamContractTestCase(TestCase):
 
         partial_marker_items = run(
             _collect_local_items(
-                _local_tokens(("answer ", "<think>", "private</thi"))
+                _local_text_chunks(("answer ", "<think>", "private</thi"))
             )
         )
         partial_marker_accumulator = accumulate_canonical_stream_items(
@@ -5935,7 +5661,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "answer ",
                         "<think>",
@@ -5968,7 +5694,7 @@ class StreamContractTestCase(TestCase):
     def test_local_stream_normalizer_flushes_partial_reasoning_marker(
         self,
     ) -> None:
-        items = run(_collect_local_items(_local_tokens(("answer <thi",))))
+        items = run(_collect_local_items(_local_text_chunks(("answer <thi",))))
 
         accumulator = accumulate_canonical_stream_items(items)
 
@@ -5989,7 +5715,7 @@ class StreamContractTestCase(TestCase):
 
         for tokens, answer in cases:
             with self.subTest(tokens=tokens):
-                items = run(_collect_local_items(_local_tokens(tokens)))
+                items = run(_collect_local_items(_local_text_chunks(tokens)))
                 accumulator = accumulate_canonical_stream_items(items)
 
                 self.assertEqual(accumulator.answer_text, answer)
@@ -6008,7 +5734,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "before <tool_callout> ",
                         "<tool_call",
@@ -6038,7 +5764,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "before ",
                         "<tool_",
@@ -6081,7 +5807,7 @@ class StreamContractTestCase(TestCase):
 
         split_boundary_items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "before ",
                         "<tool_call",
@@ -6114,7 +5840,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "<tool_call></tool_call>",
                         "<tool_call>{}</tool_call>",
@@ -6141,7 +5867,7 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "before ",
                         '<tool_call name="math">',
@@ -6172,7 +5898,7 @@ class StreamContractTestCase(TestCase):
 
         invalid_json_items = run(
             _collect_local_items(
-                _local_tokens(
+                _local_text_chunks(
                     (
                         "before ",
                         "<tool_call name='math'>not-json</tool_call>",
@@ -6210,7 +5936,9 @@ class StreamContractTestCase(TestCase):
         )
 
         non_object_items = run(
-            _collect_local_items(_local_tokens(("<tool_call>[]</tool_call>",)))
+            _collect_local_items(
+                _local_text_chunks(("<tool_call>[]</tool_call>",))
+            )
         )
         non_object_diagnostic = next(
             item
@@ -6229,7 +5957,7 @@ class StreamContractTestCase(TestCase):
         )
 
         partial_open_items = run(
-            _collect_local_items(_local_tokens(("<tool_call name",)))
+            _collect_local_items(_local_text_chunks(("<tool_call name",)))
         )
         self.assertTrue(
             any(
@@ -6239,7 +5967,7 @@ class StreamContractTestCase(TestCase):
         )
 
         partial_close_items = run(
-            _collect_local_items(_local_tokens(("<tool_call>{}</tool_",)))
+            _collect_local_items(_local_text_chunks(("<tool_call>{}</tool_",)))
         )
         self.assertEqual(
             accumulate_canonical_stream_items(
@@ -6315,7 +6043,7 @@ class StreamContractTestCase(TestCase):
         with self.assertRaises(AssertionError):
             run(
                 _collect_local_items(
-                    _local_tokens(("x",)),
+                    _local_text_chunks(("x",)),
                     capabilities=StreamProviderCapabilities(
                         backend=StreamProducerBackend.HOSTED,
                     ),
@@ -7222,7 +6950,7 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(events.read_count, 3)
         self.assertTrue(events.closed)
 
-    def test_local_stream_normalizer_does_not_read_ahead(self) -> None:
+    def test_local_text_stream_does_not_read_ahead(self) -> None:
         class PullTrackedTokens:
             def __init__(self) -> None:
                 self.read_count = 0
@@ -7244,7 +6972,7 @@ class StreamContractTestCase(TestCase):
 
         async def consume_slowly() -> tuple[PullTrackedTokens, list[int]]:
             tokens = PullTrackedTokens()
-            stream = _normalize_local_stream(
+            stream = _local_text_stream(
                 tokens,
                 stream_session_id="local-stream",
                 run_id="local-run",
@@ -7448,7 +7176,7 @@ class StreamContractTestCase(TestCase):
 
         async def assert_local_backpressure() -> None:
             tokens = GatedLocalTokens()
-            stream = _normalize_local_stream(
+            stream = _local_text_stream(
                 tokens,
                 stream_session_id="local-stream",
                 run_id="local-run",
@@ -7488,7 +7216,7 @@ class StreamContractTestCase(TestCase):
         run(assert_provider_backpressure())
         run(assert_local_backpressure())
 
-    def test_local_stream_normalizer_closes_on_consumer_disconnect(
+    def test_local_text_stream_closes_on_consumer_disconnect(
         self,
     ) -> None:
         class PendingTokens:
@@ -7508,7 +7236,7 @@ class StreamContractTestCase(TestCase):
 
         async def close_after_start() -> PendingTokens:
             tokens = PendingTokens()
-            stream = _normalize_local_stream(
+            stream = _local_text_stream(
                 tokens,
                 stream_session_id="local-stream",
                 run_id="local-run",
@@ -7783,74 +7511,35 @@ class StreamContractTestCase(TestCase):
                 "control",
             },
         )
-        self.assertEqual(
-            {entry.surface for entry in inventory},
-            set(StreamLegacySurface),
-        )
-        self.assertEqual(
-            len(inventory), len({entry.surface for entry in inventory})
-        )
-        self.assertEqual(
-            {category for entry in inventory for category in entry.categories},
-            _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
-            - {
-                StreamLegacyBoundaryCategory.A2A,
-                StreamLegacyBoundaryCategory.MCP,
-                StreamLegacyBoundaryCategory.ORCHESTRATOR,
-            },
-        )
-
-        canonical_surface_kinds = {
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        }
-        for entry in inventory:
-            with self.subTest(surface=entry.surface):
-                self.assertIs(
-                    classify_legacy_stream_surface(entry.surface), entry
-                )
-                self.assertTrue(entry.owner)
-                self.assertTrue(entry.removal_condition)
-                self.assertIs(
-                    entry.scope,
-                    StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-                )
-                self.assertIs(
-                    entry.classification,
-                    StreamLegacySurfaceClassification.REMOVE_NOW,
-                )
-                self.assertNotIn(
-                    entry.classification,
-                    _TEMPORARY_LEGACY_SURFACE_CLASSIFICATIONS,
-                )
-                self.assertTrue(entry.categories)
-                self.assertTrue(
-                    set(entry.categories).issubset(
-                        _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
-                    )
-                )
-                self.assertIsNone(entry.ingestion_shim)
-                if entry.surface in canonical_surface_kinds:
-                    assert entry.canonical_kind is not None
-                    self.assertIs(
-                        entry.canonical_channel,
-                        stream_channel_for_kind(entry.canonical_kind),
-                    )
-                elif entry.surface is StreamLegacySurface.EVENT:
-                    self.assertIsNone(entry.canonical_kind)
-                    self.assertIsNone(entry.canonical_channel)
-                else:
-                    self.assertIsNone(entry.canonical_kind)
-                    self.assertIsNone(entry.canonical_channel)
+        self.assertEqual(inventory, ())
 
         with self.assertRaises(AssertionError):
             classify_legacy_stream_surface("Token")  # type: ignore[arg-type]
+        for surface in StreamLegacySurface:
+            with self.subTest(surface=surface):
+                with self.assertRaises(StreamValidationError):
+                    classify_legacy_stream_surface(surface)
         with patch("avalan.model.stream._LEGACY_STREAM_SURFACE_INVENTORY", ()):
             with self.assertRaises(StreamValidationError):
                 classify_legacy_stream_surface(StreamLegacySurface.TOKEN)
+        fixture_entry = StreamLegacySurfaceInventoryEntry(
+            surface=StreamLegacySurface.TOKEN,
+            classification=(
+                StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+            ),
+            categories=(StreamLegacyBoundaryCategory.TEST_FIXTURE,),
+            scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+            owner="tests.model.model_stream_contract_test",
+            removal_condition="synthetic classification coverage",
+        )
+        with patch(
+            "avalan.model.stream._LEGACY_STREAM_SURFACE_INVENTORY",
+            (fixture_entry,),
+        ):
+            self.assertIs(
+                classify_legacy_stream_surface(StreamLegacySurface.TOKEN),
+                fixture_entry,
+            )
 
     def test_legacy_surface_inventory_rejects_malformed_entries(self) -> None:
         def make_entry(
@@ -7990,157 +7679,41 @@ class StreamContractTestCase(TestCase):
     ) -> None:
         inventory = legacy_stream_runtime_boundary_inventory()
 
-        self.assertEqual(
-            len(inventory),
-            len({(entry.module, entry.qualname) for entry in inventory}),
-        )
-        self.assertEqual(
-            {entry.scope for entry in inventory},
-            {StreamLegacyInventoryScope.PRODUCTION_RUNTIME},
-        )
-        self.assertEqual(
-            {entry.classification for entry in inventory},
-            {StreamLegacySurfaceClassification.REMOVE_NOW},
-        )
-        self.assertEqual(
-            {entry.category for entry in inventory},
-            _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
-            - {
-                StreamLegacyBoundaryCategory.A2A,
-                StreamLegacyBoundaryCategory.ORCHESTRATOR,
-                StreamLegacyBoundaryCategory.SDK_RESPONSE,
-                StreamLegacyBoundaryCategory.CHAT_SSE,
-                StreamLegacyBoundaryCategory.FLOW,
-                StreamLegacyBoundaryCategory.MCP,
-                StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            },
-        )
-        self.assertEqual(
-            {
-                direction
-                for entry in inventory
-                for direction in entry.directions
-            },
-            set(StreamLegacyBoundaryDirection)
-            - {StreamLegacyBoundaryDirection.CONTROL},
-        )
-        self.assertEqual(
-            {surface for entry in inventory for surface in entry.surfaces},
-            set(StreamLegacySurface),
-        )
-        surface_inventory = {
-            entry.surface: entry for entry in legacy_stream_surface_inventory()
-        }
-        for entry in inventory:
-            for surface in entry.surfaces:
-                with self.subTest(
-                    surface=surface,
-                    category=entry.category,
-                    qualname=entry.qualname,
-                ):
-                    self.assertIn(
-                        entry.category,
-                        surface_inventory[surface].categories,
-                    )
-
-        expected_boundaries = {
-            ("avalan.model.vendor", "TextGenerationVendor.__call__"),
-            ("avalan.model.stream", "_normalize_local_stream"),
-            ("avalan.model.stream", "stream_consumer_projection_from_token"),
-            ("avalan.model.stream", "project_stream_consumer_item"),
-            ("avalan.model.stream", "StreamProjectionState.project"),
-            ("avalan.model.stream", "StreamProjectionState.project_many"),
-            (
-                "avalan.model.stream",
-                "_LegacyTokenStreamAdapter.item_from_token",
-            ),
-            (
-                "avalan.model.stream",
-                "_LegacyTokenStreamAdapter.events_from_token",
-            ),
-            ("avalan.event.manager", "EventManager.trigger"),
-            ("avalan.event.manager", "EventManager.listen"),
-            (
-                "avalan.model.response.parsers.reasoning",
-                "ReasoningParser",
-            ),
-            (
-                "avalan.model.response.parsers.tool",
-                "ToolCallResponseParser",
-            ),
-            ("avalan.cli.commands.model", "_stream_projection"),
-        }
-        inventory_keys = {
-            (entry.module, entry.qualname) for entry in inventory
-        }
-        self.assertIn(
-            ("avalan.cli.commands.model", "_stream_projection"),
-            inventory_keys,
-        )
-        self.assertNotIn(
-            ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
-            inventory_keys,
-        )
-        self.assertEqual(expected_boundaries, inventory_keys)
-
-        boundary_expectations = {
-            ("avalan.event.manager", "EventManager.listen"): (
-                (StreamLegacySurface.EVENT,),
-                StreamLegacyBoundaryCategory.EVENTING,
-                (
-                    StreamLegacyBoundaryDirection.EMITS,
-                    StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-                ),
-            ),
-        }
-        for (
-            module,
-            qualname,
-        ), (
-            surfaces,
-            category,
-            directions,
-        ) in boundary_expectations.items():
-            with self.subTest(module=module, qualname=qualname):
-                boundary = classify_legacy_stream_runtime_boundary(
-                    module, qualname
-                )
-                self.assertEqual(boundary.surfaces, surfaces)
-                self.assertIs(boundary.category, category)
-                self.assertEqual(boundary.directions, directions)
-
-        for entry in inventory:
-            with self.subTest(module=entry.module, qualname=entry.qualname):
-                self.assertIs(
-                    classify_legacy_stream_runtime_boundary(
-                        entry.module, entry.qualname
-                    ),
-                    entry,
-                )
-                self.assertTrue(entry.owner)
-                self.assertTrue(entry.removal_condition)
-                self.assertNotIn(
-                    entry.classification,
-                    _TEMPORARY_LEGACY_SURFACE_CLASSIFICATIONS,
-                )
-                self.assertEqual(len(entry.surfaces), len(set(entry.surfaces)))
-                self.assertEqual(
-                    len(entry.directions), len(set(entry.directions))
-                )
+        self.assertEqual(inventory, ())
 
         with self.assertRaises(AssertionError):
             classify_legacy_stream_runtime_boundary("", "qualname")
         with self.assertRaises(AssertionError):
             classify_legacy_stream_runtime_boundary("module", "")
+        with self.assertRaises(StreamValidationError):
+            classify_legacy_stream_runtime_boundary(
+                "avalan.model.stream",
+                "StreamProjectionState.project",
+            )
+        fixture_entry = StreamLegacyRuntimeBoundaryInventoryEntry(
+            module="tests.model.model_stream_contract_test",
+            qualname="legacy_fixture_runtime_boundary",
+            surfaces=(StreamLegacySurface.TOKEN,),
+            classification=(
+                StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+            ),
+            category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+            scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+            directions=(StreamLegacyBoundaryDirection.ACCEPTS,),
+            owner="tests.model.model_stream_contract_test",
+            removal_condition="synthetic classification coverage",
+        )
         with patch(
             "avalan.model.stream._LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY",
-            (),
+            (fixture_entry,),
         ):
-            with self.assertRaises(StreamValidationError):
+            self.assertIs(
                 classify_legacy_stream_runtime_boundary(
-                    "avalan.model.stream",
-                    "StreamProjectionState.project",
-                )
+                    "tests.model.model_stream_contract_test",
+                    "legacy_fixture_runtime_boundary",
+                ),
+                fixture_entry,
+            )
 
     def test_legacy_runtime_boundary_inventory_has_no_flow_listeners(
         self,
@@ -8646,155 +8219,11 @@ class InheritsCanonical(CanonicalBase):
     def test_legacy_classifier_inventory_entries_resolve_to_source(
         self,
     ) -> None:
-        repository_root = Path(__file__).resolve().parents[2]
-
-        source_sites = _source_legacy_stream_classifier_sites(repository_root)
         inventory_sites = _inventory_legacy_stream_classifier_sites()
-        extra_inventory_sites = set(inventory_sites) - set(source_sites)
-        extra_inventory_surfaces = {
-            key: inventory_sites[key] - source_sites[key]
-            for key in set(source_sites).intersection(inventory_sites)
-            if inventory_sites[key] - source_sites[key]
-        }
-
-        self.assertEqual(extra_inventory_sites, set())
-        self.assertEqual(extra_inventory_surfaces, {})
-
         inventory = legacy_stream_classifier_inventory()
-        self.assertEqual(
-            len(inventory),
-            len({(entry.module, entry.qualname) for entry in inventory}),
-        )
-        self.assertTrue(
-            any(
-                StreamLegacySurface.STRING in entry.surfaces
-                for entry in inventory
-            )
-        )
-        self.assertEqual(
-            {entry.scope for entry in inventory},
-            {StreamLegacyInventoryScope.PRODUCTION_RUNTIME},
-        )
-        self.assertEqual(
-            {entry.classification for entry in inventory},
-            {StreamLegacySurfaceClassification.REMOVE_NOW},
-        )
-        self.assertFalse(
-            {
-                entry.classification
-                for entry in inventory
-                if entry.classification
-                in _TEMPORARY_LEGACY_SURFACE_CLASSIFICATIONS
-            }
-        )
-        self.assertEqual(
-            {entry.category for entry in inventory},
-            {
-                StreamLegacyBoundaryCategory.PRODUCER,
-                StreamLegacyBoundaryCategory.PARSER,
-                StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            },
-        )
-        self.assertNotIn(
-            ("avalan.cli.commands.model", "_token_stream"),
-            {(entry.module, entry.qualname) for entry in inventory},
-        )
-        inventory_keys = {
-            (entry.module, entry.qualname) for entry in inventory
-        }
-        self.assertEqual(
-            {
-                (entry.module, entry.qualname)
-                for entry in inventory
-                if StreamLegacySurface.STRING in entry.surfaces
-            },
-            _LEGACY_CLASSIFIER_STRING_SITES,
-        )
-        self.assertNotIn(
-            ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
-            inventory_keys,
-        )
-        for qualname in (
-            "OrchestratorResponse._next_item",
-            "OrchestratorResponse._response_text_and_calls",
-            "OrchestratorResponse._append_canonical_projection_item",
-            "OrchestratorResponse._emit",
-            "OrchestratorResponse._stream_item_projection",
-        ):
-            with self.subTest(qualname=qualname):
-                self.assertNotIn(
-                    (
-                        (
-                            "avalan.agent.orchestrator.response."
-                            "orchestrator_response"
-                        ),
-                        qualname,
-                    ),
-                    inventory_keys,
-                )
-        self.assertIn(
-            (
-                "avalan.model.stream",
-                "_LegacyTokenStreamAdapter.item_from_token",
-            ),
-            inventory_keys,
-        )
-        for qualname in (
-            "stream_consumer_projection_from_token",
-            "_normalize_local_stream.events",
-            "token_text",
-            "canonical_item_from_token",
-            "_token_metadata",
-        ):
-            with self.subTest(qualname=qualname):
-                self.assertNotIn(
-                    ("avalan.model.stream", qualname),
-                    inventory_keys,
-                )
-        adapter_entry = classify_legacy_stream_classifier(
-            "avalan.model.stream",
-            "_LegacyTokenStreamAdapter.item_from_token",
-        )
-        self.assertEqual(
-            adapter_entry.surfaces,
-            (
-                StreamLegacySurface.STRING,
-                StreamLegacySurface.TOKEN,
-                StreamLegacySurface.TOKEN_DETAIL,
-                StreamLegacySurface.REASONING_TOKEN,
-                StreamLegacySurface.TOOL_CALL_TOKEN,
-            ),
-        )
-        self.assertIs(
-            adapter_entry.category,
-            StreamLegacyBoundaryCategory.PRODUCER,
-        )
-        events_entry = classify_legacy_stream_classifier(
-            "avalan.model.stream",
-            "_LegacyTokenStreamAdapter.events_from_token",
-        )
-        self.assertEqual(
-            events_entry.surfaces,
-            (StreamLegacySurface.STRING,),
-        )
-        self.assertIs(
-            events_entry.category,
-            StreamLegacyBoundaryCategory.PARSER,
-        )
-        for entry in inventory:
-            with self.subTest(module=entry.module, qualname=entry.qualname):
-                self.assertIs(
-                    classify_legacy_stream_classifier(
-                        entry.module, entry.qualname
-                    ),
-                    entry,
-                )
-                self.assertTrue(entry.owner)
-                self.assertTrue(entry.removal_condition)
-                self.assertEqual(len(entry.surfaces), len(set(entry.surfaces)))
-                self.assertIn(
-                    entry.category, _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
-                )
+
+        self.assertEqual(inventory_sites, {})
+        self.assertEqual(inventory, ())
 
         with self.assertRaises(AssertionError):
             classify_legacy_stream_classifier("", "qualname")
@@ -8805,15 +8234,34 @@ class InheritsCanonical(CanonicalBase):
                 "avalan.server.a2a.router",
                 "_A2ALegacyStreamAdapter.map",
             )
+        with self.assertRaises(StreamValidationError):
+            classify_legacy_stream_classifier(
+                "avalan.model.stream",
+                "_LegacyTokenStreamAdapter.item_from_token",
+            )
+        fixture_entry = StreamLegacyClassifierInventoryEntry(
+            module="tests.model.model_stream_contract_test",
+            qualname="legacy_fixture_classifier",
+            surfaces=(StreamLegacySurface.TOKEN,),
+            classification=(
+                StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+            ),
+            category=StreamLegacyBoundaryCategory.TEST_FIXTURE,
+            scope=StreamLegacyInventoryScope.TEST_FIXTURE,
+            owner="tests.model.model_stream_contract_test",
+            removal_condition="synthetic classification coverage",
+        )
         with patch(
             "avalan.model.stream._LEGACY_STREAM_CLASSIFIER_INVENTORY",
-            (),
+            (fixture_entry,),
         ):
-            with self.assertRaises(StreamValidationError):
+            self.assertIs(
                 classify_legacy_stream_classifier(
-                    "avalan.model.stream",
-                    "_LegacyTokenStreamAdapter.item_from_token",
-                )
+                    "tests.model.model_stream_contract_test",
+                    "legacy_fixture_classifier",
+                ),
+                fixture_entry,
+            )
 
     def test_legacy_classifier_guard_detects_new_direct_classifiers(
         self,
@@ -9125,207 +8573,42 @@ def validate_name(value):
             helper_entry.scope, StreamLegacyInventoryScope.HELPER_ONLY
         )
 
-    def test_legacy_token_canonical_projection_separates_channels(
+    def test_runtime_legacy_stream_helpers_are_removed(
         self,
     ) -> None:
-        answer = canonical_item_from_token(
-            Token(token="a"),
-            1,
-            stream_session_id="shim-stream",
-            run_id="shim-run",
-            turn_id="shim-turn",
-        )
-        detail = canonical_item_from_token(
-            TokenDetail(id=7, token=" detail", probability=0.9),
-            2,
-            stream_session_id="shim-stream",
-            run_id="shim-run",
-            turn_id="shim-turn",
-        )
-        reasoning = canonical_item_from_token(
-            ReasoningToken(token="r"),
-            3,
-            stream_session_id="shim-stream",
-            run_id="shim-run",
-            turn_id="shim-turn",
-        )
-        tool = canonical_item_from_token(
-            ToolCallToken(token='{"x":', call=None),
-            4,
-            stream_session_id="shim-stream",
-            run_id="shim-run",
-            turn_id="shim-turn",
-        )
-        call_tool = canonical_item_from_token(
-            ToolCallToken(
-                token='"y"}',
-                call=ToolCall(id="call-1", name="math", arguments={}),
-            ),
-            5,
-            stream_session_id="shim-stream",
-            run_id="shim-run",
-            turn_id="shim-turn",
-        )
-        string_answer = canonical_item_from_token(
-            "s",
-            9,
-            stream_session_id="shim-stream",
-            run_id="shim-run",
-            turn_id="shim-turn",
-        )
+        from avalan.model import stream as stream_module
 
-        self.assertIs(answer.kind, StreamItemKind.ANSWER_DELTA)
-        self.assertIs(detail.kind, StreamItemKind.ANSWER_DELTA)
-        self.assertIs(reasoning.kind, StreamItemKind.REASONING_DELTA)
-        self.assertIs(reasoning.visibility, StreamVisibility.PRIVATE)
-        self.assertIs(tool.kind, StreamItemKind.TOOL_CALL_ARGUMENT_DELTA)
-        self.assertEqual(tool.correlation.tool_call_id, "legacy-tool-call")
-        self.assertEqual(call_tool.correlation.tool_call_id, "call-1")
-        self.assertEqual(string_answer.text_delta, "s")
-        self.assertEqual(
-            [
-                item.sequence
-                for item in (answer, detail, reasoning, tool, call_tool)
-            ],
-            [1, 2, 3, 4, 5],
-        )
-        self.assertEqual(
-            {item.stream_session_id for item in (answer, detail, reasoning)},
-            {"shim-stream"},
-        )
-
-        trace_items = (
-            _item(
-                StreamItemKind.STREAM_STARTED,
-                0,
-                stream_session_id="shim-stream",
-                run_id="shim-run",
-                turn_id="shim-turn",
-            ),
-            answer,
-            detail,
-            reasoning,
-            tool,
-            call_tool,
-            _item(
-                StreamItemKind.TOOL_CALL_DONE,
-                6,
-                stream_session_id="shim-stream",
-                run_id="shim-run",
-                turn_id="shim-turn",
-                correlation=StreamItemCorrelation(
-                    tool_call_id="legacy-tool-call"
-                ),
-                metadata={"tool_call.close_reason": "error"},
-            ),
-            _item(
-                StreamItemKind.TOOL_CALL_READY,
-                7,
-                stream_session_id="shim-stream",
-                run_id="shim-run",
-                turn_id="shim-turn",
-                correlation=StreamItemCorrelation(tool_call_id="call-1"),
-                data={"name": "math", "arguments": {}},
-            ),
-            _item(
-                StreamItemKind.TOOL_CALL_DONE,
-                8,
-                stream_session_id="shim-stream",
-                run_id="shim-run",
-                turn_id="shim-turn",
-                correlation=StreamItemCorrelation(tool_call_id="call-1"),
-            ),
-            string_answer,
-            _item(
-                StreamItemKind.REASONING_DONE,
-                10,
-                stream_session_id="shim-stream",
-                run_id="shim-run",
-                turn_id="shim-turn",
-            ),
-            _item(
-                StreamItemKind.ANSWER_DONE,
-                11,
-                stream_session_id="shim-stream",
-                run_id="shim-run",
-                turn_id="shim-turn",
-            ),
-            _item(
-                StreamItemKind.USAGE_COMPLETED,
-                12,
-                stream_session_id="shim-stream",
-                run_id="shim-run",
-                turn_id="shim-turn",
-                usage={"output_tokens": 5},
-            ),
-            _item(
-                StreamItemKind.STREAM_COMPLETED,
-                13,
-                stream_session_id="shim-stream",
-                run_id="shim-run",
-                turn_id="shim-turn",
-                terminal_outcome=StreamTerminalOutcome.COMPLETED,
-            ),
-        )
-        accumulator = accumulate_canonical_stream_items(trace_items)
-
-        self.assertEqual(accumulator.answer_text, "a details")
-        self.assertEqual(accumulator.reasoning_text, "r")
-        self.assertEqual(
-            accumulator.tool_call_arguments,
-            {"legacy-tool-call": '{"x":', "call-1": '"y"}'},
-        )
-        self.assertEqual(accumulator.final_usage, {"output_tokens": 5})
-
-        with self.assertRaises(AssertionError):
-            canonical_item_from_token("bad", -1)
-        with self.assertRaises(AssertionError):
-            canonical_item_from_token(object(), 0)  # type: ignore[arg-type]
-
-    def test_legacy_token_adapter_validates_pending_id_and_metadata(
-        self,
-    ) -> None:
-        adapter = _LegacyTokenStreamAdapter(pending_tool_call_id="call-1")
-
-        self.assertEqual(adapter.pending_tool_call_id, "call-1")
-        self.assertEqual(
-            _token_metadata(
-                TokenDetail(
-                    id=7,
-                    token="detail",
-                    probability=0.75,
-                    step=2,
-                    probability_distribution="softmax",
-                    tokens=[Token(id=8, token="candidate")],
-                )
-            ),
-            {
-                "token_id": 7,
-                "probability": 0.75,
-                "step": 2,
-                "probability_distribution": "softmax",
-                "tokens": [{"token": "candidate", "token_id": 8}],
-            },
-        )
-
-        with self.assertRaises(AssertionError):
-            _LegacyTokenStreamAdapter(pending_tool_call_id="")
+        for name in (
+            "_LegacyTokenStreamAdapter",
+            "canonical_item_from_token",
+            "stream_consumer_projection_from_token",
+            "_normalize_local_stream",
+            "token_text",
+            "_token_metadata",
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(stream_module, name))
 
     def test_stream_projection_display_token_uses_projection_metadata(
         self,
     ) -> None:
-        detail = stream_consumer_projection_from_token(
-            TokenDetail(
-                id=7,
-                token="detail",
-                probability=0.75,
-                step=2,
-                probability_distribution="softmax",
-                tokens=[
-                    Token(id=8, token="candidate", probability=0.25),
-                ],
-            ),
-            0,
+        detail = project_canonical_stream_item(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="detail",
+                metadata=stream_token_metadata(
+                    token_id=7,
+                    probability=0.75,
+                    step=2,
+                    probability_distribution="softmax",
+                    candidates=(("candidate", 8, 0.25),),
+                ),
+            )
         )
         display_token = stream_projection_display_token(detail)
 
@@ -9341,8 +8624,17 @@ def validate_name(value):
             [Token(id=8, token="candidate", probability=0.25)],
         )
 
-        answer = stream_consumer_projection_from_token(
-            Token(id=9, token="a"), 1
+        answer = project_canonical_stream_item(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="a",
+                metadata=stream_token_metadata(token_id=9),
+            )
         )
         self.assertEqual(
             stream_projection_display_token(answer),
@@ -9363,9 +8655,18 @@ def validate_name(value):
                 text_delta="answer",
             )
         )
-        tool = stream_consumer_projection_from_token(
-            ToolCallToken(token="tool", id=2),
-            2,
+        tool = project_canonical_stream_item(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=2,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="tool-1"),
+                text_delta="tool",
+                metadata=stream_token_metadata(token_id=2),
+            )
         )
         detail = project_canonical_stream_item(
             CanonicalStreamItem(

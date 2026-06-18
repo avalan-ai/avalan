@@ -1,10 +1,23 @@
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 
-from avalan.entities import ReasoningSettings, ReasoningToken
+from avalan.entities import ReasoningSettings
 from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
 )
+from avalan.model.stream import StreamItemKind, StreamProviderEvent
+
+
+def _reasoning_delta_text(item: object) -> str:
+    assert isinstance(item, StreamProviderEvent)
+    assert item.kind is StreamItemKind.REASONING_DELTA
+    assert item.text_delta is not None
+    return item.text_delta
+
+
+def _assert_reasoning_done(item: object) -> None:
+    assert isinstance(item, StreamProviderEvent)
+    assert item.kind is StreamItemKind.REASONING_DONE
 
 
 class ReasoningParserTestCase(IsolatedAsyncioTestCase):
@@ -12,25 +25,21 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         tokens = []
         for t in ["a", "<think>", "b", "</think>", "c"]:
             tokens.extend(await parser.push(t))
         self.assertEqual(tokens[0], "a")
-        self.assertIsInstance(tokens[1], ReasoningToken)
-        self.assertEqual(tokens[1].token, "<think>")
-        self.assertIsInstance(tokens[2], ReasoningToken)
-        self.assertEqual(tokens[2].token, "b")
-        self.assertIsInstance(tokens[3], ReasoningToken)
-        self.assertEqual(tokens[3].token, "</think>")
-        self.assertEqual(tokens[4], "c")
+        self.assertEqual(_reasoning_delta_text(tokens[1]), "<think>")
+        self.assertEqual(_reasoning_delta_text(tokens[2]), "b")
+        self.assertEqual(_reasoning_delta_text(tokens[3]), "</think>")
+        _assert_reasoning_done(tokens[4])
+        self.assertEqual(tokens[5], "c")
 
     async def test_without_thinking_tags(self):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         tokens = []
         for t in ["x", "y"]:
@@ -42,24 +51,20 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             prefixes=["Thought:"],
             logger=getLogger(),
-            legacy_fixture=True,
         )
         tokens = []
         for t in ["Thought:", "d", "e"]:
             tokens.extend(await parser.push(t))
-        self.assertIsInstance(tokens[0], ReasoningToken)
-        self.assertEqual(tokens[0].token, "Thought:")
-        self.assertIsInstance(tokens[1], ReasoningToken)
-        self.assertEqual(tokens[1].token, "d")
-        self.assertIsInstance(tokens[2], ReasoningToken)
-        self.assertEqual(tokens[2].token, "e")
+        self.assertEqual(
+            [_reasoning_delta_text(token) for token in tokens],
+            ["Thought:", "d", "e"],
+        )
 
     async def test_without_prefixes(self):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             prefixes=["Thought:"],
             logger=getLogger(),
-            legacy_fixture=True,
         )
         tokens = []
         for t in ["hello", "world"]:

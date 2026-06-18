@@ -3104,14 +3104,13 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
             rp = ReasoningParser(
                 reasoning_settings=ReasoningSettings(),
                 logger=getLogger(),
-                legacy_fixture=True,
             )
             tm = MagicMock()
             tm.is_potential_tool_call.return_value = True
             tm.get_calls.return_value = None
             base_parser = ToolCallParser()
             tm.tool_call_status.side_effect = base_parser.tool_call_status
-            tp = ToolCallResponseParser(tm, None, legacy_fixture=True)
+            tp = ToolCallResponseParser(tm, None)
             sequence = [
                 "X",
                 "<think>",
@@ -3134,24 +3133,8 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
                         else [item]
                     )
                     for p in parsed:
-                        if isinstance(p, str):
-                            if p == "</think>":
-                                yield TokenDetail(
-                                    id=3, token=p, probability=0.5
-                                )
-                            elif p in {"X", "Y"}:
-                                yield Token(id=1, token=p)
-                            elif p == "<think>" or p == "Z":
-                                yield p
-                        elif isinstance(p, ToolCallToken):
-                            if p.token == "</tool_call>":
-                                yield TokenDetail(
-                                    id=4, token=p.token, probability=0.5
-                                )
-                            else:
-                                yield p
-                        else:
-                            yield p
+                        assert isinstance(p, StreamProviderEvent)
+                        yield p
 
         class DummyOrchestratorResponse:
             input_token_count = 1
@@ -3188,9 +3171,25 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
         async for t in resp_obj:
             tokens.append(t)
 
+        self.assertFalse(any(isinstance(t, ReasoningToken) for t in tokens))
+        reasoning_deltas = [
+            t
+            for t in tokens
+            if (
+                isinstance(t, StreamProviderEvent)
+                and t.kind is StreamItemKind.REASONING_DELTA
+            )
+        ]
         self.assertEqual(
-            len([t for t in tokens if isinstance(t, ReasoningToken)]),
-            4,
+            [event.text_delta for event in reasoning_deltas],
+            ["<think>", "ra", "rb", "</think>"],
+        )
+        self.assertTrue(
+            any(
+                isinstance(t, StreamProviderEvent)
+                and t.kind is StreamItemKind.REASONING_DONE
+                for t in tokens
+            )
         )
         self.assertEqual(
             len([t for t in tokens if isinstance(t, ToolCallToken)]),

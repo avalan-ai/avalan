@@ -1257,11 +1257,11 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             ),
             (
                 (canonical_item, "legacy"),
-                "legacy stream item after canonical stream item",
+                "unsupported stream item for Chat SSE projection",
             ),
             (
                 (projection, "legacy"),
-                "legacy stream item after canonical stream item",
+                "unsupported stream item for Chat SSE projection",
             ),
         )
 
@@ -1341,7 +1341,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         chunks = []
         with self.assertRaisesRegex(
             StreamValidationError,
-            "legacy stream item after canonical stream item",
+            "unsupported stream item for Chat SSE projection",
         ):
             async for chunk in resp.body_iterator:
                 chunks.append(chunk)

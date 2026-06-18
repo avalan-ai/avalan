@@ -3,6 +3,23 @@ from unittest import IsolatedAsyncioTestCase
 
 from avalan.entities import ReasoningSettings
 from avalan.model.response.parsers.reasoning import ReasoningParser
+from avalan.model.stream import StreamItemKind, StreamProviderEvent
+
+
+def _reasoning_delta_texts(items: object) -> list[str]:
+    assert isinstance(items, list)
+    texts: list[str] = []
+    for item in items:
+        assert isinstance(item, StreamProviderEvent)
+        assert item.kind is StreamItemKind.REASONING_DELTA
+        assert item.text_delta is not None
+        texts.append(item.text_delta)
+    return texts
+
+
+def _assert_reasoning_done(item: object) -> None:
+    assert isinstance(item, StreamProviderEvent)
+    assert item.kind is StreamItemKind.REASONING_DONE
 
 
 class FakeStartTag:
@@ -30,7 +47,6 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         parser._pending_tokens = ["<", "thi"]
         parser._pending_str = "<thi"
@@ -38,13 +54,12 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(parser.is_thinking)
         self.assertEqual(parser._pending_tokens, [])
         self.assertEqual(parser._pending_str, "")
-        self.assertEqual([t.token for t in tokens], ["<", "thi", "nk>"])
+        self.assertEqual(_reasoning_delta_texts(tokens), ["<", "thi", "nk>"])
 
     async def test_overlong_pending_clears_token(self) -> None:
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         tokens = await parser.push("<th")
         self.assertEqual(tokens, [])
@@ -55,13 +70,13 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         parser.set_thinking(True)
         parser._pending_tokens = ["a", "b"]
         parser._pending_str = "ab"
-        tokens = await parser.flush()
-        self.assertEqual([t.token for t in tokens], ["a", "b"])
+        tokens = list(await parser.flush())
+        self.assertEqual(_reasoning_delta_texts(tokens[:-1]), ["a", "b"])
+        _assert_reasoning_done(tokens[-1])
         self.assertEqual(parser._pending_tokens, [])
         self.assertEqual(parser._pending_str, "")
 
@@ -72,12 +87,11 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             start_tag=FakeStartTag("<think>"),
-            legacy_fixture=True,
         )
         await parser.push("<")
         tokens = await parser.push("think>extra")
         self.assertEqual(
-            [token.token for token in tokens],
+            _reasoning_delta_texts(tokens),
             ["<", "think>", "extra"],
         )
         self.assertTrue(parser.is_thinking)
@@ -89,11 +103,10 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             start_tag=FakeStartTag("<think>"),
-            legacy_fixture=True,
         )
         tokens = await parser.push("<think>extra")
         self.assertEqual(
-            [token.token for token in tokens],
+            _reasoning_delta_texts(tokens),
             ["<think>", "extra"],
         )
         self.assertTrue(parser.is_thinking)
@@ -105,18 +118,16 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             start_tag=FakeStartTag("<think>"),
-            legacy_fixture=True,
         )
         tokens = await parser.push("<think>")
         self.assertTrue(parser.is_thinking)
-        self.assertEqual([t.token for t in tokens], ["<think>"])
+        self.assertEqual(_reasoning_delta_texts(tokens), ["<think>"])
 
     async def test_thinking_budget_exhaustion_property(self) -> None:
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             max_thinking_turns=1,
-            legacy_fixture=True,
         )
         await parser.push("<think>")
         await parser.push("</think>")

@@ -1,9 +1,6 @@
 from ..entities import (
-    ReasoningToken,
     Token,
     TokenDetail,
-    ToolCall,
-    ToolCallToken,
 )
 from ..observability import observability_key_sample
 from ..types import LooseJsonValue
@@ -11,7 +8,7 @@ from .provider import ProviderFamily, provider_family_value
 
 from abc import ABC, abstractmethod
 from asyncio import CancelledError
-from collections.abc import AsyncIterable, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterable, Awaitable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -936,30 +933,6 @@ def canonical_item_from_consumer_projection(
     )
 
 
-def stream_consumer_projection_from_token(
-    token: CanonicalStreamItem | StreamConsumerProjection | Token | str,
-    sequence: int,
-    *,
-    stream_session_id: str = "legacy-stream",
-    run_id: str = "legacy-run",
-    turn_id: str = "legacy-turn",
-) -> StreamConsumerProjection:
-    if isinstance(token, StreamConsumerProjection):
-        return token
-    if isinstance(token, CanonicalStreamItem):
-        return project_canonical_stream_item(token)
-    return project_canonical_stream_item(
-        _LegacyTokenStreamAdapter(
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-        ).item_from_token(
-            token,
-            sequence,
-        )
-    )
-
-
 def project_stream_consumer_item(
     item: object,
     sequence: int,
@@ -969,16 +942,12 @@ def project_stream_consumer_item(
     turn_id: str,
     unsupported_message: str,
     accumulate: bool = False,
-    legacy_item_mapper: (
-        Callable[[object], Iterable[CanonicalStreamItem] | None] | None
-    ) = None,
 ) -> StreamConsumerProjection:
     state = StreamProjectionState(
         stream_session_id=stream_session_id,
         run_id=run_id,
         turn_id=turn_id,
         accumulate=accumulate,
-        legacy_item_mapper=legacy_item_mapper,
     )
     return state.project(
         item,
@@ -1545,398 +1514,17 @@ def stream_terminal_outcome_for_kind(
 
 _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
     StreamLegacySurfaceInventoryEntry, ...
-] = (
-    StreamLegacySurfaceInventoryEntry(
-        surface=StreamLegacySurface.STRING,
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        categories=(
-            StreamLegacyBoundaryCategory.PRODUCER,
-            StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.PARSER,
-            StreamLegacyBoundaryCategory.CLI_STDOUT,
-            StreamLegacyBoundaryCategory.CHAT_SSE,
-            StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.FLOW,
-            StreamLegacyBoundaryCategory.HELPER_ONLY,
-        ),
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.stream",
-        removal_condition=(
-            "Canonical item iteration replaces string stream output."
-        ),
-        canonical_kind=StreamItemKind.ANSWER_DELTA,
-        canonical_channel=StreamChannel.ANSWER,
-    ),
-    StreamLegacySurfaceInventoryEntry(
-        surface=StreamLegacySurface.TOKEN,
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        categories=(
-            StreamLegacyBoundaryCategory.PRODUCER,
-            StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.CLI_STDOUT,
-            StreamLegacyBoundaryCategory.CHAT_SSE,
-            StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.HELPER_ONLY,
-        ),
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.stream",
-        removal_condition=(
-            "Canonical item iteration replaces Token stream output."
-        ),
-        canonical_kind=StreamItemKind.ANSWER_DELTA,
-        canonical_channel=StreamChannel.ANSWER,
-    ),
-    StreamLegacySurfaceInventoryEntry(
-        surface=StreamLegacySurface.TOKEN_DETAIL,
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        categories=(
-            StreamLegacyBoundaryCategory.PRODUCER,
-            StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.CLI_STDOUT,
-            StreamLegacyBoundaryCategory.CHAT_SSE,
-            StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.HELPER_ONLY,
-        ),
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.stream",
-        removal_condition=(
-            "Canonical item metadata replaces TokenDetail stream output."
-        ),
-        canonical_kind=StreamItemKind.ANSWER_DELTA,
-        canonical_channel=StreamChannel.ANSWER,
-    ),
-    StreamLegacySurfaceInventoryEntry(
-        surface=StreamLegacySurface.REASONING_TOKEN,
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        categories=(
-            StreamLegacyBoundaryCategory.PRODUCER,
-            StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.PARSER,
-            StreamLegacyBoundaryCategory.CLI_STDOUT,
-            StreamLegacyBoundaryCategory.CHAT_SSE,
-            StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.HELPER_ONLY,
-        ),
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.stream",
-        removal_condition=(
-            "Canonical reasoning channel replaces ReasoningToken output."
-        ),
-        canonical_kind=StreamItemKind.REASONING_DELTA,
-        canonical_channel=StreamChannel.REASONING,
-    ),
-    StreamLegacySurfaceInventoryEntry(
-        surface=StreamLegacySurface.TOOL_CALL_TOKEN,
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        categories=(
-            StreamLegacyBoundaryCategory.PRODUCER,
-            StreamLegacyBoundaryCategory.SDK_RESPONSE,
-            StreamLegacyBoundaryCategory.PARSER,
-            StreamLegacyBoundaryCategory.CLI_STDOUT,
-            StreamLegacyBoundaryCategory.CHAT_SSE,
-            StreamLegacyBoundaryCategory.RESPONSES_SSE,
-            StreamLegacyBoundaryCategory.HELPER_ONLY,
-        ),
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.stream",
-        removal_condition=(
-            "Canonical tool-call items replace ToolCallToken output."
-        ),
-        canonical_kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-        canonical_channel=StreamChannel.TOOL_CALL,
-    ),
-    StreamLegacySurfaceInventoryEntry(
-        surface=StreamLegacySurface.EVENT,
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        categories=(
-            StreamLegacyBoundaryCategory.PARSER,
-            StreamLegacyBoundaryCategory.EVENTING,
-        ),
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="event",
-        removal_condition=(
-            "Event streaming is projected through canonical observability."
-        ),
-    ),
-)
+] = ()
 
 
 _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
     StreamLegacyClassifierInventoryEntry, ...
-] = (
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.stream",
-        qualname="_LegacyTokenStreamAdapter.item_from_token",
-        surfaces=(
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PRODUCER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.stream",
-        removal_condition=(
-            "Local and SDK producers emit canonical stream items before "
-            "model.stream ingestion."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.stream",
-        qualname="_LegacyTokenStreamAdapter.events_from_token",
-        surfaces=(StreamLegacySurface.STRING,),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.PARSER,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.stream",
-        removal_condition=(
-            "Local producers emit parsed provider events or canonical items "
-            "instead of raw string deltas."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.vendor.openai",
-        qualname="OpenAIClient._non_stream_response_content",
-        surfaces=(StreamLegacySurface.STRING,),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.SDK_RESPONSE,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.vendor.openai",
-        removal_condition=(
-            "OpenAI non-stream response content is projected through "
-            "canonical response items."
-        ),
-    ),
-    StreamLegacyClassifierInventoryEntry(
-        module="avalan.model.nlp.text.vendor.anthropic",
-        qualname="AnthropicClient._non_stream_response_content",
-        surfaces=(StreamLegacySurface.STRING,),
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=StreamLegacyBoundaryCategory.SDK_RESPONSE,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        owner="model.vendor.anthropic",
-        removal_condition=(
-            "Anthropic non-stream response content is projected through "
-            "canonical response items."
-        ),
-    ),
-)
-
-
-def _runtime_boundary(
-    module: str,
-    qualname: str,
-    surfaces: tuple[StreamLegacySurface, ...],
-    category: StreamLegacyBoundaryCategory,
-    directions: tuple[StreamLegacyBoundaryDirection, ...],
-    owner: str,
-    removal_condition: str,
-) -> StreamLegacyRuntimeBoundaryInventoryEntry:
-    return StreamLegacyRuntimeBoundaryInventoryEntry(
-        module=module,
-        qualname=qualname,
-        surfaces=surfaces,
-        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
-        category=category,
-        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
-        directions=directions,
-        owner=owner,
-        removal_condition=removal_condition,
-    )
+] = ()
 
 
 _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
     StreamLegacyRuntimeBoundaryInventoryEntry, ...
-] = (
-    _runtime_boundary(
-        "avalan.model.vendor",
-        "TextGenerationVendor.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
-        "model.vendor",
-        "Vendor call surfaces return canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "stream_consumer_projection_from_token",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.HELPER_ONLY,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "model.stream",
-        "Projection helpers accept canonical stream items only.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "project_stream_consumer_item",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.HELPER_ONLY,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "model.stream",
-        "Shared stream projection accepts canonical stream items only.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "StreamProjectionState.project",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.HELPER_ONLY,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "model.stream",
-        "Projection state accepts canonical stream items only.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "StreamProjectionState.project_many",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.HELPER_ONLY,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "model.stream",
-        "Projection state batch mapping accepts canonical stream items only.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "_normalize_local_stream",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.HELPER_ONLY,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "model.stream",
-        "Local stream normalization accepts provider events or canonical"
-        " items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "_LegacyTokenStreamAdapter.item_from_token",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.HELPER_ONLY,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "model.stream",
-        "Legacy token adapter is removed after producers emit canonical"
-        " items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.stream",
-        "_LegacyTokenStreamAdapter.events_from_token",
-        (StreamLegacySurface.STRING,),
-        StreamLegacyBoundaryCategory.HELPER_ONLY,
-        (
-            StreamLegacyBoundaryDirection.ACCEPTS,
-            StreamLegacyBoundaryDirection.PROJECTS,
-        ),
-        "model.stream",
-        "String parser adapter is removed after local producers emit events.",
-    ),
-    _runtime_boundary(
-        "avalan.event.manager",
-        "EventManager.trigger",
-        (StreamLegacySurface.EVENT,),
-        StreamLegacyBoundaryCategory.EVENTING,
-        (StreamLegacyBoundaryDirection.ACCEPTS,),
-        "event",
-        "Event publishing accepts canonical stream observability payloads.",
-    ),
-    _runtime_boundary(
-        "avalan.event.manager",
-        "EventManager.listen",
-        (StreamLegacySurface.EVENT,),
-        StreamLegacyBoundaryCategory.EVENTING,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "event",
-        "Event listening yields canonical stream observability payloads.",
-    ),
-    _runtime_boundary(
-        "avalan.model.response.parsers.tool",
-        "ToolCallResponseParser",
-        (StreamLegacySurface.TOOL_CALL_TOKEN,),
-        StreamLegacyBoundaryCategory.PARSER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.parsers.tool",
-        "Tool-call parsing emits canonical tool-call lifecycle items.",
-    ),
-    _runtime_boundary(
-        "avalan.model.response.parsers.reasoning",
-        "ReasoningParser",
-        (StreamLegacySurface.REASONING_TOKEN,),
-        StreamLegacyBoundaryCategory.PARSER,
-        (StreamLegacyBoundaryDirection.EMITS,),
-        "model.parsers.reasoning",
-        "Reasoning parsing emits canonical reasoning items.",
-    ),
-    _runtime_boundary(
-        "avalan.cli.commands.model",
-        "_stream_projection",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.CLI_STDOUT,
-        (StreamLegacyBoundaryDirection.PROJECTS,),
-        "cli.model",
-        "CLI stdout and rendering consume canonical projections only.",
-    ),
-)
+] = ()
 
 
 def legacy_stream_surface_inventory() -> (
@@ -2790,11 +2378,7 @@ class StreamProjectionState:
         default_factory=CanonicalStreamAccumulator
     )
     has_canonical_items: bool = False
-    legacy_stream_seen: bool = False
     accumulate: bool = True
-    legacy_item_mapper: (
-        Callable[[object], Iterable[CanonicalStreamItem] | None] | None
-    ) = None
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -2805,10 +2389,7 @@ class StreamProjectionState:
             _assert_non_empty_string(value, field_name)
         assert isinstance(self.accumulator, CanonicalStreamAccumulator)
         assert isinstance(self.has_canonical_items, bool)
-        assert isinstance(self.legacy_stream_seen, bool)
         assert isinstance(self.accumulate, bool)
-        if self.legacy_item_mapper is not None:
-            assert callable(self.legacy_item_mapper)
 
     def project(
         self,
@@ -2839,27 +2420,7 @@ class StreamProjectionState:
             return (self._project_canonical_item(item),)
         if isinstance(item, StreamConsumerProjection):
             return (self._project_consumer_projection(item),)
-        if self.has_canonical_items:
-            raise StreamValidationError(
-                "legacy stream item after canonical stream item"
-            )
-
-        self.legacy_stream_seen = True
-        if self.legacy_item_mapper is None:
-            raise StreamValidationError(unsupported_message)
-
-        try:
-            mapped = self.legacy_item_mapper(item)
-        except AssertionError as exc:
-            raise StreamValidationError(unsupported_message) from exc
-        if mapped is None:
-            raise StreamValidationError(unsupported_message)
-
-        mapped_items = tuple(mapped)
-        return tuple(
-            self._project_mapped_legacy_item(mapped_item)
-            for mapped_item in mapped_items
-        )
+        raise StreamValidationError(unsupported_message)
 
     def validate_complete(self) -> None:
         if self.has_canonical_items and self.accumulate:
@@ -2879,10 +2440,6 @@ class StreamProjectionState:
         self,
         item: CanonicalStreamItem,
     ) -> StreamConsumerProjection:
-        if self.legacy_stream_seen:
-            raise StreamValidationError(
-                "canonical stream item after legacy stream item"
-            )
         self.has_canonical_items = True
         if self.accumulate:
             self.accumulator.add(item)
@@ -2892,25 +2449,12 @@ class StreamProjectionState:
         self,
         projection: StreamConsumerProjection,
     ) -> StreamConsumerProjection:
-        if self.legacy_stream_seen:
-            raise StreamValidationError(
-                "canonical stream item after legacy stream item"
-            )
         self.has_canonical_items = True
         if self.accumulate:
             self.accumulator.add(
                 canonical_item_from_consumer_projection(projection)
             )
         return projection
-
-    def _project_mapped_legacy_item(
-        self,
-        item: CanonicalStreamItem,
-    ) -> StreamConsumerProjection:
-        assert isinstance(item, CanonicalStreamItem)
-        if self.accumulate:
-            self.accumulator.add(item)
-        return project_canonical_stream_item(item)
 
 
 def accumulate_canonical_stream_items(
@@ -2992,115 +2536,6 @@ async def normalize_provider_stream(
             yield item
     finally:
         await close_provider_stream()
-
-
-async def _normalize_local_stream(
-    tokens: AsyncIterable[Token | TokenDetail | str],
-    *,
-    stream_session_id: str,
-    run_id: str,
-    turn_id: str,
-    provider_family: ProviderFamily | str | None = ProviderFamily.LOCAL,
-    capabilities: StreamProviderCapabilities | None = None,
-    close_after_terminal: bool = True,
-) -> AsyncIterator[CanonicalStreamItem]:
-    assert isinstance(tokens, AsyncIterable)
-    _assert_non_empty_string(stream_session_id, "stream_session_id")
-    _assert_non_empty_string(run_id, "run_id")
-    _assert_non_empty_string(turn_id, "turn_id")
-    if capabilities is None:
-        capabilities = StreamProviderCapabilities(
-            backend=StreamProducerBackend.LOCAL,
-            provider_family=provider_family,
-            supports_reasoning=True,
-            supports_tool_calls=True,
-            supports_cancellation=True,
-            max_queue_depth=StreamPerformanceBudget().max_queue_depth,
-        )
-    else:
-        assert isinstance(capabilities, StreamProviderCapabilities)
-        assert capabilities.backend is StreamProducerBackend.LOCAL
-
-    legacy_adapter = _LegacyTokenStreamAdapter(
-        stream_session_id=stream_session_id,
-        run_id=run_id,
-        turn_id=turn_id,
-        parser=_LocalTextStreamParser(),
-    )
-    token_iterator = tokens.__aiter__()
-    tokens_exhausted = False
-    tokens_closed = False
-
-    async def close_tokens() -> None:
-        nonlocal tokens_closed
-        if tokens_closed or tokens_exhausted:
-            return
-        tokens_closed = True
-        await _close_async_iterable(token_iterator)
-
-    async def events() -> AsyncIterator[StreamProviderEvent]:
-        nonlocal tokens_exhausted
-        try:
-            while True:
-                try:
-                    token = await token_iterator.__anext__()
-                except StopAsyncIteration:
-                    tokens_exhausted = True
-                    break
-
-                for event in legacy_adapter.events_from_token(token):
-                    yield event
-            for event in legacy_adapter.flush_events():
-                yield event
-        finally:
-            await close_tokens()
-
-    provider_stream = normalize_provider_stream(
-        events(),
-        stream_session_id=stream_session_id,
-        run_id=run_id,
-        turn_id=turn_id,
-        provider_family=provider_family,
-        capabilities=capabilities,
-        close_after_terminal=close_after_terminal,
-    )
-    try:
-        async for item in provider_stream:
-            yield item
-    except (CancelledError, GeneratorExit):
-        await close_tokens()
-        await cast(Any, provider_stream).aclose()
-        raise
-
-
-def _legacy_tool_call_boundary_events(
-    tool_call_id: str | None,
-    data: LooseJsonValue | None,
-) -> tuple[StreamProviderEvent, ...]:
-    if tool_call_id is None:
-        return ()
-    assert isinstance(tool_call_id, str)
-    assert tool_call_id.strip()
-    data = data if isinstance(data, dict) else {}
-    correlation = StreamItemCorrelation(tool_call_id=tool_call_id)
-    return (
-        StreamProviderEvent(
-            kind=StreamItemKind.TOOL_CALL_READY,
-            correlation=correlation,
-            data={
-                "name": data.get("name"),
-                "arguments": data.get("arguments"),
-            },
-        ),
-        StreamProviderEvent(
-            kind=StreamItemKind.TOOL_CALL_DONE,
-            correlation=correlation,
-        ),
-    )
-
-
-def _legacy_tool_call_id(call: ToolCall) -> str:
-    return str(call.id) if call.id is not None else "legacy-tool-call"
 
 
 @dataclass(slots=True)
@@ -3972,24 +3407,25 @@ class TextGenerationStream(AsyncIterator[CanonicalStreamItem], ABC):
 
 
 class TextGenerationSingleStream(TextGenerationStream):
-    _content: str | Token | TokenDetail
+    _content: str
     _item_index: int = 0
     _provider_family: str | None = None
     _usage: object | None = None
 
     def __init__(
         self,
-        content: str | Token | TokenDetail,
+        content: str,
         *,
         provider_family: ProviderFamily | str | None = None,
         usage: object | None = None,
     ) -> None:
+        assert isinstance(content, str)
         self._content = content
         self._provider_family = provider_family_value(provider_family)
         self._usage = usage
 
     @property
-    def content(self) -> str | Token | TokenDetail:
+    def content(self) -> str:
         return self._content
 
     @property
@@ -4021,7 +3457,7 @@ class TextGenerationSingleStream(TextGenerationStream):
         capabilities: StreamProviderCapabilities | None,
         close_after_terminal: bool,
     ) -> tuple[CanonicalStreamItem, ...]:
-        text = token_text(self._content)
+        text = self._content
         usage = self._usage if self._usage is not None else {}
         normalized_provider_family = provider_family_value(provider_family)
         metadata: dict[str, LooseJsonValue] = {}
@@ -4147,264 +3583,3 @@ class TextGenerationSingleStream(TextGenerationStream):
         item = items[self._item_index]
         self._item_index += 1
         return item
-
-
-@dataclass(slots=True)
-class _LegacyTokenStreamAdapter:
-    stream_session_id: str = "legacy-stream"
-    run_id: str = "legacy-run"
-    turn_id: str = "legacy-turn"
-    parser: _LocalTextStreamParser | None = None
-    pending_tool_call_id: str | None = None
-    pending_tool_call_data: LooseJsonValue | None = None
-    pending_reasoning_done: bool = False
-
-    def __post_init__(self) -> None:
-        _assert_non_empty_string(self.stream_session_id, "stream_session_id")
-        _assert_non_empty_string(self.run_id, "run_id")
-        _assert_non_empty_string(self.turn_id, "turn_id")
-        if self.parser is not None:
-            assert isinstance(self.parser, _LocalTextStreamParser)
-        if self.pending_tool_call_id is not None:
-            _assert_non_empty_string(
-                self.pending_tool_call_id, "pending_tool_call_id"
-            )
-
-    def item_from_token(
-        self,
-        token: object,
-        sequence: int,
-    ) -> CanonicalStreamItem:
-        assert isinstance(sequence, int), "sequence must be an integer"
-        assert sequence >= 0, "sequence must not be negative"
-        if isinstance(token, str):
-            text = token
-            metadata: dict[str, LooseJsonValue] = {}
-        else:
-            assert isinstance(token, Token)
-            assert isinstance(token.token, str)
-            text = token.token
-            metadata = {}
-            if isinstance(token.id, int) and token.id >= 0:
-                metadata["token_id"] = token.id
-            if token.probability is not None:
-                metadata["probability"] = token.probability
-            if isinstance(token, TokenDetail):
-                if token.step is not None:
-                    metadata["step"] = token.step
-                if token.probability_distribution is not None:
-                    metadata["probability_distribution"] = (
-                        token.probability_distribution
-                    )
-                if token.tokens is not None:
-                    candidate_metadata: list[dict[str, LooseJsonValue]] = []
-                    for candidate in token.tokens:
-                        assert isinstance(candidate, Token)
-                        assert isinstance(candidate.token, str)
-                        candidate_entry: dict[str, LooseJsonValue] = {
-                            "token": candidate.token
-                        }
-                        if isinstance(candidate.id, int) and candidate.id >= 0:
-                            candidate_entry["token_id"] = candidate.id
-                        if candidate.probability is not None:
-                            candidate_entry["probability"] = (
-                                candidate.probability
-                            )
-                        candidate_metadata.append(candidate_entry)
-                    metadata["tokens"] = cast(
-                        LooseJsonValue, candidate_metadata
-                    )
-            if (
-                isinstance(token, ToolCallToken)
-                and token.provider_name is not None
-            ):
-                metadata["provider_name"] = token.provider_name
-
-        if isinstance(token, ReasoningToken):
-            return CanonicalStreamItem(
-                stream_session_id=self.stream_session_id,
-                run_id=self.run_id,
-                turn_id=self.turn_id,
-                sequence=sequence,
-                kind=StreamItemKind.REASONING_DELTA,
-                channel=StreamChannel.REASONING,
-                text_delta=text,
-                visibility=StreamVisibility.PRIVATE,
-                metadata=metadata,
-            )
-        if isinstance(token, ToolCallToken):
-            tool_call_id = (
-                _legacy_tool_call_id(token.call)
-                if token.call is not None
-                else "legacy-tool-call"
-            )
-            data: LooseJsonValue | None = None
-            if token.call is not None:
-                data = cast(
-                    LooseJsonValue,
-                    {
-                        "name": token.call.name,
-                        "arguments": token.call.arguments,
-                    },
-                )
-            return CanonicalStreamItem(
-                stream_session_id=self.stream_session_id,
-                run_id=self.run_id,
-                turn_id=self.turn_id,
-                sequence=sequence,
-                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                channel=StreamChannel.TOOL_CALL,
-                correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
-                text_delta=text,
-                data=data,
-                metadata=metadata,
-            )
-        return CanonicalStreamItem(
-            stream_session_id=self.stream_session_id,
-            run_id=self.run_id,
-            turn_id=self.turn_id,
-            sequence=sequence,
-            kind=StreamItemKind.ANSWER_DELTA,
-            channel=StreamChannel.ANSWER,
-            text_delta=text,
-            metadata=metadata,
-        )
-
-    def events_from_token(
-        self,
-        token: Token | TokenDetail | str,
-    ) -> tuple[StreamProviderEvent, ...]:
-        if isinstance(token, str):
-            assert self.parser is not None
-            return (
-                *self._pop_pending_reasoning_done_events(),
-                *self._pop_pending_tool_call_events(),
-                *self.parser.push(token),
-            )
-
-        item = self.item_from_token(token, 0)
-        boundary_events = self._boundary_events_before_item(item)
-        self._remember_pending_tool_call(item)
-        self._remember_pending_reasoning(item)
-        return (
-            *boundary_events,
-            self._provider_event_from_item(item),
-        )
-
-    def flush_events(self) -> tuple[StreamProviderEvent, ...]:
-        parser_events: tuple[StreamProviderEvent, ...] = ()
-        if self.parser is not None:
-            parser_events = self.parser.flush()
-        return (
-            *parser_events,
-            *self._pop_pending_reasoning_done_events(),
-            *self._pop_pending_tool_call_events(),
-        )
-
-    def _boundary_events_before_item(
-        self,
-        item: CanonicalStreamItem,
-    ) -> tuple[StreamProviderEvent, ...]:
-        assert isinstance(item, CanonicalStreamItem)
-        events: list[StreamProviderEvent] = []
-        if item.kind is not StreamItemKind.REASONING_DELTA:
-            events.extend(self._pop_pending_reasoning_done_events())
-        if item.kind is not StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
-            events.extend(self._pop_pending_tool_call_events())
-            return tuple(events)
-        if item.data is None:
-            return tuple(events)
-        tool_call_id = item.correlation.tool_call_id
-        if (
-            self.pending_tool_call_id is not None
-            and tool_call_id != self.pending_tool_call_id
-        ):
-            events.extend(self._pop_pending_tool_call_events())
-        return tuple(events)
-
-    def _remember_pending_tool_call(
-        self,
-        item: CanonicalStreamItem,
-    ) -> None:
-        assert isinstance(item, CanonicalStreamItem)
-        if (
-            item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
-            and item.data is not None
-        ):
-            self.pending_tool_call_id = item.correlation.tool_call_id
-            self.pending_tool_call_data = item.data
-
-    def _remember_pending_reasoning(
-        self,
-        item: CanonicalStreamItem,
-    ) -> None:
-        assert isinstance(item, CanonicalStreamItem)
-        if item.kind is StreamItemKind.REASONING_DELTA:
-            self.pending_reasoning_done = True
-
-    def _pop_pending_tool_call_events(
-        self,
-    ) -> tuple[StreamProviderEvent, ...]:
-        events = _legacy_tool_call_boundary_events(
-            self.pending_tool_call_id,
-            self.pending_tool_call_data,
-        )
-        self.pending_tool_call_id = None
-        self.pending_tool_call_data = None
-        return events
-
-    def _pop_pending_reasoning_done_events(
-        self,
-    ) -> tuple[StreamProviderEvent, ...]:
-        if not self.pending_reasoning_done:
-            return ()
-        self.pending_reasoning_done = False
-        return (
-            StreamProviderEvent(
-                kind=StreamItemKind.REASONING_DONE,
-                visibility=StreamVisibility.PRIVATE,
-            ),
-        )
-
-    @staticmethod
-    def _provider_event_from_item(
-        item: CanonicalStreamItem,
-    ) -> StreamProviderEvent:
-        assert isinstance(item, CanonicalStreamItem)
-        return StreamProviderEvent(
-            kind=item.kind,
-            text_delta=item.text_delta,
-            data=item.data,
-            usage=item.usage,
-            correlation=item.correlation,
-            visibility=item.visibility,
-            metadata=item.metadata,
-            provider_event_type=item.provider_event_type,
-        )
-
-
-def token_text(token: Token | TokenDetail | str) -> str:
-    return (
-        _LegacyTokenStreamAdapter().item_from_token(token, 0).text_delta or ""
-    )
-
-
-def canonical_item_from_token(
-    token: Token | TokenDetail | str,
-    sequence: int,
-    *,
-    stream_session_id: str = "legacy-stream",
-    run_id: str = "legacy-run",
-    turn_id: str = "legacy-turn",
-) -> CanonicalStreamItem:
-    return _LegacyTokenStreamAdapter(
-        stream_session_id=stream_session_id,
-        run_id=run_id,
-        turn_id=turn_id,
-    ).item_from_token(token, sequence)
-
-
-def _token_metadata(
-    token: Token | TokenDetail | str,
-) -> dict[str, LooseJsonValue]:
-    return dict(_LegacyTokenStreamAdapter().item_from_token(token, 0).metadata)

@@ -876,12 +876,13 @@ class AnthropicClient(TextGenerationVendor):
                 continue
 
             if block_type == "tool_use":
-                token = TextGenerationVendor.build_tool_call_token(
-                    _get(block, "id"),
-                    _get(block, "name"),
-                    _get(block, "input"),
+                parts.append(
+                    TextGenerationVendor.build_tool_call_text(
+                        _get(block, "id"),
+                        _get(block, "name"),
+                        _get(block, "input"),
+                    )
                 )
-                parts.append(token.token)
 
         return "".join(parts)
 

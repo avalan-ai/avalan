@@ -5,9 +5,6 @@ from ..entities import (
     MessageContentFile,
     MessageContentImage,
     MessageContentText,
-    ToolCall,
-    ToolCallToken,
-    ToolValue,
 )
 from ..tool.manager import ToolManager
 from .message import (
@@ -52,7 +49,7 @@ class TextGenerationVendor(ABC):
         instructions: str | None = None,
         tool: ToolManager | None = None,
         use_async_generator: bool = True,
-    ) -> TextGenerationStream | AsyncIterator[Any] | str:
+    ) -> TextGenerationStream | AsyncIterator[CanonicalStreamItem] | str:
         raise NotImplementedError()
 
     def _system_prompt(self, messages: list[Message]) -> str | None:
@@ -157,11 +154,11 @@ class TextGenerationVendor(ABC):
         return decoded
 
     @staticmethod
-    def build_tool_call_token(
+    def build_tool_call_text(
         call_id: str | object | None,
         tool_name: str | object | None,
         arguments: str | dict[str, Any] | object | None,
-    ) -> ToolCallToken:
+    ) -> str:
         tool_name_text = (
             tool_name if isinstance(tool_name, str) else str(tool_name or "")
         )
@@ -176,18 +173,15 @@ class TextGenerationVendor(ABC):
                 name = tool_name_text
         else:
             name = ""
-        provider_arguments_malformed = False
         if isinstance(arguments, str):
             try:
                 parsed_arguments = loads(arguments)
             except JSONDecodeError:
-                provider_arguments_malformed = True
                 args = {}
             else:
                 if isinstance(parsed_arguments, dict):
                     args = parsed_arguments
                 else:
-                    provider_arguments_malformed = True
                     args = {}
         else:
             args = (
@@ -200,14 +194,6 @@ class TextGenerationVendor(ABC):
             if isinstance(call_id, str) or call_id is None
             else str(call_id)
         )
-        call = ToolCall(
-            id=cast(Any, call_id_value),
-            name=name,
-            arguments=cast(dict[str, ToolValue], args),
-            provider_name=tool_name_text or None,
-            provider_name_encoded=provider_name_encoded,
-            provider_arguments_malformed=provider_arguments_malformed,
-        )
         token_payload: dict[str, Any] = {
             "name": name,
             "arguments": args,
@@ -215,11 +201,7 @@ class TextGenerationVendor(ABC):
         if call_id_value is not None:
             token_payload["id"] = call_id_value
         token_json = dumps(token_payload)
-        return ToolCallToken(
-            token=f"<tool_call>{token_json}</tool_call>",
-            call=call,
-            provider_name=tool_name_text or None,
-        )
+        return f"<tool_call>{token_json}</tool_call>"
 
 
 class TextGenerationVendorStream(TextGenerationStream):

@@ -11,12 +11,6 @@ from ...entities import (
     MessageFile,
     ReasoningSettings,
 )
-from ...entities import (
-    ReasoningToken as ReasoningToken,
-)
-from ...entities import (
-    ToolCallToken as ToolCallToken,
-)
 from ...server.entities import (
     ChatCompletionRequest,
     ContentFile,

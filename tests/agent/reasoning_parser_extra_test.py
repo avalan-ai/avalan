@@ -10,7 +10,6 @@ class ReasoningParserExtraTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         await parser.push("<think>")
         await parser.push("a")
@@ -21,7 +20,6 @@ class ReasoningParserExtraTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         await parser.push("<")
         await parser.push("thi")
@@ -31,7 +29,6 @@ class ReasoningParserExtraTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
-            legacy_fixture=True,
         )
         self.assertFalse(parser.is_thinking)
         parser.set_thinking(True)
