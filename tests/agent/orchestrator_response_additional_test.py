@@ -1,4 +1,6 @@
+from asyncio import CancelledError, create_task, sleep
 from collections.abc import AsyncIterator
+from json import dumps
 from logging import getLogger
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
@@ -46,6 +48,7 @@ from avalan.model.stream import (
     TextGenerationSingleStream,
     stream_channel_for_kind,
     validate_canonical_stream_items,
+    validate_tool_lifecycle_items,
 )
 from avalan.task.usage import (
     UsageSource,
@@ -145,39 +148,51 @@ def _canonical_tool_call_items(
     resolved_tool_call_id = tool_call_id or str(call.id)
     correlation = StreamItemCorrelation(tool_call_id=resolved_tool_call_id)
     arguments = call.arguments or {}
-    return (
-        _canonical_item(StreamItemKind.STREAM_STARTED, 0),
+    items = [_canonical_item(StreamItemKind.STREAM_STARTED, 0)]
+    sequence = 1
+    if arguments:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id="additional-stream",
+                run_id="additional-run",
+                turn_id="additional-turn",
+                sequence=sequence,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                text_delta=dumps(arguments),
+                correlation=correlation,
+            )
+        )
+        sequence += 1
+    items.append(
         CanonicalStreamItem(
             stream_session_id="additional-stream",
             run_id="additional-run",
             turn_id="additional-turn",
-            sequence=1,
-            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-            channel=StreamChannel.TOOL_CALL,
-            text_delta='{"x":1}' if arguments else "",
-            correlation=correlation,
-        ),
-        CanonicalStreamItem(
-            stream_session_id="additional-stream",
-            run_id="additional-run",
-            turn_id="additional-turn",
-            sequence=2,
+            sequence=sequence,
             kind=StreamItemKind.TOOL_CALL_READY,
             channel=StreamChannel.TOOL_CALL,
             data={"name": call.name, "arguments": arguments},
             correlation=correlation,
-        ),
+        )
+    )
+    sequence += 1
+    items.append(
         CanonicalStreamItem(
             stream_session_id="additional-stream",
             run_id="additional-run",
             turn_id="additional-turn",
-            sequence=3,
+            sequence=sequence,
             kind=StreamItemKind.TOOL_CALL_DONE,
             channel=StreamChannel.TOOL_CALL,
             correlation=correlation,
-        ),
-        _canonical_item(StreamItemKind.STREAM_COMPLETED, 4, usage={}),
+        )
     )
+    sequence += 1
+    items.append(
+        _canonical_item(StreamItemKind.STREAM_COMPLETED, sequence, usage={})
+    )
+    return tuple(items)
 
 
 def _response_from_items(
@@ -378,7 +393,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
                 with self.assertRaises(StreamValidationError):
                     await iterator.__anext__()
 
-    async def test_provider_events_are_staged_as_canonical_items(self):
+    async def test_provider_events_are_staged_as_canonical_lifecycle(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
         agent.engine = engine
@@ -392,30 +407,91 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         )
         ready_event = StreamProviderEvent(
             kind=StreamItemKind.TOOL_CALL_READY,
-            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            correlation=StreamItemCorrelation(
+                provider_request_id="provider-request-1",
+                model_continuation_id="continuation-1",
+                tool_call_id="call-1",
+                task_id="task-1",
+            ),
             data={"name": "calc", "arguments": {"x": 1}},
         )
+        argument_correlation = StreamItemCorrelation(
+            provider_request_id="provider-request-1",
+            model_continuation_id="continuation-1",
+            tool_call_id="call-1",
+            task_id="task-1",
+        )
 
+        response.__aiter__()
         response._queue_parser_output(
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                text_delta='{"x":',
-                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta='{"x":1}',
+                correlation=argument_correlation,
             )
         )
-        response._queue_parser_output(
-            StreamProviderEvent(kind=StreamItemKind.TOOL_CALL_DONE)
+        response._queue_parser_output(ready_event)
+        lifecycle_items = [
+            item
+            for item in response.canonical_items
+            if item.kind
+            in {
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+            }
+        ]
+        self.assertEqual(
+            [item.kind for item in lifecycle_items],
+            [
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+            ],
+        )
+        self.assertEqual(lifecycle_items[0].text_delta, '{"x":1}')
+        self.assertEqual(
+            lifecycle_items[0].correlation,
+            argument_correlation,
         )
         self.assertEqual(
-            [item.kind for item in response.canonical_items],
-            [StreamItemKind.TOOL_CALL_ARGUMENT_DELTA],
+            lifecycle_items[1].correlation,
+            ready_event.correlation,
         )
-        self.assertEqual(response.canonical_items[0].text_delta, '{"x":')
+        self.assertTrue(response._calls.empty())
 
-        response.__aiter__()
-        response._queue_parser_output(ready_event)
+        done_correlation = StreamItemCorrelation(
+            provider_request_id="provider-request-1",
+            model_continuation_id="continuation-1",
+            tool_call_id="call-1",
+            task_id="task-1",
+        )
+        response._queue_parser_output(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                correlation=done_correlation,
+            )
+        )
+
         self.assertTrue(response._parser_queue.empty())
-        self.assertFalse(response._pending_tool_call_ready_items.empty())
+        self.assertFalse(response._calls.empty())
+        lifecycle_items = [
+            item
+            for item in response.canonical_items
+            if item.kind
+            in {
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+            }
+        ]
+        self.assertEqual(
+            lifecycle_items[-1].kind,
+            StreamItemKind.TOOL_CALL_DONE,
+        )
+        self.assertEqual(
+            lifecycle_items[-1].correlation,
+            done_correlation,
+        )
 
     async def test_parser_flush_bridges_provider_ready_and_done_events(self):
         engine = _DummyEngine()
@@ -431,25 +507,266 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         )
         response._tool_parser = AsyncMock()
         response._tool_parser.flush.return_value = [
-            StreamProviderEvent(kind=StreamItemKind.TOOL_CALL_DONE),
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_READY,
                 correlation=StreamItemCorrelation(tool_call_id="call-1"),
                 data={"name": "calc", "arguments": {"x": 1}},
+            ),
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
             ),
         ]
         response.__aiter__()
 
         items = await _collect_until_kind(
             response,
-            StreamItemKind.TOOL_CALL_READY,
+            StreamItemKind.TOOL_CALL_DONE,
         )
         item = items[-1]
 
-        self.assertIs(item.kind, StreamItemKind.TOOL_CALL_READY)
+        self.assertIs(item.kind, StreamItemKind.TOOL_CALL_DONE)
         self.assertEqual(item.correlation.tool_call_id, "call-1")
-        self.assertEqual(item.data, {"name": "calc", "arguments": {"x": 1}})
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(ready.data, {"name": "calc", "arguments": {"x": 1}})
         self.assertTrue(all(not isinstance(item, Event) for item in items))
+
+    async def test_provider_flush_lifecycle_executes_with_full_correlation(
+        self,
+    ):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        agent.return_value = _response_from_items(
+            *_canonical_answer_items("done")
+        )
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        full_correlation = StreamItemCorrelation(
+            provider_request_id="provider-request-1",
+            model_continuation_id="continuation-1",
+            tool_call_id="provider-call-1",
+            flow_run_id="flow-1",
+            node_id="node-1",
+            parent_sequence=0,
+            protocol_item_id="protocol-1",
+            task_id="task-1",
+            artifact_id="artifact-1",
+        )
+
+        async def execute_tool(
+            call: ToolCall,
+            _: ToolCallContext,
+        ) -> ToolCallResult:
+            return ToolCallResult(
+                id="result-1",
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                result="3",
+            )
+
+        tool.side_effect = execute_tool
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+        )
+        response._tool_parser = AsyncMock()
+        response._tool_parser.flush.side_effect = [
+            [
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    text_delta='{"x":3}',
+                    correlation=full_correlation,
+                ),
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_READY,
+                    correlation=full_correlation,
+                    data={"name": "calc", "arguments": {"ignored": True}},
+                ),
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_DONE,
+                    correlation=full_correlation,
+                ),
+            ],
+            [],
+        ]
+
+        items = await _collect_items(response)
+
+        tool.assert_awaited_once()
+        executed_call = tool.await_args.args[0]
+        self.assertEqual(executed_call.id, "provider-call-1")
+        self.assertEqual(executed_call.name, "calc")
+        self.assertEqual(executed_call.arguments, {"x": 3})
+        lifecycle_items = [
+            item
+            for item in items
+            if item.kind
+            in {
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            }
+        ]
+        self.assertEqual(
+            [item.kind for item in lifecycle_items],
+            [
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            ],
+        )
+        self.assertTrue(
+            all(
+                item.correlation == full_correlation
+                for item in lifecycle_items
+            )
+        )
+        triggered_types = [
+            call_args.args[0].type
+            for call_args in event_manager.trigger.await_args_list
+        ]
+        self.assertNotIn(EventType.TOOL_PROCESS, triggered_types)
+        validate_canonical_stream_items(response.canonical_items)
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_provider_missing_delta_lifecycle_does_not_execute(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        agent.return_value = _response_from_items(
+            *_canonical_answer_items("done")
+        )
+        operation = _dummy_operation()
+        tool = AsyncMock(spec=ToolManager)
+        tool.is_empty = False
+        correlation = StreamItemCorrelation(
+            provider_request_id="provider-request-1",
+            model_continuation_id="continuation-1",
+            tool_call_id="provider-call-1",
+            task_id="task-1",
+        )
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+            tool=tool,
+        )
+        response._tool_parser = AsyncMock()
+        response._tool_parser.flush.side_effect = [
+            [
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    correlation=correlation,
+                ),
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_READY,
+                    correlation=correlation,
+                    data={"name": "calc", "arguments": {"x": 3}},
+                ),
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_DONE,
+                    correlation=correlation,
+                ),
+            ],
+            [],
+        ]
+
+        items = await _collect_items(response)
+
+        tool.assert_not_awaited()
+        diagnostics = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+        ]
+        self.assertTrue(
+            any(
+                item.data["code"]
+                == "orchestrator.tool_call.missing_argument_delta"
+                for item in diagnostics
+            )
+        )
+        self.assertNotIn(
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            [item.kind for item in items],
+        )
+        self.assertTrue(
+            all(
+                item.correlation.provider_request_id == "provider-request-1"
+                for item in diagnostics
+            )
+        )
+        validate_canonical_stream_items(response.canonical_items)
+
+    async def test_provider_tool_call_missing_id_emits_diagnostic(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        first = response._append_canonical_provider_event_item(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_READY,
+                data={"name": "calc", "arguments": {"x": 1}},
+            )
+        )
+        second = response._append_canonical_provider_event_item(
+            StreamProviderEvent(kind=StreamItemKind.TOOL_CALL_DONE)
+        )
+
+        assert first is not None
+        assert second is not None
+        self.assertEqual(
+            [item.kind for item in response.canonical_items],
+            [
+                StreamItemKind.STREAM_DIAGNOSTIC,
+                StreamItemKind.STREAM_DIAGNOSTIC,
+            ],
+        )
+        self.assertEqual(
+            [
+                item.correlation.tool_call_id
+                for item in response.canonical_items
+            ],
+            [
+                "orchestrator-tool-call-diagnostic-1",
+                "orchestrator-tool-call-diagnostic-2",
+            ],
+        )
+        self.assertTrue(
+            all(
+                item.data["code"] == "orchestrator.tool_call.missing_id"
+                for item in response.canonical_items
+            )
+        )
+        self.assertTrue(response._calls.empty())
 
     async def test_answer_delta_parser_with_no_items_suppresses_raw_delta(
         self,
@@ -591,6 +908,103 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(items[0].correlation.tool_call_id, "call-1")
         self.assertEqual(items[0].sequence, 0)
 
+    async def test_provider_argument_event_missing_delta_is_diagnostic(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        item = response._append_canonical_provider_event_item(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                correlation=StreamItemCorrelation(
+                    provider_request_id="provider-request-1",
+                    model_continuation_id="continuation-1",
+                    tool_call_id="call-1",
+                    task_id="task-1",
+                ),
+            )
+        )
+
+        assert item is not None
+        self.assertIs(item.kind, StreamItemKind.STREAM_DIAGNOSTIC)
+        self.assertEqual(
+            item.data["code"],
+            "orchestrator.tool_call.missing_argument_delta",
+        )
+        self.assertEqual(item.correlation.tool_call_id, "call-1")
+        self.assertEqual(
+            item.correlation.provider_request_id,
+            "provider-request-1",
+        )
+        self.assertEqual(
+            item.correlation.model_continuation_id,
+            "continuation-1",
+        )
+        self.assertEqual(item.correlation.task_id, "task-1")
+        self.assertTrue(response._calls.empty())
+
+    async def test_provider_missing_delta_uses_current_canonical_id(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+        )
+        response._append_canonical_tool_call_ready(
+            ToolCall(id="call-1", name="calc", arguments={"x": 1})
+        )
+        response._begin_tool_call_lifecycle_response()
+
+        item = response._append_canonical_provider_event_item(
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                correlation=StreamItemCorrelation(
+                    provider_request_id="provider-request-1",
+                    model_continuation_id="continuation-1",
+                    tool_call_id="call-1",
+                    task_id="task-1",
+                ),
+            )
+        )
+
+        assert item is not None
+        self.assertIs(item.kind, StreamItemKind.STREAM_DIAGNOSTIC)
+        self.assertEqual(
+            item.data["code"],
+            "orchestrator.tool_call.missing_argument_delta",
+        )
+        self.assertEqual(
+            item.correlation.tool_call_id,
+            "orchestrator-tool-call-1",
+        )
+        self.assertEqual(
+            item.data["tool_call_id"],
+            "orchestrator-tool-call-1",
+        )
+        self.assertEqual(
+            item.correlation.provider_request_id,
+            "provider-request-1",
+        )
+        self.assertEqual(
+            item.correlation.model_continuation_id,
+            "continuation-1",
+        )
+        self.assertEqual(item.correlation.task_id, "task-1")
+        self.assertTrue(response._calls.empty())
+
     async def test_finish_canonical_stream_closes_open_reasoning_channel(self):
         engine = _DummyEngine()
         agent = MagicMock(spec=EngineAgent)
@@ -657,7 +1071,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             {shim.event_type for shim in inventory},
-            TOOL_TYPES,
+            TOOL_TYPES - {EventType.TOOL_PROCESS},
         )
         self.assertEqual(
             len(inventory), len({shim.event_type for shim in inventory})
@@ -677,6 +1091,8 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaises(StreamValidationError):
             classify_legacy_tool_event_shim(EventType.END)
+        with self.assertRaises(StreamValidationError):
+            classify_legacy_tool_event_shim(EventType.TOOL_PROCESS)
         with self.assertRaises(AssertionError):
             classify_legacy_tool_event_shim("tool_result")  # type: ignore[arg-type]
 
@@ -1436,7 +1852,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             call_args.args[0].type
             for call_args in event_manager.trigger.await_args_list
         ]
-        self.assertIn(EventType.TOOL_PROCESS, triggered_types)
+        self.assertNotIn(EventType.TOOL_PROCESS, triggered_types)
         self.assertIn(EventType.TOOL_RESULT, triggered_types)
         self.assertIn(EventType.TOOL_MODEL_RESPONSE, triggered_types)
 
@@ -1458,7 +1874,51 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaises(StreamValidationError):
             resp._queue_parser_output(event)
-        self.assertTrue(resp._pending_tool_call_ready_items.empty())
+        self.assertTrue(resp._calls.empty())
+
+    async def test_legacy_flush_items_with_tool_manager_never_execute(self):
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
+
+        for legacy_item in (
+            Event(type=EventType.TOOL_PROCESS, payload=[call]),
+            ToolCallToken(token='{"x":1}', call=call),
+        ):
+            with self.subTest(legacy_item=type(legacy_item).__qualname__):
+                tool = AsyncMock(spec=ToolManager)
+                tool.is_empty = False
+                response = _make_response(
+                    Message(role=MessageRole.USER, content="hi"),
+                    _empty_response(),
+                    agent,
+                    operation,
+                    {},
+                    event_manager=event_manager,
+                    tool=tool,
+                )
+                response._tool_parser = AsyncMock()
+                response._tool_parser.flush.return_value = [legacy_item]
+                iterator = response.__aiter__()
+
+                first = await iterator.__anext__()
+                self.assertIs(first.kind, StreamItemKind.STREAM_STARTED)
+                with self.assertRaises(StreamValidationError):
+                    await iterator.__anext__()
+
+                tool.assert_not_awaited()
+                self.assertTrue(response._calls.empty())
+                triggered_types = [
+                    call_args.args[0].type
+                    for call_args in event_manager.trigger.await_args_list
+                ]
+                self.assertNotIn(EventType.TOOL_EXECUTE, triggered_types)
+                self.assertNotIn(EventType.TOOL_PROCESS, triggered_types)
+                event_manager.trigger.reset_mock()
 
     async def test_queue_parser_output_rejects_tool_process_without_calls(
         self,
@@ -1480,7 +1940,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             resp._queue_parser_output(
                 Event(type=EventType.TOOL_PROCESS, payload=None)
             )
-        self.assertTrue(resp._pending_tool_call_ready_items.empty())
+        self.assertTrue(resp._calls.empty())
 
     async def test_direct_iteration_rejects_legacy_tool_call_token(self):
         engine = _DummyEngine()
@@ -1537,7 +1997,7 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
         call = ToolCall(id=uuid4(), name="calc", arguments=None)
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _empty_response(),
+            _response_from_items(*_canonical_tool_call_items(call)),
             agent,
             operation,
             {},
@@ -1546,9 +2006,6 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             tool_confirm=lambda c: "a",
         )
         resp.__aiter__()
-        ready_item = resp._append_canonical_tool_call_ready(call)
-        assert ready_item is not None
-        resp._tool_call_ready_items.put(ready_item)
         items = await _collect_until_kind(
             resp,
             StreamItemKind.TOOL_EXECUTION_COMPLETED,
@@ -1742,9 +2199,10 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
 
         tool.side_effect = tool_exec
 
+        call = ToolCall(id=uuid4(), name="fail", arguments={})
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
-            _empty_response(),
+            _response_from_items(*_canonical_tool_call_items(call)),
             agent,
             operation,
             {},
@@ -1752,10 +2210,6 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             tool=tool,
         )
         resp.__aiter__()
-        call = ToolCall(id=uuid4(), name="fail", arguments={})
-        ready_item = resp._append_canonical_tool_call_ready(call)
-        assert ready_item is not None
-        resp._tool_call_ready_items.put(ready_item)
 
         items = await _collect_until_kind(
             resp,
@@ -1902,3 +2356,346 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             resp.canonical_items[-1].correlation.tool_call_id,
             tool_call_id,
         )
+
+        fresh_call = ToolCall(id=None, name="calc", arguments={"x": 2})
+        canonical_fresh_call = resp._tool_call_with_canonical_id(fresh_call)
+        self.assertIsNot(canonical_fresh_call, fresh_call)
+        self.assertIsNotNone(canonical_fresh_call.id)
+        self.assertNotEqual(canonical_fresh_call.id, tool_call_id)
+        self.assertTrue(
+            str(canonical_fresh_call.id).startswith("orchestrator-tool-call-")
+        )
+        self.assertTrue(resp._should_execute_staged_tool_call(fresh_call))
+
+        assigned_call = ToolCall(
+            id="assigned-call",
+            name="calc",
+            arguments=None,
+        )
+        resp._canonical_tool_call_ids_by_object[id(assigned_call)] = (
+            "assigned-call"
+        )
+        self.assertIs(
+            resp._tool_call_with_canonical_id(assigned_call),
+            assigned_call,
+        )
+
+    async def test_tool_call_lifecycle_defensive_diagnostics(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        cases: tuple[tuple[str, str], ...] = (
+            ("missing-delta", "orchestrator.tool_call.missing_argument_delta"),
+            (
+                "argument-after-ready",
+                "orchestrator.tool_call.argument_after_ready",
+            ),
+            (
+                "argument-after-done",
+                "orchestrator.tool_call.argument_after_done",
+            ),
+            ("ready-after-done", "orchestrator.tool_call.ready_after_done"),
+        )
+        for tool_call_id, expected_code in cases:
+            with self.subTest(code=expected_code):
+                if tool_call_id == "argument-after-ready":
+                    resp._append_canonical_tool_call_lifecycle_item(
+                        StreamItemKind.TOOL_CALL_READY,
+                        data={"name": "calc", "arguments": {}},
+                        correlation=StreamItemCorrelation(
+                            tool_call_id=tool_call_id
+                        ),
+                    )
+                    resp._append_canonical_tool_call_lifecycle_item(
+                        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        text_delta="{}",
+                        correlation=StreamItemCorrelation(
+                            tool_call_id=tool_call_id
+                        ),
+                    )
+                elif tool_call_id == "argument-after-done":
+                    state = resp._canonical_tool_call_lifecycle(tool_call_id)
+                    state.done = True
+                    resp._append_canonical_tool_call_lifecycle_item(
+                        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        text_delta="{}",
+                        correlation=StreamItemCorrelation(
+                            tool_call_id=tool_call_id
+                        ),
+                    )
+                elif tool_call_id == "ready-after-done":
+                    state = resp._canonical_tool_call_lifecycle(tool_call_id)
+                    state.done = True
+                    resp._append_canonical_tool_call_lifecycle_item(
+                        StreamItemKind.TOOL_CALL_READY,
+                        data={},
+                        correlation=StreamItemCorrelation(
+                            tool_call_id=tool_call_id
+                        ),
+                    )
+                else:
+                    resp._append_canonical_tool_call_lifecycle_item(
+                        StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        correlation=StreamItemCorrelation(
+                            tool_call_id=tool_call_id
+                        ),
+                    )
+
+                self.assertTrue(
+                    any(
+                        item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+                        and item.data["code"] == expected_code
+                        and item.correlation.tool_call_id == tool_call_id
+                        for item in resp.canonical_items
+                    )
+                )
+
+        terminal = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        terminal._finish_canonical_stream(StreamItemKind.STREAM_COMPLETED)
+        self.assertIsNone(
+            terminal._append_canonical_tool_call_lifecycle_item(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                text_delta="{}",
+                correlation=StreamItemCorrelation(tool_call_id="after-close"),
+            )
+        )
+
+    async def test_tool_call_lifecycle_reconstruction_defensive_paths(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        bad_data = resp._canonical_tool_call_lifecycle("bad-data")
+        bad_data.ready_item = _canonical_item(
+            StreamItemKind.TOOL_CALL_READY,
+            0,
+            data="bad",
+            correlation=StreamItemCorrelation(tool_call_id="bad-data"),
+        )
+        self.assertIsNone(
+            resp._tool_call_from_canonical_lifecycle("bad-data", bad_data)
+        )
+
+        missing_name = resp._canonical_tool_call_lifecycle("missing-name")
+        missing_name.ready_item = _canonical_item(
+            StreamItemKind.TOOL_CALL_READY,
+            1,
+            data={"arguments": {}},
+            correlation=StreamItemCorrelation(tool_call_id="missing-name"),
+        )
+        self.assertIsNone(
+            resp._tool_call_from_canonical_lifecycle(
+                "missing-name",
+                missing_name,
+            )
+        )
+
+        non_object_delta = resp._canonical_tool_call_lifecycle(
+            "non-object-delta"
+        )
+        non_object_delta.argument_deltas.append("[]")
+        non_object_delta.ready_item = _canonical_item(
+            StreamItemKind.TOOL_CALL_READY,
+            2,
+            data={"name": "calc", "arguments": {}},
+            correlation=StreamItemCorrelation(tool_call_id="non-object-delta"),
+        )
+        self.assertIsNone(
+            resp._tool_call_from_canonical_lifecycle(
+                "non-object-delta",
+                non_object_delta,
+            )
+        )
+
+        ready_list = resp._canonical_tool_call_lifecycle("ready-list")
+        ready_list_arguments = resp._tool_call_arguments_from_lifecycle(
+            "ready-list",
+            ready_list,
+            ready_data={"arguments": []},
+        )
+        self.assertIsNot(
+            ready_list_arguments,
+            None,
+        )
+        self.assertNotIsInstance(ready_list_arguments, dict)
+
+        no_arguments = resp._canonical_tool_call_lifecycle("no-arguments")
+        self.assertIsNone(
+            resp._tool_call_arguments_from_lifecycle(
+                "no-arguments",
+                no_arguments,
+                ready_data={},
+            )
+        )
+        self.assertTrue(
+            any(
+                item.kind is StreamItemKind.STREAM_DIAGNOSTIC
+                and item.correlation.tool_call_id
+                in {
+                    "bad-data",
+                    "missing-name",
+                    "non-object-delta",
+                    "ready-list",
+                }
+                for item in resp.canonical_items
+            )
+        )
+
+    async def test_tool_call_id_allocator_defensive_paths(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+
+        self.assertTrue(
+            resp._should_execute_staged_tool_call(
+                ToolCall(id=None, name="calc", arguments={})
+            )
+        )
+
+        anonymous = ToolCall(id=None, name="calc", arguments={})
+        canonical_anonymous = resp._tool_call_with_canonical_id(anonymous)
+        self.assertEqual(canonical_anonymous.id, "orchestrator-tool-call-1")
+
+        assigned = ToolCall(id="assigned-call", name="calc", arguments={})
+        resp._canonical_tool_call_ids_by_object[id(assigned)] = "assigned-call"
+        self.assertIs(resp._tool_call_with_canonical_id(assigned), assigned)
+
+        invalid = resp._canonical_tool_call_lifecycle("invalid-call")
+        invalid.invalid = True
+        resp._queue_completed_canonical_tool_call("invalid-call", invalid)
+        invalid.queued = True
+        resp._queue_completed_canonical_tool_call("invalid-call", invalid)
+        self.assertTrue(resp._calls.empty())
+
+    async def test_invalid_staged_calls_skip_execution_batch(self) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        resp.__aiter__()
+        invalid = resp._canonical_tool_call_lifecycle("invalid-call")
+        invalid.done = True
+        invalid.invalid = True
+        resp._calls.put(
+            ToolCall(id="invalid-call", name="calc", arguments=None)
+        )
+        resp._response_drained = True
+
+        self.assertIsNone(await resp._next_item())
+        self.assertTrue(resp._calls.empty())
+
+    async def test_pending_tool_batch_task_completion_is_consumed(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        resp.__aiter__()
+        resp._canonical_yield_index = len(resp.canonical_items)
+        resp._canonical_item_available.clear()
+        call = ToolCall(id="call1", name="calc", arguments=None)
+        result = ToolCallResult(
+            id="result1",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result="ok",
+        )
+
+        async def complete_batch() -> list[_ToolExecutionOutcome]:
+            await sleep(0)
+            return [
+                _ToolExecutionOutcome(
+                    call=call,
+                    context=ToolCallContext(),
+                    event=Event(type=EventType.TOOL_RESULT),
+                    planned_index=0,
+                    result=result,
+                )
+            ]
+
+        task = create_task(complete_batch())
+        resp._pending_tool_batch_task = task
+
+        await resp._await_pending_tool_batch()
+
+        self.assertIsNone(resp._pending_tool_batch_task)
+        self.assertFalse(resp._tool_result_outcomes.empty())
+
+    async def test_pending_tool_batch_cancellation_cleans_up_task(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            operation,
+            {},
+        )
+        resp.__aiter__()
+
+        async def slow_batch() -> list[_ToolExecutionOutcome]:
+            await sleep(1)
+            return []
+
+        pending_batch = create_task(slow_batch())
+        resp._pending_tool_batch_task = pending_batch
+        waiter = create_task(resp._await_pending_tool_batch())
+        await sleep(0)
+
+        waiter.cancel()
+        with self.assertRaises(CancelledError):
+            await waiter
+
+        self.assertIsNone(resp._pending_tool_batch_task)
+        self.assertTrue(pending_batch.cancelled())
