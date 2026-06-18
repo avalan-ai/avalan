@@ -11,7 +11,15 @@ from ..model.stream import (
     stream_projection_text_delta,
 )
 from .display import CliStreamDisplayConfig
-from .display_safety import event_type_value, safe_text, value_from
+from .display_safety import (
+    MAX_SUMMARY_CHARS,
+    REDACTED,
+    contains_sensitive_marker,
+    event_type_value,
+    safe_text,
+    truncate_text,
+    value_from,
+)
 from .display_snapshot import (
     CliStreamSnapshot,
     CliStreamSnapshotBuilder,
@@ -21,10 +29,47 @@ from .display_snapshot import (
 
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping
+from dataclasses import dataclass
 from time import perf_counter
 
 CliStreamClock = Callable[[], float]
 CliStreamReducerInput = StreamConsumerProjection | Event
+
+
+@dataclass(slots=True)
+class _ToolArgumentDisplayState:
+    """Retain bounded display text for one streamed tool call."""
+
+    text: str = ""
+    dropped_characters: int = 0
+    sensitive_seen: bool = False
+    _scan_tail: str = ""
+
+    def append(self, chunk: str) -> None:
+        assert isinstance(chunk, str)
+        if not chunk:
+            return
+        scan_text = self._scan_tail + chunk
+        self.sensitive_seen = self.sensitive_seen or contains_sensitive_marker(
+            scan_text
+        )
+        self._scan_tail = scan_text[-MAX_SUMMARY_CHARS:]
+        retained = self.text + chunk
+        if len(retained) <= MAX_SUMMARY_CHARS:
+            self.text = retained
+            return
+        dropped = len(retained) - MAX_SUMMARY_CHARS
+        self.dropped_characters += dropped
+        self.text = truncate_text(
+            retained[-MAX_SUMMARY_CHARS:],
+            MAX_SUMMARY_CHARS,
+        )
+
+    def materialize(self) -> str:
+        """Return bounded text or redact truncated sensitive data."""
+        if self.sensitive_seen and self.dropped_characters:
+            return REDACTED
+        return self.text
 
 
 def default_cli_stream_clock() -> float:
@@ -52,27 +97,46 @@ class CliStreamSnapshotReducer:
         self._time_to_n_token_recorded = False
         self._reasoning_started_at: float | None = None
         self._tool_started_at: dict[str, float] = {}
-        self._tool_argument_chunks: dict[str, list[str]] = {}
+        self._tool_argument_state: dict[str, _ToolArgumentDisplayState] = {}
         self._tool_names: dict[str, str] = {}
         self._canonical_tool_call_ids: set[str] = set()
         self._side_channel_tool_event_ids: dict[str, dict[str, int]] = {}
         self._side_channel_tool_event_order: deque[str] = deque()
         self._side_channel_tool_event_counts: dict[str, int] = {}
 
+    @property
+    def terminal_completed(self) -> bool:
+        """Return whether a terminal projection has completed display state."""
+        return self._terminal_seen
+
     def reduce_projection(
         self,
         projection: StreamConsumerProjection,
     ) -> CliStreamSnapshot:
         """Reduce one canonical consumer projection."""
+        self.apply_projection(projection)
+        return self.snapshot()
+
+    def apply_projection(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> bool:
+        """Apply one canonical projection without building a snapshot."""
+        assert isinstance(projection, StreamConsumerProjection)
+        if self._is_duplicate_terminal_projection(projection):
+            return False
         text_delta = stream_projection_text_delta(projection)
-        stream_projection_display_token(projection)
+        display_token = stream_projection_display_token(projection)
         now = self._active_stream_time()
         if now is not None:
             self._mark_started(now)
             self._builder.update_timing(updated_at=now)
 
+        tool_events_changed = False
         if projection.tool_call_id is not None:
-            self._remember_canonical_tool_call(projection.tool_call_id)
+            tool_events_changed = self._remember_canonical_tool_call(
+                projection.tool_call_id
+            )
         self._builder.add_projection_summary(projection)
         self._update_usage(projection)
         if text_delta is not None:
@@ -80,19 +144,28 @@ class CliStreamSnapshotReducer:
 
         self._reduce_projection_kind(projection, now)
         self._builder.add_display_token_from_projection(projection)
-        return self.snapshot()
+        return self._projection_changes_display(
+            projection,
+            text_delta=text_delta,
+            display_token_seen=display_token is not None,
+            tool_events_changed=tool_events_changed,
+        )
 
     def reduce_event(self, event: Event) -> CliStreamSnapshot:
         """Reduce one CLI side-channel event summary."""
+        self.apply_event(event)
+        return self.snapshot()
+
+    def apply_event(self, event: Event) -> bool:
+        """Apply one CLI side-channel event without building a snapshot."""
         assert isinstance(event, Event)
         event_type = event_type_value(event.type)
         if event_type == EventType.TOKEN_GENERATED.value:
-            return self.snapshot()
+            return False
         if event_type.startswith("tool_"):
-            self._reduce_tool_event(event)
-            return self.snapshot()
+            return self._reduce_tool_event(event)
         self._builder.add_event(event)
-        return self.snapshot()
+        return self._builder.retention.event_history_limit > 0
 
     def snapshot(self) -> CliStreamSnapshot:
         """Return the current immutable CLI stream snapshot."""
@@ -135,9 +208,10 @@ class CliStreamSnapshotReducer:
             and projection.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
         ):
             tool_id = _tool_call_id(projection)
-            self._tool_argument_chunks.setdefault(tool_id, []).append(
-                text_delta
-            )
+            self._tool_argument_state.setdefault(
+                tool_id,
+                _ToolArgumentDisplayState(),
+            ).append(text_delta)
             self._builder.append_tool_call_request_text(text_delta)
 
     def _record_visible_token(self, now: float | None) -> None:
@@ -196,6 +270,79 @@ class CliStreamSnapshotReducer:
             StreamItemKind.STREAM_CANCELLED,
         ):
             self._finish_stream(projection, now)
+
+    def _projection_changes_display(
+        self,
+        projection: StreamConsumerProjection,
+        *,
+        text_delta: str | None,
+        display_token_seen: bool,
+        tool_events_changed: bool,
+    ) -> bool:
+        if tool_events_changed:
+            return True
+        if display_token_seen and self._builder.display.show_token_details:
+            return True
+        if self._projection_adds_stats_summary(projection):
+            return True
+        if text_delta:
+            if projection.channel is StreamChannel.ANSWER:
+                return True
+            if projection.channel in (
+                StreamChannel.REASONING,
+                StreamChannel.TOOL_CALL,
+            ):
+                return self._builder.display.show_stats
+        if projection.kind in (
+            StreamItemKind.TOOL_EXECUTION_STARTED,
+            StreamItemKind.TOOL_EXECUTION_OUTPUT,
+            StreamItemKind.TOOL_EXECUTION_PROGRESS,
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            StreamItemKind.TOOL_EXECUTION_CANCELLED,
+        ):
+            return self._builder.display.show_tools
+        if projection.kind in (
+            StreamItemKind.FLOW_EVENT,
+            StreamItemKind.STREAM_DIAGNOSTIC,
+        ):
+            return self._builder.display.show_events
+        if projection.kind in (
+            StreamItemKind.USAGE_UPDATE,
+            StreamItemKind.USAGE_COMPLETED,
+        ):
+            return self._builder.display.show_stats
+        return projection.kind in (
+            StreamItemKind.STREAM_COMPLETED,
+            StreamItemKind.STREAM_ERRORED,
+            StreamItemKind.STREAM_CANCELLED,
+        )
+
+    def _projection_adds_stats_summary(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> bool:
+        if not self._builder.display.show_stats:
+            return False
+        if (
+            projection.usage is not None
+            and self._builder.retention.usage_summary_history_limit > 0
+        ):
+            return True
+        return (
+            self._builder.retention.projection_metadata_history_limit > 0
+            and (projection.data is not None or bool(projection.metadata))
+        )
+
+    def _is_duplicate_terminal_projection(
+        self,
+        projection: StreamConsumerProjection,
+    ) -> bool:
+        return self._terminal_seen and projection.kind in (
+            StreamItemKind.STREAM_COMPLETED,
+            StreamItemKind.STREAM_ERRORED,
+            StreamItemKind.STREAM_CANCELLED,
+        )
 
     def _remember_tool_ready(
         self,
@@ -270,11 +417,13 @@ class CliStreamSnapshotReducer:
             status=result_status,
             result=_tool_terminal_result(projection),
             arguments_count=_tool_arguments_count(
-                self._tool_argument_chunks.get(tool_id)
+                self._tool_argument_state.get(tool_id)
             ),
             sequence=projection.sequence,
             elapsed_seconds=elapsed,
         )
+        self._tool_argument_state.pop(tool_id, None)
+        self._tool_names.pop(tool_id, None)
 
     def _tool_elapsed(
         self,
@@ -302,8 +451,6 @@ class CliStreamSnapshotReducer:
         projection: StreamConsumerProjection,
         now: float | None,
     ) -> None:
-        if self._terminal_seen:
-            return
         self._terminal_seen = True
         if now is not None:
             self._finish_reasoning(now)
@@ -353,24 +500,30 @@ class CliStreamSnapshotReducer:
         return self._tool_names.get(tool_id, "tool")
 
     def _tool_arguments(self, tool_id: str) -> str | None:
-        chunks = self._tool_argument_chunks.get(tool_id)
-        if not chunks:
+        state = self._tool_argument_state.get(tool_id)
+        if state is None:
             return None
-        return "".join(chunks)
+        text = state.materialize()
+        return text or None
 
-    def _remember_canonical_tool_call(self, tool_id: str) -> None:
+    def _remember_canonical_tool_call(self, tool_id: str) -> bool:
         normalized_tool_id = safe_text(tool_id)
         self._canonical_tool_call_ids.add(normalized_tool_id)
-        self._builder.remove_tool_events_for_tool_call(normalized_tool_id)
+        removed_count = self._builder.remove_tool_events_for_tool_call(
+            normalized_tool_id
+        )
         event_ids = self._side_channel_tool_event_ids.pop(
             normalized_tool_id,
             {},
         )
         for event_id in event_ids:
-            self._builder.remove_tool_events_for_tool_call(event_id)
+            removed_count += self._builder.remove_tool_events_for_tool_call(
+                event_id
+            )
             self._forget_side_channel_tool_event(event_id)
+        return removed_count > 0
 
-    def _reduce_tool_event(self, event: Event) -> None:
+    def _reduce_tool_event(self, event: Event) -> bool:
         tool_call_ids, name = _tool_event_identity(event)
         normalized_tool_ids = tuple(
             _normalized_tool_call_id(tool_call_id)
@@ -380,13 +533,14 @@ class CliStreamSnapshotReducer:
             tool_id in self._canonical_tool_call_ids
             for tool_id in normalized_tool_ids
         ):
-            return
+            return False
         event_id = "|".join(normalized_tool_ids) or None
         self._builder.add_tool_event(
             event,
             tool_call_id=event_id,
             name=name,
         )
+        changed = self._builder.retention.internal_tool_history_limit > 0
         if event_id is not None:
             self._side_channel_tool_event_order.append(event_id)
             self._side_channel_tool_event_counts[event_id] = (
@@ -399,6 +553,7 @@ class CliStreamSnapshotReducer:
                 )
                 event_counts[event_id] = event_counts.get(event_id, 0) + 1
             self._trim_side_channel_tool_event_index()
+        return changed
 
     def _drop_side_channel_tool_event_reference(self, event_id: str) -> None:
         for tool_id, event_ids in tuple(
@@ -498,8 +653,8 @@ def _tool_terminal_result(projection: StreamConsumerProjection) -> object:
     return {"kind": projection.kind.value}
 
 
-def _tool_arguments_count(chunks: list[str] | None) -> int:
-    if not chunks:
+def _tool_arguments_count(state: _ToolArgumentDisplayState | None) -> int:
+    if state is None or not state.text:
         return 0
     return 1
 

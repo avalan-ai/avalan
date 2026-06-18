@@ -7,6 +7,7 @@ from avalan.cli.display import CliStreamDisplayConfig
 from avalan.cli.display_snapshot import (
     CliAppendOnlyTextBuffer,
     CliBoundedHistoryBuffer,
+    CliBoundedTextBuffer,
     CliStreamSnapshotBuilder,
     display_token_snapshot,
     retention_from_config,
@@ -86,6 +87,30 @@ class DisplaySnapshotBufferTestCase(TestCase):
         self.assertEqual(buffer.materialization_count, 0)
         self.assertEqual(buffer.materialize(), "a")
         self.assertEqual(buffer.materialization_count, 1)
+
+    def test_bounded_text_buffer_retains_tail_and_redacts_dropped_sensitive(
+        self,
+    ) -> None:
+        buffer = CliBoundedTextBuffer(limit=5)
+
+        buffer.append("")
+        buffer.append("abc")
+        buffer.append("def")
+        retained = buffer.materialize()
+
+        self.assertEqual(buffer.chunk_count, 2)
+        self.assertEqual(buffer.character_count, 6)
+        self.assertEqual(retained, "bcdef")
+        self.assertEqual(buffer.materialization_count, 1)
+
+        zero = CliBoundedTextBuffer(limit=0)
+        zero.append("abc")
+        self.assertEqual(zero.materialize(), "")
+
+        sensitive = CliBoundedTextBuffer(limit=8)
+        sensitive.append("api_key")
+        sensitive.append("=" + ("x" * 20))
+        self.assertEqual(sensitive.materialize(), "<redacted>")
 
     def test_history_buffer_bounds_and_counts(self) -> None:
         buffer = CliBoundedHistoryBuffer[int](2)
@@ -733,6 +758,21 @@ class DisplaySnapshotBuilderTestCase(TestCase):
             ["event-46", "event-47", "event-48", "event-49"],
         )
 
+    def test_large_answer_stream_materializes_only_on_snapshot(self) -> None:
+        builder = CliStreamSnapshotBuilder(_config())
+
+        for _ in range(10_000):
+            builder.append_answer_text("x")
+
+        snapshot = builder.snapshot()
+
+        self.assertEqual(snapshot.answer_text, "x" * 10_000)
+        self.assertEqual(snapshot.build_stats.snapshots_built, 1)
+        self.assertEqual(snapshot.build_stats.answer_chunks, 10_000)
+        self.assertEqual(snapshot.build_stats.answer_characters, 10_000)
+        self.assertEqual(snapshot.build_stats.text_materializations, 3)
+        self.assertEqual(snapshot.build_stats.history_materializations, 8)
+
     def test_finite_and_unbounded_tool_history_are_bounded(self) -> None:
         finite = CliStreamSnapshotBuilder(
             _config(display_tools=True, display_tools_events=1)
@@ -810,6 +850,33 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(
             [tool.tool_call_id for tool in unbounded_snapshot.completed_tools],
             ["tool-1", "tool-2"],
+        )
+
+        hard_capped = CliStreamSnapshotBuilder(
+            _config(display_tools=True, display_tools_events=None),
+        )
+        for index in range(260):
+            hard_capped.complete_tool(
+                tool_call_id=f"tool-{index}",
+                name=f"tool-{index}",
+            )
+        hard_capped_snapshot = hard_capped.snapshot()
+
+        self.assertEqual(
+            hard_capped_snapshot.retention.internal_tool_history_limit,
+            256,
+        )
+        self.assertEqual(
+            hard_capped_snapshot.build_stats.retained_completed_tools,
+            256,
+        )
+        self.assertEqual(
+            hard_capped_snapshot.build_stats.dropped_completed_tools,
+            4,
+        )
+        self.assertEqual(
+            hard_capped_snapshot.completed_tools[0].tool_call_id,
+            "tool-4",
         )
 
     def test_events_and_projection_summaries_are_bounded(self) -> None:

@@ -189,9 +189,9 @@ def safe_tool_call_request_text(text: str) -> str:
     try:
         parsed = loads(text)
     except JSONDecodeError:
-        if _contains_sensitive_marker(text):
+        if contains_sensitive_marker(text):
             return REDACTED
-        return safe_text(text, limit=len(text))
+        return safe_text(text, limit=MAX_SUMMARY_CHARS)
     return safe_summary(parsed, limit=max(len(text), MAX_SUMMARY_CHARS))
 
 
@@ -211,7 +211,8 @@ def event_type_value(event_type: object) -> str:
     return value if isinstance(value, str) else str(value)
 
 
-def _contains_sensitive_marker(text: str) -> bool:
+def contains_sensitive_marker(text: str) -> bool:
+    """Return whether text appears to contain a sensitive key."""
     key_text = strip_terminal_controls(text).lower()
     key_text = sub(r"\[/?[^\]]+\]", "", key_text)
     compact_key = sub(r"[^a-z0-9]", "", key_text)

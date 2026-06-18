@@ -13,10 +13,14 @@ from ..model.stream import (
 )
 from .display import CliStreamDisplayConfig, DiagnosticChannel
 from .display_safety import (
+    MAX_SUMMARY_CHARS,
+    REDACTED,
+    contains_sensitive_marker,
     event_type_value,
     safe_summary,
     safe_text,
     safe_tool_call_request_text,
+    truncate_text,
     value_from,
 )
 
@@ -72,6 +76,71 @@ class CliAppendOnlyTextBuffer:
         """Return the joined text."""
         self._materialization_count += 1
         return "".join(self._chunks)
+
+
+class CliBoundedTextBuffer:
+    """Collect recent text while keeping display memory bounded."""
+
+    def __init__(self, limit: int = MAX_SUMMARY_CHARS) -> None:
+        assert isinstance(limit, int)
+        assert limit >= 0
+        self._limit = limit
+        self._text = ""
+        self._character_count = 0
+        self._chunk_count = 0
+        self._dropped_count = 0
+        self._materialization_count = 0
+        self._scan_tail = ""
+        self._sensitive_seen = False
+
+    @property
+    def chunk_count(self) -> int:
+        """Return how many chunks were appended."""
+        return self._chunk_count
+
+    @property
+    def character_count(self) -> int:
+        """Return how many characters were appended."""
+        return self._character_count
+
+    @property
+    def materialization_count(self) -> int:
+        """Return how many times retained text was materialized."""
+        return self._materialization_count
+
+    def append(self, text: str) -> None:
+        """Append one text chunk while retaining a bounded tail."""
+        assert isinstance(text, str)
+        if not text:
+            return
+        self._chunk_count += 1
+        self._character_count += len(text)
+        scan_text = self._scan_tail + text
+        self._sensitive_seen = (
+            self._sensitive_seen or contains_sensitive_marker(scan_text)
+        )
+        self._scan_tail = scan_text[-MAX_SUMMARY_CHARS:]
+
+        if self._limit == 0:
+            self._dropped_count += len(text)
+            self._text = ""
+            return
+
+        retained = self._text + text
+        if len(retained) <= self._limit:
+            self._text = retained
+            return
+
+        dropped = len(retained) - self._limit
+        self._dropped_count += dropped
+        self._text = truncate_text(retained[-self._limit :], self._limit)
+
+    def materialize(self) -> str:
+        """Return the retained display text."""
+        self._materialization_count += 1
+        if self._sensitive_seen and self._dropped_count:
+            return REDACTED
+        return self._text
 
 
 class CliBoundedHistoryBuffer(Generic[HistoryItem]):
@@ -511,7 +580,7 @@ class CliStreamSnapshotBuilder:
         )
         self._answer_text = CliAppendOnlyTextBuffer()
         self._reasoning_text = CliAppendOnlyTextBuffer()
-        self._tool_call_request_text = CliAppendOnlyTextBuffer()
+        self._tool_call_request_text = CliBoundedTextBuffer()
         self._active_tools: dict[str, CliToolExecutionSummarySnapshot] = {}
         tool_limit = self.retention.internal_tool_history_limit
         self._completed_tools = CliBoundedHistoryBuffer[
