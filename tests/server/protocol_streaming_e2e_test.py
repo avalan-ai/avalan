@@ -11,6 +11,11 @@ from unittest.mock import MagicMock, call
 from uuid import uuid4
 
 from a2a import types as a2a_types
+from streaming_trace_fixtures import (
+    TERMINAL_ERROR_DATA,
+    async_items,
+    terminal_outcome_trace,
+)
 
 from avalan.cli.commands import model as model_cmds
 from avalan.entities import MessageRole
@@ -22,6 +27,7 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
+    StreamValidationError,
     iter_stream_consumer_projections,
 )
 from avalan.server.a2a.router import (
@@ -55,6 +61,17 @@ class _SyncingOrchestrator:
 
     async def sync_messages(self) -> None:
         self.synced = True
+
+
+class _LegacyRejectionResponse:
+    input_token_count = 0
+    output_token_count = 0
+
+    def __aiter__(self) -> AsyncIterator[object]:
+        return self._items()
+
+    async def _items(self) -> AsyncIterator[object]:
+        yield "legacy text"
 
 
 async def _iter_items(
@@ -226,6 +243,30 @@ async def _run_same_canonical_stream_projects_through_protocols() -> None:
     items = _canonical_items(flow_item)
     await _assert_mcp_projection(items)
     await _assert_a2a_projection(items)
+
+
+def test_terminal_outcome_traces_project_through_protocols() -> None:
+    asyncio.run(_run_terminal_outcome_traces_project_through_protocols())
+
+
+async def _run_terminal_outcome_traces_project_through_protocols() -> None:
+    for outcome in (
+        StreamTerminalOutcome.COMPLETED,
+        StreamTerminalOutcome.ERRORED,
+        StreamTerminalOutcome.CANCELLED,
+    ):
+        trace = terminal_outcome_trace(outcome)
+        await _assert_mcp_terminal_outcome_projection(trace.items, outcome)
+        await _assert_a2a_terminal_outcome_projection(trace.items, outcome)
+
+
+def test_default_protocol_routes_legacy_rejection_first_item() -> None:
+    asyncio.run(_run_default_protocol_routes_legacy_rejection_first_item())
+
+
+async def _run_default_protocol_routes_legacy_rejection_first_item() -> None:
+    await _assert_mcp_legacy_rejection_first_item()
+    await _assert_a2a_legacy_rejection_first_item()
 
 
 def test_lossy_cli_frames_do_not_drop_lossless_public_surfaces() -> None:
@@ -415,6 +456,177 @@ async def _assert_simple_a2a_projection(
     ]
 
 
+async def _collect_mcp_payloads(
+    response: _CanonicalResponse | _LegacyRejectionResponse,
+    request_id: str,
+) -> tuple[dict[str, object], ...]:
+    request_model = ChatCompletionRequest(
+        model="test-model",
+        messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        stream=True,
+    )
+    payloads: list[dict[str, object]] = []
+    async for chunk in mcp_router._stream_mcp_response(
+        request_id=request_id,
+        request_model=request_model,
+        response=response,
+        response_id=uuid4(),
+        timestamp=1,
+        progress_token=f"progress-{request_id}",
+        orchestrator=_SyncingOrchestrator(),
+        logger=getLogger(f"test.protocol.mcp.{request_id}"),
+        resource_store=mcp_router.MCPResourceStore(),
+        base_path="/mcp",
+        cancel_event=AsyncEvent(),
+    ):
+        for part in chunk.decode("utf-8").splitlines():
+            if not part:
+                continue
+            payload = loads(part)
+            assert isinstance(payload, dict)
+            payloads.append(cast(dict[str, object], payload))
+    return tuple(payloads)
+
+
+async def _assert_mcp_terminal_outcome_projection(
+    items: tuple[CanonicalStreamItem, ...],
+    outcome: StreamTerminalOutcome,
+) -> None:
+    payloads = await _collect_mcp_payloads(
+        _CanonicalResponse(items),
+        f"terminal-{outcome.value}",
+    )
+    progress_types = [
+        _mcp_progress(payload).get("type")
+        for payload in payloads
+        if payload.get("method") == "notifications/progress"
+    ]
+
+    if outcome is StreamTerminalOutcome.COMPLETED:
+        assert "answer.completed" in progress_types
+        result_payloads = [
+            payload for payload in payloads if "result" in payload
+        ]
+        assert len(result_payloads) == 1
+        result = cast(dict[str, object], result_payloads[0]["result"])
+        assert result["content"] == [{"type": "text", "text": "ok"}]
+        structured = cast(dict[str, object], result["structuredContent"])
+        usage = cast(dict[str, object], structured["usage"])
+        assert usage["total_tokens"] == 3
+        assert not [payload for payload in payloads if "error" in payload]
+        return
+
+    expected_progress = (
+        "stream.errored"
+        if outcome is StreamTerminalOutcome.ERRORED
+        else "stream.cancelled"
+    )
+    expected_error_message = (
+        str(TERMINAL_ERROR_DATA["message"])
+        if outcome is StreamTerminalOutcome.ERRORED
+        else "Request cancelled"
+    )
+    assert expected_progress in progress_types
+    error_payloads = [payload for payload in payloads if "error" in payload]
+    assert len(error_payloads) == 1
+    error = cast(dict[str, object], error_payloads[0]["error"])
+    assert error["message"] == expected_error_message
+    assert not [payload for payload in payloads if "result" in payload]
+
+
+async def _assert_a2a_terminal_outcome_projection(
+    items: tuple[CanonicalStreamItem, ...],
+    outcome: StreamTerminalOutcome,
+) -> None:
+    expected_statuses = {
+        StreamTerminalOutcome.COMPLETED: "completed",
+        StreamTerminalOutcome.ERRORED: "failed",
+        StreamTerminalOutcome.CANCELLED: "canceled",
+    }
+    expected_states = {
+        StreamTerminalOutcome.COMPLETED: a2a_types.TaskState.completed,
+        StreamTerminalOutcome.ERRORED: a2a_types.TaskState.failed,
+        StreamTerminalOutcome.CANCELLED: a2a_types.TaskState.canceled,
+    }
+    store = TaskStore()
+    task_id = f"terminal-{outcome.value}"
+    await store.create_task(
+        task_id,
+        model="test-model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+    converter = A2AStreamEventConverter(task_id, store)
+
+    status_updates: list[a2a_types.TaskStatusUpdateEvent] = []
+    async for raw_event in translator.run_stream(async_items(items)):
+        converted = await converter.convert(raw_event)
+        if not isinstance(converted, dict) or "result" not in converted:
+            continue
+        response = (
+            a2a_types.SendStreamingMessageSuccessResponse.model_validate(
+                converted
+            )
+        )
+        if isinstance(response.result, a2a_types.TaskStatusUpdateEvent):
+            status_updates.append(response.result)
+
+    task = await store.get_task(task_id)
+    assert task["status"] == expected_statuses[outcome]
+    if outcome is StreamTerminalOutcome.ERRORED:
+        assert task["error"] == str(TERMINAL_ERROR_DATA["message"])
+    else:
+        assert task["error"] is None
+    assert status_updates
+    assert status_updates[-1].status.state is expected_states[outcome]
+    assert status_updates[-1].final is True
+
+
+async def _assert_mcp_legacy_rejection_first_item() -> None:
+    payloads = await _collect_mcp_payloads(
+        _LegacyRejectionResponse(),
+        "legacy-rejection",
+    )
+    error_payloads = [payload for payload in payloads if "error" in payload]
+    assert len(error_payloads) == 1
+    error = cast(dict[str, object], error_payloads[0]["error"])
+    assert error["message"] == "An internal server error occurred."
+    assert not [payload for payload in payloads if "result" in payload]
+
+
+async def _assert_a2a_legacy_rejection_first_item() -> None:
+    store = TaskStore()
+    task_id = "legacy-rejection"
+    await store.create_task(
+        task_id,
+        model="test-model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+    events: list[dict[str, object]] = []
+
+    try:
+        async for event in translator.run_stream(_LegacyRejectionResponse()):
+            events.append(cast(dict[str, object], event))
+    except StreamValidationError as exc:
+        assert "unsupported legacy A2A stream item" in str(exc)
+    else:
+        raise AssertionError("A2A accepted a legacy-only stream source")
+
+    task = await store.get_task(task_id)
+    assert task["status"] == "failed"
+    assert "unsupported legacy A2A stream item" in str(task["error"])
+    assert any(
+        event.get("event") == "task.status.changed"
+        and cast(dict[str, object], event["data"]).get("status") == "failed"
+        for event in events
+    )
+
+
 async def _assert_mcp_projection(
     items: tuple[CanonicalStreamItem, ...],
 ) -> None:
@@ -589,6 +801,11 @@ async def _assert_a2a_projection(
 def _mcp_message(payload: dict[str, object]) -> dict[str, object]:
     params = cast(dict[str, object], payload["params"])
     return cast(dict[str, object], params["message"])
+
+
+def _mcp_progress(payload: dict[str, object]) -> dict[str, object]:
+    params = cast(dict[str, object], payload["params"])
+    return cast(dict[str, object], params["progress"])
 
 
 def _mcp_resource(payload: dict[str, object]) -> dict[str, object]:

@@ -389,6 +389,61 @@ class MCPUtilityTestCase(TestCase):
             mcp_router.MODEL_FALLBACK,
         )
 
+    def test_usage_count_prefers_mcp_native_key_over_alias(self) -> None:
+        self.assertEqual(
+            mcp_router._usage_count(
+                {
+                    "input_text_tokens": 1,
+                    "input_tokens": 99,
+                },
+                "input_text_tokens",
+                7,
+                aliases=("input_tokens",),
+            ),
+            1,
+        )
+
+    def test_usage_count_accepts_valid_alias_only_after_native_key(
+        self,
+    ) -> None:
+        self.assertEqual(
+            mcp_router._usage_count(
+                {"input_tokens": 2},
+                "input_text_tokens",
+                7,
+                aliases=("input_tokens",),
+            ),
+            2,
+        )
+
+    def test_usage_count_ignores_bool_and_non_int_alias_values(
+        self,
+    ) -> None:
+        for alias_value in (True, "2"):
+            with self.subTest(alias_value=alias_value):
+                self.assertEqual(
+                    mcp_router._usage_count(
+                        {"input_tokens": alias_value},
+                        "input_text_tokens",
+                        7,
+                        aliases=("input_tokens",),
+                    ),
+                    7,
+                )
+
+        self.assertEqual(
+            mcp_router._usage_count(
+                {
+                    "input_text_tokens": False,
+                    "input_tokens": 2,
+                },
+                "input_text_tokens",
+                7,
+                aliases=("input_tokens",),
+            ),
+            2,
+        )
+
     def test_build_chat_request_uses_default_model(self) -> None:
         orchestrator = SimpleNamespace(model_ids={"zeta", "alpha"})
         tool_request = MCPToolRequest(input_string="ping")
@@ -2567,8 +2622,8 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.STREAM_COMPLETED,
                 channel=StreamChannel.CONTROL,
                 usage={
-                    "input_text_tokens": 1,
-                    "output_text_tokens": 2,
+                    "input_tokens": 1,
+                    "output_tokens": 2,
                     "total_tokens": 3,
                 },
                 terminal_outcome=StreamTerminalOutcome.COMPLETED,
@@ -2856,8 +2911,8 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.USAGE_COMPLETED,
                 channel=StreamChannel.USAGE,
                 usage={
-                    "input_text_tokens": 11,
-                    "output_text_tokens": 22,
+                    "input_tokens": 11,
+                    "output_tokens": 22,
                     "total_tokens": 33,
                 },
             ),

@@ -574,7 +574,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             accumulate_canonical_stream_items(items).answer_text, "ok"
         )
 
-    async def test_canonical_stream_closes_underlying_response_output(
+    async def test_canonical_stream_legacy_rejection_closes_output(
         self,
     ) -> None:
         class PendingOutput:
@@ -607,11 +607,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             turn_id="response-turn",
         )
 
-        item = await stream.__anext__()
-        self.assertIs(item.kind, StreamItemKind.STREAM_STARTED)
-        item = await stream.__anext__()
-        self.assertIs(item.kind, StreamItemKind.ANSWER_DELTA)
-        await cast(Any, stream).aclose()
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await stream.__anext__()
 
         self.assertEqual(output.read_count, 1)
         self.assertTrue(output.closed)
@@ -619,18 +619,55 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
     async def test_canonical_stream_opens_underlying_output_once(self) -> None:
         class Output:
             def __init__(self, value: str) -> None:
-                self.value = value
-                self.done = False
+                self.items = iter(
+                    (
+                        CanonicalStreamItem(
+                            stream_session_id="response-stream",
+                            run_id="response-run",
+                            turn_id="response-turn",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="response-stream",
+                            run_id="response-run",
+                            turn_id="response-turn",
+                            sequence=1,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta=value,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="response-stream",
+                            run_id="response-run",
+                            turn_id="response-turn",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="response-stream",
+                            run_id="response-run",
+                            turn_id="response-turn",
+                            sequence=3,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            usage={"output_tokens": 1},
+                            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                        ),
+                    )
+                )
                 self.closed = False
 
             def __aiter__(self) -> "Output":
                 return self
 
-            async def __anext__(self) -> str:
-                if self.done:
-                    raise StopAsyncIteration
-                self.done = True
-                return self.value
+            async def __anext__(self) -> CanonicalStreamItem:
+                try:
+                    return next(self.items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
 
             async def aclose(self) -> None:
                 self.closed = True
@@ -729,7 +766,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 ]
             )
 
-    async def test_canonical_stream_reports_semantic_after_legacy_output(
+    async def test_canonical_stream_legacy_rejection_before_semantic_output(
         self,
     ) -> None:
         async def gen():
@@ -745,8 +782,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        items = tuple(
-            [
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [
                 item
                 async for item in resp.canonical_stream(
                     stream_session_id="response-stream",
@@ -754,25 +794,6 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                     turn_id="response-turn",
                 )
             ]
-        )
-
-        error_item = next(
-            item
-            for item in items
-            if item.kind is StreamItemKind.STREAM_ERRORED
-        )
-        self.assertIs(items[-1].kind, StreamItemKind.STREAM_CLOSED)
-        self.assertIs(
-            error_item.terminal_outcome,
-            StreamTerminalOutcome.ERRORED,
-        )
-        self.assertEqual(
-            error_item.data,
-            {
-                "error_type": "StreamValidationError",
-                "message": "canonical stream item after legacy stream item",
-            },
-        )
 
     async def test_canonical_stream_finalizer_accepts_sync_close_hook(
         self,
@@ -1052,7 +1073,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             "alpha  omega <thinking> visible",
         )
 
-    async def test_consumer_projections_close_underlying_output(
+    async def test_consumer_projections_legacy_rejection_closes_output(
         self,
     ) -> None:
         class PendingOutput:
@@ -1085,14 +1106,73 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             turn_id="sdk-turn",
         )
 
-        item = await projections.__anext__()
-        self.assertIs(item.kind, StreamItemKind.STREAM_STARTED)
-        item = await projections.__anext__()
-        self.assertIs(item.kind, StreamItemKind.ANSWER_DELTA)
-        await cast(Any, projections).aclose()
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            await projections.__anext__()
 
         self.assertEqual(output.read_count, 1)
         self.assertTrue(output.closed)
+
+    async def test_default_sdk_legacy_rejection_yields_no_items(
+        self,
+    ) -> None:
+        class LegacyOutput:
+            def __init__(self) -> None:
+                self.read_count = 0
+                self.closed = False
+
+            def __aiter__(self) -> "LegacyOutput":
+                return self
+
+            async def __anext__(self) -> str:
+                self.read_count += 1
+                if self.read_count > 1:
+                    raise AssertionError("default SDK stream read ahead")
+                return "legacy"
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        async def assert_rejection(surface: str) -> None:
+            output = LegacyOutput()
+            settings = GenerationSettings()
+            resp = TextGenerationResponse(
+                lambda **_: output,
+                logger=getLogger(),
+                use_async_generator=True,
+                generation_settings=settings,
+                settings=settings,
+            )
+            items: list[object] = []
+
+            with self.assertRaisesRegex(
+                StreamValidationError,
+                "unsupported legacy SDK response stream item",
+            ):
+                if surface == "canonical_stream":
+                    async for item in resp.canonical_stream(
+                        stream_session_id="sdk-stream",
+                        run_id="sdk-run",
+                        turn_id="sdk-turn",
+                    ):
+                        items.append(item)
+                else:
+                    async for item in resp.consumer_projections(
+                        stream_session_id="sdk-stream",
+                        run_id="sdk-run",
+                        turn_id="sdk-turn",
+                    ):
+                        items.append(item)
+
+            self.assertEqual(items, [])
+            self.assertEqual(output.read_count, 1)
+            self.assertTrue(output.closed)
+
+        for surface in ("canonical_stream", "consumer_projections"):
+            with self.subTest(surface=surface):
+                await assert_rejection(surface)
 
     async def test_aclose_handles_unopened_and_nonclosable_output(
         self,
@@ -1208,19 +1288,49 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         class UsageOutput:
             def __init__(self) -> None:
-                self._done = False
+                self.items = iter(
+                    (
+                        CanonicalStreamItem(
+                            stream_session_id="response-stream",
+                            run_id="response-run",
+                            turn_id="response-turn",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="response-stream",
+                            run_id="response-run",
+                            turn_id="response-turn",
+                            sequence=1,
+                            kind=StreamItemKind.USAGE_COMPLETED,
+                            channel=StreamChannel.USAGE,
+                            usage=usage,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="response-stream",
+                            run_id="response-run",
+                            turn_id="response-turn",
+                            sequence=2,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                        ),
+                    )
+                )
                 self.closed = False
                 self.usage: object | None = None
 
             def __aiter__(self) -> "UsageOutput":
                 return self
 
-            async def __anext__(self) -> str:
-                if self._done:
-                    raise StopAsyncIteration
-                self._done = True
+            async def __anext__(self) -> CanonicalStreamItem:
+                try:
+                    item = next(self.items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
                 self.usage = usage
-                return "ok"
+                return item
 
             async def aclose(self) -> None:
                 self.closed = True
@@ -1249,7 +1359,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(output.closed)
         self.assertEqual(resp.usage, usage)
         self.assertEqual(
-            accumulate_canonical_stream_items(items).answer_text, "ok"
+            accumulate_canonical_stream_items(items).final_usage, usage
         )
 
     async def test_to_str_uses_answer_channel_accumulation(self) -> None:
@@ -2041,8 +2151,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
         resp.add_done_callback(mark_consumed)
 
-        projections = tuple(
-            [
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported legacy SDK response stream item",
+        ):
+            _ = [
                 item
                 async for item in resp.consumer_projections(
                     stream_session_id="sdk-stream",
@@ -2050,17 +2163,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                     turn_id="sdk-turn",
                 )
             ]
-        )
 
-        error_projection = next(
-            item
-            for item in projections
-            if item.kind is StreamItemKind.STREAM_ERRORED
-        )
-        self.assertIs(
-            error_projection.terminal_outcome,
-            StreamTerminalOutcome.ERRORED,
-        )
         self.assertTrue(output.closed)
         self.assertFalse(consumed)
         with self.assertRaisesRegex(RuntimeError, "provider failed"):

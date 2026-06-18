@@ -344,7 +344,10 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
         orch.return_value = TextGenerationResponse(
-            lambda: output_gen(), logger=getLogger(), use_async_generator=True
+            lambda: output_gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            provider_family="transformers",
         )
         req = ChatCompletionRequest(
             model="m",
@@ -422,6 +425,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                     output_gen,
                     logger=getLogger(),
                     use_async_generator=True,
+                    provider_family="transformers",
                 )
 
             async def sync_messages(self) -> None:  # type: ignore[override]

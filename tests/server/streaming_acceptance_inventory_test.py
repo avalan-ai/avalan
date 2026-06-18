@@ -88,7 +88,7 @@ ACCEPTANCE_HARNESS_TESTS = {
         (
             "tests/model/text_generation_response_golden_trace_test.py"
             "::TextGenerationResponseGoldenTraceTestCase"
-            "::test_async_iteration_matches_current_golden_trace"
+            "::test_canonical_stream_matches_current_golden_trace"
         ),
         (
             "tests/model/text_generation_response_more_test.py"
@@ -98,6 +98,10 @@ ACCEPTANCE_HARNESS_TESTS = {
         (
             "tests/server/streaming_conformance_test.py"
             "::test_canonical_trace_conforms_across_public_stream_surfaces"
+        ),
+        (
+            "tests/server/streaming_conformance_test.py"
+            "::test_canonical_golden_trace_locks_item_semantics"
         ),
     ),
     "SDK losslessness": (
@@ -229,6 +233,14 @@ ACCEPTANCE_HARNESS_TESTS = {
             "tests/server/primary_consumer_projection_golden_test.py"
             "::PrimaryConsumerProjectionGoldenTestCase"
             "::test_primary_consumers_project_same_canonical_trace"
+        ),
+        (
+            "tests/server/streaming_conformance_test.py"
+            "::test_terminal_outcome_traces_project_protocol_terminal_events"
+        ),
+        (
+            "tests/server/protocol_streaming_e2e_test.py"
+            "::test_terminal_outcome_traces_project_through_protocols"
         ),
         (
             "tests/model/text_generation_response_golden_trace_test.py"
@@ -602,6 +614,10 @@ HARDENING_COVERAGE_TESTS = {
         ),
         (
             "tests/server/protocol_streaming_e2e_test.py"
+            "::test_terminal_outcome_traces_project_through_protocols"
+        ),
+        (
+            "tests/server/protocol_streaming_e2e_test.py"
             "::test_lossy_cli_frames_do_not_drop_lossless_public_surfaces"
         ),
         (
@@ -622,6 +638,10 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/server/streaming_conformance_test.py"
             "::test_public_projection_helpers_reject_unsupported_items"
+        ),
+        (
+            "tests/server/streaming_conformance_test.py"
+            "::test_default_projection_helpers_legacy_rejection_first_item"
         ),
     ),
     "protocol route negatives": (
@@ -679,6 +699,10 @@ HARDENING_COVERAGE_TESTS = {
             "tests/server/mcp_router_test.py"
             "::MCPRouterAsyncTestCase"
             "::test_stream_response_rejects_mixed_surfaces"
+        ),
+        (
+            "tests/server/protocol_streaming_e2e_test.py"
+            "::test_default_protocol_routes_legacy_rejection_first_item"
         ),
         (
             "tests/server/test_a2a.py"
@@ -1052,6 +1076,10 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
             "::test_stream_response_emits_canonical_notifications"
         ),
         (
+            "tests/server/protocol_streaming_e2e_test.py"
+            "::test_terminal_outcome_traces_project_through_protocols"
+        ),
+        (
             "tests/server/mcp_router_test.py"
             "::MCPRouterAsyncTestCase"
             "::test_stream_response_rejects_missing_canonical_terminal"
@@ -1067,6 +1095,10 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
             "::test_stream_response_legacy_rejection_first_item"
         ),
         (
+            "tests/server/protocol_streaming_e2e_test.py"
+            "::test_default_protocol_routes_legacy_rejection_first_item"
+        ),
+        (
             "tests/server/mcp_router_test.py"
             "::MCPRouterAsyncTestCase"
             "::test_stream_response_cleans_up_when_consumer_closes"
@@ -1075,6 +1107,14 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
     "A2A": (
         "tests/server/test_a2a.py::test_translator_streams_canonical_items",
         "tests/server/test_a2a.py::test_create_task_streams_jsonrpc_request",
+        (
+            "tests/server/protocol_streaming_e2e_test.py"
+            "::test_terminal_outcome_traces_project_through_protocols"
+        ),
+        (
+            "tests/server/protocol_streaming_e2e_test.py"
+            "::test_default_protocol_routes_legacy_rejection_first_item"
+        ),
         (
             "tests/server/test_a2a.py"
             "::test_canonical_duplicate_terminal_is_rejected"
@@ -1435,11 +1475,19 @@ FINAL_GATE_ACCEPTANCE_HARNESSES = {
                 "tests/server/streaming_conformance_test.py"
                 "::test_canonical_trace_conforms_across_public_stream_surfaces"
             ),
+            (
+                "tests/server/streaming_conformance_test.py"
+                "::test_canonical_golden_trace_locks_item_semantics"
+            ),
         ),
         integration=(
             (
                 "tests/server/protocol_streaming_e2e_test.py"
                 "::test_same_canonical_stream_projects_through_protocols"
+            ),
+            (
+                "tests/server/protocol_streaming_e2e_test.py"
+                "::test_terminal_outcome_traces_project_through_protocols"
             ),
             (
                 "tests/server/protocol_streaming_e2e_test.py"
