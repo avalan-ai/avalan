@@ -929,6 +929,22 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(output, expected)
 
+    def test_unlimited_wrapped_output_ignores_visible_line_count(self) -> None:
+        text = "01234567" * 4
+        expected = "\n".join(FancyTheme._wrap_lines([text], 8)).rstrip()
+
+        output = fancy_theme_module._fancy_wrapped_output(
+            text,
+            max_width=8,
+            height=2,
+            padding=1,
+            limit_height=False,
+            visible_line_count=1,
+        )
+
+        self.assertEqual(output, expected)
+        self.assertGreater(len((output or "").splitlines()), 1)
+
     async def test_answer_mode_skips_stream_panels(self) -> None:
         config = _stream_config()
         builder = CliStreamSnapshotBuilder(config)

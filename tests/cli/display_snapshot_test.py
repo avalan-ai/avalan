@@ -112,6 +112,16 @@ class DisplaySnapshotBufferTestCase(TestCase):
         sensitive.append("=" + ("x" * 20))
         self.assertEqual(sensitive.materialize(), "<redacted>")
 
+    def test_bounded_text_buffer_detects_split_sensitive_marker(self) -> None:
+        buffer = CliBoundedTextBuffer(limit=8)
+
+        buffer.append("api")
+        buffer.append("_")
+        buffer.append("key")
+        buffer.append("=" + ("x" * 20))
+
+        self.assertEqual(buffer.materialize(), "<redacted>")
+
     def test_history_buffer_bounds_and_counts(self) -> None:
         buffer = CliBoundedHistoryBuffer[int](2)
 

@@ -1822,6 +1822,44 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(display_config.show_stats)
         self.assertFalse(tg_patch.await_args.kwargs["with_stats"])
 
+    async def test_run_display_events_without_stats_passes_display_config(
+        self,
+    ) -> None:
+        self.args.display_events = True
+        self.args.stats = False
+
+        class DummyOrchestratorResponse:
+            pass
+
+        with (
+            patch.object(agent_cmds, "get_input", return_value="hi"),
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(return_value=self.orch),
+            ),
+            patch.object(
+                agent_cmds, "token_generation", new_callable=AsyncMock
+            ) as tg_patch,
+            patch.object(
+                agent_cmds,
+                "OrchestratorResponse",
+                DummyOrchestratorResponse,
+            ),
+        ):
+            self.orch.return_value = DummyOrchestratorResponse()
+            await agent_cmds.agent_run(
+                self.args, self.console, self.theme, self.hub, self.logger, 1
+            )
+
+        display_config = tg_patch.await_args.kwargs["display_config"]
+        self.assertTrue(display_config.show_events)
+        self.assertFalse(display_config.show_stats)
+        self.assertFalse(tg_patch.await_args.kwargs["with_stats"])
+
     async def test_run_from_settings(self):
         self.args.specifications_file = None
         self.args.engine_uri = "engine"

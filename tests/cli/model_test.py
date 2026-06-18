@@ -1020,6 +1020,26 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(gate.delay_until_next_tick(), 0.0)
 
+    def test_stream_presentation_gate_delay_uses_clock_when_unchecked(
+        self,
+    ) -> None:
+        class RecordingClock:
+            def __init__(self) -> None:
+                self.values = iter((1.2, 1.7))
+                self.calls = 0
+
+            def __call__(self) -> float:
+                self.calls += 1
+                return next(self.values)
+
+        clock = RecordingClock()
+        gate = model_cmds._CliStreamPresentationGate(2, clock=clock)
+        gate.last_presented_at = 1.0
+
+        self.assertAlmostEqual(gate.delay_until_next_tick(), 0.3)
+        self.assertEqual(gate.delay_until_next_tick(), 0.0)
+        self.assertEqual(clock.calls, 2)
+
     def test_tool_execution_projections_force_presentation(self) -> None:
         started = StreamConsumerProjection(
             stream_session_id="stream",
@@ -1880,6 +1900,117 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
         self.assertIn(0.4, sleep_delays)
 
+    async def test_token_generation_cancels_pending_retry_after_terminal_flush(
+        self,
+    ) -> None:
+        class MutableClock:
+            def __init__(self) -> None:
+                self.value = 0.0
+
+            def __call__(self) -> float:
+                return self.value
+
+        class RecordingPresenter:
+            requires_completion_snapshot = True
+
+            def __init__(self) -> None:
+                self.requests: list[str] = []
+                self._emitted = ""
+
+            async def present(
+                self,
+                request: CliStreamPresenterRequest,
+            ) -> AsyncIterator[CliStreamAnswerTextChunk]:
+                text = request.snapshot.answer_text
+                self.requests.append(text)
+                chunk = text[len(self._emitted) :]
+                self._emitted = text
+                if chunk:
+                    yield CliStreamAnswerTextChunk(text=chunk)
+
+        class RecordingTheme:
+            def __init__(self, presenter: RecordingPresenter) -> None:
+                self.presenter = presenter
+
+            def stream_presenter(
+                self,
+                logger: object,
+                *,
+                event_stats: object | None = None,
+            ) -> RecordingPresenter:
+                _ = logger, event_stats
+                return self.presenter
+
+        retry_sleep_started = asyncio.Event()
+        retry_sleep_cancelled = asyncio.Event()
+        clock = MutableClock()
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[str]:
+                async def gen() -> AsyncIterator[str]:
+                    yield "A"
+                    clock.value = 0.1
+                    yield "B"
+                    await retry_sleep_started.wait()
+
+                return gen()
+
+        async def controlled_sleep(delay: float) -> None:
+            if delay <= 0:
+                await asyncio.sleep(0)
+                return
+            retry_sleep_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                retry_sleep_cancelled.set()
+                raise
+
+        presenter = RecordingPresenter()
+        console = MagicMock()
+        with (
+            patch.object(model_cmds, "perf_counter", clock),
+            patch.object(
+                model_cmds,
+                "sleep",
+                new=AsyncMock(side_effect=controlled_sleep),
+            ),
+        ):
+            await asyncio.wait_for(
+                model_cmds.token_generation(
+                    args=Namespace(skip_display_reasoning_time=False),
+                    console=console,
+                    theme=RecordingTheme(presenter),  # type: ignore[arg-type]
+                    logger=getLogger(__name__),
+                    orchestrator=None,
+                    event_stats=None,
+                    lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                    input_string="i",
+                    response=Response(),  # type: ignore[arg-type]
+                    display_tokens=0,
+                    dtokens_pick=0,
+                    with_stats=False,
+                    tool_events_limit=2,
+                    refresh_per_second=2,
+                    display_config=self._display_config(interactive=False),
+                ),
+                timeout=1,
+            )
+
+        self.assertTrue(retry_sleep_cancelled.is_set())
+        self.assertEqual(presenter.requests, ["A", "AB"])
+        self.assertEqual(
+            console.print.call_args_list,
+            [call("A", end=""), call("B", end="")],
+        )
+
     async def test_token_generation_retry_recomputes_early_tick_delay(
         self,
     ) -> None:
@@ -2014,6 +2145,122 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 await asyncio.gather(task, return_exceptions=True)
 
         self.assertGreaterEqual(sleep_delays.count(0.4), 3)
+
+    async def test_token_generation_skips_synthetic_completion_after_terminal(
+        self,
+    ) -> None:
+        class RecordingPresenter:
+            requires_completion_snapshot = True
+
+            def __init__(self) -> None:
+                self.terminal_sequences: list[int | None] = []
+                self._emitted = ""
+
+            async def present(
+                self,
+                request: CliStreamPresenterRequest,
+            ) -> AsyncIterator[CliStreamAnswerTextChunk]:
+                if request.snapshot.terminal.completed:
+                    self.terminal_sequences.append(
+                        request.snapshot.terminal.sequence
+                    )
+                text = request.snapshot.answer_text
+                chunk = text[len(self._emitted) :]
+                self._emitted = text
+                if chunk:
+                    yield CliStreamAnswerTextChunk(text=chunk)
+
+        class RecordingTheme:
+            def __init__(self, presenter: RecordingPresenter) -> None:
+                self.presenter = presenter
+
+            def stream_presenter(
+                self,
+                logger: object,
+                *,
+                event_stats: object | None = None,
+            ) -> RecordingPresenter:
+                _ = logger, event_stats
+                return self.presenter
+
+        def item(
+            sequence: int,
+            kind: StreamItemKind,
+            *,
+            text_delta: str | None = None,
+            terminal_outcome: StreamTerminalOutcome | None = None,
+        ) -> CanonicalStreamItem:
+            return CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=kind,
+                channel=stream_channel_for_kind(kind),
+                text_delta=text_delta,
+                usage={} if kind is StreamItemKind.STREAM_COMPLETED else None,
+                terminal_outcome=terminal_outcome,
+            )
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def consumer_projections(
+                self,
+                **_kwargs: object,
+            ) -> AsyncIterator[StreamConsumerProjection]:
+                async def gen() -> AsyncIterator[StreamConsumerProjection]:
+                    for stream_item in (
+                        item(0, StreamItemKind.STREAM_STARTED),
+                        item(
+                            1,
+                            StreamItemKind.ANSWER_DELTA,
+                            text_delta="done",
+                        ),
+                        item(2, StreamItemKind.ANSWER_DONE),
+                        item(
+                            3,
+                            StreamItemKind.STREAM_COMPLETED,
+                            terminal_outcome=(StreamTerminalOutcome.COMPLETED),
+                        ),
+                    ):
+                        yield project_canonical_stream_item(stream_item)
+
+                return gen()
+
+        presenter = RecordingPresenter()
+        console = MagicMock()
+        with patch.object(
+            model_cmds,
+            "_stream_completed_projection",
+            wraps=model_cmds._stream_completed_projection,
+        ) as completed_projection:
+            await model_cmds.token_generation(
+                args=Namespace(skip_display_reasoning_time=False),
+                console=console,
+                theme=RecordingTheme(presenter),  # type: ignore[arg-type]
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),  # type: ignore[arg-type]
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(interactive=False),
+            )
+
+        completed_projection.assert_not_called()
+        self.assertEqual(presenter.terminal_sequences, [3])
+        self.assertEqual(console.print.call_args_list[0], call("done", end=""))
 
     async def test_token_generation_retry_presentation_error_propagates(
         self,
