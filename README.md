@@ -1199,7 +1199,10 @@ Use the math toolset whenever your agent needs deterministic arithmetic or algeb
 
 #### Example: `math.calculator`
 
-The example below uses a local 8B LLM, enables recent memory, and loads a calculator tool. The agent begins with a math question and stays open for follow-ups:
+The local example below is the default Fancy/live-panel invocation. Fancy is
+the default theme, so no `--theme` flag is needed. It uses a local 8B LLM,
+enables recent memory, loads `math.calculator`, and begins with a math
+question before staying open for follow-ups:
 
 ```sh
 echo "What is (4 + 6) and then that result times 5, divided by 2?" \
@@ -1220,6 +1223,27 @@ echo "What is (4 + 6) and then that result times 5, divided by 2?" \
 Notice the GPU utilization at the bottom:
 
 ![Example use of an ephemeral tool agent with memory](https://github.com/user-attachments/assets/e15cdd4c-f037-4151-88b9-d0acbb22b0ba)
+
+To see the same calculation in the Basic theme, pass `--theme basic`.
+`--display-tools` shows tool lifecycle details and results without requiring
+`--stats`:
+
+```sh
+echo "What is (4 + 6) and then that result times 5, divided by 2?" \
+  | avalan agent run \
+      --theme basic \
+      --engine-uri "NousResearch/Hermes-3-Llama-3.1-8B" \
+      --backend mlx \
+      --tool "math.calculator" \
+      --memory-recent \
+      --run-max-new-tokens 8192 \
+      --name "Tool" \
+      --role "You are a helpful assistant named Tool, that can resolve user requests using tools." \
+      --display-tools
+```
+
+Both the default Fancy example and the Basic example validate the result
+`25`.
 
 You can give your GPU some breathing room by running the same on a vendor model, like Anthropic:
 
@@ -2144,16 +2168,17 @@ printf '%s\n' 'Write a short greeting.' \
 ```
 
 Use `--ds4-native-backend cuda` on Linux CUDA builds. CPU mode is only a
-debug/reference path. Native DS4 tool calls use the DSML protocol: Avalan
-renders tool schemas, parses completed DSML tool blocks, streams argument
-deltas, and preserves exact raw DSML replay metadata for session alignment.
+debug/reference path.
 Use `ai://local//absolute/path.gguf` for absolute paths, or a normal
 `ai://local/relative/path.gguf` URI for paths relative to the current
 directory.
 
 #### Tool use
 
-DS4-backed agents can use Avalan tools through the native DSML protocol:
+DS4-backed agents can use normal Avalan tools. Basic output shows the answer
+text and hides DSML/protocol/tool-call markup from the final answer while
+preserving tool results; with `--display-tools`, it also shows tool
+lifecycle details and results:
 
 ```sh
 printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
@@ -2172,6 +2197,10 @@ printf '%s\n' 'What is (4 + 6) and then that result times 5, divided by 2?' \
       --display-events \
       --display-tools
 ```
+
+Internally, native DS4 tool calls use DSML: Avalan renders tool schemas,
+parses completed DSML tool blocks, streams argument deltas, and preserves
+exact raw DSML replay metadata for session alignment.
 
 ### Source build tips
 

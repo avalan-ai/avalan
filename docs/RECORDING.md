@@ -43,7 +43,6 @@ env -u NO_COLOR \
     | .venv/bin/avalan agent run \
         --engine-uri 'ai://local//Users/mariano/Code/ai/pyds4/.local/ds4/ds4flash.gguf?backend=ds4&ds4_ctx=4096&ds4_native_backend=metal' \
         --tool 'math.calculator' \
-        --tool-format dsml \
         --run-max-new-tokens 512 \
         --run-temperature 0 \
         --reasoning-effort high \
@@ -56,9 +55,16 @@ env -u NO_COLOR \
   /private/tmp/avalan-recording.ttyrec
 ```
 
-For Avalan agent recordings, include `--stats` when you want the Rich live
-panels. `--display-events` and `--display-tools` only become visible in the
-live renderer when stats are enabled.
+For Avalan agent recordings, choose the diagnostics you want independently:
+`--stats` shows token generation statistics, `--display-events` shows
+non-tool stream events, and `--display-tools` shows tool lifecycle details
+and results. Tool and event diagnostics do not require `--stats`.
+
+Avalan uses one live owner to render the active terminal view for all roles.
+When `--record` is enabled, recording saves after the owner render so the
+captured frame matches the displayed live frame. Rapid updates may coalesce
+to the latest live frame instead of preserving every intermediate visual
+state, while lossless canonical/public response surfaces remain intact.
 
 Use `ttyplay` to inspect the capture:
 
@@ -124,7 +130,12 @@ re-encoded at a different frame rate.
 
 - Use `ttyrec`, not `script`, for video-bound terminal captures.
 - Unset `NO_COLOR` and force `TERM=xterm-256color` for Rich color.
-- Use `--stats` with Avalan when recording live panels.
+- Pick `--stats`, `--display-events`, and `--display-tools` independently
+  for the diagnostics you want in the live recording.
+- Remember that one live owner renders all roles and `--record` saves after
+  that owner render.
+- Expect rapid live updates to coalesce to the latest frame; rely on the
+  canonical/public output surfaces for lossless content.
 - Preserve the `.ttyrec` file until the MP4 has been reviewed.
 - Encode MP4 with `-pix_fmt yuv420p` and `-movflags +faststart` for broad
   playback compatibility.
