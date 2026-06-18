@@ -441,7 +441,7 @@ class ToolCallResponseParser:
             pending_split = self._split_pending_candidate(candidate)
             if pending_split is not None:
                 pending_prefix, tool_token, status = pending_split
-                result.append(pending_prefix)
+                self._append_visible_output(result, pending_prefix)
                 self._append_visible_text(pending_prefix)
                 candidate = tool_token
                 self._pending_tokens.clear()
@@ -452,7 +452,7 @@ class ToolCallResponseParser:
                     token_str, status
                 )
                 if split_prefix is not None:
-                    result.append(split_prefix)
+                    self._append_visible_output(result, split_prefix)
                     self._append_visible_text(split_prefix)
                     candidate = tool_token
                     status = self._tool_manager.tool_call_status(candidate)
@@ -486,12 +486,12 @@ class ToolCallResponseParser:
                     terminal_status = status
             else:
                 if self._pending_tokens:
-                    result.extend(self._pending_tokens)
+                    self._extend_visible_output(result, self._pending_tokens)
                     self._append_visible_text(self._pending_str)
                     self._pending_tokens.clear()
                     self._pending_str = ""
                     self._tool_buffer = StringIO()
-                result.append(token_str)
+                self._append_visible_output(result, token_str)
                 self._append_visible_text(token_str)
         else:
             tool_token = token_str
@@ -751,12 +751,31 @@ class ToolCallResponseParser:
                 return result
 
         if self._pending_tokens:
-            result.extend(self._pending_tokens)
+            self._extend_visible_output(result, self._pending_tokens)
             self._append_visible_text(self._pending_str)
             self._pending_tokens.clear()
             self._pending_str = ""
             self._tool_buffer = StringIO()
         return result
+
+    def _append_visible_output(self, items: list[Any], text: str) -> None:
+        if not text:
+            return
+        if self._legacy_fixture:
+            items.append(text)
+            return
+        items.append(
+            StreamProviderEvent(
+                kind=StreamItemKind.ANSWER_DELTA,
+                text_delta=text,
+            )
+        )
+
+    def _extend_visible_output(
+        self, items: list[Any], texts: list[str]
+    ) -> None:
+        for text in texts:
+            self._append_visible_output(items, text)
 
     def _append_visible_text(self, text: str) -> None:
         if text:
@@ -1369,12 +1388,10 @@ class ToolCallResponseParser:
             sorted(self._visible_tool_marker_ends(), key=len, reverse=True)
         )
 
-    @staticmethod
     def _append_visible_suffix(
-        items: list[Any], visible_suffix: str
+        self, items: list[Any], visible_suffix: str
     ) -> list[Any]:
-        if visible_suffix:
-            items.append(visible_suffix)
+        self._append_visible_output(items, visible_suffix)
         return items
 
     def _parse_text(self) -> str:

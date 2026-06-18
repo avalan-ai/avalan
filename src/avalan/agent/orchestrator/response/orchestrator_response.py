@@ -4,18 +4,14 @@ from ....entities import (
     Message,
     MessageRole,
     MessageToolCall,
-    Token,
-    TokenDetail,
     ToolCall,
     ToolCallContext,
     ToolCallDiagnostic,
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
-    ToolCallDiagnosticStatus,
     ToolCallError,
     ToolCallOutcome,
     ToolCallResult,
-    ToolCallToken,
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
 )
@@ -34,7 +30,6 @@ from ....model.stream import (
     StreamTerminalOutcome,
     StreamValidationError,
     canonical_item_from_consumer_projection,
-    canonical_item_from_token,
     stream_channel_for_kind,
     stream_observability_payload,
 )
@@ -58,7 +53,6 @@ from asyncio import (
 )
 from base64 import b64encode
 from dataclasses import asdict, dataclass, is_dataclass, replace
-from datetime import datetime
 from inspect import iscoroutine
 from json import dumps, loads
 from queue import Full, Queue
@@ -188,45 +182,6 @@ class _ToolExecutionOutcome:
     result: ToolCallOutcome | None
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
-class _OrchestratorResponseStreamItemProjection:
-    canonical_item: CanonicalStreamItem | None
-    event: Event | None
-    legacy_token: Token | TokenDetail | str | None
-    legacy_tool_call_token: ToolCallToken | None
-    parser_text: str | None
-    canonical_source: bool
-
-    def __post_init__(self) -> None:
-        assert (
-            self.canonical_item is not None or self.event is not None
-        ), "projection must carry a canonical item or event"
-        assert not (
-            self.canonical_item is not None and self.event is not None
-        ), "projection must not carry both a canonical item and event"
-        assert isinstance(self.canonical_source, bool)
-        if self.canonical_item is not None:
-            assert isinstance(self.canonical_item, CanonicalStreamItem)
-        if self.event is not None:
-            assert type(self.event) is Event
-            assert self.legacy_token is None
-            assert self.legacy_tool_call_token is None
-            assert self.parser_text is None
-            assert not self.canonical_source
-        if self.legacy_tool_call_token is not None:
-            assert type(self.legacy_tool_call_token) is ToolCallToken
-            assert self.legacy_token is self.legacy_tool_call_token
-            assert not self.canonical_source
-        if self.parser_text is not None:
-            assert isinstance(self.parser_text, str)
-            assert self.legacy_token == self.parser_text
-            assert not self.canonical_source
-        if self.canonical_source:
-            assert self.legacy_token is None
-            assert self.legacy_tool_call_token is None
-            assert self.parser_text is None
-
-
 def _legacy_tool_event(
     event_type: EventType,
     *,
@@ -245,9 +200,12 @@ def _legacy_tool_event(
     )
 
 
-class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
+class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     """Async iterator handling tool execution during streaming."""
 
+    _LEGACY_STREAM_ERROR = (
+        "unsupported legacy orchestrator response stream item"
+    )
     _MAXIMUM_TOOL_CYCLES = 8
     _MAXIMUM_CONSECUTIVE_NON_EXECUTED_CYCLES = 2
     _MAXIMUM_STAGING_QUEUE_ITEMS = 4096
@@ -260,10 +218,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _event_manager: EventManager | None
     _tool_manager: ToolManager | None
     _calls: Queue[ToolCall]
-    _tool_call_events: Queue[Event]
-    _tool_process_events: Queue[Event]
-    _tool_result_emit_events: Queue[Event]
-    _tool_result_events: Queue[Event]
+    _pending_tool_call_ready_items: Queue[CanonicalStreamItem]
+    _tool_call_ready_items: Queue[CanonicalStreamItem]
+    _tool_result_outcomes: Queue[_ToolExecutionOutcome]
     _input: Input
     _context: ModelCallContext
     _tool_context: ToolCallContext | None
@@ -275,10 +232,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _agent_id: UUID | None
     _participant_id: UUID | None
     _session_id: UUID | None
-    _parser_queue: Queue[Token | TokenDetail | Event] | None
+    _parser_queue: Queue[CanonicalStreamItem] | None
     _tool_parser: ToolCallResponseParser | None
     _cancellation_checker: Callable[[], Awaitable[None]] | None
     _canonical_items: list[CanonicalStreamItem]
+    _canonical_yield_index: int
     _canonical_sequence: int
     _canonical_stream_terminal: StreamTerminalOutcome | None
     _canonical_stream_closed: bool
@@ -290,17 +248,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
     _canonical_answer_done: bool
     _canonical_reasoning_started: bool
     _canonical_reasoning_done: bool
-    _last_token_event_canonical_item: CanonicalStreamItem | None
     _canonical_tool_call_argument_delta_ids: set[str]
     _canonical_tool_call_ready_ids: set[str]
     _canonical_tool_execution_started_ids: set[str]
     _canonical_tool_execution_terminal_ids: set[str]
     _canonical_tool_call_ids_by_object: dict[int, str]
     _canonical_tool_call_index: int
-    _pending_tool_call: ToolCall | None
-    _pending_tool_call_anonymous: bool
-    _pending_tool_call_argument_text: str
-    _pending_tool_call_unanchored_deltas: list[str]
     _active_model_continuation_id: str | None
     _response_drained: bool
 
@@ -343,7 +296,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._session_id = session_id
         self._tool_confirm = tool_confirm
         self._tool_confirm_all = False
+        self._calls = self._make_staging_queue()
         self._parser_queue = self._make_staging_queue()
+        self._pending_tool_call_ready_items = self._make_staging_queue()
+        self._tool_call_ready_items = self._make_staging_queue()
+        self._tool_result_outcomes = self._make_staging_queue()
         self._cancellation_checker = None
         self._model_responses = [response]
         self._tool_parser = (
@@ -352,6 +309,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             else None
         )
         self._canonical_items = []
+        self._canonical_yield_index = 0
         self._canonical_sequence = 0
         self._canonical_stream_terminal = None
         self._canonical_stream_closed = False
@@ -365,17 +323,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._canonical_answer_done = False
         self._canonical_reasoning_started = False
         self._canonical_reasoning_done = False
-        self._last_token_event_canonical_item = None
         self._canonical_tool_call_argument_delta_ids = set()
         self._canonical_tool_call_ready_ids = set()
         self._canonical_tool_execution_started_ids = set()
         self._canonical_tool_execution_terminal_ids = set()
         self._canonical_tool_call_ids_by_object = {}
         self._canonical_tool_call_index = 0
-        self._pending_tool_call = None
-        self._pending_tool_call_anonymous = False
-        self._pending_tool_call_argument_text = ""
-        self._pending_tool_call_unanchored_deltas = []
         self._active_model_continuation_id = None
         self._response_drained = False
 
@@ -419,21 +372,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             assert isinstance(value, str)
             assert value.strip()
 
-        self.__aiter__()
         emitted = 0
         try:
-            while True:
-                while emitted < len(self._canonical_items):
-                    yield StreamConsumerProjection.from_item(
-                        self._canonical_items[emitted]
-                    )
-                    emitted += 1
-                try:
-                    item = await self.__anext__()
-                except StopAsyncIteration:
-                    break
-                if emitted == len(self._canonical_items):
-                    self._append_canonical_projection_item(item)
+            async for item in self:
+                yield StreamConsumerProjection.from_item(item)
+                emitted += 1
         except (CancelledError, Exception):
             while emitted < len(self._canonical_items):
                 yield StreamConsumerProjection.from_item(
@@ -442,295 +385,115 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 emitted += 1
             raise
 
-        while emitted < len(self._canonical_items):
-            yield StreamConsumerProjection.from_item(
-                self._canonical_items[emitted]
-            )
-            emitted += 1
-
-    def _append_canonical_projection_item(
-        self,
-        item: CanonicalStreamItem | Token | TokenDetail | Event | str,
-    ) -> None:
-        projection = self._stream_item_projection(
-            item,
-            self._canonical_sequence,
-        )
-        if projection.event is not None:
-            return
-        if projection.legacy_tool_call_token is not None:
-            return
-        canonical_item = projection.canonical_item
-        assert canonical_item is not None
-        if projection.canonical_source:
-            self._append_canonical_response_item(canonical_item)
-            return
-        assert self._canonical_stream_terminal is None
-        assert not self._canonical_stream_closed
-        matching_item = self._matching_token_event_canonical_item(
-            canonical_item
-        )
-        if matching_item is not None:
-            self._canonical_items.append(matching_item)
-            self._track_canonical_channel_boundary(matching_item)
-            return
-        self._canonical_items.append(canonical_item)
-        self._canonical_sequence += 1
-        self._track_canonical_channel_boundary(canonical_item)
-
-    def _stream_item_projection(
-        self,
-        item: object,
-        sequence: int,
-    ) -> _OrchestratorResponseStreamItemProjection:
-        assert isinstance(sequence, int), "sequence must be an integer"
-        assert sequence >= 0, "sequence must not be negative"
-        if isinstance(item, Event):
-            return _OrchestratorResponseStreamItemProjection(
-                canonical_item=None,
-                event=item,
-                legacy_token=None,
-                legacy_tool_call_token=None,
-                parser_text=None,
-                canonical_source=False,
-            )
-        if isinstance(item, CanonicalStreamItem):
-            return _OrchestratorResponseStreamItemProjection(
-                canonical_item=item,
-                event=None,
-                legacy_token=None,
-                legacy_tool_call_token=None,
-                parser_text=None,
-                canonical_source=True,
-            )
-        if isinstance(item, StreamConsumerProjection):
-            return _OrchestratorResponseStreamItemProjection(
-                canonical_item=canonical_item_from_consumer_projection(item),
-                event=None,
-                legacy_token=None,
-                legacy_tool_call_token=None,
-                parser_text=None,
-                canonical_source=True,
-            )
-        canonical_item = canonical_item_from_token(
-            cast(Token | TokenDetail | str, item),
-            sequence,
-            stream_session_id=self._canonical_stream_session_id,
-            run_id=self._canonical_run_id,
-            turn_id=self._canonical_turn_id,
-        )
-        return _OrchestratorResponseStreamItemProjection(
-            canonical_item=canonical_item,
-            event=None,
-            legacy_token=cast(Token | TokenDetail | str, item),
-            legacy_tool_call_token=(
-                item if isinstance(item, ToolCallToken) else None
-            ),
-            parser_text=item if isinstance(item, str) else None,
-            canonical_source=False,
-        )
-
-    def _legacy_token_projection(
-        self,
-        item: object,
-        sequence: int,
-    ) -> _OrchestratorResponseStreamItemProjection:
-        projection = self._stream_item_projection(item, sequence)
-        assert projection.legacy_token is not None
-        return projection
-
-    def _stage_compatibility_event(self, event: Event) -> Event | None:
-        if event.type == EventType.TOOL_PROCESS:
-            self._put_staging_item(
-                self._tool_process_events,
-                event,
-                "tool process event",
-            )
-            return None
-        return event
-
     def _queue_parser_output(
         self,
         item: object,
     ) -> None:
         if isinstance(item, StreamProviderEvent):
-            bridged_item = self._legacy_parser_item_from_provider_event(item)
-            if bridged_item is None:
-                return
-            item = bridged_item
-        projection = self._stream_item_projection(
-            item,
-            self._canonical_sequence,
-        )
-        if projection.event is not None:
-            staged = self._stage_compatibility_event(projection.event)
-            if staged is None:
-                return
-            assert self._parser_queue
-            self._put_staging_item(
-                self._parser_queue,
-                staged,
-                "parser item",
+            self._append_canonical_provider_event_item(item)
+            return
+        if isinstance(item, CanonicalStreamItem):
+            self._append_canonical_response_item(item)
+            return
+        if isinstance(item, StreamConsumerProjection):
+            self._append_canonical_response_item(
+                canonical_item_from_consumer_projection(item)
             )
             return
+        raise StreamValidationError(self._LEGACY_STREAM_ERROR)
 
-        assert self._parser_queue
-        self._put_staging_item(
-            self._parser_queue,
-            item,
-            "parser item",
-        )
-
-    def _legacy_parser_item_from_provider_event(
+    def _append_canonical_provider_event_item(
         self,
         event: StreamProviderEvent,
-    ) -> ToolCallToken | Event | None:
-        if event.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
-            return ToolCallToken(token=event.text_delta or "")
+    ) -> CanonicalStreamItem | None:
+        assert isinstance(event, StreamProviderEvent)
         if event.kind is StreamItemKind.TOOL_CALL_READY:
-            data = cast(dict[str, Any], event.data or {})
-            call = ToolCall(
-                id=event.correlation.tool_call_id,
-                name=cast(str, data.get("name") or ""),
-                arguments=cast(dict[str, Any], data.get("arguments") or {}),
-            )
-            return _legacy_tool_event(
-                EventType.TOOL_PROCESS,
-                payload=cast(Any, [call]),
-                started=perf_counter(),
-            )
-        if event.kind is StreamItemKind.STREAM_DIAGNOSTIC:
-            return _legacy_tool_event(
-                EventType.TOOL_DIAGNOSTIC,
-                payload={
-                    "diagnostics": cast(
-                        Any,
-                        self._legacy_diagnostics_from_provider_event(event),
-                    )
-                },
-                started=perf_counter(),
-            )
+            self._queue_provider_tool_call(event)
+            return None
         if event.kind is StreamItemKind.TOOL_CALL_DONE:
             return None
-        raise AssertionError(f"unsupported parser event kind: {event.kind}")
-
-    @staticmethod
-    def _legacy_diagnostics_from_provider_event(
-        event: StreamProviderEvent,
-    ) -> list[ToolCallDiagnostic]:
-        data = event.data if isinstance(event.data, dict) else {}
-        diagnostics = data.get("diagnostics")
-        if not isinstance(diagnostics, list):
-            return []
-        fallback_call_id = event.correlation.tool_call_id
-        if fallback_call_id is None:
-            tool_call_id = data.get("tool_call_id")
-            fallback_call_id = (
-                tool_call_id if isinstance(tool_call_id, str) else None
-            )
-        return [
-            OrchestratorResponse._legacy_diagnostic_from_data(
-                diagnostic,
-                fallback_call_id=fallback_call_id,
-            )
-            for diagnostic in diagnostics
-            if isinstance(diagnostic, dict)
-        ]
-
-    @staticmethod
-    def _legacy_diagnostic_from_data(
-        data: dict[str, Any],
-        *,
-        fallback_call_id: str | None,
-    ) -> ToolCallDiagnostic:
-        return ToolCallDiagnostic(
-            id=cast(str, data.get("id") or "parser-diagnostic"),
-            call_id=cast(str | None, data.get("call_id")) or fallback_call_id,
-            requested_name=cast(str | None, data.get("requested_name")),
-            canonical_name=cast(str | None, data.get("canonical_name")),
-            status=ToolCallDiagnosticStatus(
-                cast(
-                    str,
-                    data.get("status")
-                    or ToolCallDiagnosticStatus.NON_EXECUTED.value,
-                )
-            ),
-            code=ToolCallDiagnosticCode(
-                cast(
-                    str,
-                    data.get("code")
-                    or ToolCallDiagnosticCode.MALFORMED_CALL.value,
-                )
-            ),
-            stage=ToolCallDiagnosticStage(
-                cast(
-                    str,
-                    data.get("stage") or ToolCallDiagnosticStage.PARSE.value,
-                )
-            ),
-            message=cast(str, data.get("message") or "Malformed tool call."),
-            retryable=bool(data.get("retryable", False)),
-            details=cast(dict[str, Any], data.get("details") or {}),
-            started_at=OrchestratorResponse._legacy_diagnostic_datetime(
-                data.get("started_at")
-            ),
-            finished_at=OrchestratorResponse._legacy_diagnostic_datetime(
-                data.get("finished_at")
-            ),
-            duration_ms=cast(int | float | None, data.get("duration_ms")),
-        )
-
-    @staticmethod
-    def _legacy_diagnostic_datetime(value: object) -> datetime | None:
-        if value is None:
-            return None
-        assert isinstance(value, str)
-        return datetime.fromisoformat(value)
-
-    def _matching_token_event_canonical_item(
-        self,
-        item: CanonicalStreamItem | Token | TokenDetail | str,
-    ) -> CanonicalStreamItem | None:
-        pending = self._last_token_event_canonical_item
-        self._last_token_event_canonical_item = None
-        if pending is None:
-            return None
-        candidate = (
-            item
-            if isinstance(item, CanonicalStreamItem)
-            else self._legacy_token_projection(
-                item,
-                pending.sequence,
-            ).canonical_item
-        )
-        assert candidate is not None
-        if (
-            candidate.kind is pending.kind
-            and candidate.channel is pending.channel
-            and candidate.text_delta == pending.text_delta
-            and candidate.metadata == pending.metadata
+        if event.kind in (
+            StreamItemKind.ANSWER_DONE,
+            StreamItemKind.REASONING_DONE,
+            StreamItemKind.USAGE_COMPLETED,
         ):
-            return pending
-        return None
+            return None
+        if event.kind in (
+            StreamItemKind.STREAM_COMPLETED,
+            StreamItemKind.STREAM_ERRORED,
+            StreamItemKind.STREAM_CANCELLED,
+        ):
+            self._finish_canonical_stream(
+                event.kind,
+                data=event.data,
+                usage=event.usage,
+            )
+            return None
+        item = self._append_canonical_item(
+            event.kind,
+            text_delta=event.text_delta,
+            data=event.data,
+            usage=event.usage,
+            correlation=event.correlation,
+        )
+        if (
+            item is not None
+            and item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+            and item.correlation.tool_call_id is not None
+        ):
+            self._canonical_tool_call_argument_delta_ids.add(
+                item.correlation.tool_call_id
+            )
+        return item
+
+    def _queue_provider_tool_call(
+        self,
+        event: StreamProviderEvent,
+    ) -> None:
+        call = self._tool_call_from_provider_event(event)
+        ready_item = self._append_canonical_tool_call_ready(call)
+        if ready_item is not None:
+            self._queue_canonical_tool_call(ready_item)
+
+    @staticmethod
+    def _tool_call_from_provider_event(
+        event: StreamProviderEvent,
+    ) -> ToolCall:
+        assert event.kind is StreamItemKind.TOOL_CALL_READY
+        data = event.data if isinstance(event.data, dict) else {}
+        name = data.get("name")
+        arguments = data.get("arguments")
+        return ToolCall(
+            id=event.correlation.tool_call_id,
+            name=name if isinstance(name, str) else "",
+            arguments=(
+                cast(dict[str, Any], arguments)
+                if isinstance(arguments, dict)
+                else None
+            ),
+        )
 
     def _append_canonical_response_item(
         self, item: CanonicalStreamItem
-    ) -> None:
+    ) -> CanonicalStreamItem | None:
         assert isinstance(item, CanonicalStreamItem)
         if item.kind in (
             StreamItemKind.STREAM_STARTED,
             StreamItemKind.STREAM_CLOSED,
+            StreamItemKind.ANSWER_DONE,
+            StreamItemKind.REASONING_DONE,
+            StreamItemKind.USAGE_COMPLETED,
         ):
-            return
+            return None
         if item.terminal_outcome is not None:
+            if item.kind is StreamItemKind.STREAM_COMPLETED:
+                return None
             self._finish_canonical_stream(
                 item.kind,
                 data=item.data,
                 usage=item.usage,
             )
-            return
-        if item.kind is StreamItemKind.USAGE_COMPLETED:
-            self._append_open_canonical_channel_done_items()
+            return None
         assert self._canonical_stream_terminal is None
         assert not self._canonical_stream_closed
         canonical_item = replace(
@@ -744,11 +507,118 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._canonical_items.append(canonical_item)
         self._canonical_sequence += 1
         self._track_canonical_channel_boundary(canonical_item)
+        self._track_canonical_lifecycle_item(canonical_item)
+        return canonical_item
 
-    def _has_canonical_final_usage(self) -> bool:
-        return any(
-            item.kind is StreamItemKind.USAGE_COMPLETED
-            for item in self._canonical_items
+    def _canonical_item_from_response_item(
+        self,
+        item: object,
+    ) -> CanonicalStreamItem:
+        if isinstance(item, StreamConsumerProjection):
+            return canonical_item_from_consumer_projection(item)
+        if not isinstance(item, CanonicalStreamItem):
+            raise StreamValidationError(self._LEGACY_STREAM_ERROR)
+        return item
+
+    async def _process_canonical_response_item(
+        self,
+        item: CanonicalStreamItem,
+    ) -> None:
+        if (
+            item.kind is StreamItemKind.ANSWER_DELTA
+            and item.text_delta is not None
+            and type(self._tool_parser) is ToolCallResponseParser
+        ):
+            token_item = replace(
+                item,
+                stream_session_id=self._canonical_stream_session_id,
+                run_id=self._canonical_run_id,
+                turn_id=self._canonical_turn_id,
+                sequence=self._canonical_sequence,
+                channel=stream_channel_for_kind(item.kind),
+            )
+            await self._emit_token_generated_event(token_item)
+            self._step += 1
+            for parser_item in await self._tool_parser.push(item.text_delta):
+                self._queue_parser_output(parser_item)
+            return
+
+        canonical_item = self._append_canonical_response_item(item)
+        if canonical_item is None:
+            return
+        if (
+            canonical_item.kind is StreamItemKind.ANSWER_DELTA
+            and canonical_item.text_delta is not None
+        ):
+            await self._emit_token_generated_event(canonical_item)
+            self._step += 1
+            if self._tool_parser:
+                for parser_item in await self._tool_parser.push(
+                    canonical_item.text_delta
+                ):
+                    self._queue_parser_output(parser_item)
+            return
+        if canonical_item.kind is StreamItemKind.TOOL_CALL_READY:
+            self._queue_canonical_tool_call(canonical_item)
+
+    def _track_canonical_lifecycle_item(
+        self,
+        item: CanonicalStreamItem,
+    ) -> None:
+        tool_call_id = item.correlation.tool_call_id
+        if tool_call_id is None:
+            return
+        if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            self._canonical_tool_call_argument_delta_ids.add(tool_call_id)
+        elif item.kind is StreamItemKind.TOOL_CALL_READY:
+            self._canonical_tool_call_ready_ids.add(tool_call_id)
+        elif item.kind is StreamItemKind.TOOL_EXECUTION_STARTED:
+            self._canonical_tool_execution_started_ids.add(tool_call_id)
+        elif item.kind in (
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            StreamItemKind.TOOL_EXECUTION_CANCELLED,
+        ):
+            self._canonical_tool_execution_terminal_ids.add(tool_call_id)
+
+    def _queue_canonical_tool_call(
+        self,
+        item: CanonicalStreamItem,
+    ) -> None:
+        assert item.kind is StreamItemKind.TOOL_CALL_READY
+        self._put_staging_item(
+            self._pending_tool_call_ready_items,
+            item,
+            "pending tool call ready item",
+        )
+
+    def _legacy_tool_process_event_from_ready_item(
+        self,
+        item: CanonicalStreamItem,
+    ) -> Event:
+        call = self._tool_call_from_canonical_item(item)
+        return _legacy_tool_event(
+            EventType.TOOL_PROCESS,
+            payload=cast(dict[str, Any], [call]),
+            started=perf_counter(),
+        )
+
+    @staticmethod
+    def _tool_call_from_canonical_item(
+        item: CanonicalStreamItem,
+    ) -> ToolCall:
+        assert item.kind is StreamItemKind.TOOL_CALL_READY
+        data = item.data if isinstance(item.data, dict) else {}
+        name = data.get("name")
+        arguments = data.get("arguments")
+        return ToolCall(
+            id=item.correlation.tool_call_id,
+            name=name if isinstance(name, str) else "",
+            arguments=(
+                cast(dict[str, Any], arguments)
+                if isinstance(arguments, dict)
+                else None
+            ),
         )
 
     @property
@@ -797,6 +667,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         return entity_class(**loads(json))
 
     def __aiter__(self) -> "OrchestratorResponse":
+        self._prepare_iteration(reset_yield_index=True)
+        return self
+
+    def _prepare_iteration(self, *, reset_yield_index: bool) -> None:
+        assert isinstance(reset_yield_index, bool)
         if self._event_manager:
             self._response.add_done_callback(self._on_consumed)
         if not self._canonical_items:
@@ -813,58 +688,67 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             calls=list(self._call_history),
             cancellation_checker=self._cancellation_checker,
         )
-        self._tool_call_events = self._make_staging_queue()
-        self._tool_process_events = self._make_staging_queue()
-        self._tool_result_emit_events = self._make_staging_queue()
-        self._tool_result_events = self._make_staging_queue()
+        self._pending_tool_call_ready_items = self._make_staging_queue()
+        self._tool_call_ready_items = self._make_staging_queue()
+        self._tool_result_outcomes = self._make_staging_queue()
         self._response_drained = False
-        self._pending_tool_call = None
-        self._pending_tool_call_anonymous = False
-        self._pending_tool_call_argument_text = ""
-        self._pending_tool_call_unanchored_deltas = []
         self._step = 0
-        return self
+        if reset_yield_index:
+            self._canonical_yield_index = 0
 
-    async def __anext__(self) -> Token | TokenDetail | Event:
+    async def __anext__(self) -> CanonicalStreamItem:
         assert self._response_iterator
 
         while True:
-            item = await self._next_item()
+            item = self._next_canonical_yield_item()
             if item is not None:
                 return item
+            try:
+                await self._next_item()
+            except StopAsyncIteration:
+                item = self._next_canonical_yield_item()
+                if item is not None:
+                    return item
+                raise
 
-    async def _next_item(self) -> Token | TokenDetail | Event | None:
+    def _next_canonical_yield_item(self) -> CanonicalStreamItem | None:
+        if self._canonical_yield_index >= len(self._canonical_items):
+            return None
+        item = self._canonical_items[self._canonical_yield_index]
+        self._canonical_yield_index += 1
+        return item
+
+    async def _next_item(self) -> None:
         assert self._response_iterator
 
         if self._parser_queue and not self._parser_queue.empty():
-            return self._parser_queue.get()
+            self._append_canonical_response_item(self._parser_queue.get())
+            return None
 
-        if not self._tool_result_emit_events.empty():
-            return self._tool_result_emit_events.get()
-
-        if self._response_drained and not self._tool_process_events.empty():
-            event = self._tool_process_events.get()
-            assert event.type == EventType.TOOL_PROCESS
+        if (
+            self._response_drained
+            and not self._pending_tool_call_ready_items.empty()
+        ):
+            item = self._pending_tool_call_ready_items.get()
             self._put_staging_item(
-                self._tool_call_events,
-                event,
-                "tool call event",
+                self._tool_call_ready_items,
+                item,
+                "tool call ready item",
             )
-            return event
+            return None
 
-        if self._response_drained and not self._tool_call_events.empty():
-            event = self._tool_call_events.get()
-            assert event.type == EventType.TOOL_PROCESS
+        if self._response_drained and not self._tool_call_ready_items.empty():
+            item = self._tool_call_ready_items.get()
+            assert item.kind is StreamItemKind.TOOL_CALL_READY
             if self._event_manager:
-                await self._event_manager.trigger(event)
+                await self._event_manager.trigger(
+                    self._legacy_tool_process_event_from_ready_item(item)
+                )
 
-            calls = cast(list[ToolCall], event.payload or [])
-            if calls:
-                for call in calls:
-                    assert isinstance(call, ToolCall)
-                    call = self._tool_call_with_canonical_id(call)
-                    self._append_canonical_tool_call_ready(call)
-                    self._put_staging_item(self._calls, call, "tool call")
+            call = self._tool_call_from_canonical_item(item)
+            call = self._tool_call_with_canonical_id(call)
+            self._put_staging_item(self._calls, call, "tool call")
+            return None
 
         if self._response_drained and not self._calls.empty():
             self._finish_active_model_continuation(
@@ -881,39 +765,29 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 outcomes, key=lambda outcome: outcome.planned_index
             )
             for outcome in ordered:
-                self._record_tool_outcome(outcome.result)
-                self._tool_context = outcome.context
                 self._put_staging_item(
-                    self._tool_result_events,
-                    outcome.event,
-                    "tool result event",
+                    self._tool_result_outcomes,
+                    outcome,
+                    "tool result outcome",
                 )
-            first, *remaining = ordered
-            for outcome in remaining:
-                self._put_staging_item(
-                    self._tool_result_emit_events,
-                    outcome.event,
-                    "tool result emit event",
-                )
-            return first.event
+            return None
 
         # Wait until all results are collected
         if (
-            self._tool_call_events.empty()
+            self._tool_call_ready_items.empty()
             and self._calls.empty()
-            and not self._tool_result_events.empty()
+            and not self._tool_result_outcomes.empty()
         ):
-            result_events: list[Event] = []
-            while not self._tool_result_events.empty():
-                result_event = self._tool_result_events.get()
-                result_events.append(result_event)
+            completed_outcomes: list[_ToolExecutionOutcome] = []
+            while not self._tool_result_outcomes.empty():
+                completed_outcomes.append(self._tool_result_outcomes.get())
 
             tool_messages = []
             tool_outcomes = []
-            for e in result_events:
-                assert e.payload is not None and "result" in e.payload
-                tool_result = e.payload["result"]
-                event_call = e.payload.get("call")
+            for outcome in completed_outcomes:
+                self._record_tool_outcome(outcome.result)
+                self._tool_context = outcome.context
+                tool_result = outcome.result
                 if not isinstance(
                     tool_result,
                     (ToolCallResult, ToolCallError, ToolCallDiagnostic),
@@ -923,11 +797,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 tool_messages.extend(
                     self._tool_observation_messages(
                         tool_result,
-                        call=(
-                            event_call
-                            if isinstance(event_call, ToolCall)
-                            else None
-                        ),
+                        call=outcome.call,
                         json_output=True,
                     )
                 )
@@ -1018,7 +888,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             self._response = inner_response
             self._response_drained = False
             self._set_active_model_continuation(continuation_id)
-            self.__aiter__()
+            self._prepare_iteration(reset_yield_index=False)
 
             event_tool_model_response = _legacy_tool_event(
                 EventType.TOOL_MODEL_RESPONSE,
@@ -1032,117 +902,50 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             if self._event_manager:
                 await self._event_manager.trigger(event_tool_model_response)
 
-            return event_tool_model_response
+            return None
 
         try:
-            token = await self._response_iterator.__anext__()
-            projection = self._stream_item_projection(
-                token,
-                self._canonical_sequence,
-            )
-            if projection.event is not None:
-                return await self._emit(projection.event)
-            canonical_item = projection.canonical_item
-            assert canonical_item is not None
-            if projection.canonical_source:
-                if (
-                    canonical_item.kind is StreamItemKind.ANSWER_DELTA
-                    and canonical_item.text_delta is not None
-                ):
-                    canonical_sequence = self._canonical_sequence
-                    self._append_canonical_projection_item(canonical_item)
-                    token = Token(token=canonical_item.text_delta)
-                    return await self._emit(
-                        token, canonical_sequence=canonical_sequence
-                    )
-                else:
-                    self._append_canonical_projection_item(canonical_item)
-                    return None
-            if projection.legacy_tool_call_token is not None:
-                self._record_streamed_tool_call_token(
-                    projection.legacy_tool_call_token
-                )
+            item = await self._response_iterator.__anext__()
+            canonical_item = self._canonical_item_from_response_item(item)
+            await self._process_canonical_response_item(canonical_item)
         except StopAsyncIteration:
             self._response_drained = True
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
             )
-            self._queue_pending_tool_call_event()
             if self._tool_parser:
-                parser_items: list[Token | TokenDetail | Event] = []
-                parser_events: list[Event] = []
-                for item in await self._tool_parser.flush():
-                    if isinstance(item, StreamProviderEvent):
-                        bridged_item = (
-                            self._legacy_parser_item_from_provider_event(item)
-                        )
-                        if bridged_item is None:
-                            continue
-                        item = bridged_item
-                    projection = self._stream_item_projection(
+                try:
+                    for item in await self._tool_parser.flush():
+                        self._queue_parser_output(item)
+                except Exception as exc:
+                    self._finish_canonical_stream(
+                        StreamItemKind.STREAM_ERRORED,
+                        data={
+                            "error_type": exc.__class__.__name__,
+                            "message": str(exc),
+                        },
+                    )
+                    raise
+                if not self._pending_tool_call_ready_items.empty():
+                    item = self._pending_tool_call_ready_items.get()
+                    self._put_staging_item(
+                        self._tool_call_ready_items,
                         item,
-                        self._canonical_sequence,
+                        "tool call ready item",
                     )
-                    if projection.event is not None:
-                        event = projection.event
-                        if event.type == EventType.TOOL_PROCESS:
-                            self._put_staging_item(
-                                self._tool_process_events,
-                                event,
-                                "tool process event",
-                            )
-                        elif event.type == EventType.TOOL_DIAGNOSTIC:
-                            parser_events.append(event)
-                        else:
-                            self._put_staging_item(
-                                self._tool_process_events,
-                                event,
-                                "tool process event",
-                            )
-                    else:
-                        legacy_token = projection.legacy_token
-                        assert legacy_token is not None
-                        parser_items.append(
-                            cast(Token | TokenDetail | Event, legacy_token)
-                        )
-                assert self._parser_queue
-                for item in parser_items:
-                    self._put_staging_item(
-                        self._parser_queue,
-                        item,
-                        "parser item",
-                    )
-                for event in parser_events:
-                    self._put_staging_item(
-                        self._parser_queue,
-                        event,
-                        "parser item",
-                    )
-                if self._parser_queue and not self._parser_queue.empty():
-                    return self._parser_queue.get()
-                if not self._tool_process_events.empty():
-                    event = self._tool_process_events.get()
-                    assert event.type == EventType.TOOL_PROCESS
-                    self._put_staging_item(
-                        self._tool_call_events,
-                        event,
-                        "tool call event",
-                    )
-                    return event
-            if not self._tool_process_events.empty():
-                event = self._tool_process_events.get()
-                assert event.type == EventType.TOOL_PROCESS
+                    return None
+            if not self._pending_tool_call_ready_items.empty():
+                item = self._pending_tool_call_ready_items.get()
                 self._put_staging_item(
-                    self._tool_call_events,
-                    event,
-                    "tool call event",
+                    self._tool_call_ready_items,
+                    item,
+                    "tool call ready item",
                 )
-                return event
+                return None
             if (
-                not self._tool_result_emit_events.empty()
-                or not self._tool_call_events.empty()
+                not self._tool_call_ready_items.empty()
                 or not self._calls.empty()
-                or not self._tool_result_events.empty()
+                or not self._tool_result_outcomes.empty()
             ):
                 return await self._next_item()
             if self._event_manager and not self._finished:
@@ -1174,7 +977,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             )
             raise
 
-        return await self._emit(token)
+        return None
 
     async def _react(
         self, response: TextGenerationResponse, output: str | None = None
@@ -1677,43 +1480,61 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             calls: list[ToolCall] = []
             async for item in response:
                 await self._raise_if_cancelled(finish_stream=False)
-                projection = self._stream_item_projection(
-                    item,
-                    self._canonical_sequence,
-                )
-                if projection.event is not None:
-                    continue
-                canonical_item = projection.canonical_item
-                assert canonical_item is not None
-                if projection.canonical_source:
-                    if (
-                        canonical_item.kind is StreamItemKind.ANSWER_DELTA
-                        and canonical_item.text_delta is not None
+                canonical_item = self._canonical_item_from_response_item(item)
+                if (
+                    canonical_item.kind is StreamItemKind.ANSWER_DELTA
+                    and canonical_item.text_delta is not None
+                    and type(self._tool_parser) is ToolCallResponseParser
+                ):
+                    token_item = replace(
+                        canonical_item,
+                        stream_session_id=self._canonical_stream_session_id,
+                        run_id=self._canonical_run_id,
+                        turn_id=self._canonical_turn_id,
+                        sequence=self._canonical_sequence,
+                        channel=stream_channel_for_kind(canonical_item.kind),
+                    )
+                    await self._emit_token_generated_event(token_item)
+                    self._step += 1
+                    collection_index = len(self._canonical_items)
+                    for parser_item in await self._tool_parser.push(
+                        canonical_item.text_delta
                     ):
-                        text_parts.append(canonical_item.text_delta)
-                    continue
-                legacy_token = projection.legacy_token
-                assert legacy_token is not None
-                await self._emit_token_generated_event(legacy_token)
-                self._step += 1
-                tool_call_token = projection.legacy_tool_call_token
-                if tool_call_token is not None:
-                    if tool_call_token.call is not None:
-                        self._collect_streamed_tool_call_token(
-                            tool_call_token,
-                            calls,
+                        self._queue_parser_output(parser_item)
+                        self._collect_response_text_and_calls(
+                            collection_index, text_parts, calls
                         )
-                    else:
-                        self._record_unanchored_tool_call_delta(
-                            tool_call_token.token
-                        )
+                        collection_index = len(self._canonical_items)
                     continue
-                text_delta = canonical_item.text_delta
-                assert text_delta is not None
-                text_parts.append(text_delta)
-            pending_call = self._take_pending_tool_call()
-            if pending_call is not None:
-                calls.append(pending_call)
+
+                collection_index = len(self._canonical_items)
+                appended_item = self._append_canonical_response_item(
+                    canonical_item
+                )
+                if appended_item is None:
+                    continue
+                if (
+                    appended_item.kind is StreamItemKind.ANSWER_DELTA
+                    and appended_item.text_delta is not None
+                ):
+                    await self._emit_token_generated_event(appended_item)
+                    self._step += 1
+                    text_parts.append(appended_item.text_delta)
+                elif appended_item.kind is StreamItemKind.TOOL_CALL_READY:
+                    calls.append(
+                        self._tool_call_from_canonical_item(appended_item)
+                    )
+                self._collect_response_text_and_calls(
+                    collection_index + 1, text_parts, calls
+                )
+            if self._tool_parser is not None:
+                collection_index = len(self._canonical_items)
+                for parser_item in await self._tool_parser.flush():
+                    self._queue_parser_output(parser_item)
+                    self._collect_response_text_and_calls(
+                        collection_index, text_parts, calls
+                    )
+                    collection_index = len(self._canonical_items)
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
             )
@@ -1733,17 +1554,31 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             )
             raise
 
+    def _collect_response_text_and_calls(
+        self,
+        start_index: int,
+        text_parts: list[str],
+        calls: list[ToolCall],
+    ) -> None:
+        for item in self._canonical_items[start_index:]:
+            if (
+                item.kind is StreamItemKind.ANSWER_DELTA
+                and item.text_delta is not None
+            ):
+                text_parts.append(item.text_delta)
+            elif item.kind is StreamItemKind.TOOL_CALL_READY:
+                calls.append(self._tool_call_from_canonical_item(item))
+
     async def _emit_token_generated_event(
         self,
-        item: Token | TokenDetail | str,
-        *,
-        canonical_sequence: int | None = None,
-    ) -> CanonicalStreamItem | None:
+        item: CanonicalStreamItem,
+    ) -> None:
         if not self._should_emit_token_generated_event():
-            return None
-        token_str = item.token if hasattr(item, "token") else str(item)
-        token_id = getattr(item, "id", None)
-        if token_id is None and self._should_enrich_token_ids():
+            return
+        assert item.text_delta is not None
+        token_str = item.text_delta
+        token_id = item.metadata.get("token_id")
+        if not isinstance(token_id, int) and self._should_enrich_token_ids():
             tokenizer = (
                 self._engine_agent.engine.tokenizer
                 if self._engine_agent.engine
@@ -1753,27 +1588,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 ids = tokenizer.encode(token_str, add_special_tokens=False)
                 token_id = ids[0] if ids else None
 
-        sequence = (
-            canonical_sequence
-            if canonical_sequence is not None
-            else self._canonical_sequence
-        )
-        if canonical_sequence is None:
-            self._canonical_sequence += 1
-        canonical_item = canonical_item_from_token(
-            item,
-            sequence,
-            stream_session_id=self._canonical_stream_session_id,
-            run_id=self._canonical_run_id,
-            turn_id=self._canonical_turn_id,
-        )
-
         assert self._event_manager
         payload = {
             "token_id": token_id,
             "model_id": self._engine_agent.engine.model_id,
             "token": token_str,
-            "token_type": type(item).__qualname__,
+            "token_type": CanonicalStreamItem.__qualname__,
             "step": self._step,
         }
         await self._event_manager.trigger(
@@ -1782,12 +1602,11 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 payload=payload,
                 observability_payload=(
                     EventObservabilityPayload.canonical_stream(
-                        stream_observability_payload(canonical_item)
+                        stream_observability_payload(item)
                     )
                 ),
             )
         )
-        return canonical_item
 
     def _should_emit_token_generated_event(self) -> bool:
         if not self._event_manager:
@@ -2272,53 +2091,6 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             ),
         )
 
-    async def _emit(
-        self,
-        item: Token | TokenDetail | Event | str,
-        *,
-        canonical_sequence: int | None = None,
-    ) -> Token | TokenDetail | Event | None:
-        projection = self._stream_item_projection(
-            item,
-            (
-                canonical_sequence
-                if canonical_sequence is not None
-                else self._canonical_sequence
-            ),
-        )
-        if self._event_manager and projection.event is None:
-            legacy_token = projection.legacy_token
-            assert legacy_token is not None
-            canonical_item = await self._emit_token_generated_event(
-                legacy_token,
-                canonical_sequence=canonical_sequence,
-            )
-            self._last_token_event_canonical_item = (
-                canonical_item if canonical_sequence is None else None
-            )
-
-        self._step += 1
-
-        if projection.event is not None:
-            return self._stage_compatibility_event(projection.event)
-
-        if projection.parser_text is not None and self._tool_parser:
-            items = await self._tool_parser.push(projection.parser_text)
-            if not items:
-                return None
-        else:
-            items = [item]
-
-        for it in items:
-            self._queue_parser_output(it)
-
-        assert self._parser_queue
-        return (
-            self._parser_queue.get()
-            if not self._parser_queue.empty()
-            else None
-        )
-
     async def _on_consumed(self) -> None:
         assert self._event_manager
         await self._event_manager.trigger(Event(type=EventType.STREAM_END))
@@ -2385,6 +2157,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         self._canonical_items.append(item)
         self._canonical_sequence += 1
         self._track_canonical_channel_boundary(item)
+        self._track_canonical_lifecycle_item(item)
         return item
 
     def _finish_canonical_stream(
@@ -2406,13 +2179,9 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         terminal_usage: Any | None = None
         if kind is StreamItemKind.STREAM_COMPLETED:
             terminal_usage = (
-                None
-                if self._has_canonical_final_usage()
-                else (
-                    cast(Any, usage)
-                    if usage is not None
-                    else self._canonical_usage()
-                )
+                cast(Any, usage)
+                if usage is not None
+                else self._canonical_usage()
             )
         self._append_canonical_item(
             kind,
@@ -2447,10 +2216,12 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         elif item.kind is StreamItemKind.REASONING_DONE:
             self._canonical_reasoning_done = True
 
-    def _append_canonical_tool_call_ready(self, call: ToolCall) -> None:
+    def _append_canonical_tool_call_ready(
+        self, call: ToolCall
+    ) -> CanonicalStreamItem | None:
         tool_call_id = self._canonical_tool_call_id(call)
         if tool_call_id in self._canonical_tool_call_ready_ids:
-            return
+            return None
         self._canonical_tool_call_ready_ids.add(tool_call_id)
         correlation = StreamItemCorrelation(tool_call_id=tool_call_id)
         arguments = (
@@ -2468,7 +2239,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
                 text_delta=arguments,
                 correlation=correlation,
             )
-        self._append_canonical_item(
+        ready_item = self._append_canonical_item(
             StreamItemKind.TOOL_CALL_READY,
             data={
                 "name": call.name,
@@ -2480,6 +2251,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             StreamItemKind.TOOL_CALL_DONE,
             correlation=correlation,
         )
+        return ready_item
 
     def _append_canonical_tool_execution_started(self, call: ToolCall) -> None:
         tool_call_id = self._canonical_tool_call_id(call)
@@ -2723,147 +2495,6 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
         if call.id is not None:
             return call
         return replace(call, id=self._canonical_tool_call_id(call))
-
-    def _record_streamed_tool_call_token(self, token: ToolCallToken) -> None:
-        call = token.call
-        if call is None:
-            self._record_unanchored_tool_call_delta(token.token)
-            return
-        anonymous = call.id is None
-        call = self._merge_or_assign_tool_call_id(
-            call,
-            anonymous=anonymous,
-            token_text=token.token,
-        )
-        if (
-            self._pending_tool_call is not None
-            and self._canonical_tool_call_id(self._pending_tool_call)
-            != self._canonical_tool_call_id(call)
-        ):
-            self._queue_pending_tool_call_event()
-        token_text = self._flush_unanchored_tool_call_deltas(call)
-        token_text += token.token
-        self._set_pending_tool_call(call, anonymous, token_text)
-        if token.token:
-            self._append_canonical_tool_call_argument_delta(call, token.token)
-
-    def _collect_streamed_tool_call_token(
-        self, token: ToolCallToken, calls: list[ToolCall]
-    ) -> None:
-        call = token.call
-        assert call is not None
-        anonymous = call.id is None
-        call = self._merge_or_assign_tool_call_id(
-            call,
-            anonymous=anonymous,
-            token_text=token.token,
-        )
-        if (
-            self._pending_tool_call is not None
-            and self._canonical_tool_call_id(self._pending_tool_call)
-            != self._canonical_tool_call_id(call)
-        ):
-            pending_call = self._take_pending_tool_call()
-            assert pending_call is not None
-            calls.append(pending_call)
-        token_text = self._flush_unanchored_tool_call_deltas(call)
-        token_text += token.token
-        self._set_pending_tool_call(call, anonymous, token_text)
-        if token.token:
-            self._append_canonical_tool_call_argument_delta(call, token.token)
-
-    def _record_unanchored_tool_call_delta(self, token_text: str) -> None:
-        if token_text:
-            self._pending_tool_call_unanchored_deltas.append(token_text)
-
-    def _flush_unanchored_tool_call_deltas(self, call: ToolCall) -> str:
-        token_text = "".join(self._pending_tool_call_unanchored_deltas)
-        for delta in self._pending_tool_call_unanchored_deltas:
-            self._append_canonical_tool_call_argument_delta(call, delta)
-        self._pending_tool_call_unanchored_deltas = []
-        return token_text
-
-    def _queue_pending_tool_call_event(self) -> None:
-        call = self._take_pending_tool_call()
-        if call is None:
-            return
-        event = _legacy_tool_event(
-            EventType.TOOL_PROCESS,
-            payload=cast(dict[str, Any], [call]),
-            started=perf_counter(),
-        )
-        self._put_staging_item(
-            self._tool_process_events,
-            event,
-            "tool process event",
-        )
-
-    def _take_pending_tool_call(self) -> ToolCall | None:
-        call = self._pending_tool_call
-        self._pending_tool_call = None
-        self._pending_tool_call_anonymous = False
-        self._pending_tool_call_argument_text = ""
-        self._pending_tool_call_unanchored_deltas = []
-        return call
-
-    def _set_pending_tool_call(
-        self,
-        call: ToolCall,
-        anonymous: bool,
-        token_text: str,
-    ) -> None:
-        if (
-            self._pending_tool_call is not None
-            and self._canonical_tool_call_id(self._pending_tool_call)
-            == self._canonical_tool_call_id(call)
-        ):
-            self._pending_tool_call_argument_text += token_text
-        else:
-            self._pending_tool_call_argument_text = token_text
-        self._pending_tool_call = call
-        self._pending_tool_call_anonymous = anonymous
-
-    def _merge_or_assign_tool_call_id(
-        self,
-        call: ToolCall,
-        *,
-        anonymous: bool,
-        token_text: str,
-    ) -> ToolCall:
-        if (
-            anonymous
-            and self._pending_tool_call_anonymous
-            and self._pending_tool_call is not None
-            and self._pending_tool_call.name == call.name
-        ):
-            tool_call_id = self._canonical_tool_call_id(
-                self._pending_tool_call
-            )
-            if (
-                tool_call_id in self._canonical_tool_call_argument_delta_ids
-                and self._anonymous_tool_call_fragment_extends_pending(
-                    call,
-                    token_text,
-                )
-            ):
-                return replace(call, id=tool_call_id)
-        return self._tool_call_with_canonical_id(call)
-
-    def _anonymous_tool_call_fragment_extends_pending(
-        self,
-        call: ToolCall,
-        token_text: str,
-    ) -> bool:
-        try:
-            decoded = loads(self._pending_tool_call_argument_text + token_text)
-            return bool(decoded == call.arguments)
-        except (TypeError, ValueError):
-            return not self._looks_like_anonymous_tool_call_start(token_text)
-
-    @staticmethod
-    def _looks_like_anonymous_tool_call_start(token_text: str) -> bool:
-        stripped = token_text.lstrip()
-        return stripped.startswith(("{", "[", "<tool_call", "<|", "<｜"))
 
     def _append_canonical_tool_call_argument_delta(
         self,

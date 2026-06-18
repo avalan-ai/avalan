@@ -61,6 +61,17 @@ def _is_tool_event(item: object) -> bool:
     }
 
 
+def _answer_delta_texts(items: Iterable[object]) -> list[str | None]:
+    return [
+        item.text_delta
+        for item in items
+        if (
+            isinstance(item, StreamProviderEvent)
+            and item.kind is StreamItemKind.ANSWER_DELTA
+        )
+    ]
+
+
 async def _event_stream(
     events: list[StreamProviderEvent],
 ) -> AsyncIterator[StreamProviderEvent]:
@@ -522,7 +533,44 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         parser._pending_tokens = ["rest"]
         parser._pending_str = "rest"
         flushed = await parser.flush()
-        self.assertEqual(flushed, ["rest"])
+        self.assertEqual(_answer_delta_texts(flushed), ["rest"])
+
+    async def test_visible_text_around_tool_call_is_answer_delta_event(
+        self,
+    ) -> None:
+        manager = ToolManager(parser=ToolCallParser())
+        parser = ToolCallResponseParser(manager, None)
+        text = (
+            "visible before "
+            '<tool_call>{"name":"calc","arguments":{"x":1}}</tool_call>'
+            " visible after"
+        )
+
+        output = list(await parser.push(text))
+        output.extend(await parser.flush())
+
+        self.assertFalse(any(isinstance(item, str) for item in output))
+        self.assertFalse(
+            any(isinstance(item, ToolCallToken) for item in output)
+        )
+        self.assertEqual(
+            _answer_delta_texts(output),
+            ["visible before ", " visible after"],
+        )
+        self.assertNotIn("<tool_call", "".join(_answer_delta_texts(output)))
+        self.assertEqual(
+            [
+                item.kind
+                for item in output
+                if isinstance(item, StreamProviderEvent)
+                and _is_tool_event(item)
+            ],
+            [
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                StreamItemKind.TOOL_CALL_READY,
+                StreamItemKind.TOOL_CALL_DONE,
+            ],
+        )
 
     async def test_valid_tool_call_preserves_explicit_id(self) -> None:
         manager = ToolManager(parser=ToolCallParser())
@@ -661,7 +709,10 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
                         for item in output
                     )
                 )
-                self.assertEqual(output[-1], visible_suffix)
+                self.assertIsInstance(output[-1], StreamProviderEvent)
+                suffix = cast(StreamProviderEvent, output[-1])
+                self.assertIs(suffix.kind, StreamItemKind.ANSWER_DELTA)
+                self.assertEqual(suffix.text_delta, visible_suffix)
                 self.assertEqual(await parser.flush(), [])
 
     async def test_split_tool_like_prefix_remains_visible(self) -> None:
@@ -678,7 +729,10 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
             output.extend(await parser.push(token))
         output.extend(await parser.flush())
 
-        self.assertEqual(output, ["before ", "<tool_call", "out> text"])
+        self.assertEqual(
+            _answer_delta_texts(output),
+            ["before ", "<tool_call", "out> text"],
+        )
         self.assertFalse(
             any(isinstance(item, ToolCallToken) for item in output)
         )
@@ -1016,10 +1070,10 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         parser._pending_tokens = ["pending"]
         parser._pending_str = "pending"
         result = await parser.push("noise")
-        self.assertEqual(result, ["pending", "noise"])
+        self.assertEqual(_answer_delta_texts(result), ["pending", "noise"])
         self.assertEqual(parser._tag_buffer, "noise")
         result = await parser.push("a" * 70)
-        self.assertEqual(result, ["a" * 70])
+        self.assertEqual(_answer_delta_texts(result), ["a" * 70])
         self.assertEqual(len(parser._tag_buffer), 64)
 
     async def test_return_empty_result_when_list_ignores_appends(self) -> None:
