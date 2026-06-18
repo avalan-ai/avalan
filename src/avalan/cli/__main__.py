@@ -1399,7 +1399,7 @@ class CLI:
             dest="use_sync_generator",
             action="store_true",
             default=False,
-            help="Don't use an async generator (token streaming)",
+            help="Don't use an async generator (streaming output)",
         )
         agent_run_parser.add_argument(
             "--tools-confirm",

@@ -20,7 +20,7 @@ This directory showcases configuration files and small programs that demonstrate
 - [tasks](tasks/) – Task definition examples for scalar input, structured JSON, large direct files, provider file ids, hosted URLs, object-store URIs, conversion, retrieval and map-reduce fallback, local text conversion, local multimodal media, queued file tasks, artifact outputs, SDK construction, and intentionally invalid diagnostics.
 
 ## Text generation
-- [text_generation.py](text_generation.py) – Streams tokens from a Llama 3 model. Adjust `model` id, `temperature`, or `max_new_tokens`.
+- [text_generation.py](text_generation.py) – Streams canonical answer deltas from a Llama 3 model. Adjust `model` id, `temperature`, or `max_new_tokens`.
 - [text_generation_openai.py](text_generation_openai.py) – Uses OpenAI models. Set `OPENAI_API_KEY`, then tweak `model`, `temperature`, or `max_new_tokens`.
 - [text_generation_anthropic.py](text_generation_anthropic.py) – Anthropic API example requiring `ANTHROPIC_API_KEY`. Change `model` or generation settings.
 - [text_generation_google.py](text_generation_google.py) – Gemini via `GOOGLE_API_KEY`. Modify `model`, `temperature`, or token limits.

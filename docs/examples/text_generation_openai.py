@@ -1,7 +1,9 @@
 from asyncio import run
+from os import environ
+
 from avalan.entities import GenerationSettings, TransformerEngineSettings
 from avalan.model.nlp.text.vendor.openai import OpenAIModel
-from os import environ
+from avalan.model.stream import CanonicalStreamItem, StreamItemKind
 
 
 async def example() -> None:
@@ -19,12 +21,21 @@ async def example() -> None:
             times.
         """
 
-        async for token in await lm(
+        async for item in await lm(
             "Who are you?",
             system_prompt=system_prompt,
-            settings=GenerationSettings(temperature=0.9, max_new_tokens=256),
+            settings=GenerationSettings(
+                temperature=0.9,
+                max_new_tokens=256,
+                use_async_generator=True,
+            ),
         ):
-            print(token.token, end="", flush=True)
+            assert isinstance(item, CanonicalStreamItem)
+            if (
+                item.kind is StreamItemKind.ANSWER_DELTA
+                and item.text_delta is not None
+            ):
+                print(item.text_delta, end="", flush=True)
 
 
 if __name__ == "__main__":

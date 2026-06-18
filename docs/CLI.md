@@ -524,12 +524,19 @@ plicate}]
                         [--display-probabilities-maximum DISPLAY_PROBABILITIES_MAXIMUM]
                         [--display-probabilities-sample-minimum DISPLAY_PROBABILITIES_SAMPLE_MINIMUM]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]] [--skip-display-reasoning-time]
-                        [--display-tokens [DISPLAY_TOKENS]] [--display-tools] [--display-tools-events DISPLAY_TOOLS_EVENTS]
+                        [--display-reasoning] [--display-tokens [DISPLAY_TOKENS]]
+                        [--display-tools] [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT] [--id ID]
                         [--participant PARTICIPANT] [--conversation] [--watch] [--no-session | --session SESSION]
                         [--skip-load-recent-messages] [--load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT] [--stats]
-                        [--sync] [--tools-confirm] [--tool-format {json,react,bracket,openai,harmony}]
-                        [--reasoning-tag {think,channel}] [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK]
+                        [--sync] [--tools-confirm] [--tool-format {json,react,bracket,openai,harmony,dsml}]
+                        [--tool-recovery-format {tool_call_block,minimax_xml,tool_code,broad_xml,dsml_leakage,fenced}]
+                        [--reasoning-tag {think,channel}] [--ds4-ctx DS4_CTX]
+                        [--ds4-native-backend {auto,metal,cuda,cpu}]
+                        [--ds4-mtp DS4_MTP] [--ds4-mtp-draft DS4_MTP_DRAFT]
+                        [--ds4-mtp-margin DS4_MTP_MARGIN] [--ds4-warm-weights]
+                        [--ds4-quality] [--with-ds4-native-log]
+                        [--no-ds4-native-log] [--engine-uri ENGINE_URI] [--name NAME] [--role ROLE] [--task TASK]
                         [--instructions INSTRUCTIONS] [--goal-instructions GOAL_INSTRUCTIONS] [--system SYSTEM]
                         [--developer DEVELOPER] [--user USER] [--user-template USER_TEMPLATE] [--memory-recent]
                         [--no-memory-recent]
@@ -539,8 +546,9 @@ plicate}]
                         [--memory-engine-window MEMORY_ENGINE_WINDOW] [--run-max-new-tokens RUN_MAX_NEW_TOKENS]
                         [--run-skip-special-tokens] [--run-disable-cache]
                         [--run-cache-strategy {dynamic,static,offloaded_static,sliding_window,hybrid,mamba,quantized}]
-                        [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P] [--tool TOOL]
-                        [--tools TOOLS] [--tool-browser-engine TOOL_BROWSER_ENGINE] [--tool-browser-search]
+                        [--run-temperature RUN_TEMPERATURE] [--run-top-k RUN_TOP_K] [--run-top-p RUN_TOP_P]
+                        [--reasoning-effort {none,minimal,low,medium,high,xhigh,max}]
+                        [--tool TOOL] [--tools TOOLS] [--tool-browser-engine TOOL_BROWSER_ENGINE] [--tool-browser-search]
                         [--tool-browser-search-context TOOL_BROWSER_SEARCH_CONTEXT]
                         [--tool-browser-search-k TOOL_BROWSER_SEARCH_K] [--tool-browser-debug]
                         [--tool-browser-debug-url TOOL_BROWSER_DEBUG_URL]
@@ -553,6 +561,12 @@ plicate}]
                         [--tool-database-dsn TOOL_DATABASE_DSN] [--tool-database-delay-secs TOOL_DATABASE_DELAY_SECS]
                         [--tool-database-identifier-case TOOL_DATABASE_IDENTIFIER_CASE] [--tool-database-read-only]
                         [--tool-database-allowed-commands TOOL_DATABASE_ALLOWED_COMMANDS]
+                        [--tool-graph-file TOOL_GRAPH_FILE]
+                        [--tool-shell-backend TOOL_SHELL_BACKEND]
+                        [--tool-shell-workspace-root TOOL_SHELL_WORKSPACE_ROOT]
+                        [--tool-shell-cwd TOOL_SHELL_CWD]
+                        [--tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS]
+                        [--tool-shell-max-timeout-seconds TOOL_SHELL_MAX_TIMEOUT_SECONDS]
                         
 
 Run an AI agent
@@ -614,6 +628,7 @@ plicate}
                         Display the time it takes to reach the given Nth token (defaults to 256)
   --skip-display-reasoning-time
                         Don't display total reasoning time
+  --display-reasoning   Display streamed reasoning text in the live response panel
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a time
   --display-tools       If --display-events is specified and there's an orchestrator / agent involved, show the events panel.
@@ -635,12 +650,29 @@ plicate}
   --load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT
                         If specified, load up to these many recent messages
   --stats               Show token generation statistics for agent output
-  --sync                Don't use an async generator (token streaming)
+  --sync                Don't use an async generator (streaming output)
   --tools-confirm       Confirm tool calls before execution
-  --tool-format {json,react,bracket,openai,harmony}
+  --tool-format {json,react,bracket,openai,harmony,dsml}
                         Tool format
+  --tool-recovery-format {tool_call_block,minimax_xml,tool_code,broad_xml,dsml_leakage,fenced}
+                        Enable a tool-call recovery format
   --reasoning-tag {think,channel}
                         Reasoning tag style
+
+DS4 backend options:
+  --ds4-ctx DS4_CTX     DS4 context size
+  --ds4-native-backend {auto,metal,cuda,cpu}
+                        DS4 native backend
+  --ds4-mtp DS4_MTP     DS4 MTP model path
+  --ds4-mtp-draft DS4_MTP_DRAFT
+                        DS4 MTP draft-token count
+  --ds4-mtp-margin DS4_MTP_MARGIN
+                        DS4 MTP acceptance margin
+  --ds4-warm-weights    Warm DS4 model weights when opening the engine
+  --ds4-quality         Enable DS4 quality mode
+  --with-ds4-native-log, --ds4-native-log
+                        Replay DS4 native stderr emitted while opening the engine
+  --no-ds4-native-log   Suppress DS4 native stderr emitted while opening the engine
 
 inline agent settings:
   --engine-uri ENGINE_URI
@@ -686,6 +718,8 @@ inline agent settings:
   --run-top-p RUN_TOP_P
                         If set to < 1, only the smallest set of most probable tokens with probabilities that add up to top_p
                         or higher are kept for generation.
+  --reasoning-effort {none,minimal,low,medium,high,xhigh,max}, --run-reasoning-effort {none,minimal,low,medium,high,xhigh,max}
+                        Reasoning effort level
   --tool TOOL           Enable tool
   --tools TOOLS         Enable tools matching namespace
 
@@ -713,6 +747,70 @@ database tool settings:
   --tool-database-identifier-case TOOL_DATABASE_IDENTIFIER_CASE
   --tool-database-read-only
   --tool-database-allowed-commands TOOL_DATABASE_ALLOWED_COMMANDS
+
+graph tool settings:
+  --tool-graph-file TOOL_GRAPH_FILE
+
+shell tool settings:
+  --tool-shell-backend TOOL_SHELL_BACKEND
+  --tool-shell-workspace-root TOOL_SHELL_WORKSPACE_ROOT
+  --tool-shell-cwd TOOL_SHELL_CWD
+  --tool-shell-default-timeout-seconds TOOL_SHELL_DEFAULT_TIMEOUT_SECONDS
+  --tool-shell-max-timeout-seconds TOOL_SHELL_MAX_TIMEOUT_SECONDS
+  --tool-shell-max-stdout-bytes TOOL_SHELL_MAX_STDOUT_BYTES
+  --tool-shell-max-stderr-bytes TOOL_SHELL_MAX_STDERR_BYTES
+  --tool-shell-max-stdin-bytes TOOL_SHELL_MAX_STDIN_BYTES
+  --tool-shell-max-arguments TOOL_SHELL_MAX_ARGUMENTS
+  --tool-shell-max-argument-bytes TOOL_SHELL_MAX_ARGUMENT_BYTES
+  --tool-shell-max-command-bytes TOOL_SHELL_MAX_COMMAND_BYTES
+  --tool-shell-max-path-count TOOL_SHELL_MAX_PATH_COUNT
+  --tool-shell-max-glob-count TOOL_SHELL_MAX_GLOB_COUNT
+  --tool-shell-max-glob-bytes-per-glob TOOL_SHELL_MAX_GLOB_BYTES_PER_GLOB
+  --tool-shell-max-total-glob-bytes TOOL_SHELL_MAX_TOTAL_GLOB_BYTES
+  --tool-shell-max-full-file-bytes TOOL_SHELL_MAX_FULL_FILE_BYTES
+  --tool-shell-max-rg-columns TOOL_SHELL_MAX_RG_COLUMNS
+  --tool-shell-max-rg-context-lines TOOL_SHELL_MAX_RG_CONTEXT_LINES
+  --tool-shell-max-rg-matches-per-file TOOL_SHELL_MAX_RG_MATCHES_PER_FILE
+  --tool-shell-max-head-lines TOOL_SHELL_MAX_HEAD_LINES
+  --tool-shell-max-tail-lines TOOL_SHELL_MAX_TAIL_LINES
+  --tool-shell-max-text-filter-input-bytes TOOL_SHELL_MAX_TEXT_FILTER_INPUT_BYTES
+  --tool-shell-max-filter-program-bytes TOOL_SHELL_MAX_FILTER_PROGRAM_BYTES
+  --tool-shell-max-filter-pattern-bytes TOOL_SHELL_MAX_FILTER_PATTERN_BYTES
+  --tool-shell-max-filter-selectors TOOL_SHELL_MAX_FILTER_SELECTORS
+  --tool-shell-max-awk-fields TOOL_SHELL_MAX_AWK_FIELDS
+  --tool-shell-max-awk-separator-bytes TOOL_SHELL_MAX_AWK_SEPARATOR_BYTES
+  --tool-shell-max-json-input-bytes TOOL_SHELL_MAX_JSON_INPUT_BYTES
+  --tool-shell-max-jq-filter-bytes TOOL_SHELL_MAX_JQ_FILTER_BYTES
+  --tool-shell-max-pdf-input-bytes TOOL_SHELL_MAX_PDF_INPUT_BYTES
+  --tool-shell-max-pdf-text-pages TOOL_SHELL_MAX_PDF_TEXT_PAGES
+  --tool-shell-max-pdf-raster-pages TOOL_SHELL_MAX_PDF_RASTER_PAGES
+  --tool-shell-max-pdf-raster-dpi TOOL_SHELL_MAX_PDF_RASTER_DPI
+  --tool-shell-max-raster-long-edge-pixels TOOL_SHELL_MAX_RASTER_LONG_EDGE_PIXELS
+  --tool-shell-max-raster-pixels TOOL_SHELL_MAX_RASTER_PIXELS
+  --tool-shell-max-output-files TOOL_SHELL_MAX_OUTPUT_FILES
+  --tool-shell-max-output-file-bytes TOOL_SHELL_MAX_OUTPUT_FILE_BYTES
+  --tool-shell-max-total-output-file-bytes TOOL_SHELL_MAX_TOTAL_OUTPUT_FILE_BYTES
+  --tool-shell-max-inline-output-file-bytes TOOL_SHELL_MAX_INLINE_OUTPUT_FILE_BYTES
+  --tool-shell-max-ocr-input-bytes TOOL_SHELL_MAX_OCR_INPUT_BYTES
+  --tool-shell-max-ocr-pixels TOOL_SHELL_MAX_OCR_PIXELS
+  --tool-shell-max-ocr-languages TOOL_SHELL_MAX_OCR_LANGUAGES
+  --tool-shell-max-tesseract-dpi TOOL_SHELL_MAX_TESSERACT_DPI
+  --tool-shell-stream-read-chunk-bytes TOOL_SHELL_STREAM_READ_CHUNK_BYTES
+  --tool-shell-max-concurrent-processes TOOL_SHELL_MAX_CONCURRENT_PROCESSES
+  --tool-shell-max-concurrent-heavy-processes TOOL_SHELL_MAX_CONCURRENT_HEAVY_PROCESSES
+  --tool-shell-default-pdf-timeout-seconds TOOL_SHELL_DEFAULT_PDF_TIMEOUT_SECONDS
+  --tool-shell-max-pdf-timeout-seconds TOOL_SHELL_MAX_PDF_TIMEOUT_SECONDS
+  --tool-shell-default-ocr-timeout-seconds TOOL_SHELL_DEFAULT_OCR_TIMEOUT_SECONDS
+  --tool-shell-max-ocr-timeout-seconds TOOL_SHELL_MAX_OCR_TIMEOUT_SECONDS
+  --tool-shell-tesseract-thread-limit TOOL_SHELL_TESSERACT_THREAD_LIMIT
+  --tool-shell-allow-media-tools
+  --tool-shell-allow-absolute-paths
+  --tool-shell-allow-symlinks
+  --tool-shell-allow-hidden
+  --tool-shell-executable-search-path TOOL_SHELL_EXECUTABLE_SEARCH_PATHS
+                        Add a trusted directory used to resolve shell tools.
+  --tool-shell-executable-path COMMAND=PATH
+                        Map a shell command to a trusted absolute executable.
 ```
 
 ### avalan agent serve
