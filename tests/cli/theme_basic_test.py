@@ -332,6 +332,93 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("event start", event_text)
         self.assertNotIn("tool_process", event_text)
 
+    async def test_delayed_calculator_progress_renders_lifecycle(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(
+            tool_call_id="calculator-call",
+            name="math.calculator",
+            arguments={"expression": "(4 + 6) * 5 / 2"},
+            started_at=10.0,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        start_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.update_active_tool(
+            tool_call_id="calculator-call",
+            name="math.calculator",
+            updated_at=12.5,
+        )
+        running_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        builder.complete_tool(
+            tool_call_id="calculator-call",
+            name="math.calculator",
+            elapsed_seconds=2.5,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="calculator-call",
+            name="math.calculator",
+            status="result",
+            result=25,
+            arguments_count=1,
+            elapsed_seconds=2.5,
+        )
+        completed_items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        start_frames = _frames(start_items)
+        running_frames = _frames(running_items)
+        completed_frames = _frames(completed_items)
+        self.assertEqual([frame.role for frame in start_frames], ["tools"])
+        self.assertEqual([frame.role for frame in running_frames], ["tools"])
+        self.assertEqual([frame.role for frame in completed_frames], ["tools"])
+        self.assertIsInstance(start_frames[0].renderable, Spinner)
+
+        start_text = _render_text(start_frames[0].renderable)
+        running_text = _render_text(running_frames[0].renderable)
+        completed_text = _render_text(completed_frames[0].renderable)
+
+        self.assertIn("tool math.calculator starting", start_text)
+        self.assertIn("expression", start_text)
+        self.assertIn("tool math.calculator running for", running_text)
+        self.assertNotEqual(start_text, running_text)
+        self.assertIn("tool math.calculator completed in", completed_text)
+        self.assertRegex(
+            completed_text,
+            r"completed in"
+            r" \d+(?:\.\d+)?\s+(?:microseconds|milliseconds|seconds)",
+        )
+        self.assertIn("tool math.calculator result: 25", completed_text)
+
+    async def test_completed_tool_without_elapsed_keeps_compact_text(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(tool_call_id="call", name="math.calculator")
+        builder.complete_tool(tool_call_id="call", name="math.calculator")
+        presenter = BasicStreamPresenter(getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        tool_text = _render_text(_frames(items)[0].renderable)
+        self.assertIn("tool math.calculator completed", tool_text)
+        self.assertNotIn("completed in", tool_text)
+        self.assertNotIn("unknown", tool_text)
+
     async def test_requested_single_surfaces_render_only_that_surface(
         self,
     ) -> None:
