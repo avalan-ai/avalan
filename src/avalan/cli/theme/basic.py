@@ -10,10 +10,12 @@ from .stream_presenter import (
 )
 
 from collections.abc import AsyncGenerator, Mapping, Sequence
+from datetime import timedelta
 from json import JSONDecodeError, loads
 from logging import Logger
 from re import IGNORECASE, MULTILINE, Pattern, compile
 
+from humanize import precisedelta
 from rich.console import Group, RenderableType
 from rich.spinner import Spinner
 
@@ -221,7 +223,11 @@ def _basic_tool_frame(
     snapshot = request.snapshot
     history_lines = [
         *(
-            _basic_completed_tool_line(tool.name, tool.status)
+            _basic_completed_tool_line(
+                tool.name,
+                tool.status,
+                tool.elapsed_seconds,
+            )
             for tool in snapshot.completed_tools
         ),
         *(
@@ -257,6 +263,8 @@ def _basic_tool_frame(
         _basic_active_tool_renderable(
             tool.name,
             tool.arguments_summary,
+            started_at=tool.started_at,
+            updated_at=tool.updated_at,
             spinner=request.display_config.diagnostic_channel == "live",
         )
         for tool in snapshot.active_tools
@@ -325,27 +333,50 @@ def _basic_stats_frame(
 def _basic_active_tool_line(
     name: str,
     arguments_summary: str | None,
+    *,
+    started_at: float | None,
+    updated_at: float | None,
 ) -> str:
     suffix = (
         f": {_basic_summary(arguments_summary)}" if arguments_summary else ""
     )
-    return f"tool {_basic_summary(name)} running{suffix}"
+    state = "running"
+    if started_at is not None and updated_at is None:
+        state = "starting"
+    elif started_at is not None and updated_at is not None:
+        elapsed = _basic_elapsed_text(updated_at - started_at)
+        if elapsed:
+            state = f"running for {elapsed}"
+    return f"tool {_basic_summary(name)} {state}{suffix}"
 
 
 def _basic_active_tool_renderable(
     name: str,
     arguments_summary: str | None,
     *,
+    started_at: float | None,
+    updated_at: float | None,
     spinner: bool,
 ) -> RenderableType:
-    line = _basic_active_tool_line(name, arguments_summary)
+    line = _basic_active_tool_line(
+        name,
+        arguments_summary,
+        started_at=started_at,
+        updated_at=updated_at,
+    )
     if not spinner:
         return line
     return Spinner("dots", text=line)
 
 
-def _basic_completed_tool_line(name: str, status: str) -> str:
-    return f"tool {_basic_summary(name)} {status}"
+def _basic_completed_tool_line(
+    name: str,
+    status: str,
+    elapsed_seconds: float | None,
+) -> str:
+    elapsed = _basic_elapsed_text(elapsed_seconds)
+    suffix = f" in {elapsed}" if elapsed else ""
+    return f"tool {_basic_summary(name)} {status}{suffix}"
 
 
 def _basic_tool_result_line(
@@ -415,6 +446,15 @@ def _basic_stats_elapsed_line(elapsed_seconds: float | None) -> str | None:
 def _basic_usage_line(kind: str | None, usage_summary: str) -> str:
     label = _basic_summary(kind or "usage")
     return f"usage {label}: {_basic_summary(usage_summary)}"
+
+
+def _basic_elapsed_text(elapsed_seconds: float | None) -> str | None:
+    if elapsed_seconds is None:
+        return None
+    return precisedelta(
+        timedelta(seconds=max(0.0, elapsed_seconds)),
+        minimum_unit="microseconds",
+    )
 
 
 def _basic_count(label: str, value: int | None) -> str | None:
