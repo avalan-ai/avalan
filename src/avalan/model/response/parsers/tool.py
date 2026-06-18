@@ -1,7 +1,6 @@
 """Parser emitting canonical events for detected tool calls."""
 
 from ....entities import ToolCallDiagnostic, ToolFormat
-from ....event import Event, EventType
 from ....event.manager import EventManager
 from ....tool.dsml import DsmlTools
 from ....tool.manager import ToolManager
@@ -16,8 +15,7 @@ from ...stream import (
 from dataclasses import dataclass
 from io import StringIO
 from json import JSONDecodeError, JSONDecoder, dumps
-from time import perf_counter
-from typing import Any, Iterable, TypeAlias, cast
+from typing import Any, Iterable, TypeAlias
 
 ToolCallResponseParserOutput: TypeAlias = StreamProviderEvent
 _ToolCallResponseParserItem: TypeAlias = ToolCallResponseParserOutput
@@ -560,11 +558,6 @@ class ToolCallResponseParser:
         if not should_check:
             return result
 
-        if self._event_manager:
-            await self._event_manager.trigger(
-                Event(type=EventType.TOOL_DETECT)
-            )
-
         if self._inside_call and terminal_status is None:
             if type(self._tool_manager) is ToolManager:
                 return result
@@ -640,14 +633,6 @@ class ToolCallResponseParser:
             correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
             visibility=StreamVisibility.DIAGNOSTIC,
         )
-        if self._event_manager:
-            await self._event_manager.trigger(
-                Event(
-                    type=EventType.TOOL_DIAGNOSTIC,
-                    payload={"diagnostics": cast(Any, diagnostics)},
-                    started=perf_counter(),
-                )
-            )
         return provider_event
 
     async def _events_for_parse(
@@ -720,11 +705,6 @@ class ToolCallResponseParser:
                     f"{buffer_text}<|call|>"
                 )
             if calls:
-                if self._event_manager:
-                    await self._event_manager.trigger(
-                        Event(type=EventType.TOOL_DETECT)
-                    )
-
                 events = await self._events_for_parse(calls, diagnostics)
                 self._clear_buffers()
                 result.extend(events)

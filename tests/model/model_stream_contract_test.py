@@ -8065,7 +8065,8 @@ class StreamContractTestCase(TestCase):
                 for entry in inventory
                 for direction in entry.directions
             },
-            set(StreamLegacyBoundaryDirection),
+            set(StreamLegacyBoundaryDirection)
+            - {StreamLegacyBoundaryDirection.CONTROL},
         )
         self.assertEqual(
             {surface for entry in inventory for surface in entry.surfaces},
@@ -8100,10 +8101,6 @@ class StreamContractTestCase(TestCase):
             (
                 "avalan.model.stream",
                 "_LegacyTokenStreamAdapter.events_from_token",
-            ),
-            (
-                "avalan.agent.orchestrator.response.orchestrator_response",
-                "_legacy_tool_event",
             ),
             ("avalan.event.manager", "EventManager.trigger"),
             ("avalan.event.manager", "EventManager.listen"),

@@ -224,7 +224,10 @@ class EventManager:
                 )
             case EventManagerMode.CLI:
                 return EventManagerDefaults(
-                    history_config=EventHistoryConfig(max_events=256),
+                    history_config=EventHistoryConfig(
+                        max_events=256,
+                        max_bytes=524_288,
+                    ),
                     delivery_config=(
                         EventManager.default_delivery_config_for_subscriber_class(
                             EventSubscriberClass.UI
@@ -237,7 +240,10 @@ class EventManager:
                 )
             case EventManagerMode.TEST:
                 return EventManagerDefaults(
-                    history_config=EventHistoryConfig(max_events=1024),
+                    history_config=EventHistoryConfig(
+                        max_events=1024,
+                        max_bytes=2_097_152,
+                    ),
                     delivery_config=(
                         EventManager.default_delivery_config_for_subscriber_class(
                             EventSubscriberClass.LOSSLESS
@@ -247,7 +253,10 @@ class EventManager:
                 )
             case EventManagerMode.SDK:
                 return EventManagerDefaults(
-                    history_config=EventHistoryConfig(max_events=512),
+                    history_config=EventHistoryConfig(
+                        max_events=512,
+                        max_bytes=1_048_576,
+                    ),
                     delivery_config=(
                         EventManager.default_delivery_config_for_subscriber_class(
                             EventSubscriberClass.LOSSLESS

@@ -15,7 +15,7 @@ from avalan.entities import (
     ToolCallToken,
     ToolFormat,
 )
-from avalan.event import Event, EventType
+from avalan.event import Event
 from avalan.model.response.parsers.reasoning import (
     ReasoningParser,
     ReasoningTokenLimitExceeded,
@@ -574,10 +574,7 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         self.assertIsInstance(ready, StreamProviderEvent)
         assert isinstance(ready, StreamProviderEvent)
         self.assertEqual(ready.data, {"name": "call", "arguments": {"a": 1}})
-        self.assertTrue(event_manager.trigger.await_args_list)
-        for call in event_manager.trigger.await_args_list:
-            trigger_event = call.args[0]
-            self.assertEqual(trigger_event.type, EventType.TOOL_DETECT)
+        event_manager.trigger.assert_not_awaited()
 
         parser._pending_tokens = ["rest"]
         parser._pending_str = "rest"
@@ -949,27 +946,27 @@ class ToolCallResponseParserAdditionalTestCase(IsolatedAsyncioTestCase):
         nested_diagnostics = diagnostic.data["diagnostics"]
         self.assertEqual(nested_diagnostics[0]["call_id"], "bad-call-1")
 
-    async def test_canonical_diagnostic_triggers_event_manager(self) -> None:
+    async def test_canonical_diagnostic_skips_event_manager(self) -> None:
         manager = ToolManager(parser=ToolCallParser())
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
         parser = ToolCallResponseParser(manager, event_manager)
 
-        await parser.push(
+        output = await parser.push(
             '<tool_call>{"id":"bad-call-1","name":"calc",'
             '"arguments":[]}</tool_call>'
         )
 
         diagnostic_events = [
-            call.args[0]
-            for call in event_manager.trigger.await_args_list
-            if call.args[0].type is EventType.TOOL_DIAGNOSTIC
+            event
+            for event in output
+            if event.kind is StreamItemKind.STREAM_DIAGNOSTIC
         ]
+        event_manager.trigger.assert_not_awaited()
         self.assertEqual(len(diagnostic_events), 1)
-        diagnostics = diagnostic_events[0].payload["diagnostics"]
+        diagnostics = diagnostic_events[0].data["diagnostics"]
         self.assertEqual(len(diagnostics), 1)
-        self.assertIsInstance(diagnostics[0], ToolCallDiagnostic)
-        self.assertEqual(diagnostics[0].call_id, "bad-call-1")
+        self.assertEqual(diagnostics[0]["call_id"], "bad-call-1")
 
     async def test_canonical_diagnostic_includes_optional_fields(
         self,

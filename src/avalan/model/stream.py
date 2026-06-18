@@ -1894,18 +1894,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         "String parser adapter is removed after local producers emit events.",
     ),
     _runtime_boundary(
-        "avalan.agent.orchestrator.response.orchestrator_response",
-        "_legacy_tool_event",
-        (StreamLegacySurface.EVENT,),
-        StreamLegacyBoundaryCategory.EVENTING,
-        (
-            StreamLegacyBoundaryDirection.CONTROL,
-            StreamLegacyBoundaryDirection.EMITS,
-        ),
-        "agent.orchestrator",
-        "Tool lifecycle control uses canonical stream items.",
-    ),
-    _runtime_boundary(
         "avalan.event.manager",
         "EventManager.trigger",
         (StreamLegacySurface.EVENT,),
@@ -1929,10 +1917,7 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
     _runtime_boundary(
         "avalan.model.response.parsers.tool",
         "ToolCallResponseParser",
-        (
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-            StreamLegacySurface.EVENT,
-        ),
+        (StreamLegacySurface.TOOL_CALL_TOKEN,),
         StreamLegacyBoundaryCategory.PARSER,
         (StreamLegacyBoundaryDirection.EMITS,),
         "model.parsers.tool",

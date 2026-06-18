@@ -2382,7 +2382,16 @@ class FancyTheme(Theme):
                 and (event.type != EventType.TOKEN_GENERATED or include_tokens)
             ):
                 payload = cast(Any, event.payload)
-                if event.type == EventType.TOOL_EXECUTE and payload:
+                canonical_payload = self._canonical_event_payload(payload)
+                if canonical_payload is not None:
+                    event_log.append(
+                        self._canonical_event_log(event, canonical_payload)
+                    )
+                elif (
+                    event.type == EventType.TOOL_EXECUTE
+                    and isinstance(payload, Mapping)
+                    and "call" in payload
+                ):
                     call = payload["call"]
                     arguments = call.arguments
                     event_log.append(
@@ -2404,7 +2413,12 @@ class FancyTheme(Theme):
                             + "[/gray78]",
                         )
                     )
-                elif event.type == EventType.TOOL_MODEL_RUN and payload:
+                elif (
+                    event.type == EventType.TOOL_MODEL_RUN
+                    and isinstance(payload, Mapping)
+                    and isinstance(payload.get("messages"), list)
+                    and "model_id" in payload
+                ):
                     messages = payload["messages"]
                     event_log.append(
                         _n(
@@ -2418,7 +2432,11 @@ class FancyTheme(Theme):
                             total_messages=len(messages),
                         )
                     )
-                elif event.type == EventType.TOOL_MODEL_RESPONSE and payload:
+                elif (
+                    event.type == EventType.TOOL_MODEL_RESPONSE
+                    and isinstance(payload, Mapping)
+                    and "model_id" in payload
+                ):
                     event_log.append(
                         _("Got ReACT response from model {model_id}").format(
                             model_id=payload["model_id"]
@@ -2450,8 +2468,9 @@ class FancyTheme(Theme):
                     )
                 elif (
                     event.type == EventType.TOOL_RESULT
+                    and isinstance(payload, Mapping)
                     and payload
-                    and payload["result"]
+                    and payload.get("result")
                 ):
                     result = payload["result"]
                     if isinstance(result, ToolCallDiagnostic):
@@ -2518,6 +2537,56 @@ class FancyTheme(Theme):
             event_log = event_log[-events_limit:]
 
         return event_log
+
+    @staticmethod
+    def _canonical_event_payload(
+        payload: Any,
+    ) -> Mapping[str, Any] | None:
+        if not isinstance(payload, Mapping):
+            return None
+        if not all(
+            isinstance(payload.get(key), str)
+            for key in ("stream_session_id", "run_id", "turn_id", "kind")
+        ):
+            return None
+        if not isinstance(payload.get("channel"), str):
+            return None
+        return cast(Mapping[str, Any], payload)
+
+    def _canonical_event_log(
+        self,
+        event: Event,
+        payload: Mapping[str, Any],
+    ) -> str:
+        event_type = (
+            event.type.value
+            if isinstance(event.type, EventType)
+            else event.type
+        )
+        kind = payload.get("kind")
+        kind_label = kind if isinstance(kind, str) else "canonical stream item"
+        detail = self._canonical_event_correlation_detail(payload)
+        return self._("Tool event {event_type} from {kind}{detail}.").format(
+            event_type=event_type,
+            kind=kind_label,
+            detail=detail,
+        )
+
+    @staticmethod
+    def _canonical_event_correlation_detail(
+        payload: Mapping[str, Any],
+    ) -> str:
+        correlation = payload.get("correlation")
+        if not isinstance(correlation, Mapping):
+            return ""
+        for key, label in (
+            ("tool_call_id", "call"),
+            ("model_continuation_id", "continuation"),
+        ):
+            value = correlation.get(key)
+            if isinstance(value, str) and value:
+                return f" for {label} #{value[:8]}"
+        return ""
 
     def _tool_diagnostic_from_payload(
         self, payload: Any
