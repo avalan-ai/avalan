@@ -1793,6 +1793,66 @@ class StreamContractTestCase(TestCase):
         self.assertIsNotNone(terminal)
         self.assertEqual(terminal.sequence, 3)
 
+    def test_stream_projection_state_single_item_path_bypasses_project_many(
+        self,
+    ) -> None:
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        with patch.object(
+            StreamProjectionState,
+            "project_many",
+            side_effect=AssertionError("project_many called"),
+        ):
+            projection = state.project(
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                99,
+                unsupported_message="unsupported stream item",
+            )
+
+        self.assertEqual(projection.sequence, 0)
+        self.assertTrue(state.has_canonical_items)
+        self.assertEqual(
+            [item.sequence for item in state.accumulator.items],
+            [0],
+        )
+
+    def test_stream_projection_state_project_many_keeps_single_item_contract(
+        self,
+    ) -> None:
+        state = StreamProjectionState(
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+        answer_projection = project_canonical_stream_item(
+            _item(StreamItemKind.ANSWER_DELTA, 1, text_delta="answer")
+        )
+
+        started = state.project_many(
+            _item(StreamItemKind.STREAM_STARTED, 0),
+            99,
+            unsupported_message="unsupported stream item",
+        )
+        answer = state.project_many(
+            answer_projection,
+            100,
+            unsupported_message="unsupported stream item",
+        )
+
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0].sequence, 0)
+        self.assertEqual(answer, (answer_projection,))
+        self.assertTrue(state.has_canonical_items)
+        self.assertEqual(
+            [item.sequence for item in state.accumulator.items],
+            [0, 1],
+        )
+        self.assertEqual(state.accumulator.answer_text, "answer")
+
     def test_stream_projection_state_rejects_terminal_with_open_channel(
         self,
     ) -> None:
@@ -2028,23 +2088,6 @@ class StreamContractTestCase(TestCase):
                 0,
                 unsupported_message="unsupported stream item",
             )
-        projection = project_canonical_stream_item(
-            _item(StreamItemKind.ANSWER_DELTA, 0, text_delta="first")
-        )
-        with patch.object(
-            StreamProjectionState,
-            "project_many",
-            return_value=(projection, projection),
-        ):
-            with self.assertRaisesRegex(
-                StreamValidationError,
-                "unsupported stream item",
-            ):
-                invalid_state.project(
-                    projection,
-                    1,
-                    unsupported_message="unsupported stream item",
-                )
 
         mixed_state = StreamProjectionState(
             stream_session_id="fallback-stream",
@@ -4864,6 +4907,39 @@ class StreamContractTestCase(TestCase):
             accumulator.final_usage,
             {"input_tokens": 1, "output_tokens": 2},
         )
+
+    def test_provider_stream_normalizer_reuses_empty_internal_correlation(
+        self,
+    ) -> None:
+        items = run(
+            _collect_provider_items(
+                _provider_events(
+                    (
+                        StreamProviderEvent(
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            text_delta="answer",
+                        ),
+                    )
+                ),
+                provider_family=None,
+            )
+        )
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(items[0].correlation, StreamItemCorrelation())
+        self.assertIs(items[2].correlation, items[0].correlation)
+        self.assertIs(items[3].correlation, items[0].correlation)
+        self.assertIs(items[4].correlation, items[0].correlation)
+        self.assertIsNot(items[1].correlation, items[0].correlation)
 
     def test_normalizers_emit_done_items_at_deterministic_boundaries(
         self,

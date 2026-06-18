@@ -1086,6 +1086,44 @@ class StreamBenchmarkRegressionTestCase(TestCase):
         )
         self.assertEqual(projection.text_delta, "x")
         self.assertEqual(projection.sequence, count - 1)
+        self.assertEqual(state.accumulator.items, ())
+        self.assertLessEqual(per_item_us, budget.per_item_overhead_us)
+
+    def test_accumulated_canonical_projection_hot_path_overhead_within_budget(
+        self,
+    ) -> None:
+        count = 8192
+        budget = StreamPerformanceBudget()
+        state = StreamProjectionState(
+            stream_session_id="benchmark-stream",
+            run_id="benchmark-run",
+            turn_id="benchmark-turn",
+            accumulate=True,
+        )
+        projection: StreamConsumerProjection | None = None
+
+        started = perf_counter()
+        for item in _long_stream_items(count):
+            projection = state.project(
+                item,
+                item.sequence,
+                unsupported_message="unsupported benchmark item",
+            )
+        state.validate_complete()
+        elapsed_us = (perf_counter() - started) * 1_000_000
+        per_item_us = elapsed_us / (count + 4)
+
+        print(
+            "phase7 benchmark accumulated_canonical_projection_hot_path "
+            f"tokens={count} per_item_us={per_item_us:.3f}"
+        )
+        self.assertIsNotNone(projection)
+        self.assertIs(projection.kind, StreamItemKind.STREAM_CLOSED)
+        self.assertEqual(state.accumulator.answer_text, "x" * count)
+        self.assertEqual(
+            state.accumulator.final_usage,
+            {"output_tokens": count},
+        )
         self.assertLessEqual(per_item_us, budget.per_item_overhead_us)
 
     def test_rejects_late_content_during_projection_benchmark(

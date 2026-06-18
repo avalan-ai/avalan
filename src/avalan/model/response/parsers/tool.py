@@ -21,6 +21,25 @@ ToolCallResponseParserOutput: TypeAlias = StreamProviderEvent
 _ToolCallResponseParserItem: TypeAlias = ToolCallResponseParserOutput
 
 
+class _IncrementalTextBuffer:
+    """Collect streamed text while tracking its length."""
+
+    def __init__(self) -> None:
+        self._chunks: list[str] = []
+        self._length = 0
+
+    def __len__(self) -> int:
+        return self._length
+
+    def getvalue(self) -> str:
+        return "".join(self._chunks)
+
+    def write(self, text: str) -> int:
+        self._chunks.append(text)
+        self._length += len(text)
+        return len(text)
+
+
 class _MarkdownFenceState:
     """Track markdown fence state while text streams in."""
 
@@ -178,9 +197,8 @@ class _VisibleTextState:
         self._markdown = markdown or _MarkdownFenceState()
         self._quote = quote or _VisibleQuoteState()
 
-    @property
-    def markdown_fence_is_open(self) -> bool:
-        return self._markdown.is_open
+    def marker_is_executable_before(self, next_character: str | None) -> bool:
+        return self._marker_is_executable(next_character)
 
     def copy(self) -> "_VisibleTextState":
         return _VisibleTextState(self._markdown.copy(), self._quote.copy())
@@ -392,7 +410,7 @@ class ToolCallResponseParser:
         self._tool_manager = tool_manager
         self._event_manager = event_manager
         self._buffer = StringIO()
-        self._tool_buffer = StringIO()
+        self._tool_buffer = _IncrementalTextBuffer()
         self._tag_buffer = ""
         self._inside_call = False
         self._pending_tokens: list[str] = []
@@ -418,7 +436,9 @@ class ToolCallResponseParser:
         )
         if (
             should_check
-            and self._visible_state.markdown_fence_is_open
+            and not self._visible_state.marker_is_executable_before(
+                token_str[0] if token_str else None
+            )
             and not self._has_executable_marker_in_visible_token(token_str)
         ):
             should_check = False
@@ -450,7 +470,7 @@ class ToolCallResponseParser:
                 candidate = tool_token
                 self._pending_tokens.clear()
                 self._pending_str = ""
-                self._tool_buffer = StringIO()
+                self._tool_buffer = _IncrementalTextBuffer()
             else:
                 split_prefix, tool_token = self._split_visible_prefix(
                     token_str, status
@@ -485,7 +505,7 @@ class ToolCallResponseParser:
                     status is ToolCallParser.ToolCallBufferStatus.OPEN
                 )
                 if self._inside_call:
-                    self._reset_tool_close_state(self._tool_buffer.getvalue())
+                    self._reset_tool_close_state(candidate)
                 if status is ToolCallParser.ToolCallBufferStatus.CLOSED:
                     terminal_status = status
             else:
@@ -494,39 +514,49 @@ class ToolCallResponseParser:
                     self._append_visible_text(self._pending_str)
                     self._pending_tokens.clear()
                     self._pending_str = ""
-                    self._tool_buffer = StringIO()
+                    self._tool_buffer = _IncrementalTextBuffer()
                 self._append_visible_output(result, token_str)
                 self._append_visible_text(token_str)
         else:
             tool_token = token_str
-            current_tool_text = self._tool_buffer.getvalue()
+            current_tool_length = len(self._tool_buffer)
             pending_visible_suffix = self._pending_tool_visible_suffix
-            combined_tool_text = (
-                current_tool_text + pending_visible_suffix + token_str
-            )
             close = self._tool_close_state.push(
                 self,
                 token_str,
                 token_start=(
-                    len(current_tool_text) + len(pending_visible_suffix)
+                    current_tool_length + len(pending_visible_suffix)
                 ),
             )
-            closed_split = self._tool_close_split(
-                current_tool_text, pending_visible_suffix, token_str, close
+            closed_split = (
+                self._tool_close_split(
+                    self._tool_buffer.getvalue(),
+                    pending_visible_suffix,
+                    token_str,
+                    close,
+                )
+                if close is not None
+                else None
             )
-            if (
-                closed_split is None
-                and not issubclass(type(self._tool_manager), ToolManager)
-                and self._tool_manager.tool_call_status(combined_tool_text)
-                is ToolCallParser.ToolCallBufferStatus.CLOSED
+            if closed_split is None and not issubclass(
+                type(self._tool_manager), ToolManager
             ):
-                closed_split = self._split_closed_visible_suffix(
+                combined_tool_text = (
+                    self._tool_buffer.getvalue()
+                    + pending_visible_suffix
+                    + token_str
+                )
+                status = self._tool_manager.tool_call_status(
                     combined_tool_text
                 )
+                if status is ToolCallParser.ToolCallBufferStatus.CLOSED:
+                    closed_split = self._split_closed_visible_suffix(
+                        combined_tool_text
+                    )
             if closed_split is not None:
                 tool_text, visible_suffix = closed_split
                 uncommitted_tool_length = max(
-                    0, len(tool_text) - len(current_tool_text)
+                    0, len(tool_text) - current_tool_length
                 )
                 tool_token = (pending_visible_suffix + token_str)[
                     :uncommitted_tool_length
@@ -544,7 +574,7 @@ class ToolCallResponseParser:
                 if event is not None:
                     result.append(event)
             if closed_split is not None:
-                self._tool_buffer = StringIO()
+                self._tool_buffer = _IncrementalTextBuffer()
                 self._tool_buffer.write(tool_text)
             else:
                 self._tool_buffer.write(tool_token)
@@ -722,7 +752,7 @@ class ToolCallResponseParser:
             self._append_visible_text(self._pending_str)
             self._pending_tokens.clear()
             self._pending_str = ""
-            self._tool_buffer = StringIO()
+            self._tool_buffer = _IncrementalTextBuffer()
         return result
 
     def _append_visible_output(
@@ -817,6 +847,9 @@ class ToolCallResponseParser:
     ) -> ToolCallResponseParserOutput | None:
         if getattr(self._tool_manager, "tool_format", None) is ToolFormat.DSML:
             return self._dsml_tool_argument_delta(token)
+
+        if "}" not in token:
+            return None
 
         text = self._tool_buffer.getvalue() + token
         argument_text = self._stream_tool_argument_text(text)
@@ -1405,7 +1438,7 @@ class ToolCallResponseParser:
 
     def _clear_buffers(self, visible_text: str = "") -> None:
         self._buffer = StringIO()
-        self._tool_buffer = StringIO()
+        self._tool_buffer = _IncrementalTextBuffer()
         self._tag_buffer = visible_text[-64:]
         self._inside_call = False
         self._pending_tokens.clear()

@@ -52,6 +52,7 @@ class FlowStreamRecorder:
     downstream: FlowStreamSink
     history_item_limit: int = StreamRetentionPolicy().flow_history_item_limit
     _items: list[CanonicalStreamItem] = field(default_factory=list)
+    _retained_sequences: set[int] = field(default_factory=set)
     _ui_items: dict[
         tuple[str | None, str | None, str], CanonicalStreamItem
     ] = field(default_factory=dict)
@@ -61,6 +62,13 @@ class FlowStreamRecorder:
         assert isinstance(self.history_item_limit, int)
         assert not isinstance(self.history_item_limit, bool)
         assert self.history_item_limit >= 0
+        assert isinstance(self._items, list)
+        retained_sequences = {item.sequence for item in self._items}
+        assert len(retained_sequences) == len(self._items)
+        if self._retained_sequences:
+            assert self._retained_sequences == retained_sequences
+        else:
+            self._retained_sequences.update(retained_sequences)
 
     @property
     def items(self) -> tuple[CanonicalStreamItem, ...]:
@@ -92,20 +100,45 @@ class FlowStreamRecorder:
     def _record(self, item: CanonicalStreamItem) -> None:
         if self.history_item_limit == 0:
             return
-        assert all(
-            existing.sequence != item.sequence for existing in self._items
-        )
-        self._items.append(item)
-        self._items.sort(key=lambda current: current.sequence)
+        assert item.sequence not in self._retained_sequences
+        self._insert_item(item)
+        self._retained_sequences.add(item.sequence)
+        removed: CanonicalStreamItem | None = None
         if len(self._items) > self.history_item_limit:
-            del self._items[0]
-        self._ui_items[_flow_ui_coalescing_key(item)] = item
+            removed = self._items.pop(0)
+            self._retained_sequences.remove(removed.sequence)
+            self._remove_ui_item_if_current(removed)
+        if item.sequence in self._retained_sequences:
+            self._ui_items[_flow_ui_coalescing_key(item)] = item
         while len(self._ui_items) > self.history_item_limit:
             oldest_key = min(
                 self._ui_items,
                 key=lambda key: self._ui_items[key].sequence,
             )
             del self._ui_items[oldest_key]
+
+    def _remove_ui_item_if_current(self, item: CanonicalStreamItem) -> None:
+        key = _flow_ui_coalescing_key(item)
+        if self._ui_items.get(key) is item:
+            del self._ui_items[key]
+
+    def _insert_item(self, item: CanonicalStreamItem) -> None:
+        if not self._items or self._items[-1].sequence < item.sequence:
+            self._items.append(item)
+            return
+        index = self._item_insert_index(item.sequence)
+        self._items.insert(index, item)
+
+    def _item_insert_index(self, sequence: int) -> int:
+        start = 0
+        end = len(self._items)
+        while start < end:
+            midpoint = (start + end) // 2
+            if self._items[midpoint].sequence < sequence:
+                start = midpoint + 1
+            else:
+                end = midpoint
+        return start
 
 
 @dataclass(slots=True)

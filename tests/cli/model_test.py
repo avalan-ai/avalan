@@ -2300,6 +2300,160 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(captured, [(None, None, None)])
 
+    async def test_token_stream_reuses_unchanged_token_snapshots(self):
+        items = [
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="plan",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=3,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="A",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="B",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=5,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=6,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+
+        class Resp:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self):
+                async def gen():
+                    for item in items:
+                        yield item
+
+                return gen()
+
+        captured: list[TokenRenderState] = []
+
+        class CapturingFrameBuilder:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def mark_dirty(self, state: TokenRenderState) -> None:
+                captured.append(state)
+
+            async def close(self) -> None:
+                pass
+
+        args = Namespace(
+            skip_display_reasoning_time=False,
+            display_time_to_n_token=1,
+            display_pause=0,
+            start_thinking=False,
+            display_probabilities=False,
+            display_probabilities_maximum=0.0,
+            display_probabilities_sample_minimum=0.0,
+            record=False,
+        )
+
+        with (
+            patch.object(
+                model_cmds,
+                "_LatestTokenFrameBuilder",
+                CapturingFrameBuilder,
+            ),
+            patch.object(model_cmds, "_projection_display_token") as display,
+        ):
+            await model_cmds._token_stream(
+                args=args,
+                console=MagicMock(width=80),
+                live=MagicMock(),
+                group=None,
+                tokens_group_index=None,
+                theme=MagicMock(),
+                logger=MagicMock(),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(
+                    model_id="m",
+                    tokenizer_config=None,
+                    input_token_count=lambda value: 1,
+                ),
+                input_string="i",
+                response=Resp(),
+                display_tokens=0,
+                dtokens_pick=0,
+                refresh_per_second=2,
+                stop_signal=None,
+                tool_events_limit=2,
+                with_stats=True,
+            )
+
+        self.assertEqual(len(captured), 3)
+        self.assertEqual(captured[0].reasoning_text_tokens, ("plan",))
+        self.assertEqual(captured[1].answer_text_tokens, ("A",))
+        self.assertEqual(captured[2].answer_text_tokens, ("A", "B"))
+        self.assertIs(
+            captured[0].reasoning_text_tokens,
+            captured[1].reasoning_text_tokens,
+        )
+        self.assertIs(
+            captured[1].reasoning_text_tokens,
+            captured[2].reasoning_text_tokens,
+        )
+        self.assertIsNot(
+            captured[1].answer_text_tokens,
+            captured[2].answer_text_tokens,
+        )
+        display.assert_not_called()
+
     async def test_token_stream_passes_tokenizer_config_for_display_tokens(
         self,
     ):
