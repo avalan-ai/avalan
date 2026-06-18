@@ -281,6 +281,13 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
     ) -> None:
         source = _HostedCanonicalSource(self._complete_canonical_items())
         response = self._hosted_canonical_response(source)
+        callbacks = 0
+
+        def mark_consumed() -> None:
+            nonlocal callbacks
+            callbacks += 1
+
+        response.add_done_callback(mark_consumed)
         projections = response.consumer_projections(
             stream_session_id="hosted-response-stream",
             run_id="hosted-response-run",
@@ -288,11 +295,14 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
 
         started = await anext(projections)
+        self.assertEqual(callbacks, 0)
         await projections.aclose()
+        await response.aclose()
 
         self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
         self.assertEqual(source.read_count, 1)
         self.assertEqual(source.close_count, 1)
+        self.assertEqual(callbacks, 1)
 
     async def test_hosted_projection_cancel_closes_pending_read(
         self,
@@ -1155,7 +1165,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(source.open_count, 1)
         self.assertEqual(source.outputs[0].close_count, 1)
 
-    async def test_overlapping_explicit_canonical_streams_close_own_iterators(
+    async def test_overlapping_explicit_canonical_streams_are_rejected(
         self,
     ) -> None:
         source = _ExplicitCanonicalStreamSource(
@@ -1182,37 +1192,137 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
             )
             first_output = source.outputs[0]
 
-            second_items = tuple(
-                [
-                    item
-                    async for item in resp.canonical_stream(
-                        stream_session_id="second-stream",
-                        run_id="second-run",
-                        turn_id="second-turn",
-                    )
-                ]
-            )
-            second_output = source.outputs[1]
+            with self.assertRaisesRegex(RuntimeError, "single-use"):
+                resp.canonical_stream(
+                    stream_session_id="second-stream",
+                    run_id="second-run",
+                    turn_id="second-turn",
+                )
         finally:
             aclose = getattr(first_stream, "aclose", None)
             if aclose is not None:
                 await aclose()
 
-        self.assertEqual(
-            accumulate_canonical_stream_items(second_items).answer_text, "ok"
-        )
-        self.assertEqual(source.open_count, 2)
+        self.assertEqual(source.open_count, 1)
         self.assertEqual(first_output.close_count, 1)
-        self.assertEqual(second_output.close_count, 1)
 
-    async def test_canonical_stream_accepts_empty_async_output(self) -> None:
-        async def gen() -> AsyncIterator[str]:
-            if False:
-                yield "unused"
+    async def test_unstarted_explicit_canonical_stream_is_response_owned(
+        self,
+    ) -> None:
+        source = _ExplicitCanonicalStreamSource(
+            self._complete_canonical_items()
+        )
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            source,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        stream = resp.canonical_stream(
+            stream_session_id="response-stream",
+            run_id="response-run",
+            turn_id="response-turn",
+        )
+
+        self.assertEqual(source.open_count, 1)
+        await resp.aclose()
+        self.assertEqual(source.outputs[0].close_count, 1)
+
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+        self.assertEqual(source.outputs[0].close_count, 1)
+
+        with self.assertRaises(StopAsyncIteration):
+            await anext(stream)
+        self.assertEqual(source.outputs[0].read_count, 0)
+
+    async def test_unstarted_explicit_canonical_stream_close_owns_source(
+        self,
+    ) -> None:
+        source = _ExplicitCanonicalStreamSource(
+            self._complete_canonical_items()
+        )
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            source,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        stream = resp.canonical_stream(
+            stream_session_id="response-stream",
+            run_id="response-run",
+            turn_id="response-turn",
+        )
+        aclose = getattr(stream, "aclose", None)
+        assert aclose is not None
+        await aclose()
+
+        self.assertEqual(source.open_count, 1)
+        self.assertEqual(source.outputs[0].close_count, 1)
+
+    async def test_unstarted_lazy_canonical_stream_stops_after_close(
+        self,
+    ) -> None:
+        open_count = 0
+
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            for item in self._complete_canonical_items():
+                yield item
+
+        def output_fn(**_: object) -> AsyncIterator[CanonicalStreamItem]:
+            nonlocal open_count
+            open_count += 1
+            return gen()
 
         settings = GenerationSettings()
         resp = TextGenerationResponse(
-            lambda **_: gen(),
+            output_fn,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        stream = resp.canonical_stream(
+            stream_session_id="response-stream",
+            run_id="response-run",
+            turn_id="response-turn",
+        )
+        await resp.aclose()
+
+        with self.assertRaises(StopAsyncIteration):
+            await anext(stream)
+        self.assertEqual(open_count, 0)
+
+    async def test_canonical_stream_accepts_empty_async_output(self) -> None:
+        usage = {"input_tokens": 1, "output_tokens": 0}
+
+        class EmptyOutput:
+            def __init__(self) -> None:
+                self.close_count = 0
+                self.usage: object | None = None
+
+            def __aiter__(self) -> "EmptyOutput":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+                self.usage = usage
+
+        settings = GenerationSettings()
+        output = EmptyOutput()
+        resp = TextGenerationResponse(
+            lambda **_: output,
             logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
@@ -1233,6 +1343,11 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             accumulate_canonical_stream_items(items).answer_text, ""
         )
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).final_usage, usage
+        )
+        self.assertEqual(output.close_count, 1)
+        self.assertEqual(resp.usage, usage)
         self.assertEqual(resp.output_token_count, 0)
 
     async def test_to_str_accepts_empty_async_output(self) -> None:
@@ -1852,6 +1967,41 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaises(AssertionError):
             await resp.aclose()
+
+    async def test_aclose_retries_after_failed_close_result(self) -> None:
+        class RetryCloseOutput:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            def __aiter__(self) -> "RetryCloseOutput":
+                return self
+
+            async def __anext__(self) -> str:
+                return "ok"
+
+            def aclose(self) -> object | None:
+                self.close_count += 1
+                if self.close_count == 1:
+                    return object()
+                return None
+
+        output = RetryCloseOutput()
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: output,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        resp.__aiter__()
+
+        with self.assertRaises(AssertionError):
+            await resp.aclose()
+        await resp.aclose()
+        await resp.aclose()
+
+        self.assertEqual(output.close_count, 2)
 
     async def test_aclose_rejects_bad_async_close_result(self) -> None:
         class BadAsyncCloseOutput:
@@ -2995,7 +3145,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
                 self.assertEqual(output.close_count, 1)
                 self.assertEqual(resp.output_token_count, 4)
-                self.assertFalse(consumed)
+                self.assertTrue(consumed)
 
     async def test_to_str_raises_for_semantic_cancelled_terminal(self) -> None:
         items = (
@@ -3060,6 +3210,70 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                     await resp.to_str()
 
                 self.assertEqual(resp.output_token_count, 4)
+
+    async def test_close_after_terminal_preserves_failure(self) -> None:
+        cases: tuple[
+            tuple[tuple[CanonicalStreamItem, ...], type[BaseException], str],
+            ...,
+        ] = (
+            (self._errored_canonical_items(), RuntimeError, "provider failed"),
+            (
+                self._cancelled_canonical_items(),
+                CancelledError,
+                "stream cancelled",
+            ),
+        )
+
+        for items, exception_type, message in cases:
+            with self.subTest(exception_type=exception_type.__name__):
+
+                class Output:
+                    def __init__(self) -> None:
+                        self.items = iter(items)
+                        self.close_count = 0
+
+                    def __aiter__(self) -> "Output":
+                        return self
+
+                    async def __anext__(self) -> CanonicalStreamItem:
+                        try:
+                            return next(self.items)
+                        except StopIteration as exc:
+                            raise StopAsyncIteration from exc
+
+                    async def aclose(self) -> None:
+                        self.close_count += 1
+
+                consumed = False
+
+                def mark_consumed() -> None:
+                    nonlocal consumed
+                    consumed = True
+
+                output = Output()
+                settings = GenerationSettings()
+                resp = TextGenerationResponse(
+                    lambda **_: output,
+                    logger=getLogger(),
+                    use_async_generator=True,
+                    generation_settings=settings,
+                    settings=settings,
+                )
+                resp.add_done_callback(mark_consumed)
+                iterator = resp.__aiter__()
+
+                item: CanonicalStreamItem | None = None
+                for _ in items:
+                    item = await iterator.__anext__()
+
+                assert item is not None
+                self.assertTrue(item.is_stream_terminal)
+                await resp.aclose()
+
+                self.assertEqual(output.close_count, 1)
+                self.assertTrue(consumed)
+                with self.assertRaisesRegex(exception_type, message):
+                    await resp.to_str()
 
     async def test_to_str_uses_semantic_terminal_message_fallbacks(
         self,
@@ -3176,7 +3390,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(output.close_count, 1)
                 self.assertEqual(resp.output_token_count, 4)
-                self.assertFalse(consumed)
+                self.assertTrue(consumed)
                 with self.assertRaisesRegex(RuntimeError, "provider failed"):
                     await resp.to_str()
 
@@ -3234,7 +3448,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 self.assertEqual(accumulator.answer_text, "partial")
                 self.assertEqual(source.open_count, 1)
                 self.assertEqual(source.call_count, 0)
-                self.assertFalse(consumed)
+                self.assertTrue(consumed)
                 self.assertIsNone(resp._final_text)
                 with self.assertRaisesRegex(exception_type, message):
                     await resp.to_str()
@@ -3406,13 +3620,13 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(accumulator.answer_text, "partial")
                 self.assertEqual(open_count, 1)
-                self.assertFalse(consumed)
+                self.assertTrue(consumed)
                 with self.assertRaisesRegex(exception_type, message):
                     await resp.to_str()
                 with self.assertRaisesRegex(exception_type, message):
                     await resp.to_str()
                 self.assertEqual(open_count, 1)
-                self.assertFalse(consumed)
+                self.assertTrue(consumed)
 
     async def test_async_iteration_terminal_cancel_keeps_to_str_failure(
         self,
@@ -3514,7 +3728,7 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                     await iterator.__anext__()
 
                 self.assertEqual(output.close_count, 1)
-                self.assertFalse(consumed)
+                self.assertTrue(consumed)
                 with self.assertRaisesRegex(
                     CancelledError, "stream cancelled"
                 ):
@@ -4501,16 +4715,23 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(output.read_count, 1)
         self.assertTrue(output.closed)
 
-    async def test_restarted_iteration_resets_response_accumulation(
+    async def test_restarted_iteration_continues_active_session(
         self,
     ) -> None:
+        open_count = 0
+
         async def gen():
             for item in self._complete_canonical_items():
                 yield item
 
+        def output_fn(**_: object) -> AsyncIterator[CanonicalStreamItem]:
+            nonlocal open_count
+            open_count += 1
+            return gen()
+
         settings = GenerationSettings()
         resp = TextGenerationResponse(
-            lambda **_: gen(),
+            output_fn,
             logger=getLogger(),
             use_async_generator=True,
             generation_settings=settings,
@@ -4525,14 +4746,19 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
 
         tokens = [token async for token in resp]
 
+        self.assertEqual(open_count, 1)
         self.assertEqual(
             [token.kind for token in tokens],
-            [item.kind for item in self._complete_canonical_items()],
+            [
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
         )
         self.assertEqual(await resp.to_str(), "ok")
         self.assertEqual(resp.output_token_count, 4)
 
-    async def test_restarted_iteration_clears_cached_final_text(self) -> None:
+    async def test_restarted_iteration_keeps_cached_final_text(self) -> None:
         values = iter(("first", "second"))
 
         def output_fn(**_: object):
@@ -4589,11 +4815,195 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(await resp.to_str(), "first")
+        with self.assertRaisesRegex(RuntimeError, "single-use"):
+            resp.__aiter__()
+
+        self.assertEqual(await resp.to_str(), "first")
+
+    async def test_session_ownership_edge_paths(self) -> None:
+        settings = GenerationSettings()
+        non_stream = TextGenerationResponse(
+            lambda **_: "ok",
+            logger=getLogger(),
+            use_async_generator=False,
+            generation_settings=settings,
+            settings=settings,
+        )
+        non_stream._claim_stream_session()
+        self.assertEqual(await non_stream.to_str(), "ok")
+
+        open_count = 0
+
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            for item in self._complete_canonical_items():
+                yield item
+
+        def output_fn(**_: object) -> AsyncIterator[CanonicalStreamItem]:
+            nonlocal open_count
+            open_count += 1
+            return gen()
+
+        started = TextGenerationResponse(
+            output_fn,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        started.__aiter__()
+        started._start_stream_output()
+        await started.aclose()
+        self.assertEqual(open_count, 1)
+
+        active_to_str = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        active_to_str.__aiter__()
+        self.assertEqual(await active_to_str.to_str(), "ok")
+
+        closed = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        await closed.aclose()
+        await closed.cancel()
+
+        finalized = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        self.assertEqual(await finalized.to_str(), "ok")
+        await finalized.cancel()
+
+    async def test_to_str_rejects_claimed_unopened_stream_session(
+        self,
+    ) -> None:
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: self._complete_canonical_items(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        stream = resp.canonical_stream(
+            stream_session_id="response-stream",
+            run_id="response-run",
+            turn_id="response-turn",
+        )
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "single-use"):
+                await resp.to_str()
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
+            await resp.aclose()
+
+    async def test_to_str_after_close_returns_accumulated_answer(
+        self,
+    ) -> None:
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            for item in self._complete_canonical_items():
+                yield item
+
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
         iterator = resp.__aiter__()
+
         self.assertIs(
             (await iterator.__anext__()).kind,
             StreamItemKind.STREAM_STARTED,
         )
-        self.assertEqual((await iterator.__anext__()).text_delta, "second")
+        self.assertEqual((await iterator.__anext__()).text_delta, "ok")
+        await resp.aclose()
 
-        self.assertEqual(await resp.to_str(), "second")
+        self.assertEqual(await resp.to_str(), "ok")
+
+    async def test_direct_iteration_closes_on_source_exception(self) -> None:
+        class Output:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            def __aiter__(self) -> "Output":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                raise RuntimeError("source failed")
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        output = Output()
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: output,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        resp.__aiter__()
+
+        with self.assertRaisesRegex(RuntimeError, "source failed"):
+            await resp.__anext__()
+
+        self.assertEqual(output.close_count, 1)
+
+    async def test_direct_iteration_closes_on_record_cancellation(
+        self,
+    ) -> None:
+        class Output:
+            def __init__(self) -> None:
+                self.close_count = 0
+                items = (
+                    TextGenerationResponseMoreTestCase._complete_canonical_items()
+                )
+                self.item = items[0]
+
+            def __aiter__(self) -> "Output":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                return self.item
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        class CancellingAccumulator:
+            def add(self, _: CanonicalStreamItem) -> None:
+                raise CancelledError()
+
+        output = Output()
+        settings = GenerationSettings()
+        resp = TextGenerationResponse(
+            lambda **_: output,
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+        resp.__aiter__()
+        resp._stream_accumulator = cast(Any, CancellingAccumulator())
+
+        with self.assertRaises(CancelledError):
+            await resp.__anext__()
+
+        self.assertEqual(output.close_count, 1)
