@@ -22,8 +22,11 @@ from avalan.entities import (
     GenerationSettings,
     Message,
     MessageRole,
+    ReasoningToken,
     Token,
+    TokenDetail,
     ToolCall,
+    ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.event import Event, EventType
@@ -547,6 +550,16 @@ def _canonical_answer_stream_items(
     return tuple(items)
 
 
+def _legacy_stream_item_cases() -> tuple[tuple[str, object], ...]:
+    return (
+        ("string", "legacy"),
+        ("token", Token(token="legacy")),
+        ("token-detail", TokenDetail(id=1, token="legacy", probability=0.5)),
+        ("reasoning-token", ReasoningToken("legacy")),
+        ("tool-call-token", ToolCallToken(token='{"value": 1}')),
+    )
+
+
 def test_translator_updates_task_store() -> None:
     asyncio.run(_run_translator_flow())
 
@@ -734,30 +747,31 @@ def test_translator_preserves_orchestrator_canonical_non_answer_items() -> (
 
 
 async def _run_unsupported_legacy_item_flow() -> None:
-    store = TaskStore()
-    task_id = "task-unsupported-legacy"
-    await store.create_task(
-        task_id,
-        model="test",
-        instructions=None,
-        input_messages=[],
-        metadata={},
-    )
-    translator = A2AResponseTranslator(task_id, store)
+    for label, legacy_item in _legacy_stream_item_cases():
+        store = TaskStore()
+        task_id = f"task-unsupported-legacy-{label}"
+        await store.create_task(
+            task_id,
+            model="test",
+            instructions=None,
+            input_messages=[],
+            metadata={},
+        )
+        translator = A2AResponseTranslator(task_id, store)
 
-    async def stream():
-        yield object()
+        async def stream(item: object = legacy_item):
+            yield item
 
-    with raises(
-        StreamValidationError,
-        match="unsupported legacy A2A stream item",
-    ):
-        async for _ in translator.run_stream(stream()):
-            continue
+        with raises(
+            StreamValidationError,
+            match="unsupported legacy A2A stream item",
+        ):
+            async for _ in translator.run_stream(stream()):
+                continue
 
-    task = await store.get_task(task_id)
-    assert task["status"] == "failed"
-    assert task["error"] == "unsupported legacy A2A stream item"
+        task = await store.get_task(task_id)
+        assert task["status"] == "failed"
+        assert task["error"] == "unsupported legacy A2A stream item"
 
 
 async def _run_orchestrator_tool_event_projection_flow() -> None:
@@ -1865,56 +1879,61 @@ async def _run_missing_terminal_flow() -> None:
 
 
 async def _run_legacy_rejection_closes_answer_artifact() -> None:
-    store = TaskStore()
-    task_id = "mixed-stream"
-    await store.create_task(
-        task_id,
-        model="test",
-        instructions=None,
-        input_messages=[],
-        metadata={},
-    )
-    translator = A2AResponseTranslator(task_id, store)
-
-    async def stream():
-        yield CanonicalStreamItem(
-            stream_session_id="s",
-            run_id="r",
-            turn_id="t",
-            sequence=0,
-            kind=StreamItemKind.STREAM_STARTED,
-            channel=StreamChannel.CONTROL,
+    for label, legacy_item in _legacy_stream_item_cases():
+        store = TaskStore()
+        task_id = f"mixed-stream-{label}"
+        await store.create_task(
+            task_id,
+            model="test",
+            instructions=None,
+            input_messages=[],
+            metadata={},
         )
-        yield CanonicalStreamItem(
-            stream_session_id="s",
-            run_id="r",
-            turn_id="t",
-            sequence=1,
-            kind=StreamItemKind.ANSWER_DELTA,
-            channel=StreamChannel.ANSWER,
-            text_delta="partial",
-        )
-        yield Token(token="legacy")
+        translator = A2AResponseTranslator(task_id, store)
 
-    emitted_events: list[dict[str, Any]] = []
-    try:
-        async for event in translator.run_stream(stream()):
-            emitted_events.append(event)
-    except StreamValidationError as exc:
-        assert str(exc) == "legacy stream item after canonical stream item"
-    else:
-        raise AssertionError("expected mixed stream to be rejected")
-    assert any(
-        event["event"] == "artifact.completed"
-        and event["data"]["artifact"]["id"] == "answer"
-        for event in emitted_events
-    )
-    task = await store.get_task(task_id)
-    assert task["status"] == "failed"
-    assert task["error"] == "legacy stream item after canonical stream item"
-    assert task["completed_at"] is not None
-    artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
-    assert artifacts["answer"]["state"] == "completed"
+        async def stream(item: object = legacy_item):
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="partial",
+            )
+            yield item
+
+        emitted_events: list[dict[str, Any]] = []
+        try:
+            async for event in translator.run_stream(stream()):
+                emitted_events.append(event)
+        except StreamValidationError as exc:
+            assert str(exc) == "legacy stream item after canonical stream item"
+        else:
+            raise AssertionError("expected mixed stream to be rejected")
+        assert any(
+            event["event"] == "artifact.completed"
+            and event["data"]["artifact"]["id"] == "answer"
+            for event in emitted_events
+        )
+        task = await store.get_task(task_id)
+        assert task["status"] == "failed"
+        assert (
+            task["error"] == "legacy stream item after canonical stream item"
+        )
+        assert task["completed_at"] is not None
+        artifacts = {
+            artifact["id"]: artifact for artifact in task["artifacts"]
+        }
+        assert artifacts["answer"]["state"] == "completed"
 
 
 async def _run_cancelled_stream_closes_answer_artifact() -> None:
@@ -2420,7 +2439,10 @@ def test_repeated_create_task_stream_requests_bound_state_without_ui_listener(
     retention = TaskStoreRetention(
         max_tasks=2,
         max_events_per_task=4,
+        max_messages_per_task=1,
         max_artifacts_per_task=1,
+        max_message_chunks=1,
+        max_message_bytes=64,
         max_artifact_items=1,
         max_artifact_bytes=64,
     )
@@ -2447,7 +2469,10 @@ def test_repeated_create_task_stream_requests_bound_state_without_ui_listener(
         assert len(store._tasks) <= retention.max_tasks
         for record in store._tasks.values():
             assert len(record.events) <= retention.max_events_per_task
+            assert len(record.messages) <= retention.max_messages_per_task
             assert len(record.artifacts) <= retention.max_artifacts_per_task
+            for message in record.messages.values():
+                assert len(message.content) <= retention.max_message_chunks
             for artifact in record.artifacts.values():
                 assert len(artifact.content) <= retention.max_artifact_items
 

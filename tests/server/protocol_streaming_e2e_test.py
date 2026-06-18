@@ -3,7 +3,7 @@ from argparse import Namespace
 from asyncio import Event as AsyncEvent
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from json import loads
+from json import dumps, loads
 from logging import getLogger
 from types import SimpleNamespace
 from typing import Any, cast
@@ -832,10 +832,12 @@ async def _assert_a2a_projection(
 
     status_updates: list[a2a_types.TaskStatusUpdateEvent] = []
     artifact_updates: list[a2a_types.TaskArtifactUpdateEvent] = []
+    converted_payloads: list[dict[str, object]] = []
     async for raw_event in translator.run_stream(_iter_items(items)):
         converted = await converter.convert(raw_event)
         if not isinstance(converted, dict) or "result" not in converted:
             continue
+        converted_payloads.append(converted)
         response = (
             a2a_types.SendStreamingMessageSuccessResponse.model_validate(
                 converted
@@ -848,8 +850,19 @@ async def _assert_a2a_projection(
 
     assert translator.text == "final answer"
     task = await store.get_task(task_id)
+    event_history = await store.get_events(task_id)
+    payload = dumps(
+        {
+            "converted": converted_payloads,
+            "events": event_history,
+            "task": task,
+        },
+        sort_keys=True,
+    )
     artifacts = {artifact["id"]: artifact for artifact in task["artifacts"]}
     assert task["status"] == "completed"
+    assert "a2a-legacy-stream" not in payload
+    assert "legacy-tool-call" not in payload
     assert artifacts["reasoning"]["content"][0]["text"] == "plan"
     assert artifacts["answer"]["content"] == [
         {"type": "text", "text": "final "},

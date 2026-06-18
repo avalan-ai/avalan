@@ -23,6 +23,7 @@ from avalan.entities import (
     ReasoningToken,
     Token,
     TokenDetail,
+    ToolCallToken,
 )
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -31,7 +32,6 @@ from avalan.model.stream import (
     StreamItemKind,
     StreamTerminalOutcome,
     StreamValidationError,
-    canonical_item_from_token,
     project_canonical_stream_item,
 )
 from avalan.server.a2a.router import (
@@ -39,7 +39,6 @@ from avalan.server.a2a.router import (
     A2AResponseTranslator,
     A2AStreamEventConverter,
     A2ATaskCreateRequest,
-    _A2ALegacyStreamAdapter,
     _append_unique,
     _artifact_parts_from_payload,
     _build_agent_card,
@@ -1352,45 +1351,94 @@ def test_additional_router_helpers() -> None:
     asyncio.run(_run_additional_router_helpers())
 
 
-def test_legacy_stream_adapter_returns_none_for_unsupported_item() -> None:
-    adapter = _A2ALegacyStreamAdapter("fixture-run")
-
-    assert adapter.map(object()) is None
-    assert adapter.sequence == 0
+def test_translator_runtime_output_uses_canonical_identities() -> None:
+    asyncio.run(_run_translator_runtime_output_uses_canonical_identities())
 
 
-def test_legacy_stream_adapter_maps_token_and_string_sequence() -> None:
-    adapter = _A2ALegacyStreamAdapter("fixture-run")
+async def _run_translator_runtime_output_uses_canonical_identities() -> None:
+    store = TaskStore()
+    task_id = "canonical-identities"
+    await store.create_task(
+        task_id,
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
 
-    first_items = adapter.map(Token(token="first"))
+    async def stream() -> AsyncGenerator[CanonicalStreamItem, None]:
+        for item in (
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                text_delta="{}",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+                data={"name": "lookup", "arguments": {}},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ):
+            yield item
 
-    assert first_items is not None
-    assert len(first_items) == 2
-    stream_start, first_token = first_items
-    assert stream_start.kind is StreamItemKind.STREAM_STARTED
-    assert stream_start.channel is StreamChannel.CONTROL
-    assert stream_start.sequence == 0
-    assert stream_start.stream_session_id == adapter.stream_session_id
-    assert stream_start.run_id == "fixture-run"
-    assert stream_start.turn_id == adapter.turn_id
-    assert first_token.kind is StreamItemKind.ANSWER_DELTA
-    assert first_token.channel is StreamChannel.ANSWER
-    assert first_token.sequence == 1
-    assert first_token.text_delta == "first"
-    assert first_token.stream_session_id == adapter.stream_session_id
-    assert first_token.run_id == "fixture-run"
-    assert first_token.turn_id == adapter.turn_id
+    events = [event async for event in translator.run_stream(stream())]
+    task = await store.get_task(task_id)
+    payload = json.dumps(
+        {"events": events, "task": task},
+        default=str,
+        sort_keys=True,
+    )
 
-    later_items = adapter.map("later")
-
-    assert later_items is not None
-    assert len(later_items) == 1
-    later_token = later_items[0]
-    assert later_token.kind is StreamItemKind.ANSWER_DELTA
-    assert later_token.channel is StreamChannel.ANSWER
-    assert later_token.sequence == 2
-    assert later_token.text_delta == "later"
-    assert adapter.sequence == 3
+    assert task["status"] == "completed"
+    assert "a2a-legacy-stream" not in payload
+    assert "legacy-tool-call" not in payload
+    assert "call-1" in payload
 
 
 async def _run_additional_router_helpers() -> None:
@@ -1403,19 +1451,23 @@ async def _run_additional_router_helpers() -> None:
         metadata={},
     )
 
-    reasoning_item = canonical_item_from_token(
-        ReasoningToken("thinking"),
-        1,
+    reasoning_item = CanonicalStreamItem(
         stream_session_id="s",
         run_id="r",
         turn_id="t",
+        sequence=1,
+        kind=StreamItemKind.REASONING_DELTA,
+        channel=StreamChannel.REASONING,
+        text_delta="thinking",
     )
-    answer_item = canonical_item_from_token(
-        Token(token="text"),
-        2,
+    answer_item = CanonicalStreamItem(
         stream_session_id="s",
         run_id="r",
         turn_id="t",
+        sequence=2,
+        kind=StreamItemKind.ANSWER_DELTA,
+        channel=StreamChannel.ANSWER,
+        text_delta="text",
     )
     tool_item = CanonicalStreamItem(
         stream_session_id="s",
@@ -1695,6 +1747,40 @@ async def _run_stream_generator_handles_consumer_close(
     assert orchestrator.synced is True
 
 
+async def _seed_completed_stream(
+    translator: A2AResponseTranslator,
+) -> None:
+    for item in (
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=1,
+            kind=StreamItemKind.USAGE_COMPLETED,
+            channel=StreamChannel.USAGE,
+            usage={},
+        ),
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=2,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    ):
+        await translator._process_item(item)
+
+
 def test_translator_finish_handles_answer_artifact() -> None:
     asyncio.run(_run_translator_finish_handles_answer_artifact())
 
@@ -1709,6 +1795,7 @@ async def _run_translator_finish_handles_answer_artifact() -> None:
         metadata={},
     )
     translator = A2AResponseTranslator("finish", store)
+    await _seed_completed_stream(translator)
     artifact_id, _ = await store.ensure_artifact(
         "finish",
         artifact_id="answer-art",
@@ -1736,6 +1823,7 @@ async def _run_translator_finish_handles_reasoning_artifact() -> None:
         metadata={},
     )
     translator = A2AResponseTranslator("finish-reasoning", store)
+    await _seed_completed_stream(translator)
     artifact_id, _ = await store.ensure_artifact(
         "finish-reasoning",
         artifact_id="reasoning-art",
@@ -1757,9 +1845,13 @@ def test_translator_legacy_rejection_first_item() -> None:
     asyncio.run(_run_translator_legacy_rejection_first_item())
 
 
-async def _run_translator_legacy_rejection_first_item() -> None:
+def test_translator_process_item_rejects_noncanonical_item() -> None:
+    asyncio.run(_run_translator_process_item_rejects_noncanonical_item())
+
+
+async def _run_translator_process_item_rejects_noncanonical_item() -> None:
     store = TaskStore()
-    task_id = "legacy-rejection-first"
+    task_id = "direct-noncanonical-rejection"
     await store.create_task(
         task_id,
         model="model",
@@ -1773,12 +1865,42 @@ async def _run_translator_legacy_rejection_first_item() -> None:
         StreamValidationError,
         match="unsupported legacy A2A stream item",
     ):
-        await translator._process_item(
-            TokenDetail(id=7, token="chunk", probability=0.5)
-        )
+        await translator._process_item(object())
 
-    assert translator._projection_state.legacy_stream_seen is True
-    assert translator._projection_state.has_canonical_items is False
+
+async def _run_translator_legacy_rejection_first_item() -> None:
+    cases: tuple[object, ...] = (
+        "chunk",
+        Token(token="chunk"),
+        TokenDetail(id=7, token="chunk", probability=0.5),
+        ReasoningToken("chunk"),
+        ToolCallToken(token="{}"),
+    )
+    for index, legacy_item in enumerate(cases):
+        store = TaskStore()
+        task_id = f"legacy-rejection-first-{index}"
+        await store.create_task(
+            task_id,
+            model="model",
+            instructions=None,
+            input_messages=[],
+            metadata={},
+        )
+        translator = A2AResponseTranslator(task_id, store)
+
+        async def stream() -> AsyncGenerator[object, None]:
+            yield legacy_item
+
+        with pytest.raises(
+            StreamValidationError,
+            match="unsupported legacy A2A stream item",
+        ):
+            async for _ in translator.run_stream(stream()):
+                continue
+
+        task = await store.get_task(task_id)
+        assert task["status"] == "failed"
+        assert task["error"] == "unsupported legacy A2A stream item"
 
 
 async def _run_translator_rejects_mixed_stream_surfaces() -> None:
@@ -1816,9 +1938,18 @@ async def _run_translator_rejects_mixed_stream_surfaces() -> None:
 
     for task_id, items, message in cases:
         translator = await prepare(task_id)
-        with pytest.raises(StreamValidationError, match=message):
+
+        async def stream() -> AsyncGenerator[object, None]:
             for item in items:
-                await translator._process_item(item)
+                yield item
+
+        with pytest.raises(StreamValidationError, match=message):
+            async for _ in translator.run_stream(stream()):
+                continue
+
+        task = await translator._store.get_task(task_id)
+        assert task["status"] == "failed"
+        assert task["error"] == message
 
 
 def test_translator_rejects_duplicate_canonical_terminal() -> None:
@@ -1938,6 +2069,38 @@ def test_translator_run_stream_closes_open_artifact_after_iterator_end() -> (
     None
 ):
     asyncio.run(_run_open_artifact_iterator_end())
+
+
+def test_translator_run_stream_rejects_empty_stream() -> None:
+    asyncio.run(_run_translator_rejects_empty_stream())
+
+
+async def _run_translator_rejects_empty_stream() -> None:
+    store = TaskStore()
+    task_id = "empty-stream-finalization"
+    await store.create_task(
+        task_id,
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    async def stream() -> AsyncGenerator[object, None]:
+        if False:
+            yield object()
+
+    with pytest.raises(
+        StreamValidationError,
+        match="stream must contain at least one item",
+    ):
+        async for _ in translator.run_stream(stream()):
+            continue
+
+    task = await store.get_task(task_id)
+    assert task["status"] == "failed"
+    assert task["error"] == "stream must contain at least one item"
 
 
 async def _run_open_artifact_iterator_end() -> None:

@@ -325,7 +325,6 @@ _LEGACY_CLASSIFIER_STRING_SITES = {
         "avalan.model.nlp.text.vendor.openai",
         "OpenAIClient._non_stream_response_content",
     ),
-    ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
     ("avalan.model.stream", "_LegacyTokenStreamAdapter.item_from_token"),
     ("avalan.model.stream", "_LegacyTokenStreamAdapter.events_from_token"),
 }
@@ -390,18 +389,6 @@ _PHASE_1_1_LEGACY_CLASSIFIER_DEBT_CEILING = {
     (
         "avalan.model.stream",
         "_LegacyTokenStreamAdapter.item_from_token",
-    ): frozenset(
-        {
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        }
-    ),
-    (
-        "avalan.server.a2a.router",
-        "_A2ALegacyStreamAdapter.map",
     ): frozenset(
         {
             StreamLegacySurface.STRING,
@@ -7823,6 +7810,7 @@ class StreamContractTestCase(TestCase):
             {category for entry in inventory for category in entry.categories},
             _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
             - {
+                StreamLegacyBoundaryCategory.A2A,
                 StreamLegacyBoundaryCategory.MCP,
                 StreamLegacyBoundaryCategory.ORCHESTRATOR,
             },
@@ -8034,6 +8022,7 @@ class StreamContractTestCase(TestCase):
             {entry.category for entry in inventory},
             _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
             - {
+                StreamLegacyBoundaryCategory.A2A,
                 StreamLegacyBoundaryCategory.ORCHESTRATOR,
                 StreamLegacyBoundaryCategory.SDK_RESPONSE,
                 StreamLegacyBoundaryCategory.CHAT_SSE,
@@ -8095,13 +8084,20 @@ class StreamContractTestCase(TestCase):
                 "ToolCallResponseParser",
             ),
             ("avalan.cli.commands.model", "_stream_projection"),
-            ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
             ("avalan.flow.stream", "FlowEventSink"),
             ("avalan.flow.stream", "FlowCanonicalEventListener.__call__"),
         }
         inventory_keys = {
             (entry.module, entry.qualname) for entry in inventory
         }
+        self.assertIn(
+            ("avalan.cli.commands.model", "_stream_projection"),
+            inventory_keys,
+        )
+        self.assertNotIn(
+            ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
+            inventory_keys,
+        )
         self.assertEqual(expected_boundaries, inventory_keys)
 
         boundary_expectations = {
@@ -8111,23 +8107,6 @@ class StreamContractTestCase(TestCase):
                 (
                     StreamLegacyBoundaryDirection.EMITS,
                     StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-                ),
-            ),
-            (
-                "avalan.server.a2a.router",
-                "_A2ALegacyStreamAdapter.map",
-            ): (
-                (
-                    StreamLegacySurface.STRING,
-                    StreamLegacySurface.TOKEN,
-                    StreamLegacySurface.TOKEN_DETAIL,
-                    StreamLegacySurface.REASONING_TOKEN,
-                    StreamLegacySurface.TOOL_CALL_TOKEN,
-                ),
-                StreamLegacyBoundaryCategory.A2A,
-                (
-                    StreamLegacyBoundaryDirection.ACCEPTS,
-                    StreamLegacyBoundaryDirection.PROJECTS,
                 ),
             ),
             ("avalan.flow.stream", "FlowCanonicalEventListener.__call__"): (
@@ -8711,7 +8690,6 @@ class InheritsCanonical(CanonicalBase):
                 StreamLegacyBoundaryCategory.PRODUCER,
                 StreamLegacyBoundaryCategory.PARSER,
                 StreamLegacyBoundaryCategory.SDK_RESPONSE,
-                StreamLegacyBoundaryCategory.A2A,
             },
         )
         self.assertNotIn(
@@ -8728,6 +8706,10 @@ class InheritsCanonical(CanonicalBase):
                 if StreamLegacySurface.STRING in entry.surfaces
             },
             _LEGACY_CLASSIFIER_STRING_SITES,
+        )
+        self.assertNotIn(
+            ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
+            inventory_keys,
         )
         for qualname in (
             "OrchestratorResponse._next_item",
@@ -8796,24 +8778,6 @@ class InheritsCanonical(CanonicalBase):
             events_entry.category,
             StreamLegacyBoundaryCategory.PARSER,
         )
-        a2a_entry = classify_legacy_stream_classifier(
-            "avalan.server.a2a.router",
-            "_A2ALegacyStreamAdapter.map",
-        )
-        self.assertEqual(
-            a2a_entry.surfaces,
-            (
-                StreamLegacySurface.STRING,
-                StreamLegacySurface.TOKEN,
-                StreamLegacySurface.TOKEN_DETAIL,
-                StreamLegacySurface.REASONING_TOKEN,
-                StreamLegacySurface.TOOL_CALL_TOKEN,
-            ),
-        )
-        self.assertIs(
-            a2a_entry.category,
-            StreamLegacyBoundaryCategory.A2A,
-        )
         for entry in inventory:
             with self.subTest(module=entry.module, qualname=entry.qualname):
                 self.assertIs(
@@ -8833,6 +8797,11 @@ class InheritsCanonical(CanonicalBase):
             classify_legacy_stream_classifier("", "qualname")
         with self.assertRaises(AssertionError):
             classify_legacy_stream_classifier("module", "")
+        with self.assertRaises(StreamValidationError):
+            classify_legacy_stream_classifier(
+                "avalan.server.a2a.router",
+                "_A2ALegacyStreamAdapter.map",
+            )
         with patch(
             "avalan.model.stream._LEGACY_STREAM_CLASSIFIER_INVENTORY",
             (),
