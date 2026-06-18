@@ -1996,36 +1996,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         "CLI stdout and rendering consume canonical projections only.",
     ),
     _runtime_boundary(
-        "avalan.server.routers.chat",
-        "_stream_projection",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.CHAT_SSE,
-        (StreamLegacyBoundaryDirection.PROJECTS,),
-        "server.chat",
-        "Chat SSE projects canonical stream items only.",
-    ),
-    _runtime_boundary(
-        "avalan.server.routers.responses",
-        "_stream_projection",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.RESPONSES_SSE,
-        (StreamLegacyBoundaryDirection.PROJECTS,),
-        "server.responses",
-        "Responses SSE projects canonical stream items only.",
-    ),
-    _runtime_boundary(
         "avalan.server.routers.mcp",
         "ResponseItem",
         (

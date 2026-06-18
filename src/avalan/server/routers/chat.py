@@ -3,11 +3,10 @@ from ...entities import (
     MessageRole,
 )
 from ...model.stream import (
-    CanonicalStreamItem,
     StreamConsumerProjection,
     StreamItemKind,
     StreamTerminalOutcome,
-    project_stream_consumer_item,
+    StreamValidationError,
 )
 from ...server.entities import (
     ChatCompletionChoice,
@@ -21,7 +20,6 @@ from .. import di_get_logger, di_get_orchestrator
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
 from .streaming import (
-    ProtocolStreamProjectionState,
     cleanup_stream_sources,
     protocol_stream_terminal_snapshot,
     stream_consumer_iterator,
@@ -39,6 +37,9 @@ from fastapi.responses import StreamingResponse
 
 _JSON_SEPARATORS = (",", ":")
 _CHAT_COMPLETION_CHUNK_SUFFIX = "}}]}"
+_CHAT_COMPLETION_FINAL_CHUNK_SUFFIX = (
+    '"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}'
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +72,20 @@ class _ChatCompletionChunkEnvelope:
             + _CHAT_COMPLETION_CHUNK_SUFFIX
         )
 
+    def final_chunk_json(self) -> str:
+        return (
+            f'{{"id":{_json_string(self.response_id)},'
+            '"object":"chat.completion.chunk",'
+            f'"created":{self.timestamp},'
+            f'"model":{_json_string(self.model_id)},'
+            + _CHAT_COMPLETION_FINAL_CHUNK_SUFFIX
+        )
+
     def message(self, content: str) -> str:
         return sse_message(self.chunk_json(content))
+
+    def final_message(self) -> str:
+        return sse_message(self.final_chunk_json())
 
 
 def _json_string(value: str) -> str:
@@ -118,16 +131,10 @@ async def create_chat_completion(
     if request.stream:
 
         async def generate_chunks() -> AsyncIterator[str]:
-            sequence = 0
             chunk_envelope = _ChatCompletionChunkEnvelope(
                 response_id=response_id,
                 timestamp=timestamp,
                 model_id=model_id,
-            )
-            stream_state = ProtocolStreamProjectionState(
-                stream_session_id="chat-sse-stream",
-                run_id=str(response_id),
-                turn_id="chat-sse-turn",
             )
             iterator = stream_consumer_iterator(
                 response,
@@ -140,55 +147,51 @@ async def create_chat_completion(
                 close_source_on_generator_exit=False,
             )
             cancelled = False
+            final_usage: object | None = None
+            terminal: StreamConsumerProjection | None = None
             try:
-                sync_messages = True
                 while True:
                     try:
                         token = await anext(iterator)
                     except StopAsyncIteration:
                         break
 
-                    projection = stream_state.project(
-                        token,
-                        sequence,
-                        unsupported_message=(
-                            "unsupported stream item for Chat SSE projection"
-                        ),
-                    )
-                    projected_text = _stream_text(projection)
-                    sequence += 1
+                    if token.usage is not None:
+                        final_usage = token.usage
+                    if token.is_stream_terminal:
+                        terminal = token
+                    projected_text = _stream_text(token)
                     if projected_text is None:
                         continue
 
                     yield chunk_envelope.message(projected_text)
 
-                if stream_state.has_canonical_items:
-                    stream_state.validate_complete()
-                    terminal = stream_state.terminal_projection()
-                    terminal_event = _chat_terminal_event(
+                if terminal is None:
+                    raise StreamValidationError(
+                        "stream missing terminal outcome"
+                    )
+
+                terminal_event = _chat_terminal_event(
+                    response_id,
+                    timestamp,
+                    model_id,
+                    terminal,
+                )
+                usage = _chat_usage(final_usage)
+                if usage is not None:
+                    yield _chat_usage_chunk(
                         response_id,
                         timestamp,
                         model_id,
-                        terminal,
+                        usage,
                     )
-                    usage = _chat_usage(stream_state.accumulator.final_usage)
-                    if usage is not None:
-                        yield _chat_usage_chunk(
-                            response_id,
-                            timestamp,
-                            model_id,
-                            usage,
-                        )
-                    if terminal_event is not None:
-                        yield terminal_event
-                    sync_messages = stream_terminal_succeeded(terminal)
+                if terminal_event is not None:
+                    yield terminal_event
                 else:
-                    terminal_event = None
-
-                if terminal_event is None:
+                    yield chunk_envelope.final_message()
                     yield sse_message("[DONE]")
 
-                if sync_messages:
+                if stream_terminal_succeeded(terminal):
                     await orchestrator.sync_messages()
             except CancelledError:
                 cancelled = True
@@ -274,20 +277,6 @@ def _chat_terminal_event(
         ):
             data["error"] = terminal_snapshot.data
     return sse_message(to_json(data), event=event)
-
-
-def _stream_projection(
-    token: CanonicalStreamItem | StreamConsumerProjection,
-    sequence: int,
-) -> StreamConsumerProjection:
-    return project_stream_consumer_item(
-        token,
-        sequence,
-        stream_session_id="chat-helper-stream",
-        run_id="chat-helper-run",
-        turn_id="chat-helper-turn",
-        unsupported_message="unsupported stream item for Chat SSE projection",
-    )
 
 
 def _stream_text(
