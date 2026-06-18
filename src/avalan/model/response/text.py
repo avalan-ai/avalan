@@ -18,6 +18,7 @@ from . import InvalidJsonResponseException
 
 from asyncio import CancelledError
 from collections.abc import AsyncIterable, Mapping
+from enum import Enum
 from inspect import isawaitable
 from io import StringIO
 from json import JSONDecodeError, loads
@@ -42,6 +43,47 @@ _LEGACY_SDK_RESULT_TYPE_NAMES = frozenset(
         "ToolCallToken",
     }
 )
+_SINGLE_USE_STREAM_ERROR = (
+    "TextGenerationResponse stream session is single-use"
+)
+
+
+class _StreamSessionState(Enum):
+    NOT_STARTED = "not_started"
+    ACTIVE = "active"
+    FINALIZED = "finalized"
+    CLOSED_CANCELLED = "closed_cancelled"
+
+
+class _ResponseOwnedStreamIterator(AsyncIterator[CanonicalStreamItem]):
+    def __init__(
+        self,
+        stream: AsyncIterator[CanonicalStreamItem],
+        close_response: Callable[[], Awaitable[None]],
+        is_closed: Callable[[], bool],
+    ) -> None:
+        self._stream = stream
+        self._close_response = close_response
+        self._is_closed = is_closed
+
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        return self
+
+    async def __anext__(self) -> CanonicalStreamItem:
+        if self._is_closed():
+            raise StopAsyncIteration
+        return await self._stream.__anext__()
+
+    async def aclose(self) -> None:
+        aclose = getattr(self._stream, "aclose", None)
+        try:
+            if aclose is not None:
+                assert callable(aclose)
+                await TextGenerationResponse._close_output(
+                    cast(Callable[[], object], aclose)
+                )
+        finally:
+            await self._close_response()
 
 
 def _explicit_canonical_stream(
@@ -106,6 +148,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _terminal_failure_message: str | None = None
     _validation_failure_message: str | None = None
     _output_closed: bool = False
+    _closed_source_ids: set[int]
+    _cancelled_source_ids: set[int]
+    _session_state: _StreamSessionState
     _bos_token: str | None = None
     _stream_accumulator: CanonicalStreamAccumulator | None = None
     _last_stream_sequence: int | None = None
@@ -136,6 +181,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         self._on_consumed_callbacks = []
         self._final_text = None
         self._output_closed = False
+        self._closed_source_ids = set()
+        self._cancelled_source_ids = set()
+        self._session_state = _StreamSessionState.NOT_STARTED
         self._manual_thinking = False
         self._reset_iteration_state()
 
@@ -158,6 +206,25 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         self._terminal_failure_outcome = None
         self._terminal_failure_message = None
         self._validation_failure_message = None
+
+    def _claim_stream_session(self) -> None:
+        if not self._use_async_generator:
+            return
+        if self._session_state is not _StreamSessionState.NOT_STARTED:
+            raise RuntimeError(_SINGLE_USE_STREAM_ERROR)
+        self._session_state = _StreamSessionState.ACTIVE
+        self._reset_iteration_state()
+        self._final_text = None
+
+    def _start_stream_output(self) -> None:
+        if self._output is not None:
+            return
+        output = self._output_fn(*self._args, **self._kwargs)
+        if isinstance(output, AsyncIterable):
+            self._output = output.__aiter__()
+        else:
+            self._output = self._single_item_output_generator(output)
+        self._output_closed = False
 
     @staticmethod
     def _count_input_tokens(inputs: Any) -> int:
@@ -299,51 +366,57 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             self._reset_iteration_state()
             self._output_token_count = len(prefetched_text)
             self._final_text = None
-            return self._record_canonical_stream_final_text(
-                self._canonical_stream_from_final_text(
-                    prefetched_text,
-                    stream_session_id=stream_session_id,
-                    run_id=run_id,
-                    turn_id=turn_id,
-                    provider_family=provider_family,
-                    capabilities=capabilities
-                    or self._default_stream_capabilities(provider_family),
-                    close_after_terminal=close_after_terminal,
-                    usage=prefetched_usage,
+            return _ResponseOwnedStreamIterator(
+                self._record_canonical_stream_final_text(
+                    self._canonical_stream_from_final_text(
+                        prefetched_text,
+                        stream_session_id=stream_session_id,
+                        run_id=run_id,
+                        turn_id=turn_id,
+                        provider_family=provider_family,
+                        capabilities=capabilities
+                        or self._default_stream_capabilities(provider_family),
+                        close_after_terminal=close_after_terminal,
+                        usage=prefetched_usage,
+                    ),
+                    count_output=False,
                 ),
-                count_output=False,
+                self.aclose,
+                self._is_stream_closed,
             )
 
+        self._claim_stream_session()
         canonical_stream = _explicit_canonical_stream(self._output_fn)
         if canonical_stream is not None:
-            self._reset_iteration_state()
-            self._final_text = None
-            self._output = (
-                self._output_fn
-                if isinstance(self._output_fn, AsyncIterable)
-                else None
+            items = canonical_stream(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                provider_family=provider_family,
+                capabilities=capabilities
+                or self._default_stream_capabilities(provider_family),
+                close_after_terminal=close_after_terminal,
             )
+            self._output = items
             self._output_closed = False
-            return self._record_canonical_stream_final_text(
-                canonical_stream(
-                    stream_session_id=stream_session_id,
-                    run_id=run_id,
-                    turn_id=turn_id,
-                    provider_family=provider_family,
-                    capabilities=capabilities
-                    or self._default_stream_capabilities(provider_family),
-                    close_after_terminal=close_after_terminal,
-                )
+            return _ResponseOwnedStreamIterator(
+                self._record_canonical_stream_final_text(items),
+                self.aclose,
+                self._is_stream_closed,
             )
 
-        return self._canonical_stream_from_output(
-            stream_session_id=stream_session_id,
-            run_id=run_id,
-            turn_id=turn_id,
-            provider_family=provider_family,
-            capabilities=capabilities
-            or self._default_stream_capabilities(provider_family),
-            close_after_terminal=close_after_terminal,
+        return _ResponseOwnedStreamIterator(
+            self._canonical_stream_from_output(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                provider_family=provider_family,
+                capabilities=capabilities
+                or self._default_stream_capabilities(provider_family),
+                close_after_terminal=close_after_terminal,
+            ),
+            self.aclose,
+            self._is_stream_closed,
         )
 
     def _default_stream_capabilities(
@@ -445,23 +518,29 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         capabilities: StreamProviderCapabilities,
         close_after_terminal: bool,
     ) -> AsyncIterator[CanonicalStreamItem]:
-        iterator = self.__aiter__()
+        self._start_stream_output()
+        assert self._output is not None
+        failed = False
         try:
             try:
-                first = await iterator.__anext__()
+                first_item = await self._output.__anext__()
             except StopAsyncIteration:
                 first = None
+            else:
+                first = await self._record_returned_item(first_item)
 
             if first is not None:
                 yield first
                 while True:
                     try:
-                        item = await iterator.__anext__()
+                        item = await self.__anext__()
                     except StopAsyncIteration:
                         break
                     yield item
                 return
 
+            await self._call_output_cleanup("aclose")
+            self._output_closed = True
             provider_usage = self._provider_usage()
             async for item in self._record_canonical_stream_final_text(
                 self._canonical_stream_from_final_text(
@@ -477,8 +556,20 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 count_output=False,
             ):
                 yield item
+        except Exception:
+            failed = True
+            raise
         finally:
-            await self.aclose()
+            await self._close_session_sources(
+                trigger_callbacks=(
+                    not failed
+                    and self._session_state is _StreamSessionState.ACTIVE
+                    and self._validation_failure_message is None
+                ),
+                mark_closed=(
+                    self._session_state is not _StreamSessionState.FINALIZED
+                ),
+            )
 
     async def _record_canonical_stream_final_text(
         self,
@@ -491,6 +582,8 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         self._count_stream_output_items = count_output
         if self._stream_accumulator is None:
             self._stream_accumulator = CanonicalStreamAccumulator()
+        completed = False
+        failed = False
         try:
             async for item in items:
                 yield await self._record_returned_item(
@@ -499,15 +592,20 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             await self._finalize_stream_accumulation(
                 raise_terminal_exception=False
             )
+            completed = True
+        except Exception:
+            failed = True
+            raise
         finally:
-            aclose = getattr(items, "aclose", None)
-            if aclose is not None and (
-                self._output is not items or not self._output_closed
-            ):
-                assert callable(aclose)
-                await self._close_output(cast(Callable[[], object], aclose))
-            if self._output is items:
-                self._output_closed = True
+            await self._close_session_sources(
+                trigger_callbacks=(
+                    not completed
+                    and not failed
+                    and self._session_state is _StreamSessionState.ACTIVE
+                    and self._validation_failure_message is None
+                ),
+                mark_closed=not completed,
+            )
 
     def consumer_projections(
         self,
@@ -544,16 +642,14 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 assert awaited_result is None
 
     def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
-        # Create a fresh async generator each time we start iterating
-        if self._output is not None:
-            self._reset_iteration_state()
-            self._final_text = None
-        output = self._output_fn(*self._args, **self._kwargs)
-        if isinstance(output, AsyncIterable):
-            self._output = output.__aiter__()
-        else:
-            self._output = self._single_item_output_generator(output)
-        self._output_closed = False
+        if (
+            self._session_state is _StreamSessionState.ACTIVE
+            and self._output is not None
+            and not self._output_closed
+        ):
+            return self
+        self._claim_stream_session()
+        self._start_stream_output()
         return self
 
     @staticmethod
@@ -563,22 +659,77 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         yield item
 
     async def aclose(self) -> None:
-        if self._output_closed:
-            return
-        self._output_closed = True
-        await self._call_output_cleanup("aclose")
+        await self._close_session_sources(
+            trigger_callbacks=True,
+            mark_closed=True,
+        )
+
+    def _is_stream_closed(self) -> bool:
+        return self._output_closed and self._session_state in (
+            _StreamSessionState.CLOSED_CANCELLED,
+            _StreamSessionState.FINALIZED,
+        )
 
     async def cancel(self) -> None:
+        if self._session_state is _StreamSessionState.CLOSED_CANCELLED:
+            return
+        if self._session_state is _StreamSessionState.FINALIZED:
+            return
         await self._call_output_cleanup("cancel")
+        await self._close_session_sources(
+            trigger_callbacks=True,
+            mark_closed=True,
+        )
+
+    async def _close_session_sources(
+        self,
+        *,
+        trigger_callbacks: bool,
+        mark_closed: bool,
+    ) -> None:
+        should_trigger_callbacks = (
+            trigger_callbacks and self._validation_failure_message is None
+        )
+        if should_trigger_callbacks:
+            await self._finalize_seen_terminal()
+        if self._output_closed and (
+            self._session_state is _StreamSessionState.CLOSED_CANCELLED
+            or self._session_state is _StreamSessionState.FINALIZED
+        ):
+            if should_trigger_callbacks:
+                await self._trigger_consumed()
+            return
+        await self._call_output_cleanup("aclose")
+        self._output_closed = True
+        if mark_closed and (
+            self._session_state is not _StreamSessionState.FINALIZED
+        ):
+            self._session_state = _StreamSessionState.CLOSED_CANCELLED
+        if should_trigger_callbacks:
+            await self._trigger_consumed()
+
+    async def _finalize_seen_terminal(self) -> None:
+        accumulator = self._stream_accumulator
+        terminal_outcome = getattr(accumulator, "terminal_outcome", None)
+        if accumulator is None or terminal_outcome is None:
+            return
+        await self._finalize_stream_accumulation(
+            raise_terminal_exception=False
+        )
 
     async def _call_output_cleanup(self, method_name: str) -> None:
         assert method_name in ("cancel", "aclose")
+        cleanup_source_ids = (
+            self._cancelled_source_ids
+            if method_name == "cancel"
+            else self._closed_source_ids
+        )
         seen: set[int] = set()
         for source in (self._output, self._output_fn):
             if source is None:
                 continue
             source_id = id(source)
-            if source_id in seen:
+            if source_id in seen or source_id in cleanup_source_ids:
                 continue
             seen.add(source_id)
             method = getattr(source, method_name, None)
@@ -586,6 +737,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 continue
             assert callable(method)
             await self._close_output(cast(Callable[[], object], method))
+            cleanup_source_ids.add(source_id)
 
     @staticmethod
     async def _close_output(aclose: Callable[[], object]) -> None:
@@ -607,15 +759,33 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 )
             except StreamValidationError as exc:
                 self._validation_failure_message = str(exc)
-                await self.aclose()
+                await self._close_session_sources(
+                    trigger_callbacks=False,
+                    mark_closed=True,
+                )
                 raise
             except (Exception, CancelledError):
-                await self.aclose()
+                await self._close_session_sources(
+                    trigger_callbacks=False,
+                    mark_closed=True,
+                )
                 raise
-            await self.aclose()
+            await self._close_session_sources(
+                trigger_callbacks=False,
+                mark_closed=False,
+            )
             raise
-        except (Exception, CancelledError):
-            await self.aclose()
+        except CancelledError:
+            await self._close_session_sources(
+                trigger_callbacks=True,
+                mark_closed=True,
+            )
+            raise
+        except Exception:
+            await self._close_session_sources(
+                trigger_callbacks=False,
+                mark_closed=True,
+            )
             raise
 
         return await self._record_returned_item(
@@ -649,10 +819,22 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             return item
         except StreamValidationError as exc:
             self._validation_failure_message = str(exc)
-            await self.aclose()
+            await self._close_session_sources(
+                trigger_callbacks=False,
+                mark_closed=True,
+            )
             raise
-        except (Exception, CancelledError):
-            await self.aclose()
+        except CancelledError:
+            await self._close_session_sources(
+                trigger_callbacks=True,
+                mark_closed=True,
+            )
+            raise
+        except Exception:
+            await self._close_session_sources(
+                trigger_callbacks=False,
+                mark_closed=True,
+            )
             raise
 
     def __str__(self) -> str:
@@ -673,6 +855,11 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         if self._has_active_stream_session():
             return await self._drain_stream_to_final_text()
 
+        if self._session_state is _StreamSessionState.ACTIVE:
+            if self._output is None:
+                raise RuntimeError(_SINGLE_USE_STREAM_ERROR)
+            return await self._drain_stream_to_final_text()
+
         if not self._use_async_generator:
             self._ensure_non_stream_prefetched()
             if self._prefetched_text is None:
@@ -681,9 +868,16 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             self._final_text = self._prefetched_text
             return self._prefetched_text
 
-        # Ensure buffer is filled, wether we were already iterating or not
-        if not self._output:
-            self.__aiter__()
+        if self._session_state is _StreamSessionState.CLOSED_CANCELLED:
+            accumulator = self._stream_accumulator
+            self._final_text = (
+                accumulator.answer_text if accumulator is not None else ""
+            )
+            await self._trigger_consumed()
+            return self._final_text
+
+        self._claim_stream_session()
+        self._start_stream_output()
         assert self._output is not None
         return await self._drain_stream_to_final_text()
 
@@ -723,10 +917,12 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         accumulator = self._stream_accumulator
         if accumulator is None:
             if self._final_text is not None:
+                self._session_state = _StreamSessionState.FINALIZED
                 await self._trigger_consumed()
                 return self._final_text
-            await self._trigger_consumed()
             self._final_text = ""
+            self._session_state = _StreamSessionState.FINALIZED
+            await self._trigger_consumed()
             return self._final_text
 
         try:
@@ -737,16 +933,20 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
 
         terminal_exception = self._remember_terminal_exception(accumulator)
         if terminal_exception is not None:
+            self._session_state = _StreamSessionState.FINALIZED
+            await self._trigger_consumed()
             if raise_terminal_exception:
                 raise terminal_exception
             return accumulator.answer_text
 
         if self._final_text is not None:
+            self._session_state = _StreamSessionState.FINALIZED
             await self._trigger_consumed()
             return self._final_text
 
-        await self._trigger_consumed()
         self._final_text = accumulator.answer_text
+        self._session_state = _StreamSessionState.FINALIZED
+        await self._trigger_consumed()
         return self._final_text
 
     def _terminal_exception(

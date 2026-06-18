@@ -801,7 +801,8 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             self._response.add_done_callback(self._on_consumed)
         if not self._canonical_items:
             self._append_canonical_item(StreamItemKind.STREAM_STARTED)
-        self._response_iterator = aiter(self._response)
+        if not self._response_drained:
+            self._response_iterator = aiter(self._response)
         self._calls = self._make_staging_queue()
         self._parser_queue = self._make_staging_queue()
         self._tool_context = ToolCallContext(
@@ -1015,6 +1016,7 @@ class OrchestratorResponse(AsyncIterator[Token | TokenDetail | Event]):
             assert isinstance(inner_response, TextGenerationResponse)
             self._model_responses.append(inner_response)
             self._response = inner_response
+            self._response_drained = False
             self._set_active_model_continuation(continuation_id)
             self.__aiter__()
 

@@ -89,7 +89,9 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         resp.set_thinking(False)
         self.assertFalse(resp.is_thinking)
 
-    async def test_aiter_preserves_thinking_on_reiteration(self) -> None:
+    async def test_aiter_preserves_active_iteration_after_manual_thinking(
+        self,
+    ) -> None:
         settings = GenerationSettings()
         resp = TextGenerationResponse(
             lambda **_: _gen(),
@@ -98,15 +100,13 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
             generation_settings=settings,
             settings=settings,
         )
-        resp.__aiter__()
+        iterator = resp.__aiter__()
         resp.set_thinking(True)
 
-        iterator = resp.__aiter__()
-
-        self.assertIs(iterator, resp)
+        self.assertIs(resp.__aiter__(), iterator)
         self.assertTrue(resp.is_thinking)
 
-    async def test_aiter_does_not_preserve_parser_derived_thinking(
+    async def test_aiter_rejects_reiteration_after_legacy_failure(
         self,
     ) -> None:
         async def gen():
@@ -132,12 +132,8 @@ class TextGenerationResponseFullCoverageTestCase(IsolatedAsyncioTestCase):
         ):
             await iterator.__anext__()
 
-        restarted = resp.__aiter__()
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "unsupported legacy SDK response stream item",
-        ):
-            await restarted.__anext__()
+        with self.assertRaisesRegex(RuntimeError, "single-use"):
+            resp.__aiter__()
         self.assertFalse(resp.is_thinking)
 
     async def test_disabled_reasoning_parser_returns_raw_token(self):
