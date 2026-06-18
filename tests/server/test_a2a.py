@@ -22,7 +22,6 @@ from avalan.entities import (
     GenerationSettings,
     Message,
     MessageRole,
-    ReasoningToken,
     Token,
     ToolCall,
     ToolCallToken,
@@ -102,7 +101,7 @@ def _a2a_dummy_operation() -> AgentOperation:
     )
 
 
-def _legacy_tool_event_orchestrator_response() -> OrchestratorResponse:
+def _legacy_fixture_tool_event_orchestrator_response() -> OrchestratorResponse:
     operation = _a2a_dummy_operation()
     call = ToolCall(
         id="legacy-call",
@@ -438,6 +437,66 @@ def _canonical_tool_flow_items(
     return tuple(items)
 
 
+def _canonical_answer_stream_items(
+    *deltas: str,
+    stream_session_id: str = "s",
+    run_id: str = "r",
+    turn_id: str = "t",
+    include_answer_done: bool = True,
+    include_terminal: bool = True,
+) -> tuple[CanonicalStreamItem, ...]:
+    items: list[CanonicalStreamItem] = [
+        CanonicalStreamItem(
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+    ]
+    sequence = 1
+    for delta in deltas:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=delta,
+            )
+        )
+        sequence += 1
+    if include_answer_done:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+        )
+        sequence += 1
+    if include_terminal:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            )
+        )
+    return tuple(items)
+
+
 def test_translator_updates_task_store() -> None:
     asyncio.run(_run_translator_flow())
 
@@ -652,7 +711,7 @@ async def _run_unsupported_legacy_item_flow() -> None:
 
 
 async def _run_orchestrator_tool_event_projection_flow() -> None:
-    raw_response = _legacy_tool_event_orchestrator_response()
+    raw_response = _legacy_fixture_tool_event_orchestrator_response()
     raw_types: list[EventType] = []
     raw_iterator = raw_response.__aiter__()
     while True:
@@ -677,7 +736,9 @@ async def _run_orchestrator_tool_event_projection_flow() -> None:
     )
     translator = A2AResponseTranslator(task_id, store)
 
-    text = await translator.consume(_legacy_tool_event_orchestrator_response())
+    text = await translator.consume(
+        _legacy_fixture_tool_event_orchestrator_response()
+    )
 
     assert text == ""
     task = await store.get_task(task_id)
@@ -1097,10 +1158,80 @@ async def _run_artifact_delta_parts_flow() -> None:
     converter = A2AStreamEventConverter(task_id, store)
 
     async def stream():
-        yield ReasoningToken("first")
-        yield ReasoningToken("second")
-        yield Token(token="A")
-        yield Token(token="B")
+        items = (
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="first",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="second",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="A",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="B",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        )
+        for item in items:
+            yield item
 
     reasoning_chunks: list[str] = []
     answer_chunks: list[str] = []
@@ -1229,7 +1360,8 @@ async def _run_final_status_flow() -> None:
     converter = A2AStreamEventConverter(task_id, store)
 
     async def stream():
-        yield Token(token="done")
+        for item in _canonical_answer_stream_items("done"):
+            yield item
 
     status_updates: list[a2a_types.TaskStatusUpdateEvent] = []
     async for raw_event in translator.run_stream(stream()):
@@ -1587,8 +1719,8 @@ def test_canonical_stream_missing_terminal_is_rejected() -> None:
     asyncio.run(_run_missing_terminal_flow())
 
 
-def test_canonical_stream_rejection_closes_open_answer_artifact() -> None:
-    asyncio.run(_run_rejected_stream_closes_answer_artifact())
+def test_legacy_rejection_closes_open_answer_artifact() -> None:
+    asyncio.run(_run_legacy_rejection_closes_answer_artifact())
 
 
 def test_stream_cancellation_closes_open_answer_artifact() -> None:
@@ -1599,12 +1731,12 @@ def test_translator_closes_response_after_success() -> None:
     asyncio.run(_run_translator_closes_response_after_success())
 
 
-def test_translator_closes_response_after_rejection() -> None:
-    asyncio.run(_run_translator_closes_response_after_rejection())
+def test_translator_closes_response_after_legacy_rejection() -> None:
+    asyncio.run(_run_translator_closes_response_after_legacy_rejection())
 
 
-def test_translator_preserves_rejection_when_cleanup_fails() -> None:
-    asyncio.run(_run_translator_preserves_rejection_when_cleanup_fails())
+def test_translator_preserves_legacy_rejection_when_cleanup_fails() -> None:
+    asyncio.run(_run_translator_preserves_legacy_rejection_cleanup_failure())
 
 
 def test_translator_cancels_response_after_interruption() -> None:
@@ -1682,7 +1814,7 @@ async def _run_missing_terminal_flow() -> None:
     )
 
 
-async def _run_rejected_stream_closes_answer_artifact() -> None:
+async def _run_legacy_rejection_closes_answer_artifact() -> None:
     store = TaskStore()
     task_id = "mixed-stream"
     await store.create_task(
@@ -1748,7 +1880,12 @@ async def _run_cancelled_stream_closes_answer_artifact() -> None:
     translator = A2AResponseTranslator(task_id, store)
 
     async def stream():
-        yield Token(token="partial")
+        for item in _canonical_answer_stream_items(
+            "partial",
+            include_answer_done=False,
+            include_terminal=False,
+        ):
+            yield item
         raise asyncio.CancelledError()
 
     emitted_events: list[dict[str, Any]] = []
@@ -1790,7 +1927,9 @@ async def _run_translator_closes_response_after_success() -> None:
         metadata={},
     )
     translator = A2AResponseTranslator(task_id, store)
-    response = CleanupTrackingResponse([Token(token="done")])
+    response = CleanupTrackingResponse(
+        list(_canonical_answer_stream_items("done"))
+    )
 
     await translator.consume(response)
 
@@ -1800,7 +1939,7 @@ async def _run_translator_closes_response_after_success() -> None:
     assert task["status"] == "completed"
 
 
-async def _run_translator_closes_response_after_rejection() -> None:
+async def _run_translator_closes_response_after_legacy_rejection() -> None:
     store = TaskStore()
     task_id = "response-rejected"
     await store.create_task(
@@ -1848,7 +1987,7 @@ async def _run_translator_closes_response_after_rejection() -> None:
     assert task["error"] == "legacy stream item after canonical stream item"
 
 
-async def _run_translator_preserves_rejection_when_cleanup_fails() -> None:
+async def _run_translator_preserves_legacy_rejection_cleanup_failure() -> None:
     class FailingCloseResponse(CleanupTrackingResponse):
         async def aclose(self) -> None:
             await super().aclose()
@@ -1918,7 +2057,11 @@ async def _run_translator_cancels_response_after_interruption() -> None:
     translator = A2AResponseTranslator(task_id, store)
     response = CleanupTrackingResponse(
         [
-            Token(token="partial"),
+            *_canonical_answer_stream_items(
+                "partial",
+                include_answer_done=False,
+                include_terminal=False,
+            ),
             asyncio.CancelledError(),
         ]
     )
@@ -1951,7 +2094,11 @@ async def _run_translator_preserves_cancellation_when_cleanup_fails() -> None:
     translator = A2AResponseTranslator(task_id, store)
     response = FailingCancelResponse(
         [
-            Token(token="partial"),
+            *_canonical_answer_stream_items(
+                "partial",
+                include_answer_done=False,
+                include_terminal=False,
+            ),
             asyncio.CancelledError(),
         ]
     )
@@ -1983,10 +2130,14 @@ async def _run_translator_cancels_response_when_consumer_closes() -> None:
     )
     translator = A2AResponseTranslator(task_id, store)
     response = CleanupTrackingResponse(
-        [
-            Token(token="partial"),
-            Token(token="late"),
-        ]
+        list(
+            _canonical_answer_stream_items(
+                "partial",
+                "late",
+                include_answer_done=False,
+                include_terminal=False,
+            )
+        )
     )
     stream = translator.run_stream(response)
     try:
@@ -2071,7 +2222,13 @@ def test_create_task_streams_jsonrpc_request(monkeypatch) -> None:
 
     async def orchestrate_stub(*_args):
         async def iterator():
-            yield "Hello!"
+            for item in _canonical_answer_stream_items(
+                "Hello!",
+                stream_session_id="jsonrpc-stream",
+                run_id="jsonrpc-run",
+                turn_id="jsonrpc-turn",
+            ):
+                yield item
 
         return iterator(), uuid4(), 0
 
@@ -2171,17 +2328,20 @@ def test_repeated_create_task_stream_requests_bound_state_without_ui_listener(
         def __init__(self, index: int) -> None:
             self.index = index
             self._items = iter(
-                (
+                _canonical_answer_stream_items(
                     f"answer-{index}-a",
                     f"answer-{index}-b",
                     f"answer-{index}-c",
+                    stream_session_id=f"route-stream-{index}",
+                    run_id=f"route-run-{index}",
+                    turn_id=f"route-turn-{index}",
                 )
             )
 
         def __aiter__(self) -> "RouteResponse":
             return self
 
-        async def __anext__(self) -> str:
+        async def __anext__(self) -> CanonicalStreamItem:
             try:
                 return next(self._items)
             except StopIteration as exc:

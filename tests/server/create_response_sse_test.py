@@ -18,9 +18,7 @@ from weakref import ReferenceType, ref
 from avalan.agent.orchestrator import Orchestrator
 from avalan.entities import (
     MessageRole,
-    ReasoningToken,
     ToolCall,
-    ToolCallToken,
 )
 from avalan.event import Event, EventType
 from avalan.model.stream import (
@@ -34,6 +32,67 @@ from avalan.model.stream import (
     project_canonical_stream_item,
 )
 from avalan.server.entities import ChatMessage, ResponsesRequest
+
+
+def _canonical_answer_stream_items(
+    *text_deltas: str,
+) -> tuple[CanonicalStreamItem, ...]:
+    assert text_deltas
+    items = [
+        CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+    ]
+    sequence = 1
+    for text_delta in text_deltas:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=text_delta,
+            )
+        )
+        sequence += 1
+    items.extend(
+        [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 1,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=sequence + 2,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+    )
+    return tuple(items)
 
 
 class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
@@ -71,11 +130,97 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             stream=True,
         )
 
-        tokens = [ReasoningToken("r"), ToolCallToken(token="t"), "a"]
-
-        async def gen():
-            for token in tokens:
-                yield token
+        correlation = StreamItemCorrelation(tool_call_id="tool-1")
+        items = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="r",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=correlation,
+                text_delta="t",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=correlation,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=correlation,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="a",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=8,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=9,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
 
         class DummyResponse:
             def __init__(self, items) -> None:  # type: ignore[no-untyped-def]
@@ -90,7 +235,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
                 return gen()
 
-        response = DummyResponse(tokens)
+        response = DummyResponse(items)
 
         async def orchestrate_stub(request, logger, orch):
             return response, uuid4(), 0
@@ -131,6 +276,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.output_text.done",
             "response.content_part.done",
             "response.output_item.done",
+            "response.usage.completed",
             "response.completed",
             "done",
         ]
@@ -162,7 +308,9 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         reasoning_part = loads(data_lines[content_indices[0]][6:])
         self.assertEqual(reasoning_part["part"], {"type": "reasoning_text"})
         tool_part = loads(data_lines[content_indices[1]][6:])
-        self.assertEqual(tool_part["part"], {"type": "input_text"})
+        self.assertEqual(
+            tool_part["part"], {"type": "input_text", "id": "tool-1"}
+        )
         answer_part = loads(data_lines[content_indices[2]][6:])
         self.assertEqual(answer_part["part"], {"type": "output_text"})
 
@@ -284,6 +432,80 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(response.close_count, 1)
         orchestrator.sync_messages.assert_awaited_once()
 
+    async def test_streaming_yields_adapter_close_events(self) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        class EmptyResponse:
+            input_token_count = 0
+            output_token_count = 0
+            usage = None
+
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            def __aiter__(self) -> AsyncIterator[object]:
+                return self
+
+            async def __anext__(self) -> object:
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        responses_module = self.responses
+
+        class ClosingAdapter:
+            @property
+            def active_tool_call_id(self) -> str | None:
+                return None
+
+            def switch(self, token: object) -> list[str]:
+                return []
+
+            def close(self) -> list[str]:
+                return [
+                    responses_module._ResponsesSSEEvent(
+                        event="response.output_text.done",
+                        data={"type": "response.output_text.done"},
+                    ).message()
+                ]
+
+        response = EmptyResponse()
+
+        async def orchestrate_stub(request, logger, orch):
+            return response, uuid4(), 0
+
+        original_adapter = self.responses._ResponsesSSEProjectionAdapter
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+        self.responses._ResponsesSSEProjectionAdapter = ClosingAdapter
+        try:
+            streaming_resp = await self.responses.create_response(
+                request, logger, orchestrator
+            )
+            chunks = [
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+                async for chunk in streaming_resp.body_iterator
+            ]
+        finally:
+            self.responses._ResponsesSSEProjectionAdapter = original_adapter
+
+        text = "".join(chunks)
+        blocks = [block for block in text.strip().split("\n\n") if block]
+        events = [block.split("\n")[0].split(": ")[1] for block in blocks]
+
+        self.assertIn("response.output_text.done", events)
+        self.assertEqual(events[-2:], ["response.completed", "done"])
+        self.assertEqual(response.close_count, 1)
+        orchestrator.sync_messages.assert_awaited_once()
+
     async def test_repeated_response_stream_requests_release_sources(
         self,
     ) -> None:
@@ -301,13 +523,13 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             output_token_count = 0
 
             def __init__(self, index: int) -> None:
-                self._items = iter(("chunk",))
+                self._items = iter(_canonical_answer_stream_items("chunk"))
                 self.index = index
 
             def __aiter__(self) -> "Source":
                 return self
 
-            async def __anext__(self) -> str:
+            async def __anext__(self) -> CanonicalStreamItem:
                 try:
                     return next(self._items)
                 except StopIteration as exc:
@@ -438,7 +660,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.close_count = 0
                 self.cancel_count = 0
-                self._items = iter(["answer"])
+                self._items = iter(_canonical_answer_stream_items("answer"))
 
             def __aiter__(self):
                 return self
@@ -605,6 +827,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
             def __init__(self, count: int) -> None:
                 self._remaining = count
+                self._started = False
                 self.read_count = 0
                 self.close_count = 0
 
@@ -612,11 +835,61 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 return self
 
             async def __anext__(self):
+                if not self._started:
+                    self._started = True
+                    return CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=0,
+                        kind=StreamItemKind.STREAM_STARTED,
+                        channel=StreamChannel.CONTROL,
+                    )
                 if self._remaining <= 0:
+                    if self._remaining == 0:
+                        self._remaining -= 1
+                        return CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=self.read_count + 1,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        )
+                    if self._remaining == -1:
+                        self._remaining -= 1
+                        return CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=self.read_count + 2,
+                            kind=StreamItemKind.USAGE_COMPLETED,
+                            channel=StreamChannel.USAGE,
+                            usage={},
+                        )
+                    if self._remaining == -2:
+                        self._remaining -= 1
+                        return CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=self.read_count + 3,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            terminal_outcome=(StreamTerminalOutcome.COMPLETED),
+                        )
                     raise StopAsyncIteration
                 self._remaining -= 1
                 self.read_count += 1
-                return "x"
+                return CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=self.read_count,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="x",
+                )
 
             async def aclose(self) -> None:
                 self.close_count += 1
@@ -1639,11 +1912,11 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         cases = (
             (
                 ("legacy", canonical_item),
-                "canonical stream item after legacy stream item",
+                "unsupported stream item for Responses SSE projection",
             ),
             (
                 ("legacy", projection),
-                "canonical stream item after legacy stream item",
+                "unsupported stream item for Responses SSE projection",
             ),
             (
                 (canonical_item, "legacy"),
@@ -1739,19 +2012,134 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             stream=True,
         )
 
-        tokens = [
-            ReasoningToken("r1"),
-            ReasoningToken("r2"),
-            ToolCallToken(token="t1"),
-            ToolCallToken(token="t2"),
-            "a1",
-            "a2",
-            ReasoningToken("r3"),
-            ReasoningToken("r4"),
-            ToolCallToken(token="t3"),
-            ToolCallToken(token="t4"),
-            "a3",
-            "a4",
+        first_tool = StreamItemCorrelation(tool_call_id="tool-1")
+        second_tool = StreamItemCorrelation(tool_call_id="tool-2")
+        items = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="r1r2",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=first_tool,
+                text_delta="t1t2",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=first_tool,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=first_tool,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="a1a2",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=second_tool,
+                text_delta="t3t4",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=8,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=second_tool,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=9,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=second_tool,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=10,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="a3a4",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=11,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=12,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=13,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
         ]
 
         class DummyResponse:
@@ -1767,7 +2155,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
                 return gen()
 
-        response = DummyResponse(tokens)
+        response = DummyResponse(items)
 
         async def orchestrate_stub(request, logger, orch):
             return response, uuid4(), 0
@@ -1810,12 +2198,6 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.output_item.done",
             "response.output_item.added",
             "response.content_part.added",
-            "response.reasoning_text.delta",
-            "response.reasoning_text.done",
-            "response.content_part.done",
-            "response.output_item.done",
-            "response.output_item.added",
-            "response.content_part.added",
             "response.custom_tool_call_input.delta",
             "response.custom_tool_call_input.done",
             "response.content_part.done",
@@ -1826,6 +2208,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             "response.output_text.done",
             "response.content_part.done",
             "response.output_item.done",
+            "response.usage.completed",
             "response.completed",
             "done",
         ]
@@ -1838,7 +2221,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(
             [loads(data_lines[i][6:])["delta"] for i in reasoning_indices],
-            ["r1r2", "r3r4"],
+            ["r1r2"],
         )
 
         tool_indices = [
@@ -1868,10 +2251,9 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         ]
         expected_parts = [
             {"type": "reasoning_text"},
-            {"type": "input_text"},
+            {"type": "input_text", "id": "tool-1"},
             {"type": "output_text"},
-            {"type": "reasoning_text"},
-            {"type": "input_text"},
+            {"type": "input_text", "id": "tool-2"},
             {"type": "output_text"},
         ]
         actual_parts = [

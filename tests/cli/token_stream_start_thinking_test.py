@@ -5,6 +5,11 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import avalan.cli.commands.model as model_cmds
+from avalan.model.stream import (
+    StreamChannel,
+    StreamItemKind,
+    StreamTerminalOutcome,
+)
 
 
 class _Resp:
@@ -20,7 +25,42 @@ class _Resp:
 
     def __aiter__(self):
         async def gen():
-            yield model_cmds.Token(id=1, token="A")
+            yield model_cmds.CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield model_cmds.CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="A",
+                metadata={"token_id": 1},
+            )
+            yield model_cmds.CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield model_cmds.CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                usage={},
+            )
 
         return gen()
 

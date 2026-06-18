@@ -72,6 +72,274 @@ def _text_generation_input(
     return run_async(model_cmds._text_generation_input(prompt, input_file))
 
 
+def _canonical_token_metadata(token: Token) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    if token.id is not None:
+        metadata["token_id"] = token.id
+    if token.probability is not None:
+        metadata["probability"] = token.probability
+    if isinstance(token, TokenDetail):
+        if token.step is not None:
+            metadata["step"] = token.step
+        if token.probability_distribution is not None:
+            metadata["probability_distribution"] = (
+                token.probability_distribution
+            )
+        if token.tokens is not None:
+            metadata["tokens"] = [
+                {
+                    "token": candidate.token,
+                    "token_id": candidate.id,
+                    "probability": candidate.probability,
+                }
+                for candidate in token.tokens
+            ]
+    return metadata
+
+
+def _canonical_answer_stream_items(
+    *tokens: str | Token,
+    stream_session_id: str = "stream",
+    run_id: str = "run",
+    turn_id: str = "turn",
+) -> tuple[CanonicalStreamItem, ...]:
+    items = [
+        CanonicalStreamItem(
+            stream_session_id=stream_session_id,
+            run_id=run_id,
+            turn_id=turn_id,
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+    ]
+    sequence = 1
+    for token in tokens:
+        text = token.token if isinstance(token, Token) else token
+        metadata = (
+            _canonical_token_metadata(token)
+            if isinstance(token, Token)
+            else {}
+        )
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=text,
+                metadata=metadata,
+            )
+        )
+        sequence += 1
+    items.extend(
+        [
+            CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id=stream_session_id,
+                run_id=run_id,
+                turn_id=turn_id,
+                sequence=sequence + 1,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                usage={"output_tokens": len(tokens)},
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+    )
+    return tuple(items)
+
+
+def _canonical_reasoning_answer_stream_items(
+    *,
+    reasoning: tuple[str, ...],
+    answer: tuple[str | Token, ...],
+) -> tuple[CanonicalStreamItem, ...]:
+    items = [
+        CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        )
+    ]
+    sequence = 1
+    for delta in reasoning:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta=delta,
+            )
+        )
+        sequence += 1
+    if reasoning:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            )
+        )
+        sequence += 1
+    for token in answer:
+        text = token.token if isinstance(token, Token) else token
+        metadata = (
+            _canonical_token_metadata(token)
+            if isinstance(token, Token)
+            else {}
+        )
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=text,
+                metadata=metadata,
+            )
+        )
+        sequence += 1
+    if answer:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+        )
+        sequence += 1
+    items.append(
+        CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=sequence,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={"output_tokens": len(answer)},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+    )
+    return tuple(items)
+
+
+def _canonical_tool_call_answer_stream_items(
+    tool_text: str,
+    *answer: str | Token,
+) -> tuple[CanonicalStreamItem, ...]:
+    tool_call_id = "tool-call"
+    correlation = StreamItemCorrelation(tool_call_id=tool_call_id)
+    items: list[CanonicalStreamItem] = [
+        CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=0,
+            kind=StreamItemKind.STREAM_STARTED,
+            channel=StreamChannel.CONTROL,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=1,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=correlation,
+            text_delta=tool_text,
+        ),
+        CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=2,
+            kind=StreamItemKind.TOOL_CALL_READY,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=correlation,
+            data={"name": "tool", "arguments": {}},
+        ),
+        CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=3,
+            kind=StreamItemKind.TOOL_CALL_DONE,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=correlation,
+        ),
+    ]
+    sequence = 4
+    for token in answer:
+        text = token.token if isinstance(token, Token) else token
+        metadata = (
+            _canonical_token_metadata(token)
+            if isinstance(token, Token)
+            else {}
+        )
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta=text,
+                metadata=metadata,
+            )
+        )
+        sequence += 1
+    if answer:
+        items.append(
+            CanonicalStreamItem(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=sequence,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+        )
+        sequence += 1
+    items.append(
+        CanonicalStreamItem(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=sequence,
+            kind=StreamItemKind.STREAM_COMPLETED,
+            channel=StreamChannel.CONTROL,
+            usage={"output_tokens": len(answer)},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        )
+    )
+    return tuple(items)
+
+
 def _disable_mlx_model_import(test_case):
     mlx_model_patch = patch(
         "avalan.model.modalities.text._get_mlx_model", return_value=None
@@ -227,20 +495,36 @@ class CliModelTestCase(TestCase):
             channel=StreamChannel.REASONING,
             text_delta="plan",
         )
-        tool_call = ToolCallToken(token="tool")
-        done = CanonicalStreamItem(
+        answer = CanonicalStreamItem(
             stream_session_id="s",
             run_id="r",
             turn_id="t",
             sequence=2,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
+        tool_call = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id="tool-call"),
+            text_delta="tool",
+        )
+        done = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=4,
             kind=StreamItemKind.ANSWER_DONE,
             channel=StreamChannel.ANSWER,
         )
 
         reasoning_projection = model_cmds._stream_projection(reasoning)
-        answer_projection = model_cmds._stream_projection(
-            Token(token="answer")
-        )
+        answer_projection = model_cmds._stream_projection(answer)
         tool_projection = model_cmds._stream_projection(tool_call)
         done_projection = model_cmds._stream_projection(done)
 
@@ -254,18 +538,15 @@ class CliModelTestCase(TestCase):
         self.assertTrue(
             model_cmds._is_reasoning_stream_item(reasoning_projection)
         )
-        self.assertTrue(
-            model_cmds._is_reasoning_stream_item(
-                model_cmds._stream_projection(ReasoningToken(token="r"))
-            )
-        )
         self.assertFalse(model_cmds._is_reasoning_stream_item(tool_projection))
         self.assertTrue(model_cmds._is_tool_call_stream_item(tool_projection))
         self.assertFalse(
             model_cmds._is_tool_call_stream_item(answer_projection)
         )
 
-    def test_stream_projection_helpers_reject_invalid_text_input(self) -> None:
+    def test_stream_projection_helpers_legacy_rejection_invalid_text_input(
+        self,
+    ) -> None:
         with self.assertRaisesRegex(
             StreamValidationError,
             "unsupported CLI stream item",
@@ -530,8 +811,8 @@ class CliModelTestCase(TestCase):
 class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
     async def test_token_generation_no_stats(self):
         async def gen():
-            for t in ["a", "b"]:
-                yield t
+            for item in _canonical_answer_stream_items("a", "b"):
+                yield item
 
         args = Namespace(
             skip_display_reasoning_time=False,
@@ -1006,11 +1287,12 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             budget.per_item_overhead_us,
         )
 
-    async def test_stream_render_items_preserves_legacy_source_token(self):
+    async def test_stream_render_items_projects_display_token_metadata(self):
         token = Token(id=1, token="answer")
 
         async def gen():
-            yield token
+            for item in _canonical_answer_stream_items(token):
+                yield item
 
         observed = [
             item
@@ -1023,15 +1305,16 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(len(observed), 1)
-        self.assertEqual(observed[0].projection.text_delta, "answer")
-        self.assertEqual(observed[0].source_token, token)
+        self.assertEqual(len(observed), 4)
+        self.assertEqual(observed[1].projection.text_delta, "answer")
+        self.assertEqual(observed[1].source_token, token)
 
     async def test_stream_render_items_skips_display_token_by_default(self):
         token = Token(id=1, token="answer")
 
         async def gen():
-            yield token
+            for item in _canonical_answer_stream_items(token):
+                yield item
 
         observed = [
             item
@@ -1043,15 +1326,16 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(len(observed), 1)
-        self.assertEqual(observed[0].projection.text_delta, "answer")
-        self.assertIsNone(observed[0].source_token)
+        self.assertEqual(len(observed), 4)
+        self.assertEqual(observed[1].projection.text_delta, "answer")
+        self.assertIsNone(observed[1].source_token)
 
     async def test_stream_render_items_rejects_invalid_display_token_flag(
         self,
     ):
         async def gen():
-            yield Token(id=1, token="answer")
+            for item in _canonical_answer_stream_items("answer"):
+                yield item
 
         with self.assertRaises(AssertionError):
             [
@@ -1065,7 +1349,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 )
             ]
 
-    async def test_stream_render_items_rejects_malformed_mixed_stream(self):
+    async def test_stream_render_items_legacy_rejection_mixed_stream(self):
         async def gen():
             yield CanonicalStreamItem(
                 stream_session_id="stream",
@@ -1127,7 +1411,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 )
             ]
 
-    async def test_stream_render_items_rejects_semantic_after_legacy_stream(
+    async def test_stream_render_items_legacy_rejection_first_item(
         self,
     ):
         canonical_item = CanonicalStreamItem(
@@ -1151,7 +1435,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
                 with self.assertRaisesRegex(
                     StreamValidationError,
-                    "canonical stream item after legacy stream item",
+                    "unsupported CLI stream item",
                 ):
                     stream = model_cmds._stream_render_items(
                         gen(),
@@ -1171,7 +1455,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 self.raw_iterated = True
 
                 async def gen():
-                    yield "raw"
+                    yield object()
 
                 return gen()
 
@@ -1248,7 +1532,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         class Response:
             def __aiter__(self):
                 async def gen():
-                    yield "raw"
+                    yield object()
 
                 return gen()
 
@@ -1272,7 +1556,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 )
             ]
 
-    async def test_plain_stdout_rejects_semantic_after_legacy_stream(
+    async def test_plain_stdout_legacy_rejection_first_item(
         self,
     ):
         async def gen():
@@ -1288,7 +1572,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             StreamValidationError,
-            "canonical stream item after legacy stream item",
+            "unsupported CLI stream item",
         ):
             [
                 projection
@@ -1299,8 +1583,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_generation_no_stats_uses_response_projection(self):
         async def gen():
-            yield ToolCallToken(token='{"x":1}')
-            yield "public"
+            for item in _canonical_tool_call_answer_stream_items(
+                '{"x":1}', "public"
+            ):
+                yield item
 
         response = TextGenerationResponse(
             lambda **_: gen(),
@@ -1399,7 +1685,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         class Response:
             def consumer_projections(self, **_kwargs):
                 async def gen():
-                    yield "legacy"
+                    yield object()
 
                 return gen()
 
@@ -1472,9 +1758,6 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
     async def test_token_generation_rejects_legacy_event_stream_item(self):
         async def gen():
             yield Event(type=EventType.TOOL_EXECUTE, payload={})
-            yield "t"
-            yield Event(type=EventType.TOOL_PROCESS, payload={})
-            yield "u"
 
         args = Namespace(
             skip_display_reasoning_time=False,
@@ -1816,7 +2099,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def gen():
-                    yield token
+                    for item in _canonical_answer_stream_items(token):
+                        yield item
 
                 return gen()
 
@@ -1888,8 +2172,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def gen():
-                    yield first_token
-                    yield second_token
+                    for item in _canonical_answer_stream_items(
+                        first_token, second_token
+                    ):
+                        yield item
 
                 return gen()
 
@@ -1967,7 +2253,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_closes_unused_theme_frames(self):
         async def token_gen():
-            yield Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(Token(id=1, token="A")):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -2038,7 +2325,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         self,
     ):
         async def token_gen():
-            yield Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(Token(id=1, token="A")):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -2118,7 +2406,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_accepts_empty_theme_frame_stream(self):
         async def token_gen():
-            yield Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(Token(id=1, token="A")):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -2178,7 +2467,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_consumes_probability_theme_frames(self):
         async def token_gen():
-            yield Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(Token(id=1, token="A")):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -2252,8 +2542,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def g():
-                    for _ in range(2):
-                        yield token
+                    for item in _canonical_answer_stream_items(token, token):
+                        yield item
 
                 return g()
 
@@ -2321,7 +2611,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def g():
-                    yield token
+                    for item in _canonical_answer_stream_items(token):
+                        yield item
 
                 return g()
 
@@ -2490,8 +2781,6 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
     async def test_token_generation_tool_call_tokens_do_not_count_as_output(
         self,
     ):
-        tool_token = ToolCallToken(token="TOOL")
-
         class Resp:
             input_token_count = 0
             can_think = False
@@ -2502,7 +2791,10 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def g():
-                    yield tool_token
+                    for item in _canonical_tool_call_answer_stream_items(
+                        "TOOL"
+                    ):
+                        yield item
 
                 return g()
 
@@ -2584,8 +2876,6 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         lm.input_token_count.assert_has_calls([call("i"), call("TOOL")])
 
     async def test_token_generation_empty_tool_call_token_counts_zero(self):
-        tool_token = ToolCallToken(token="")
-
         class Resp:
             input_token_count = 0
             can_think = False
@@ -2596,7 +2886,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def g():
-                    yield tool_token
+                    for item in _canonical_tool_call_answer_stream_items(""):
+                        yield item
 
                 return g()
 
@@ -2663,7 +2954,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_generation_rejects_model_response_event_item(self):
         async def inner_gen():
-            yield "x"
+            for item in _canonical_answer_stream_items("x"):
+                yield item
 
         inner_response = model_cmds.TextGenerationResponse(
             lambda: inner_gen(),
@@ -2903,8 +3195,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def gen():
-                    for t in self._toks:
-                        yield t
+                    for item in _canonical_answer_stream_items(*self._toks):
+                        yield item
 
                 return gen()
 
@@ -2983,8 +3275,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def gen():
-                    for t in self._toks:
-                        yield t
+                    for item in _canonical_answer_stream_items(*self._toks):
+                        yield item
 
                 return gen()
 
@@ -7199,7 +7491,10 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_extra_frames_and_stop(self):
         async def token_gen():
-            yield model_cmds.Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(
+                model_cmds.Token(id=1, token="A")
+            ):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -7400,7 +7695,10 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_pause_no_probabilities(self):
         async def token_gen():
-            yield model_cmds.Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(
+                model_cmds.Token(id=1, token="A")
+            ):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -7476,7 +7774,10 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_supports_awaitable_theme_tokens(self):
         async def token_gen():
-            yield model_cmds.Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(
+                model_cmds.Token(id=1, token="A")
+            ):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -7541,9 +7842,15 @@ class CliModelInternalTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_updates_state_while_render_is_slow(self):
         async def token_gen():
-            yield model_cmds.Token(id=1, token="A")
+            items = _canonical_answer_stream_items(
+                model_cmds.Token(id=1, token="A"),
+                model_cmds.Token(id=2, token="B"),
+            )
+            yield items[0]
+            yield items[1]
             await asyncio.sleep(0)
-            yield model_cmds.Token(id=2, token="B")
+            for item in items[2:]:
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -7842,7 +8149,10 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_second_frames_pause(self):
         async def token_gen():
-            yield model_cmds.Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(
+                model_cmds.Token(id=1, token="A")
+            ):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -7919,7 +8229,10 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_start_thinking_orchestrator_response(self):
         async def gen():
-            yield model_cmds.Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(
+                model_cmds.Token(id=1, token="A")
+            ):
+                yield item
 
         response = TextGenerationResponse(
             lambda: gen(),
@@ -8007,7 +8320,10 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_answer_height_expand_option(self):
         async def token_gen():
-            yield model_cmds.Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(
+                model_cmds.Token(id=1, token="A")
+            ):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -8072,7 +8388,10 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
 
     async def test_token_stream_answer_height_option(self):
         async def token_gen():
-            yield model_cmds.Token(id=1, token="A")
+            for item in _canonical_answer_stream_items(
+                model_cmds.Token(id=1, token="A")
+            ):
+                yield item
 
         class Resp:
             input_token_count = 1
@@ -8149,8 +8468,11 @@ class CliReasoningTokenTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def gen():
-                    yield ReasoningToken(token="A")
-                    yield "B"
+                    for item in _canonical_reasoning_answer_stream_items(
+                        reasoning=("A",),
+                        answer=("B",),
+                    ):
+                        yield item
 
                 return gen()
 
@@ -8216,8 +8538,10 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
 
             def __aiter__(self):
                 async def gen():
-                    yield ToolCallToken(token="TOOL")
-                    yield model_cmds.Token(id=1, token="A")
+                    for item in _canonical_tool_call_answer_stream_items(
+                        "TOOL", model_cmds.Token(id=1, token="A")
+                    ):
+                        yield item
 
                 return gen()
 
@@ -8457,7 +8781,8 @@ class CliToolCallTokenTestCase(IsolatedAsyncioTestCase):
                         type=EventType.TOOL_RESULT,
                         payload={"call": call_obj, "result": None},
                     )
-                    yield model_cmds.Token(id=1, token="A")
+                    for item in _canonical_answer_stream_items("A"):
+                        yield item
 
                 return gen()
 

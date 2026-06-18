@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 from avalan.entities import (
-    ReasoningToken,
     Token,
     ToolCall,
     ToolCallDiagnostic,
@@ -85,6 +84,30 @@ class DummyResponse:
 
     async def to_str(self) -> str:
         return self.text
+
+
+def legacy_fixture_mcp_projection_state() -> (
+    mcp_router._MCPStreamProjectionState
+):
+    return mcp_router._MCPStreamProjectionState(
+        accumulator=mcp_router.ProtocolStreamAccumulator(),
+        tool_summaries={},
+        resources={},
+        resource_store=mcp_router.MCPResourceStore(),
+        base_path="/mcp",
+    )
+
+
+def legacy_fixture_mcp_event_items(
+    event: Event,
+    state: mcp_router._MCPStreamProjectionState | None = None,
+) -> list[CanonicalStreamItem]:
+    fixture_state = (
+        legacy_fixture_mcp_projection_state() if state is None else state
+    )
+    return list(
+        mcp_router._canonical_items_from_mcp_event(event, fixture_state)
+    )
 
 
 class DummyOrchestrator(mcp_router.Orchestrator):
@@ -470,6 +493,30 @@ class MCPUtilityTestCase(TestCase):
             {"q": "docs"},
         )
 
+        metadata_only = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id="call"),
+            text_delta="",
+            data={"name": "lookup", "arguments": {"q": "docs"}},
+        )
+        metadata_only_message = mcp_router._canonical_tool_notification(
+            metadata_only
+        )
+        self.assertEqual(
+            metadata_only_message["params"]["message"],
+            {
+                "type": "tool.call",
+                "toolCallId": "call",
+                "name": "lookup",
+                "arguments": {"q": "docs"},
+            },
+        )
+
     def test_canonical_tool_execution_notification_requires_tool_call_id(
         self,
     ) -> None:
@@ -821,6 +868,87 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 return route.endpoint
         raise AssertionError(f"Route {path} not found")
 
+    async def test_legacy_stream_adapter_maps_token_and_string(
+        self,
+    ) -> None:
+        cases: tuple[tuple[Token | str, str], ...] = (
+            (Token(token="one"), "one"),
+            ("two", "two"),
+        )
+
+        for legacy_item, text in cases:
+            with self.subTest(text=text):
+                adapter = mcp_router._MCPLegacyStreamAdapter()
+
+                items = adapter.map(legacy_item)
+
+                assert items is not None
+                self.assertEqual(
+                    [item.kind for item in items],
+                    [
+                        StreamItemKind.STREAM_STARTED,
+                        StreamItemKind.ANSWER_DELTA,
+                    ],
+                )
+                self.assertEqual(items[0].sequence, 0)
+                self.assertEqual(items[1].sequence, 1)
+                self.assertEqual(items[1].text_delta, text)
+                self.assertEqual(
+                    items[1].stream_session_id,
+                    adapter.stream_session_id,
+                )
+
+    async def test_legacy_stream_adapter_maps_tool_process_event(
+        self,
+    ) -> None:
+        adapter = mcp_router._MCPLegacyStreamAdapter()
+        call = ToolCall(
+            id="legacy-call",
+            name="lookup",
+            arguments={"q": "docs"},
+        )
+        event = Event(
+            type=EventType.TOOL_PROCESS,
+            payload={"call": call},
+            started=1.0,
+        )
+
+        items = adapter.map(event)
+
+        assert items is not None
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+            ],
+        )
+        tool_item = items[1]
+        self.assertEqual(tool_item.correlation.tool_call_id, "legacy-call")
+        self.assertEqual(
+            tool_item.data,
+            {
+                "name": "lookup",
+                "arguments": {"q": "docs"},
+                "timings": {
+                    "started": 1.0,
+                    "finished": None,
+                    "elapsed": None,
+                },
+            },
+        )
+
+    async def test_legacy_stream_adapter_unsupported_item_returns_none(
+        self,
+    ) -> None:
+        adapter = mcp_router._MCPLegacyStreamAdapter()
+
+        self.assertIsNone(adapter.map(object()))
+        self.assertEqual(
+            adapter.map(Event(type=EventType.START, payload={})),
+            (),
+        )
+
     async def test_stream_item_notifications_emit_canonical_answer_delta(
         self,
     ) -> None:
@@ -900,7 +1028,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(state.accumulator.snapshot().answer_text, "answer")
 
-    async def test_stream_item_notifications_project_legacy_tokens(
+    async def test_stream_item_notifications_legacy_rejection_first_item(
         self,
     ) -> None:
         state = mcp_router._MCPStreamProjectionState(
@@ -911,38 +1039,19 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             base_path="/mcp",
         )
 
-        first = await mcp_router._mcp_stream_item_notifications(
-            Token(token="one"),
-            state,
-            "progress",
-        )
-        second = await mcp_router._mcp_stream_item_notifications(
-            "two",
-            state,
-            "progress",
-        )
+        with self.assertRaisesRegex(
+            StreamValidationError, "unsupported MCP stream item"
+        ):
+            await mcp_router._mcp_stream_item_notifications(
+                Token(token="one"),
+                state,
+                "progress",
+            )
 
-        notifications = first + second
-        self.assertEqual(
-            [
-                item["params"]["progress"]["delta"]
-                for item in notifications
-                if item.get("method") == "notifications/progress"
-            ],
-            ["one", "two"],
-        )
-        snapshot = state.accumulator.snapshot()
-        self.assertEqual(snapshot.answer_text, "onetwo")
-        self.assertEqual(
-            [item.kind for item in snapshot.control_items],
-            [StreamItemKind.STREAM_STARTED],
-        )
-        self.assertEqual(snapshot.control_items[0].sequence, 0)
-        self.assertEqual(state.legacy_adapter.sequence, 3)
         self.assertTrue(state.legacy_stream_seen)
         self.assertFalse(state.has_canonical_items)
 
-    async def test_stream_item_notifications_project_empty_tool_call_token(
+    async def test_stream_item_notifications_rejects_empty_tool_call_token(
         self,
     ) -> None:
         state = mcp_router._MCPStreamProjectionState(
@@ -956,35 +1065,15 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             id="call-empty", name="lookup", arguments={"q": "docs"}
         )
 
-        notifications = await mcp_router._mcp_stream_item_notifications(
-            ToolCallToken(token="", call=call),
-            state,
-            "progress",
-        )
+        with self.assertRaisesRegex(
+            StreamValidationError, "unsupported MCP stream item"
+        ):
+            await mcp_router._mcp_stream_item_notifications(
+                ToolCallToken(token="", call=call),
+                state,
+                "progress",
+            )
 
-        messages = [
-            item["params"]["message"]
-            for item in notifications
-            if item.get("method") == "notifications/message"
-        ]
-        self.assertEqual(
-            messages,
-            [
-                {
-                    "type": "tool.call",
-                    "toolCallId": "call-empty",
-                    "name": "lookup",
-                    "arguments": {"q": "docs"},
-                }
-            ],
-        )
-        snapshot = state.accumulator.snapshot()
-        self.assertEqual(snapshot.tool_call_arguments["call-empty"], "")
-        self.assertEqual(
-            [item.kind for item in snapshot.control_items],
-            [StreamItemKind.STREAM_STARTED],
-        )
-        self.assertEqual(state.legacy_adapter.sequence, 2)
         self.assertTrue(state.legacy_stream_seen)
         self.assertFalse(state.has_canonical_items)
 
@@ -1019,7 +1108,7 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
                 "progress",
             )
 
-    async def test_stream_item_notifications_ignores_non_tool_event(
+    async def test_stream_item_notifications_rejects_legacy_event_first_item(
         self,
     ) -> None:
         state = mcp_router._MCPStreamProjectionState(
@@ -1030,16 +1119,18 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             base_path="/mcp",
         )
 
-        notifications = await mcp_router._mcp_stream_item_notifications(
-            Event(type=EventType.START, payload={}),
-            state,
-            "progress",
-        )
+        with self.assertRaisesRegex(
+            StreamValidationError, "unsupported MCP stream item"
+        ):
+            await mcp_router._mcp_stream_item_notifications(
+                Event(type=EventType.START, payload={}),
+                state,
+                "progress",
+            )
 
-        self.assertEqual(notifications, [])
         self.assertTrue(state.legacy_stream_seen)
 
-    async def test_stream_item_notifications_malformed_tool_event_no_start(
+    async def test_stream_item_notifications_rejects_malformed_tool_event(
         self,
     ) -> None:
         state = mcp_router._MCPStreamProjectionState(
@@ -1051,16 +1142,15 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         )
         event = Event(type=EventType.TOOL_PROCESS, payload={})
 
-        with patch.object(
-            mcp_router, "_tool_call_event_item", return_value={"id": 1}
+        with self.assertRaisesRegex(
+            StreamValidationError, "unsupported MCP stream item"
         ):
-            notifications = await mcp_router._mcp_stream_item_notifications(
+            await mcp_router._mcp_stream_item_notifications(
                 event,
                 state,
                 "progress",
             )
 
-        self.assertEqual(notifications, [])
         self.assertEqual(state.legacy_adapter.sequence, 0)
         self.assertEqual(state.accumulator.snapshot().control_items, ())
         self.assertTrue(state.legacy_stream_seen)
@@ -1121,21 +1211,140 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             arguments={"a": 1},
             result={"stdout": "log"},
         )
+        correlation = StreamItemCorrelation(tool_call_id=tool_call.id)
         items: list[Any] = [
-            ReasoningToken(token="thinking"),
-            Event(
-                type=EventType.TOOL_PROCESS, payload=[tool_call], started=1.0
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
             ),
-            Token(token="Hello"),
-            Event(
-                type=EventType.TOOL_RESULT,
-                payload={"result": tool_result},
-                started=1.0,
-                finished=2.0,
-                elapsed=1.0,
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.REASONING_DELTA,
+                channel=StreamChannel.REASONING,
+                text_delta="thinking",
             ),
-            Token(token="!"),
-            "text",
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.REASONING_DONE,
+                channel=StreamChannel.REASONING,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.TOOL_CALL_READY,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=correlation,
+                data={
+                    "name": tool_call.name,
+                    "arguments": tool_call.arguments,
+                },
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.TOOL_CALL_DONE,
+                channel=StreamChannel.TOOL_CALL,
+                correlation=correlation,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.TOOL_EXECUTION_STARTED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=correlation,
+                metadata={"tool_name": tool_call.name},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=6,
+                kind=StreamItemKind.TOOL_EXECUTION_OUTPUT,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=correlation,
+                text_delta="log",
+                data={"category": "stdout", "content": "log"},
+                metadata={"tool_name": tool_result.name},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=7,
+                kind=StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                channel=StreamChannel.TOOL_EXECUTION,
+                correlation=correlation,
+                metadata={"tool_name": tool_result.name},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=8,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="Hello",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=9,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="!",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=10,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="text",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=11,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=12,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=13,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
         ]
         response = DummyResponse(items)
         request_model = ChatCompletionRequest(
@@ -1181,6 +1390,111 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(result_messages)
         summary = result_messages[-1]["result"]["structuredContent"]
         self.assertEqual(summary["model"], "gpt")
+
+    async def test_stream_response_yields_item_notification_payload(
+        self,
+    ) -> None:
+        items: list[Any] = [
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="hello",
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.USAGE_COMPLETED,
+                channel=StreamChannel.USAGE,
+                usage={},
+            ),
+            CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        ]
+        response = DummyResponse(items)
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        cancel_event = AsyncEvent()
+
+        async def passthrough_iterator(
+            iterator: AsyncIterator[Any],
+            _cancel_event: AsyncEvent,
+        ) -> AsyncIterator[Any]:
+            async for item in iterator:
+                yield item
+
+        messages: list[dict[str, Any]] = []
+        with patch.object(
+            mcp_router,
+            "cancellable_stream_iterator",
+            side_effect=passthrough_iterator,
+        ):
+            async for chunk in mcp_router._stream_mcp_response(
+                request_id="id",
+                request_model=request_model,
+                response=response,
+                response_id=uuid4(),
+                timestamp=1,
+                progress_token="progress",
+                orchestrator=orchestrator,
+                logger=MagicMock(),
+                resource_store=mcp_router.MCPResourceStore(),
+                base_path="/base",
+                cancel_event=cancel_event,
+            ):
+                messages.extend(
+                    loads(part)
+                    for part in chunk.decode("utf-8").splitlines()
+                    if part
+                )
+
+        progress_messages = [
+            message
+            for message in messages
+            if message.get("method") == "notifications/progress"
+        ]
+        self.assertEqual(
+            progress_messages[0]["params"]["progress"],
+            {"type": "answer.delta", "delta": "hello"},
+        )
+        self.assertEqual(
+            messages[-1]["result"]["content"],
+            [{"type": "text", "text": "hello"}],
+        )
+        orchestrator.sync_messages.assert_awaited()
 
     async def test_repeated_stream_responses_bound_shared_resource_store(
         self,
@@ -3393,6 +3707,48 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(payloads[-1]["error"]["code"], -32603)
         self.assertFalse(any("result" in item for item in payloads))
 
+    async def test_stream_response_legacy_rejection_first_item(
+        self,
+    ) -> None:
+        response = DummyResponse([Token(token="first")])
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+        logger = MagicMock()
+        cancel_event = AsyncEvent()
+
+        payloads: list[dict[str, Any]] = []
+        async for chunk in mcp_router._stream_mcp_response(
+            request_id="id",
+            request_model=request_model,
+            response=response,
+            response_id=uuid4(),
+            timestamp=1,
+            progress_token="tok",
+            orchestrator=orchestrator,
+            logger=logger,
+            resource_store=mcp_router.MCPResourceStore(),
+            base_path="/base",
+            cancel_event=cancel_event,
+        ):
+            payloads.extend(
+                loads(part)
+                for part in chunk.decode("utf-8").splitlines()
+                if part
+            )
+
+        self.assertTrue(cancel_event.is_set())
+        self.assertTrue(response._closed)
+        self.assertEqual(payloads[-1]["error"]["code"], -32603)
+        self.assertNotIn("first", dumps(payloads))
+        self.assertFalse(any("result" in item for item in payloads))
+        logger.exception.assert_called_once()
+        orchestrator.sync_messages.assert_awaited()
+
     async def test_stream_response_rejects_legacy_after_terminal(
         self,
     ) -> None:
@@ -3529,12 +3885,13 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             arguments={},
             result={"stdout": "live"},
         )
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"result": tool_result},
+        )
         response = DummyResponse(
             [
-                Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": tool_result},
-                ),
+                *legacy_fixture_mcp_event_items(event),
                 CanonicalStreamItem(
                     stream_session_id="s",
                     run_id="r",
@@ -3698,15 +4055,16 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             arguments={},
             result={"stdout": "partial"},
         )
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"result": result},
+            started=1.0,
+            finished=2.0,
+            elapsed=1.0,
+        )
         response = SourceCancelledResponse(
             [
-                Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": result},
-                    started=1.0,
-                    finished=2.0,
-                    elapsed=1.0,
-                ),
+                *legacy_fixture_mcp_event_items(event),
                 cancel_source,
             ]
         )
@@ -3849,15 +4207,16 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             arguments={},
             result={"stdout": "partial"},
         )
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"result": result},
+            started=1.0,
+            finished=2.0,
+            elapsed=1.0,
+        )
         response = DummyResponse(
             [
-                Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": result},
-                    started=1.0,
-                    finished=2.0,
-                    elapsed=1.0,
-                ),
+                *legacy_fixture_mcp_event_items(event),
                 Token(token="late"),
             ]
         )
@@ -3936,15 +4295,16 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             arguments={},
             result={"stdout": "partial"},
         )
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"result": result},
+            started=1.0,
+            finished=2.0,
+            elapsed=1.0,
+        )
         response = CleanupTrackingResponse(
             [
-                Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": result},
-                    started=1.0,
-                    finished=2.0,
-                    elapsed=1.0,
-                ),
+                *legacy_fixture_mcp_event_items(event),
                 Token(token="late"),
             ]
         )
@@ -4715,9 +5075,13 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             base_path="/base",
         )
 
-        notifications = await mcp_router._mcp_stream_item_notifications(
-            event, state, "progress"
-        )
+        notifications: list[dict[str, Any]] = []
+        for item in legacy_fixture_mcp_event_items(event, state):
+            notifications.extend(
+                await mcp_router._mcp_stream_item_notifications(
+                    item, state, "progress"
+                )
+            )
 
         self.assertTrue(notifications)
         self.assertIn(str(call.id), state.tool_summaries)
@@ -4755,16 +5119,18 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             base_path="/base",
         )
 
-        await mcp_router._mcp_stream_item_notifications(
-            event, state, "progress"
-        )
+        for item in legacy_fixture_mcp_event_items(event, state):
+            await mcp_router._mcp_stream_item_notifications(
+                item, state, "progress"
+            )
 
         with self.assertRaisesRegex(
             StreamValidationError, "tool execution item emitted after terminal"
         ):
-            await mcp_router._mcp_stream_item_notifications(
-                event, state, "progress"
-            )
+            for item in legacy_fixture_mcp_event_items(event, state):
+                await mcp_router._mcp_stream_item_notifications(
+                    item, state, "progress"
+                )
 
     async def test_mcp_tool_result_event_serializes_result(self) -> None:
         call = ToolCall(id="c2", name="run", arguments={})
@@ -4792,9 +5158,13 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         with patch.object(
             mcp_router, "to_json", return_value='{"payload":"value"}'
         ):
-            notifications = await mcp_router._mcp_stream_item_notifications(
-                event, state, "progress"
-            )
+            notifications: list[dict[str, Any]] = []
+            for item in legacy_fixture_mcp_event_items(event, state):
+                notifications.extend(
+                    await mcp_router._mcp_stream_item_notifications(
+                        item, state, "progress"
+                    )
+                )
         self.assertFalse(state.resources)
         self.assertIn(str(call.id), state.tool_summaries)
         summary = state.tool_summaries[str(call.id)]
@@ -4829,9 +5199,13 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
             base_path="/base",
         )
 
-        notifications = await mcp_router._mcp_stream_item_notifications(
-            event, state, "progress"
-        )
+        notifications: list[dict[str, Any]] = []
+        for item in legacy_fixture_mcp_event_items(event, state):
+            notifications.extend(
+                await mcp_router._mcp_stream_item_notifications(
+                    item, state, "progress"
+                )
+            )
 
         self.assertFalse(state.resources)
         self.assertIn(str(call.id), state.tool_summaries)
@@ -5461,15 +5835,16 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             error=Exception("x"),
             message="bad",
         )
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"result": tool_error},
+            started=1.0,
+            finished=2.0,
+            elapsed=1.0,
+        )
         response = DummyResponse(
             [
-                Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": tool_error},
-                    started=1.0,
-                    finished=2.0,
-                    elapsed=1.0,
-                ),
+                *legacy_fixture_mcp_event_items(event),
                 ToolCallToken(token="input", call=None),
             ]
         )
@@ -5514,15 +5889,16 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             stage=ToolCallDiagnosticStage.RESOLVE,
             message="Unknown tool.",
         )
+        event = Event(
+            type=EventType.TOOL_DIAGNOSTIC,
+            payload={"call": call, "diagnostic": diagnostic},
+            started=1.0,
+            finished=2.0,
+            elapsed=1.0,
+        )
         response = DummyResponse(
             [
-                Event(
-                    type=EventType.TOOL_DIAGNOSTIC,
-                    payload={"call": call, "diagnostic": diagnostic},
-                    started=1.0,
-                    finished=2.0,
-                    elapsed=1.0,
-                ),
+                *legacy_fixture_mcp_event_items(event),
                 Token(token="done"),
             ]
         )
@@ -5580,12 +5956,13 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             cancel_event.set()
             return Token(token="ignored")
 
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"result": tool_result},
+        )
         response = DummyResponse(
             [
-                Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": tool_result},
-                ),
+                *legacy_fixture_mcp_event_items(event),
                 cancel,
             ]
         )
@@ -5648,12 +6025,13 @@ class MCPRouterEdgeCaseAsyncTestCase(IsolatedAsyncioTestCase):
             arguments={},
             result={"stdout": "partial"},
         )
+        event = Event(
+            type=EventType.TOOL_RESULT,
+            payload={"result": tool_result},
+        )
         response = FailingCleanupResponse(
             [
-                Event(
-                    type=EventType.TOOL_RESULT,
-                    payload={"result": tool_result},
-                ),
+                *legacy_fixture_mcp_event_items(event),
                 Token(token="ignored"),
             ]
         )

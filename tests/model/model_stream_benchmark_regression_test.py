@@ -35,6 +35,7 @@ from avalan.model.stream import (
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
+    _LegacyTokenStreamAdapter,
     iter_stream_consumer_projections,
     normalize_local_stream,
 )
@@ -1008,11 +1009,27 @@ class StreamBenchmarkRegressionTestCase(TestCase):
         count = 8192
         budget = StreamPerformanceBudget()
         token = Token(id=1, token="x")
+        adapter = _LegacyTokenStreamAdapter(
+            stream_session_id="legacy-stream",
+            run_id="legacy-run",
+            turn_id="legacy-turn",
+        )
+        next_sequence = 0
+
+        def legacy_item_mapper(
+            item: object,
+        ) -> tuple[CanonicalStreamItem, ...]:
+            nonlocal next_sequence
+            current_sequence = next_sequence
+            next_sequence += 1
+            return (adapter.item_from_token(item, current_sequence),)
+
         state = StreamProjectionState(
             stream_session_id="legacy-stream",
             run_id="legacy-run",
             turn_id="legacy-turn",
             accumulate=False,
+            legacy_item_mapper=legacy_item_mapper,
         )
 
         started = perf_counter()
@@ -1030,6 +1047,8 @@ class StreamBenchmarkRegressionTestCase(TestCase):
             f"tokens={count} per_item_us={per_item_us:.3f}"
         )
         self.assertEqual(projection.text_delta, "x")
+        self.assertEqual(projection.sequence, count - 1)
+        self.assertEqual(next_sequence, count)
         self.assertLessEqual(per_item_us, budget.per_item_overhead_us)
 
     def test_rejects_late_content_during_projection_benchmark(

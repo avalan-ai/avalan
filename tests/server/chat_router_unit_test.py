@@ -17,8 +17,6 @@ from avalan.entities import (
     MessageContentText,
     MessageRole,
     ReasoningEffort,
-    ReasoningToken,
-    TokenDetail,
     ToolCallToken,
 )
 from avalan.event import Event, EventType
@@ -27,6 +25,7 @@ from avalan.model import TextGenerationResponse
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
     StreamValidationError,
@@ -364,6 +363,41 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertEqual(chunks[-1], "data: [DONE]\n\n")
         orch.assert_awaited_once()
 
+    async def test_create_chat_completion_empty_stream_finishes_done(
+        self,
+    ) -> None:
+        class EmptyResponse:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            def __aiter__(self) -> AsyncIterator[object]:
+                return self
+
+            async def __anext__(self) -> object:
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        logger = AsyncMock(spec=Logger)
+        orch = AsyncMock(spec=DummyOrchestrator)
+        orch.sync_messages = AsyncMock()
+        response = EmptyResponse()
+        orch.return_value = response
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+        with patch("avalan.server.routers.time", return_value=1):
+            resp = await self.chat.create_chat_completion(req, logger, orch)
+        chunks = [chunk async for chunk in resp.body_iterator]
+
+        self.assertEqual(chunks, ["data: [DONE]\n\n"])
+        self.assertEqual(response.close_count, 1)
+        orch.assert_awaited_once()
+        orch.sync_messages.assert_awaited_once()
+
     async def test_repeated_chat_stream_requests_bound_no_listener_state(
         self,
     ) -> None:
@@ -519,7 +553,53 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.close_count = 0
                 self.cancel_count = 0
-                self._items = iter(["a"])
+                self._items = iter(
+                    [
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="a",
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DONE,
+                            channel=StreamChannel.ANSWER,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=3,
+                            kind=StreamItemKind.USAGE_COMPLETED,
+                            channel=StreamChannel.USAGE,
+                            usage={},
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=4,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                        ),
+                    ]
+                )
 
             def __aiter__(self):
                 return self
@@ -562,7 +642,36 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             def __init__(self) -> None:
                 self.close_count = 0
                 self.cancel_count = 0
-                self._items = iter(["a", "b"])
+                self._items = iter(
+                    [
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="a",
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=2,
+                            kind=StreamItemKind.ANSWER_DELTA,
+                            channel=StreamChannel.ANSWER,
+                            text_delta="b",
+                        ),
+                    ]
+                )
 
             def __aiter__(self):
                 return self
@@ -1065,11 +1174,11 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         cases = (
             (
                 ("legacy", canonical_item),
-                "canonical stream item after legacy stream item",
+                "unsupported stream item for Chat SSE projection",
             ),
             (
                 ("legacy", projection),
-                "canonical stream item after legacy stream item",
+                "unsupported stream item for Chat SSE projection",
             ),
             (
                 (canonical_item, "legacy"),
@@ -1125,9 +1234,24 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         from avalan.event import Event, EventType
 
         async def output_gen():
-            yield "a"
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                text_delta="a",
+            )
             yield Event(type=EventType.TOOL_RESULT, payload={})
-            yield "b"
 
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
@@ -1142,7 +1266,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         chunks = []
         with self.assertRaisesRegex(
             StreamValidationError,
-            "unsupported stream item for Chat SSE projection",
+            "legacy stream item after canonical stream item",
         ):
             async for chunk in resp.body_iterator:
                 chunks.append(chunk)
@@ -1182,9 +1306,78 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
 
     async def test_streaming_skips_reasoning_tokens(self) -> None:
         async def output_gen():
-            yield "a"
-            yield ReasoningToken(token="r")
-            yield "b"
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.REASONING_DELTA,
+                    channel=StreamChannel.REASONING,
+                    text_delta="r",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=2,
+                    kind=StreamItemKind.REASONING_DONE,
+                    channel=StreamChannel.REASONING,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=3,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="a",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="b",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=5,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=6,
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    channel=StreamChannel.USAGE,
+                    usage={},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=7,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
 
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
@@ -1200,14 +1393,95 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertIn('"content":"a"', chunks[0])
         self.assertIn('"content":"b"', chunks[1])
         self.assertNotIn('"content":"r"', "".join(chunks))
-        self.assertEqual(len(chunks), 3)
+        self.assertEqual(len(chunks), 4)
         orch.assert_awaited_once()
 
     async def test_streaming_skips_tool_call_tokens(self) -> None:
         async def output_gen():
-            yield "a"
-            yield ToolCallToken(token="t")
-            yield "b"
+            correlation = StreamItemCorrelation(tool_call_id="call-1")
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    channel=StreamChannel.TOOL_CALL,
+                    correlation=correlation,
+                    text_delta="t",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=2,
+                    kind=StreamItemKind.TOOL_CALL_READY,
+                    channel=StreamChannel.TOOL_CALL,
+                    correlation=correlation,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=3,
+                    kind=StreamItemKind.TOOL_CALL_DONE,
+                    channel=StreamChannel.TOOL_CALL,
+                    correlation=correlation,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=4,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="a",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=5,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="b",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=6,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=7,
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    channel=StreamChannel.USAGE,
+                    usage={},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=8,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ):
+                yield item
 
         logger = AsyncMock(spec=Logger)
         orch = AsyncMock(spec=DummyOrchestrator)
@@ -1223,7 +1497,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
         self.assertIn('"content":"a"', chunks[0])
         self.assertIn('"content":"b"', chunks[1])
         self.assertNotIn('"content":"t"', "".join(chunks))
-        self.assertEqual(len(chunks), 3)
+        self.assertEqual(len(chunks), 4)
         orch.assert_awaited_once()
 
     def test_chat_stream_text_uses_consumer_projection(self) -> None:
@@ -1236,22 +1510,37 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             channel=StreamChannel.REASONING,
             text_delta="plan",
         )
-        done = CanonicalStreamItem(
+        answer = CanonicalStreamItem(
             stream_session_id="s",
             run_id="r",
             turn_id="t",
             sequence=2,
+            kind=StreamItemKind.ANSWER_DELTA,
+            channel=StreamChannel.ANSWER,
+            text_delta="answer",
+        )
+        tool = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=3,
+            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            channel=StreamChannel.TOOL_CALL,
+            correlation=StreamItemCorrelation(tool_call_id="tool-1"),
+            text_delta="tool",
+        )
+        done = CanonicalStreamItem(
+            stream_session_id="s",
+            run_id="r",
+            turn_id="t",
+            sequence=4,
             kind=StreamItemKind.ANSWER_DONE,
             channel=StreamChannel.ANSWER,
         )
 
         reasoning_projection = self.chat._stream_projection(reasoning, 0)
-        answer_projection = self.chat._stream_projection(
-            TokenDetail(token="answer", step=1), 1
-        )
-        tool_projection = self.chat._stream_projection(
-            ToolCallToken(token="tool"), 2
-        )
+        answer_projection = self.chat._stream_projection(answer, 1)
+        tool_projection = self.chat._stream_projection(tool, 2)
         done_projection = self.chat._stream_projection(done, 3)
 
         self.assertIsNone(self.chat._stream_text(reasoning_projection))

@@ -470,7 +470,7 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/model/model_stream_contract_test.py"
             "::StreamContractTestCase"
-            "::test_stream_projection_state_reuses_legacy_adapter"
+            "::test_protocol_projection_state_construction_is_canonical_only"
         ),
     ),
     "malformed tool calls": (
@@ -668,6 +668,11 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/server/mcp_router_test.py"
             "::MCPRouterAsyncTestCase"
+            "::test_stream_response_legacy_rejection_first_item"
+        ),
+        (
+            "tests/server/mcp_router_test.py"
+            "::MCPRouterAsyncTestCase"
             "::test_stream_response_rejects_legacy_after_terminal"
         ),
         (
@@ -732,6 +737,11 @@ HARDENING_COVERAGE_TESTS = {
             "::test_async_iteration_rejects_semantic_output_missing_terminal"
         ),
         (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_stream_projection_state_legacy_fixture_mapper_is_one_way"
+        ),
+        (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
             "::test_token_generation_no_stats_rejects_late_projection"
@@ -739,7 +749,7 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_stream_render_items_rejects_malformed_mixed_stream"
+            "::test_stream_render_items_legacy_rejection_mixed_stream"
         ),
         (
             "tests/cli/model_test.py"
@@ -749,7 +759,7 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_plain_stdout_rejects_semantic_after_legacy_stream"
+            "::test_plain_stdout_legacy_rejection_first_item"
         ),
         (
             "tests/cli/model_test.py"
@@ -818,7 +828,22 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/model/model_stream_contract_test.py"
             "::StreamContractTestCase"
+            "::test_legacy_classifier_guard_detects_grouped_aliases"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
             "::test_legacy_classifier_guard_detects_tracked_string_classifiers"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_public_streaming_return_guard_detects_legacy_item_aliases"
+        ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_protocol_projection_mapper_guard_detects_merged_constant_keys"
         ),
         (
             "tests/model/model_stream_contract_test.py"
@@ -954,6 +979,11 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
             "::TextGenerationResponseMoreTestCase"
             "::test_async_iteration_rejects_semantic_sequence_discontinuity"
         ),
+        (
+            "tests/model/model_stream_contract_test.py"
+            "::StreamContractTestCase"
+            "::test_stream_projection_state_legacy_fixture_mapper_is_one_way"
+        ),
     ),
     "stdout/CLI/FancyTheme": (
         (
@@ -968,7 +998,7 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_plain_stdout_rejects_semantic_after_legacy_stream"
+            "::test_plain_stdout_legacy_rejection_first_item"
         ),
         (
             "tests/cli/model_test.py"
@@ -1030,6 +1060,11 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
             "tests/server/mcp_router_test.py"
             "::MCPRouterAsyncTestCase"
             "::test_stream_response_rejects_duplicate_canonical_terminal"
+        ),
+        (
+            "tests/server/mcp_router_test.py"
+            "::MCPRouterAsyncTestCase"
+            "::test_stream_response_legacy_rejection_first_item"
         ),
         (
             "tests/server/mcp_router_test.py"

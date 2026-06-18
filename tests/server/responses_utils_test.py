@@ -12,10 +12,12 @@ from avalan.event import Event, EventType
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
     StreamTerminalOutcome,
     StreamValidationError,
+    stream_channel_for_kind,
 )
 from avalan.server.routers.responses import (
     _RESPONSE_SSE_CONTENT_INDEX_FIELDS,
@@ -36,34 +38,121 @@ from avalan.server.routers.responses import (
     _token_to_sse_events,
 )
 from avalan.server.sse import sse_message
+from avalan.types import LooseJsonValue
 from avalan.utils import to_json
 
 
-class ResponsesUtilsTestCase(TestCase):
-    def test_token_to_sse_formats_tokens(self) -> None:
-        rt = ReasoningToken(token="r")
-        tc = ToolCallToken(token="t")
-        tok = Token(token="a")
-        detail = TokenDetail(token="b")
+def _canonical_stream_item(
+    kind: StreamItemKind,
+    sequence: int,
+    *,
+    text_delta: str | None = None,
+    tool_call_id: str | None = None,
+    data: LooseJsonValue | None = None,
+    usage: LooseJsonValue | None = None,
+    terminal_outcome: StreamTerminalOutcome | None = None,
+    metadata: dict[str, LooseJsonValue] | None = None,
+) -> CanonicalStreamItem:
+    correlation = (
+        StreamItemCorrelation(tool_call_id=tool_call_id)
+        if tool_call_id is not None
+        else StreamItemCorrelation()
+    )
+    return CanonicalStreamItem(
+        stream_session_id="s",
+        run_id="r",
+        turn_id="t",
+        sequence=sequence,
+        kind=kind,
+        channel=stream_channel_for_kind(kind),
+        correlation=correlation,
+        text_delta=text_delta,
+        data=data,
+        usage=usage,
+        terminal_outcome=terminal_outcome,
+        metadata={} if metadata is None else metadata,
+    )
 
-        rt_event = _token_to_sse(_stream_projection(rt, 0), 0)[0]
+
+def _canonical_projection(
+    kind: StreamItemKind,
+    sequence: int,
+    *,
+    text_delta: str | None = None,
+    tool_call_id: str | None = None,
+    data: LooseJsonValue | None = None,
+    usage: LooseJsonValue | None = None,
+    terminal_outcome: StreamTerminalOutcome | None = None,
+    metadata: dict[str, LooseJsonValue] | None = None,
+) -> StreamConsumerProjection:
+    return _stream_projection(
+        _canonical_stream_item(
+            kind,
+            sequence,
+            text_delta=text_delta,
+            tool_call_id=tool_call_id,
+            data=data,
+            usage=usage,
+            terminal_outcome=terminal_outcome,
+            metadata=metadata,
+        ),
+        sequence,
+    )
+
+
+class ResponsesUtilsTestCase(TestCase):
+    def test_token_to_sse_formats_canonical_projections(self) -> None:
+        reasoning_projection = _canonical_projection(
+            StreamItemKind.REASONING_DELTA,
+            0,
+            text_delta="r",
+        )
+        tool_call_projection = _canonical_projection(
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            1,
+            text_delta="t",
+            tool_call_id="call-raw",
+        )
+        answer_projection = _canonical_projection(
+            StreamItemKind.ANSWER_DELTA,
+            2,
+            text_delta="a",
+        )
+        detail_projection = _canonical_projection(
+            StreamItemKind.ANSWER_DELTA,
+            3,
+            text_delta="b",
+            metadata={
+                "token_id": 9,
+                "probability": 0.5,
+                "step": 3,
+            },
+        )
+
+        rt_event = _token_to_sse(reasoning_projection, 0)[0]
         self.assertIn("response.reasoning_text.delta", rt_event)
         self.assertEqual(loads(rt_event.split("data: ")[1])["delta"], "r")
 
-        tc_event = _token_to_sse(_stream_projection(tc, 1), 1)[0]
+        tc_event = _token_to_sse(tool_call_projection, 1)[0]
         self.assertIn("response.custom_tool_call_input.delta", tc_event)
         self.assertEqual(loads(tc_event.split("data: ")[1])["delta"], "t")
 
-        tok_event = _token_to_sse(_stream_projection(tok, 2), 2)[0]
+        tok_event = _token_to_sse(answer_projection, 2)[0]
         self.assertIn("response.output_text.delta", tok_event)
         self.assertEqual(loads(tok_event.split("data: ")[1])["delta"], "a")
 
-        detail_event = _token_to_sse(_stream_projection(detail, 3), 3)[0]
+        detail_event = _token_to_sse(detail_projection, 3)[0]
         self.assertEqual(loads(detail_event.split("data: ")[1])["delta"], "b")
+        self.assertEqual(
+            detail_projection.metadata,
+            {"token_id": 9, "probability": 0.5, "step": 3},
+        )
 
-    def test_token_to_sse_rejects_unprojected_tokens(self) -> None:
+    def test_token_to_sse_legacy_rejection_unprojected_token(self) -> None:
+        legacy_rejection_token = Token(token="raw")
+
         with self.assertRaises(AssertionError):
-            _token_to_sse(Token(token="raw"), 0)  # type: ignore[arg-type]
+            _token_to_sse(legacy_rejection_token, 0)  # type: ignore[arg-type]
 
     def test_stream_projection_rejects_unsupported_items(self) -> None:
         with self.assertRaisesRegex(
@@ -72,22 +161,45 @@ class ResponsesUtilsTestCase(TestCase):
         ):
             _stream_projection(object(), 0)  # type: ignore[arg-type]
 
+    def test_stream_projection_legacy_rejection_first_items(self) -> None:
+        legacy_rejection_items = (
+            "legacy",
+            Token(token="legacy"),
+            TokenDetail(token="legacy"),
+            ReasoningToken(token="legacy"),
+            ToolCallToken(token="legacy"),
+        )
+
+        for legacy_rejection_item in legacy_rejection_items:
+            with self.subTest(item=type(legacy_rejection_item).__name__):
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported stream item for Responses SSE projection",
+                ):
+                    _stream_projection(legacy_rejection_item, 0)
+
     def test_stream_tool_call_protocol_id_ignores_non_tool_projection(
         self,
     ) -> None:
         self.assertIsNone(
-            _stream_tool_call_protocol_id(_stream_projection("a", 0))
+            _stream_tool_call_protocol_id(
+                _canonical_projection(
+                    StreamItemKind.ANSWER_DELTA,
+                    0,
+                    text_delta="a",
+                )
+            )
         )
 
-    def test_token_to_sse_rejects_legacy_tool_events(self) -> None:
-        event = Event(type=EventType.TOOL_RESULT, payload={})
+    def test_token_to_sse_legacy_rejection_tool_events(self) -> None:
+        legacy_rejection_event = Event(type=EventType.TOOL_RESULT, payload={})
 
         with self.assertRaises(AssertionError):
-            _token_to_sse(event, 0)  # type: ignore[arg-type]
+            _token_to_sse(legacy_rejection_event, 0)  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
-            _token_to_sse_events(event, 0)  # type: ignore[arg-type]
+            _token_to_sse_events(legacy_rejection_event, 0)  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
-            _response_projection_state(event)  # type: ignore[arg-type]
+            _response_projection_state(legacy_rejection_event)  # type: ignore[arg-type]
 
     def test_sse_event_coalesces_only_compatible_deltas(self) -> None:
         first = _ResponsesSSEEvent(
@@ -434,23 +546,36 @@ class ResponsesUtilsTestCase(TestCase):
         with self.assertRaises(TypeError):
             _token_to_sse(_stream_projection(item, 0), 0)
 
-    def test_token_to_sse_handles_tool_call_token_with_call(self) -> None:
+    def test_token_to_sse_handles_canonical_tool_call_with_call_data(
+        self,
+    ) -> None:
         call = ToolCall(id="c4", name="adder", arguments={"x": 1})
-        token = ToolCallToken(token="ignored", call=call)
+        projection = _canonical_projection(
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            3,
+            text_delta="ignored",
+            tool_call_id=call.id,
+            data={"name": call.name, "arguments": call.arguments},
+        )
 
-        events = _token_to_sse(_stream_projection(token, 3), 3)
+        events = _token_to_sse(projection, 3)
         self.assertEqual(len(events), 1)
         data = loads(events[0].split("data: ")[1])
         self.assertEqual(data["id"], "c4")
         delta = loads(data["delta"])
         self.assertEqual(delta["arguments"], {"x": 1})
 
-    def test_token_to_sse_keeps_raw_tool_call_token_without_protocol_id(
+    def test_token_to_sse_keeps_raw_canonical_tool_call_without_protocol_id(
         self,
     ) -> None:
-        token = ToolCallToken(token="raw-input")
+        projection = _canonical_projection(
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            3,
+            text_delta="raw-input",
+            tool_call_id="legacy-tool-call",
+        )
 
-        events = _token_to_sse(_stream_projection(token, 3), 3)
+        events = _token_to_sse(projection, 3)
 
         self.assertEqual(len(events), 1)
         data = loads(events[0].split("data: ")[1])
@@ -460,9 +585,14 @@ class ResponsesUtilsTestCase(TestCase):
     def test_token_to_sse_uses_active_tool_call_id_for_raw_input(
         self,
     ) -> None:
-        token = ToolCallToken(token="raw-input")
+        projection = _canonical_projection(
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            3,
+            text_delta="raw-input",
+            tool_call_id="legacy-tool-call",
+        )
 
-        events = _token_to_sse_events(_stream_projection(token, 3), 3, "c4")
+        events = _token_to_sse_events(projection, 3, "c4")
 
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].correlation_key, "c4")
@@ -559,7 +689,11 @@ class ResponsesUtilsTestCase(TestCase):
 
     def test_switch_state_generates_events(self) -> None:
         state = _response_projection_state(
-            _stream_projection(ReasoningToken(token="r"), 0)
+            _canonical_projection(
+                StreamItemKind.REASONING_DELTA,
+                0,
+                text_delta="r",
+            )
         )
         events = _switch_state(None, state)
         self.assertEqual(
@@ -576,7 +710,12 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
         new_state = _response_projection_state(
-            _stream_projection(ToolCallToken(token="t"), 1)
+            _canonical_projection(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                1,
+                text_delta="t",
+                tool_call_id="legacy-tool-call",
+            )
         )
         events = _switch_state(state, new_state)
         self.assertEqual(
@@ -599,7 +738,13 @@ class ResponsesUtilsTestCase(TestCase):
         )
 
         state = new_state
-        new_state = _response_projection_state(_stream_projection("answer", 2))
+        new_state = _response_projection_state(
+            _canonical_projection(
+                StreamItemKind.ANSWER_DELTA,
+                2,
+                text_delta="answer",
+            )
+        )
         events = _switch_state(state, new_state)
         self.assertEqual(
             new_state,
@@ -680,24 +825,25 @@ class ResponsesUtilsTestCase(TestCase):
 
         self.assertEqual(events, [])
 
-    def test_projection_adapter_carries_tool_call_id_to_legacy_delta(
+    def test_projection_adapter_carries_tool_call_id_to_raw_canonical_delta(
         self,
     ) -> None:
-        item = CanonicalStreamItem(
-            stream_session_id="s",
-            run_id="r",
-            turn_id="t",
-            sequence=1,
-            kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-            channel=StreamChannel.TOOL_CALL,
-            correlation=StreamItemCorrelation(tool_call_id="call-1"),
+        projection = _canonical_projection(
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            1,
             text_delta="a",
+            tool_call_id="call-1",
         )
         adapter = _ResponsesSSEProjectionAdapter()
 
-        open_events = adapter.switch(_stream_projection(item, 1))
+        open_events = adapter.switch(projection)
         carried_events = adapter.switch(
-            _stream_projection(ToolCallToken(token="b"), 2)
+            _canonical_projection(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                2,
+                text_delta="b",
+                tool_call_id="legacy-tool-call",
+            )
         )
 
         self.assertEqual(
