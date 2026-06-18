@@ -8,9 +8,11 @@ from avalan.entities import (
     ToolCallDiagnosticCode,
     ToolCallDiagnosticStage,
     ToolCallParseOutcome,
+    ToolCallToken,
     ToolFormat,
     ToolManagerSettings,
 )
+from avalan.event import Event
 from avalan.model.response.parsers.tool import (
     ToolCallResponseParser,
     _MarkdownFenceState,
@@ -1188,6 +1190,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             "</tool>",
         )
         self.assertIsNone(parser._tool_marker_at("plain", 0, ("</tool>",)))
+        self.assertIsNone(parser._tool_close_split("tool", "", "text", None))
 
     async def test_fence_opened_after_tool_suffix_blocks_next_call(
         self,
@@ -1840,6 +1843,101 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             {"expression": "1 + 1"},
         )
         self.assertFalse(parser._inside_call)
+
+    async def test_real_manager_uses_incremental_tool_length_for_open_chunks(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(enable_tools=[])
+        parser = ToolCallResponseParser(manager, None)
+        items: list[StreamProviderEvent] = []
+
+        await parser.push(
+            '<tool_call>{"name": "math.calculator", "arguments": '
+            '{"expression": "'
+        )
+
+        with patch.object(
+            parser._tool_buffer,
+            "getvalue",
+            side_effect=AssertionError("full tool buffer read"),
+        ):
+            for token in ("1", " + ", "1"):
+                pushed = await parser.push(token)
+                self.assertEqual(pushed, [])
+
+        items.extend(await parser.push('"}}'))
+        items.extend(await parser.push("</tool_call>"))
+        process_event = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+
+        self.assertEqual(_ready_data(process_event)["name"], "math.calculator")
+        self.assertEqual(
+            _ready_data(process_event)["arguments"],
+            {"expression": "1 + 1"},
+        )
+        self.assertFalse(parser._inside_call)
+
+    async def test_split_quoted_marker_stays_visible_and_real_marker_executes(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(enable_tools=[])
+        parser = ToolCallResponseParser(manager, None)
+        items: list[StreamProviderEvent] = []
+        quoted_suffix = (
+            'ol_call>{"name": "ignored", "arguments": {}}</tool_call>"\n'
+        )
+
+        for token in (
+            'quoted "<to',
+            quoted_suffix,
+            "<tool",
+            '_call>{"name": "math.calculator", "arguments": {"x": 2}}</tool',
+            "_call> tail",
+        ):
+            items.extend(await parser.push(token))
+
+        self.assertEqual(_ready_names(items), ["math.calculator"])
+        self.assertEqual(
+            _ready_arguments(items),
+            [{"x": 2}],
+        )
+        self.assertEqual(
+            _answer_texts(items),
+            ['quoted "<to', quoted_suffix, " tail"],
+        )
+        self.assertFalse(
+            any(isinstance(item, (Event, ToolCallToken)) for item in items)
+        )
+        self.assertFalse(_diagnostic_events(items))
+
+    async def test_split_malformed_call_emits_canonical_diagnostic_only(
+        self,
+    ) -> None:
+        manager = ToolManager.create_instance(enable_tools=[])
+        parser = ToolCallResponseParser(manager, None)
+        items: list[StreamProviderEvent] = []
+
+        for token in (
+            "<tool_call>",
+            '{"name": "math.calculator", "arguments": }',
+            "</tool",
+            "_call>",
+        ):
+            items.extend(await parser.push(token))
+
+        diagnostics = _first_diagnostic_data(items)
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(
+            diagnostics[0]["code"],
+            ToolCallDiagnosticCode.MALFORMED_CALL.value,
+        )
+        self.assertFalse(
+            any(isinstance(item, (Event, ToolCallToken)) for item in items)
+        )
+        self.assertFalse(_ready_events(items))
 
     async def test_stream_keeps_fenced_call_after_closed_call_visible(
         self,

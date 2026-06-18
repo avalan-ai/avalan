@@ -63,7 +63,9 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Generic,
     TypeAlias,
+    TypeVar,
     cast,
 )
 
@@ -78,6 +80,7 @@ from rich.padding import Padding
 from rich.prompt import Prompt
 
 _HAS_INPUT = has_input
+_T = TypeVar("_T")
 
 
 class _FrameRateRenderer:
@@ -281,6 +284,74 @@ class _LatestTokenFrameBuilder:
             and self._frame_minimum_pause_ms > 0
         ):
             await sleep(self._frame_minimum_pause_ms / 1000)
+
+
+class _TokenTupleSnapshot(Generic[_T]):
+    def __init__(self) -> None:
+        self._length = -1
+        self._tokens: tuple[_T, ...] = ()
+
+    def get(self, source: list[_T]) -> tuple[_T, ...]:
+        assert isinstance(source, list)
+        if len(source) != self._length:
+            self._tokens = tuple(source)
+            self._length = len(source)
+        return self._tokens
+
+
+class _TokenRenderSnapshotCache:
+    def __init__(
+        self,
+        *,
+        added_tokens: Any,
+        special_tokens: Any,
+    ) -> None:
+        self._added_token_source = added_tokens
+        self._special_token_source = special_tokens
+        self._added_tokens_built = False
+        self._special_tokens_built = False
+        self._added_tokens: tuple[str, ...] | None = None
+        self._special_tokens: tuple[str, ...] | None = None
+        self._reasoning_text_tokens = _TokenTupleSnapshot[str]()
+        self._tool_text_tokens = _TokenTupleSnapshot[str]()
+        self._answer_text_tokens = _TokenTupleSnapshot[str]()
+        self._display_tokens = _TokenTupleSnapshot[TokenRenderDisplayToken]()
+
+    def added_tokens(self) -> tuple[str, ...] | None:
+        if not self._added_tokens_built:
+            self._added_tokens = self._optional_token_tuple(
+                self._added_token_source
+            )
+            self._added_tokens_built = True
+        return self._added_tokens
+
+    def special_tokens(self) -> tuple[str, ...] | None:
+        if not self._special_tokens_built:
+            self._special_tokens = self._optional_token_tuple(
+                self._special_token_source
+            )
+            self._special_tokens_built = True
+        return self._special_tokens
+
+    def reasoning_text_tokens(self, source: list[str]) -> tuple[str, ...]:
+        return self._reasoning_text_tokens.get(source)
+
+    def tool_text_tokens(self, source: list[str]) -> tuple[str, ...]:
+        return self._tool_text_tokens.get(source)
+
+    def answer_text_tokens(self, source: list[str]) -> tuple[str, ...]:
+        return self._answer_text_tokens.get(source)
+
+    def display_tokens(
+        self, source: list[TokenRenderDisplayToken]
+    ) -> tuple[TokenRenderDisplayToken, ...]:
+        return self._display_tokens.get(source)
+
+    @staticmethod
+    def _optional_token_tuple(tokens: Any) -> tuple[str, ...] | None:
+        if not tokens:
+            return None
+        return cast(tuple[str, ...], tuple(tokens))
 
 
 def _collect_token_frames(
@@ -1056,6 +1127,10 @@ async def _token_stream(
         if tokenizer_config:
             tokenizer_tokens = tokenizer_config.tokens
             tokenizer_special_tokens = tokenizer_config.special_tokens
+    render_snapshots = _TokenRenderSnapshotCache(
+        added_tokens=tokenizer_tokens,
+        special_tokens=tokenizer_special_tokens,
+    )
 
     start = perf_counter()
     started_reasoning = perf_counter() if response.is_thinking else None
@@ -1182,24 +1257,28 @@ async def _token_stream(
                 projection_sequence=projection.sequence,
                 projection_kind=projection.kind,
                 projection_channel=projection.channel,
-                added_tokens=(
-                    tuple(tokenizer_tokens) if tokenizer_tokens else None
-                ),
-                special_tokens=(
-                    tuple(tokenizer_special_tokens)
-                    if tokenizer_special_tokens
-                    else None
-                ),
+                added_tokens=render_snapshots.added_tokens(),
+                special_tokens=render_snapshots.special_tokens(),
                 display_token_size=display_tokens or None,
                 display_probabilities=(
                     args.display_probabilities if dtokens_pick > 0 else False
                 ),
                 pick=dtokens_pick,
                 focus_on_token_when=_focus_on_display_token,
-                reasoning_text_tokens=tuple(thinking_text_tokens),
-                tool_text_tokens=tuple(tool_text_tokens),
-                answer_text_tokens=tuple(answer_text_tokens),
-                display_tokens=tuple(display_token_details),
+                reasoning_text_tokens=(
+                    render_snapshots.reasoning_text_tokens(
+                        thinking_text_tokens
+                    )
+                ),
+                tool_text_tokens=render_snapshots.tool_text_tokens(
+                    tool_text_tokens
+                ),
+                answer_text_tokens=render_snapshots.answer_text_tokens(
+                    answer_text_tokens
+                ),
+                display_tokens=render_snapshots.display_tokens(
+                    display_token_details
+                ),
                 display_reasoning=display_reasoning,
                 display_tools=getattr(args, "display_tools", False),
                 input_token_count=display_input_token_count,

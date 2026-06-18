@@ -59,6 +59,7 @@ from avalan.flow import (
     FlowRouteMatchPolicy,
     FlowRuntimeContext,
     FlowRuntimeEvaluationError,
+    FlowStreamRecorder,
     FlowStreamSession,
     FlowTimeoutPlan,
     canonical_flow_item,
@@ -1024,6 +1025,259 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             [item.sequence for item in delivered],
             [0, 1, 2, 3],
         )
+
+    async def test_flow_stream_recorder_inserts_out_of_order_items(
+        self,
+    ) -> None:
+        delivered: list[CanonicalStreamItem] = []
+        listener = flow_stream_recorder(delivered.append)
+
+        for sequence in (2, 0, 1):
+            result = listener(
+                _test_flow_item(
+                    EventType.FLOW_NODE_STARTED,
+                    payload={
+                        "flow_id": "flow",
+                        "node": f"node-{sequence}",
+                        "status": "started",
+                    },
+                    sequence=sequence,
+                )
+            )
+            if result is not None:
+                await result
+
+        self.assertEqual(
+            [item.sequence for item in delivered],
+            [2, 0, 1],
+        )
+        self.assertEqual(
+            [item.sequence for item in listener.items],
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            [item.sequence for item in listener.ui_items],
+            [0, 1, 2],
+        )
+
+    async def test_flow_stream_recorder_rejects_duplicate_retained_sequence(
+        self,
+    ) -> None:
+        delivered: list[CanonicalStreamItem] = []
+        listener = flow_stream_recorder(delivered.append)
+
+        first = _test_flow_item(
+            EventType.FLOW_NODE_STARTED,
+            payload={
+                "flow_id": "flow",
+                "node": "worker",
+                "status": "started",
+            },
+            sequence=0,
+        )
+        result = listener(first)
+        if result is not None:
+            await result
+
+        with self.assertRaises(AssertionError):
+            listener(
+                _test_flow_item(
+                    EventType.FLOW_NODE_COMPLETED,
+                    payload={
+                        "flow_id": "flow",
+                        "node": "worker",
+                        "status": "succeeded",
+                    },
+                    sequence=0,
+                )
+            )
+
+        self.assertEqual(
+            [item.sequence for item in listener.items],
+            [0],
+        )
+        self.assertEqual(
+            [item.sequence for item in delivered],
+            [0, 0],
+        )
+
+    async def test_flow_stream_recorder_allows_evicted_sequence_reuse(
+        self,
+    ) -> None:
+        delivered: list[CanonicalStreamItem] = []
+        listener = flow_stream_recorder(
+            delivered.append,
+            history_item_limit=2,
+        )
+
+        for sequence in (10, 12, 11, 10):
+            result = listener(
+                _test_flow_item(
+                    EventType.FLOW_NODE_STARTED,
+                    payload={
+                        "flow_id": "flow",
+                        "node": f"node-{sequence}",
+                        "status": "started",
+                    },
+                    sequence=sequence,
+                )
+            )
+            if result is not None:
+                await result
+
+        self.assertEqual(
+            [item.sequence for item in delivered],
+            [10, 12, 11, 10],
+        )
+        self.assertEqual(
+            [item.sequence for item in listener.items],
+            [11, 12],
+        )
+        self.assertEqual(
+            [item.sequence for item in listener.ui_items],
+            [11, 12],
+        )
+
+    async def test_flow_stream_recorder_does_not_retain_evicted_ui_item(
+        self,
+    ) -> None:
+        delivered: list[CanonicalStreamItem] = []
+        listener = flow_stream_recorder(
+            delivered.append,
+            history_item_limit=2,
+        )
+
+        cases = (
+            (10, "worker"),
+            (12, "other"),
+            (9, "worker"),
+        )
+        for sequence, node in cases:
+            result = listener(
+                _test_flow_item(
+                    EventType.FLOW_NODE_STARTED,
+                    payload={
+                        "flow_id": "flow",
+                        "node": node,
+                        "status": "started",
+                    },
+                    sequence=sequence,
+                )
+            )
+            if result is not None:
+                await result
+
+        self.assertEqual(
+            [item.sequence for item in delivered],
+            [10, 12, 9],
+        )
+        self.assertEqual(
+            [item.sequence for item in listener.items],
+            [10, 12],
+        )
+        self.assertEqual(
+            [item.sequence for item in listener.ui_items],
+            [10, 12],
+        )
+
+    async def test_flow_stream_recorder_prunes_stale_ui_items_over_limit(
+        self,
+    ) -> None:
+        delivered: list[CanonicalStreamItem] = []
+        retained_items = [
+            _test_flow_item(
+                EventType.FLOW_NODE_STARTED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "first",
+                    "status": "started",
+                },
+                sequence=0,
+            ),
+            _test_flow_item(
+                EventType.FLOW_NODE_STARTED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "kept",
+                    "status": "started",
+                },
+                sequence=1,
+            ),
+        ]
+        stale_item = _test_flow_item(
+            EventType.FLOW_NODE_STARTED,
+            payload={
+                "flow_id": "flow",
+                "node": "stale",
+                "status": "started",
+            },
+            sequence=2,
+        )
+
+        def key(
+            item: CanonicalStreamItem,
+        ) -> tuple[str | None, str | None, str]:
+            return (
+                item.correlation.flow_run_id,
+                item.correlation.node_id,
+                "flow_node_progress",
+            )
+
+        listener = FlowStreamRecorder(
+            delivered.append,
+            history_item_limit=2,
+            _items=retained_items.copy(),
+            _retained_sequences={0, 1},
+            _ui_items={
+                key(retained_items[0]): retained_items[0],
+                key(retained_items[1]): retained_items[1],
+                key(stale_item): stale_item,
+            },
+        )
+
+        result = listener(
+            _test_flow_item(
+                EventType.FLOW_NODE_STARTED,
+                payload={
+                    "flow_id": "flow",
+                    "node": "new",
+                    "status": "started",
+                },
+                sequence=3,
+            )
+        )
+        if result is not None:
+            await result
+
+        self.assertEqual([item.sequence for item in listener.items], [1, 3])
+        self.assertEqual([item.sequence for item in listener.ui_items], [2, 3])
+
+    def test_flow_stream_recorder_validates_seeded_retained_sequences(
+        self,
+    ) -> None:
+        retained_item = _test_flow_item(
+            EventType.FLOW_NODE_STARTED,
+            payload={
+                "flow_id": "flow",
+                "node": "worker",
+                "status": "started",
+            },
+            sequence=0,
+        )
+
+        listener = FlowStreamRecorder(
+            lambda _item: None,
+            _items=[retained_item],
+            _retained_sequences={0},
+        )
+
+        self.assertEqual([item.sequence for item in listener.items], [0])
+        with self.assertRaises(AssertionError):
+            FlowStreamRecorder(
+                lambda _item: None,
+                _items=[retained_item],
+                _retained_sequences={1},
+            )
 
     async def test_flow_stream_recorder_allows_zero_history(
         self,

@@ -375,6 +375,9 @@ class StreamItemCorrelation:
         return result
 
 
+_EMPTY_STREAM_ITEM_CORRELATION = StreamItemCorrelation()
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class StreamProviderEvent:
     kind: StreamItemKind
@@ -2398,12 +2401,8 @@ class StreamProjectionState:
         *,
         unsupported_message: str,
     ) -> StreamConsumerProjection:
-        projections = self.project_many(
-            item, sequence, unsupported_message=unsupported_message
-        )
-        if len(projections) != 1:
-            raise StreamValidationError(unsupported_message)
-        return projections[0]
+        self._validate_projection_arguments(sequence, unsupported_message)
+        return self._project_one(item, unsupported_message)
 
     def project_many(
         self,
@@ -2412,14 +2411,27 @@ class StreamProjectionState:
         *,
         unsupported_message: str,
     ) -> tuple[StreamConsumerProjection, ...]:
+        self._validate_projection_arguments(sequence, unsupported_message)
+        return (self._project_one(item, unsupported_message),)
+
+    def _validate_projection_arguments(
+        self,
+        sequence: int,
+        unsupported_message: str,
+    ) -> None:
         assert isinstance(sequence, int), "sequence must be an integer"
         assert sequence >= 0, "sequence must not be negative"
         _assert_non_empty_string(unsupported_message, "unsupported_message")
 
+    def _project_one(
+        self,
+        item: object,
+        unsupported_message: str,
+    ) -> StreamConsumerProjection:
         if isinstance(item, CanonicalStreamItem):
-            return (self._project_canonical_item(item),)
+            return self._project_canonical_item(item)
         if isinstance(item, StreamConsumerProjection):
-            return (self._project_consumer_projection(item),)
+            return self._project_consumer_projection(item)
         raise StreamValidationError(unsupported_message)
 
     def validate_complete(self) -> None:
@@ -3276,7 +3288,11 @@ class _ProviderStreamNormalizer:
             sequence=self._sequence,
             kind=kind,
             channel=stream_channel_for_kind(kind),
-            correlation=correlation or StreamItemCorrelation(),
+            correlation=(
+                _EMPTY_STREAM_ITEM_CORRELATION
+                if correlation is None
+                else correlation
+            ),
             text_delta=text_delta,
             data=data,
             usage=usage,
