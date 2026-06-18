@@ -19,6 +19,7 @@ from typing import Protocol, TypeAlias
 
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
+from rich.spinner import Spinner
 
 _FRAME_ROLE_ORDER: tuple[StreamFrameRole, ...] = (
     "events",
@@ -115,13 +116,18 @@ class CliStreamCoordinator:
         console: Console,
         display_config: CliStreamDisplayConfig,
         *,
+        diagnostic_console: Console | None = None,
         live_factory: CliStreamLiveFactory | None = None,
         record_filename_factory: RecordFilenameFactory | None = None,
         clock: CliStreamClock | None = None,
     ) -> None:
         assert isinstance(display_config, CliStreamDisplayConfig)
+        assert diagnostic_console is None or callable(
+            getattr(diagnostic_console, "print", None)
+        )
         assert clock is None or callable(clock)
         self._console = console
+        self._diagnostic_console = diagnostic_console
         self._display_config = display_config
         self._live_factory = live_factory or _default_live_factory
         self._record_filename_factory = (
@@ -133,6 +139,7 @@ class CliStreamCoordinator:
         self._live: CliStreamLive | None = None
         self._live_refresh: _LiveRefreshState = _LIVE_REFRESH_RUNNING
         self._role_renderables: dict[StreamFrameRole, RenderableType] = {}
+        self._stderr_role_renderables: dict[StreamFrameRole, str] = {}
         self._pending_flush = False
         self._manual_pause_depth = 0
         self._prompt_pause: _PromptPauseState = _PROMPT_PAUSE_IDLE
@@ -173,7 +180,10 @@ class CliStreamCoordinator:
     async def _render_frame(self, frame: CliStreamRenderableFrame) -> None:
         assert isinstance(frame, CliStreamRenderableFrame)
         assert not self._closed
-        if not self._display_config.live_enabled:
+        if self._display_config.diagnostic_channel == "none":
+            return
+        if self._display_config.diagnostic_channel == "stderr":
+            self._render_stderr_frame(frame)
             return
 
         self._role_renderables[frame.role] = frame.renderable
@@ -342,6 +352,25 @@ class CliStreamCoordinator:
         self._live = live.__enter__()
         return self._live
 
+    def _render_stderr_frame(self, frame: CliStreamRenderableFrame) -> None:
+        key = _stderr_renderable_key(frame.renderable)
+        if not key:
+            self._stderr_role_renderables.pop(frame.role, None)
+            return
+        if self._stderr_role_renderables.get(frame.role) == key:
+            return
+
+        self._stderr_role_renderables[frame.role] = key
+        self._ensure_diagnostic_console().print(frame.renderable)
+
+    def _ensure_diagnostic_console(self) -> Console:
+        if self._diagnostic_console is None:
+            self._diagnostic_console = Console(
+                stderr=True,
+                force_terminal=False,
+            )
+        return self._diagnostic_console
+
     @asynccontextmanager
     async def _tool_prompt_paused(self) -> AsyncIterator[None]:
         await self._pause_for_prompt()
@@ -454,3 +483,18 @@ def _default_live_factory(
         refresh_per_second=refresh_per_second,
         screen=screen,
     )
+
+
+def _stderr_renderable_key(renderable: RenderableType) -> str:
+    if isinstance(renderable, Group):
+        return "\n".join(
+            key
+            for key in (
+                _stderr_renderable_key(child)
+                for child in renderable.renderables
+            )
+            if key
+        )
+    if isinstance(renderable, Spinner):
+        return str(renderable.text or "")
+    return str(renderable)

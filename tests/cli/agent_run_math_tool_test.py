@@ -513,6 +513,73 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
             "25" in rendered["explicit"],
         )
 
+    async def test_cli_run_math_tool_with_basic_theme_outputs_final_result(
+        self,
+    ) -> None:
+        args = make_args()
+        args.stats = False
+        args.display_events = False
+        args.display_tools = False
+        args.display_tools_events = 0
+        args.display_tokens = 0
+        console = MagicMock()
+        console.width = 120
+        console.is_terminal = True
+        status_cm = MagicMock()
+        status_cm.__enter__.return_value = None
+        status_cm.__exit__.return_value = False
+        console.status.return_value = status_cm
+        theme = create_theme(
+            "basic",
+            lambda message: message,
+            lambda singular, plural, count: singular if count == 1 else plural,
+        )
+        hub = MagicMock()
+        logger = MagicMock()
+
+        orch = DummyOrchestrator()
+        dummy_stack = AsyncMock()
+        dummy_stack.__aenter__.return_value = dummy_stack
+        dummy_stack.__aexit__.return_value = False
+        dummy_stack.enter_async_context = AsyncMock(return_value=orch)
+
+        with (
+            patch.object(
+                agent_cmds, "AsyncExitStack", return_value=dummy_stack
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_settings",
+                new=AsyncMock(return_value=orch),
+            ),
+            patch.object(
+                agent_cmds.OrchestratorLoader,
+                "from_file",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                agent_cmds,
+                "get_input",
+                return_value=(
+                    "What is (4 + 6) and then that result times 5, divided"
+                    " by 2?"
+                ),
+            ),
+            patch("avalan.cli.stream_coordinator.Live") as live_patch,
+        ):
+            await agent_cmds.agent_run(args, console, theme, hub, logger, 1)
+
+        live_patch.assert_not_called()
+        answer_stdout = "".join(
+            str(args[0])
+            for args, kwargs in console.print.call_args_list
+            if kwargs.get("end") == ""
+        )
+        self.assertRegex(answer_stdout, r'The result is "?25"?\.')
+        self.assertNotIn("<tool_call", answer_stdout)
+        self.assertNotIn("arguments", answer_stdout)
+        self.assertNotIn("Tool calls", answer_stdout)
+
     async def test_cli_run_math_tool_display_tools_without_stats(self):
         args = make_args()
         args.stats = False
