@@ -13,6 +13,7 @@ class ReasoningParserLimitTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(max_new_tokens=2),
             logger=getLogger(),
+            legacy_fixture=True,
         )
         outputs = []
         for text in ["<think>", "a", "b", "c", "</think>", "d"]:
@@ -35,6 +36,7 @@ class ReasoningParserLimitTestCase(IsolatedAsyncioTestCase):
                 stop_on_max_new_tokens=True,
             ),
             logger=getLogger(),
+            legacy_fixture=True,
         )
         await parser.push("<think>")
         await parser.push("a")

@@ -1,4 +1,5 @@
 from ....entities import ReasoningSettings, ReasoningTag, ReasoningToken
+from ...stream import StreamItemKind, StreamProviderEvent, StreamVisibility
 
 from logging import Logger
 from typing import Any, Iterable
@@ -25,10 +26,12 @@ class ReasoningParser:
     _thinking_turns: int
     _max_thinking_turns: int
     _thinking_budget_exhausted: bool
+    _reasoning_delta_emitted: bool
     _token_count: int
     _pending_tokens: list[str]
     _pending_str: str
     _logger: Logger
+    _legacy_fixture: bool
 
     def __init__(
         self,
@@ -40,9 +43,11 @@ class ReasoningParser:
         end_tag: str | None = None,
         prefixes: list[str] | None = None,
         max_thinking_turns: int = 1,
+        legacy_fixture: bool = False,
     ) -> None:
         self._settings = reasoning_settings
         self._logger = logger
+        self._legacy_fixture = legacy_fixture
         tag = reasoning_settings.tag
         if not tag:
             if bos_token == "<|startoftext|>":
@@ -57,6 +62,7 @@ class ReasoningParser:
         self._thinking_turns = 0
         self._max_thinking_turns = max_thinking_turns
         self._thinking_budget_exhausted = False
+        self._reasoning_delta_emitted = False
         self._token_count = 0
         self._pending_tokens = []
         self._pending_str = ""
@@ -150,12 +156,15 @@ class ReasoningParser:
                 if as_reasoning:
                     self._token_count += 1
                     self._logger.debug('Flushing reasoning token "%s"', t)
-                    result.append(ReasoningToken(t))
+                    result.append(self._reasoning_delta(t))
                 else:
                     self._logger.debug('Flushing token "%s"', t)
                     result.append(t)
             self._pending_tokens.clear()
             self._pending_str = ""
+        if self._thinking and not self._legacy_fixture:
+            self._thinking = False
+            result.extend(self._reasoning_done_result())
         return result
 
     def _set_thinking(
@@ -170,6 +179,8 @@ class ReasoningParser:
         if token is not None:
             self._logger.debug('Adding reasoning token "%s"', token)
             result.extend(self._wrap(token))
+        if not is_start and not self._legacy_fixture:
+            result.extend(self._reasoning_done_result())
         return result
 
     def _set_thinking_from_pending(
@@ -233,6 +244,8 @@ class ReasoningParser:
             if part:
                 result.extend(self._wrap(part))
         self._thinking = False
+        if not self._legacy_fixture:
+            result.extend(self._reasoning_done_result())
         for part in suffix:
             if part:
                 result.append(part)
@@ -328,7 +341,32 @@ class ReasoningParser:
 
     def _wrap(self, t: str) -> list[Any]:
         self._token_count += 1
-        return [ReasoningToken(t)]
+        return [self._reasoning_delta(t)]
+
+    def _reasoning_delta(
+        self, token: str
+    ) -> ReasoningToken | StreamProviderEvent:
+        if self._legacy_fixture:
+            return ReasoningToken(token)
+        self._reasoning_delta_emitted = True
+        return StreamProviderEvent(
+            kind=StreamItemKind.REASONING_DELTA,
+            text_delta=token,
+            visibility=StreamVisibility.PRIVATE,
+        )
+
+    def _reasoning_done_result(self) -> list[Any]:
+        result: list[Any] = []
+        if not self._reasoning_delta_emitted:
+            result.append(self._reasoning_delta(""))
+        self._reasoning_delta_emitted = False
+        return [
+            *result,
+            StreamProviderEvent(
+                kind=StreamItemKind.REASONING_DONE,
+                visibility=StreamVisibility.PRIVATE,
+            ),
+        ]
 
     def _flush_pending(self, as_reasoning: bool) -> list[Any]:
         result: list[Any] = []

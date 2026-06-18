@@ -49,8 +49,11 @@ from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamItemCorrelation,
     StreamItemKind,
+    StreamProviderEvent,
     StreamTerminalOutcome,
+    StreamVisibility,
     validate_canonical_stream_items,
     validate_tool_lifecycle_items,
 )
@@ -133,14 +136,16 @@ def _make_response(
 def _complex_response():
     async def gen():
         rp = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         tm = MagicMock()
         tm.is_potential_tool_call.return_value = True
         tm.get_calls.return_value = None
         base_parser = ToolCallParser()
         tm.tool_call_status.side_effect = base_parser.tool_call_status
-        tp = ToolCallResponseParser(tm, None)
+        tp = ToolCallResponseParser(tm, None, legacy_fixture=True)
 
         sequence = [
             "X",
@@ -180,7 +185,7 @@ def _complex_response():
                     else:
                         yield p
 
-    settings = GenerationSettings()
+    settings = GenerationSettings(reasoning=ReasoningSettings(enabled=False))
     return TextGenerationResponse(
         lambda **_: gen(),
         logger=getLogger(),
@@ -668,7 +673,11 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         first = await wait_for(iterator.__anext__(), 1)
         second = await wait_for(iterator.__anext__(), 1)
         self.assertIsInstance(first, ToolCallToken)
-        self.assertIsInstance(second, ToolCallToken)
+        assert isinstance(first, ToolCallToken)
+        self.assertEqual(first.token, "{}")
+        self.assertIsInstance(second, Event)
+        assert isinstance(second, Event)
+        self.assertEqual(second.type, EventType.TOOL_PROCESS)
 
     async def test_harmony_streaming_emits_flush_tool_event(self) -> None:
         engine = _DummyEngine()
@@ -1023,6 +1032,76 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
 
         assert isinstance(item, Event)
         self.assertEqual(item.type, EventType.TOOL_DIAGNOSTIC)
+
+    async def test_provider_diagnostic_bridge_preserves_legacy_payload(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        orchestrated = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_text_response(),
+            agent,
+            operation,
+            {},
+            enable_tool_parsing=False,
+        )
+        provider_event = StreamProviderEvent(
+            kind=StreamItemKind.STREAM_DIAGNOSTIC,
+            data={
+                "code": "tool_call.malformed",
+                "message": "Malformed tool call.",
+                "tool_call_id": "parser-tool-call-1",
+                "diagnostics": [
+                    {
+                        "id": "diagnostic-1",
+                        "code": "tool_call.malformed",
+                        "stage": "parse",
+                        "status": "non_executed",
+                        "message": "Malformed tool call.",
+                        "retryable": False,
+                        "details": {"raw": "bad"},
+                        "started_at": "2026-01-01T00:00:00+00:00",
+                        "finished_at": "2026-01-01T00:00:01+00:00",
+                    }
+                ],
+            },
+            correlation=StreamItemCorrelation(
+                tool_call_id="parser-tool-call-1"
+            ),
+            visibility=StreamVisibility.DIAGNOSTIC,
+        )
+
+        event = orchestrated._legacy_parser_item_from_provider_event(
+            provider_event
+        )
+
+        self.assertIsInstance(event, Event)
+        assert isinstance(event, Event)
+        self.assertEqual(event.type, EventType.TOOL_DIAGNOSTIC)
+        diagnostics = event.payload["diagnostics"]
+        self.assertEqual(len(diagnostics), 1)
+        diagnostic = diagnostics[0]
+        self.assertIsInstance(diagnostic, ToolCallDiagnostic)
+        self.assertEqual(
+            diagnostic.code,
+            ToolCallDiagnosticCode.MALFORMED_CALL,
+        )
+        self.assertEqual(diagnostic.stage, ToolCallDiagnosticStage.PARSE)
+        self.assertEqual(diagnostic.call_id, "parser-tool-call-1")
+        self.assertEqual(diagnostic.details, {"raw": "bad"})
+        assert diagnostic.started_at is not None
+        assert diagnostic.finished_at is not None
+        self.assertEqual(
+            diagnostic.started_at.isoformat(),
+            "2026-01-01T00:00:00+00:00",
+        )
+        self.assertEqual(
+            diagnostic.finished_at.isoformat(),
+            "2026-01-01T00:00:01+00:00",
+        )
 
     async def test_iteration_records_tool_and_continuation_lifecycle(
         self,
@@ -6554,3 +6633,56 @@ class OrchestratorResponseParsedTokensTestCase(IsolatedAsyncioTestCase):
             2,
         )
         self.assertEqual(len([t for t in tokens if isinstance(t, str)]), 1)
+
+    async def test_provider_parser_bridge_rejects_unknown_event_kind(self):
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        resp = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _string_response("hi", async_gen=False),
+            agent,
+            operation,
+            {},
+        )
+
+        with self.assertRaises(AssertionError):
+            resp._legacy_parser_item_from_provider_event(
+                StreamProviderEvent(kind=StreamItemKind.ANSWER_DELTA)
+            )
+
+    async def test_provider_diagnostic_bridge_empty_and_fallback_payloads(
+        self,
+    ):
+        empty = OrchestratorResponse._legacy_diagnostics_from_provider_event(
+            StreamProviderEvent(
+                kind=StreamItemKind.STREAM_DIAGNOSTIC,
+                data={"diagnostics": "invalid"},
+                correlation=StreamItemCorrelation(tool_call_id="call-1"),
+            )
+        )
+        self.assertEqual(empty, [])
+
+        diagnostics = (
+            OrchestratorResponse._legacy_diagnostics_from_provider_event(
+                StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_DIAGNOSTIC,
+                    data={
+                        "tool_call_id": "fallback-call",
+                        "diagnostics": [
+                            {
+                                "id": "diagnostic-1",
+                                "message": "Malformed.",
+                            }
+                        ],
+                    },
+                )
+            )
+        )
+
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0].call_id, "fallback-call")
+        self.assertEqual(diagnostics[0].message, "Malformed.")
+        self.assertIsNone(diagnostics[0].started_at)
+        self.assertIsNone(diagnostics[0].finished_at)

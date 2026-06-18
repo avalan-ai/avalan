@@ -10,7 +10,9 @@ from avalan.model.response.parsers.reasoning import (
 class ReasoningParserTestCase(IsolatedAsyncioTestCase):
     async def test_with_thinking_tags(self):
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         tokens = []
         for t in ["a", "<think>", "b", "</think>", "c"]:
@@ -26,7 +28,9 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
 
     async def test_without_thinking_tags(self):
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         tokens = []
         for t in ["x", "y"]:
@@ -38,6 +42,7 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             prefixes=["Thought:"],
             logger=getLogger(),
+            legacy_fixture=True,
         )
         tokens = []
         for t in ["Thought:", "d", "e"]:
@@ -54,6 +59,7 @@ class ReasoningParserTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             prefixes=["Thought:"],
             logger=getLogger(),
+            legacy_fixture=True,
         )
         tokens = []
         for t in ["hello", "world"]:

@@ -10,6 +10,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(tag=ReasoningTag.THINK),
             logger=getLogger(),
+            legacy_fixture=True,
         )
         tokens: list[object] = []
         for t in ["a", "<think>", "b", "</think>", "c"]:
@@ -29,6 +30,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(tag=ReasoningTag.CHANNEL),
             logger=getLogger(),
+            legacy_fixture=True,
         )
         tokens: list[object] = []
         for t in ["x", start, "y", end, "z"]:
@@ -46,6 +48,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
+            legacy_fixture=True,
         )
         tokens: list[object] = []
         for t in ["a", "<think>", "b", "</think>", "c"]:
@@ -62,6 +65,7 @@ class ReasoningParserTagTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             bos_token="<|startoftext|>",
+            legacy_fixture=True,
         )
         tokens: list[object] = []
         for t in ["x", start, "y", end, "z"]:

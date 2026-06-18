@@ -28,7 +28,9 @@ class FakeStartTag:
 class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
     async def test_pending_buffer_drop_when_exceeds_length(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         parser._pending_tokens = ["<", "thi"]
         parser._pending_str = "<thi"
@@ -40,7 +42,9 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
 
     async def test_overlong_pending_clears_token(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         tokens = await parser.push("<th")
         self.assertEqual(tokens, [])
@@ -49,7 +53,9 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
 
     async def test_flush_reasoning_tokens(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         parser.set_thinking(True)
         parser._pending_tokens = ["a", "b"]
@@ -66,6 +72,7 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             start_tag=FakeStartTag("<think>"),
+            legacy_fixture=True,
         )
         await parser.push("<")
         tokens = await parser.push("think>extra")
@@ -82,6 +89,7 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             start_tag=FakeStartTag("<think>"),
+            legacy_fixture=True,
         )
         tokens = await parser.push("<think>extra")
         self.assertEqual(
@@ -97,6 +105,7 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             start_tag=FakeStartTag("<think>"),
+            legacy_fixture=True,
         )
         tokens = await parser.push("<think>")
         self.assertTrue(parser.is_thinking)
@@ -107,6 +116,7 @@ class ReasoningParserEdgeTestCase(IsolatedAsyncioTestCase):
             reasoning_settings=ReasoningSettings(),
             logger=getLogger(),
             max_thinking_turns=1,
+            legacy_fixture=True,
         )
         await parser.push("<think>")
         await parser.push("</think>")

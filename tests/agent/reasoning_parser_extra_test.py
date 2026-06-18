@@ -8,7 +8,9 @@ from avalan.model.response.parsers.reasoning import ReasoningParser
 class ReasoningParserExtraTestCase(IsolatedAsyncioTestCase):
     async def test_flush_returns_empty(self):
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         await parser.push("<think>")
         await parser.push("a")
@@ -17,7 +19,9 @@ class ReasoningParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_flush_returns_pending_tokens(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         await parser.push("<")
         await parser.push("thi")
@@ -25,7 +29,9 @@ class ReasoningParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_set_thinking_affects_state(self):
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         self.assertFalse(parser.is_thinking)
         parser.set_thinking(True)

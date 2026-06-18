@@ -8,7 +8,9 @@ from avalan.model.response.parsers.reasoning import ReasoningParser
 class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
     async def test_split_start_and_end_tags(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         outputs = []
         for text in ["<", "think", ">", "a", "b", "<", "/think", ">"]:
@@ -22,7 +24,9 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
 
     async def test_split_tags_embedded_in_chunks(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         outputs = []
         for text in [
@@ -50,7 +54,9 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         outputs = []
         for text in ["alpha <thi", "", "nk>hidden</think> omega"]:
@@ -72,7 +78,9 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         outputs = []
         for text in ["alpha <thi", " ", "nk> visible"]:
@@ -87,7 +95,9 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
 
     async def test_malformed_embedded_partial_tag_stays_visible(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         outputs = []
         for text in ["lead <thi", "s tail"]:
@@ -101,7 +111,9 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
 
     async def test_unmatched_partial_tag(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         outputs = []
         for t in ["<", "unknown", ">"]:
@@ -110,7 +122,9 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
 
     async def test_buffer_limit_with_long_prefix(self) -> None:
         parser = ReasoningParser(
-            reasoning_settings=ReasoningSettings(), logger=getLogger()
+            reasoning_settings=ReasoningSettings(),
+            logger=getLogger(),
+            legacy_fixture=True,
         )
         outputs = []
         sequence = ["x"] * 50 + [
@@ -138,6 +152,7 @@ class ReasoningParserSplitTagTestCase(IsolatedAsyncioTestCase):
         parser = ReasoningParser(
             reasoning_settings=ReasoningSettings(tag=ReasoningTag.CHANNEL),
             logger=getLogger(),
+            legacy_fixture=True,
         )
         start_parts = ["<|channel|>", "analysis", "<|message|>"]
         message = ["Leo", "Messi", "dances", "past", "defenders"]

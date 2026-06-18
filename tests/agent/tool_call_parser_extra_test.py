@@ -1,3 +1,4 @@
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,13 +13,28 @@ from avalan.entities import (
 )
 from avalan.event import EventType
 from avalan.model.response.parsers.tool import (
-    ToolCallResponseParser,
+    ToolCallResponseParser as _ToolCallResponseParser,
+)
+from avalan.model.response.parsers.tool import (
     _MarkdownFenceState,
     _VisibleQuoteState,
     _VisibleTextState,
 )
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
+
+
+class ToolCallResponseParser(_ToolCallResponseParser):
+    def __init__(
+        self,
+        tool_manager: Any,
+        event_manager: Any,
+        *,
+        legacy_fixture: bool,
+    ) -> None:
+        super().__init__(
+            tool_manager, event_manager, legacy_fixture=legacy_fixture
+        )
 
 
 class DiagnosticFallbackToolManager(ToolManager):
@@ -63,7 +79,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager.tool_call_status.return_value = (
             ToolCallParser.ToolCallBufferStatus.NONE
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         long_token = "a" * 65
         result = await parser.push(long_token)
@@ -80,7 +96,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
 
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
         items = await parser.push("<tool_call></tool_call>")
 
         self.assertIsInstance(items[0], ToolCallToken)
@@ -102,7 +120,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
 
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
         items = await parser.push("no_call")
 
         self.assertEqual(items, ["no_call"])
@@ -116,7 +136,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         base_parser = ToolCallParser()
         manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         items = await parser.push('<tool_call name="calc"/>')
 
         self.assertIsInstance(items[0], ToolCallToken)
@@ -127,7 +147,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_self_closing_tag_with_gt_attribute_value(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         items = await parser.push(
             '<tool_call name="math.calculator" arguments=\'{"expression": '
@@ -152,7 +172,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_self_closing_tag_with_inner_attribute_quote(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         items = await parser.push(
             '<tool_call name="math.calculator" arguments=\'{"phrase": '
@@ -177,7 +197,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_quoted_self_close_marker_keeps_tag_open(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         pushed = await parser.push(
             '<tool_call name="math.calculator" arguments=\'{"expression": '
@@ -213,7 +233,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         long_content = "x" * 100
         parts = [
             "<|channel|>commentary to=functions.db.run code<|message|>{"
@@ -243,7 +263,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager.tool_call_status.side_effect = base_parser.tool_call_status
         manager.get_calls.side_effect = base_parser
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tokens: list = []
         for part in (
             "<｜DSML｜tool_calls>",
@@ -271,7 +291,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
 
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
         text = (
             "<|start|>assistant<|channel|>commentary "
             "to=functions.browser.open <|constrain|>json<|message|>"
@@ -300,7 +322,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             enable_tools=[],
             settings=ToolManagerSettings(tool_format=ToolFormat.HARMONY),
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         text = (
             "<|start|>assistant<|channel|>commentary "
             "to=functions.browser.open <|constrain|>json<|message|>"
@@ -333,7 +355,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             enable_tools=[],
             settings=ToolManagerSettings(tool_format=ToolFormat.HARMONY),
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         text = (
             "<|start|>assistant<|channel|>commentary "
             "to=functions.browser.open <|constrain|>json<|message|>"
@@ -364,7 +386,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             enable_tools=[],
             settings=ToolManagerSettings(tool_format=ToolFormat.HARMONY),
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         text = (
             "<|start|>assistant<|channel|>commentary "
             "to=functions.browser.open <|constrain|>json<|message|>"
@@ -395,7 +417,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             enable_tools=[],
             settings=ToolManagerSettings(tool_format=ToolFormat.HARMONY),
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         text = (
             "<|channel|>commentary to=functions.browser.open"
             '<|message|>{"url":"https://example.com"}'
@@ -415,7 +437,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             "parse_calls should not be used"
         )
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         await parser.push(
             "<|start|>assistant<|channel|>commentary "
             "to=functions.browser.open <|constrain|>json<|message|>"
@@ -437,7 +459,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         base_parser = ToolCallParser()
         manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         await parser.push("<to")
         result = await parser.push("x")
 
@@ -449,7 +471,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push("answer <to")
         second = await parser.push(
@@ -471,7 +493,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_text = (
             '<tool_call>{"name": "math.calculator", '
             '"arguments": {"x": 1}}</tool_call>'
@@ -492,7 +514,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_text = (
             '<tool_call name="math.calculator" arguments=\'{"x": 1}\'/>'
         )
@@ -514,7 +536,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_text = (
             '<tool_call name="math.calculator" arguments=\'{"x": 1}\'/>'
         )
@@ -537,7 +559,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_text = (
             '<tool_call name="math.calculator" arguments=\'{"x": 1}\'/>'
         )
@@ -561,7 +583,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager.get_calls.side_effect = AssertionError(
             "quoted marker should stay visible"
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         items = await parser.push('answer "<tool_call" only')
         flushed = await parser.flush()
@@ -572,7 +594,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_next_line_tool_after_unclosed_quote_executes(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push('Visible "quoted text\n')
         second = await parser.push(
@@ -598,7 +620,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         text = (
             'Visible "quoted <tool_call>{"name": "math.calculator", '
             '"arguments": {}}</tool_call>'
@@ -615,7 +637,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_text = (
             '<tool_call>{"name": "math.calculator", '
             '"arguments": {"x": 1}}</tool_call>'
@@ -639,7 +661,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_text = (
             '<tool_call>{"name": "math.calculator", '
             '"arguments": {}}</tool_call>'
@@ -659,7 +681,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "math.calculator", "arguments": {"x": "/>"}}'
@@ -680,7 +702,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "math.calculator", "arguments": '
@@ -708,7 +730,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "math.calculator", "arguments": '
@@ -738,7 +760,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "math.calculator", "arguments": '
@@ -768,7 +790,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "math.calculator", "arguments": {"text": "'
@@ -795,7 +817,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         pushed = []
         pushed.extend(
@@ -827,7 +849,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         pushed = await parser.push(
             '<tool_call>{"name": "math.calculator", "arguments": '
@@ -857,7 +879,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_text = (
             '<tool_call>{"name": "math.calculator", '
             '"arguments": {"x": 1}}</tool_call>'
@@ -877,7 +899,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_remainder = (
             'ol_call>{"name": "math.calculator", '
             '"arguments": {"x": 1}}</tool_call>'
@@ -906,7 +928,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push("<to")
         second = await parser.push(
@@ -933,7 +955,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = CapturingToolManager.create_instance(enable_tools=[])
         assert isinstance(manager, CapturingToolManager)
         manager.parsed_texts = []
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push("<to")
         second = await parser.push(" visible <tool")
@@ -959,7 +981,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         result = await parser.push("answer <x")
 
@@ -971,7 +993,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = ToolManager.create_instance(enable_tools=[])
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
         text = (
             "```xml\n"
             '<tool_call>{"name": "math.calculator", "arguments": {}}'
@@ -992,7 +1016,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = ToolManager.create_instance(enable_tools=[])
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
 
         first = await parser.push("```xml\n<to")
         second = await parser.push(
@@ -1016,7 +1042,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         tool_text = (
             '<tool_call>{"name": "math.calculator", '
             '"arguments": {"x": 1}}</tool_call>'
@@ -1036,7 +1062,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         items: list = []
 
         with (
@@ -1141,7 +1167,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = MagicMock()
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertEqual(
             parser._visible_marker_indexes(" before <tool_call>", "prefix "),
@@ -1150,7 +1176,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     def test_marker_helper_branches(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertFalse(
             ToolCallResponseParser._markdown_fence_is_open(
@@ -1197,7 +1223,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = ToolManager.create_instance(enable_tools=[])
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
         first_tool = (
             '<tool_call>{"name": "math.calculator", '
             '"arguments": {"x": 1}}</tool_call>'
@@ -1229,7 +1257,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager.tool_call_status.return_value = (
             ToolCallParser.ToolCallBufferStatus.NONE
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         result = parser._split_visible_prefix(
             "answer <tool_call>",
@@ -1242,7 +1270,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         text = '<tool_call name="first"/> <tool_call'
 
         self.assertEqual(
@@ -1253,7 +1281,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
     def test_split_closed_visible_suffix_handles_dsml_suffix(self) -> None:
         manager = MagicMock()
         manager.tool_format = ToolFormat.DSML
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertEqual(
             parser._split_closed_visible_suffix(
@@ -1266,7 +1294,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         text = '<tool_call name="first"></tool_call> visible /> tail'
 
         self.assertEqual(
@@ -1278,7 +1306,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertEqual(
             parser._split_closed_visible_suffix(
@@ -1291,7 +1319,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertEqual(
             parser._split_closed_visible_suffix(
@@ -1309,7 +1337,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     def test_split_closed_visible_suffix_skips_escaped_marker(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertEqual(
             parser._split_closed_visible_suffix(
@@ -1327,7 +1355,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     def test_split_current_call_close_skips_fenced_markers(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertIsNone(
             parser._split_current_call_close(
@@ -1341,7 +1369,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     def test_split_current_call_close_handles_self_closing_tag(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertEqual(
             parser._split_current_call_close(
@@ -1355,7 +1383,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         first = '<tool_call name="first"/>'
         text = first + '<tool_call name="second"/> tail'
 
@@ -1369,7 +1397,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     def test_self_closing_tool_end_indexes_handles_open_tag(self) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertEqual(
             list(parser._self_closing_tool_end_indexes("<tool_call")),
@@ -1380,7 +1408,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         indexes = list(
             parser._self_closing_tool_end_indexes(
@@ -1403,7 +1431,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
     def test_visible_quote_detection_handles_escapes_and_single_quotes(
         self,
     ) -> None:
-        parser = ToolCallResponseParser(MagicMock(), None)
+        parser = ToolCallResponseParser(MagicMock(), None, legacy_fixture=True)
         escaped_quote = r'"quoted \" marker <tool_call'
         single_quote = "'<tool_call'"
 
@@ -1427,7 +1455,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         self.assertEqual(
             parser._split_closed_visible_suffix("<tool_call>"),
@@ -1440,7 +1468,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         base_parser = ToolCallParser()
         manager.tool_call_status.side_effect = base_parser.tool_call_status
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         await parser.push("<tool")
 
         self.assertEqual(await parser.flush(), ["<tool"])
@@ -1449,7 +1477,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_flush_pending_tool_prefix_emits_diagnostic_event(self):
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         pushed = await parser.push("<tool")
         flushed = await parser.flush()
@@ -1475,7 +1503,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         pushed = await parser.push("answer <tool")
         flushed = await parser.flush()
@@ -1501,7 +1529,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         pushed = await parser.push("answer <x")
         flushed = await parser.flush()
@@ -1516,7 +1544,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             ToolCallParser.ToolCallBufferStatus.OPEN
         )
 
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         class EmptyIterList(list):
             def __iter__(self):
@@ -1539,7 +1567,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             return ToolCallParser.ToolCallBufferStatus.OPEN
 
         manager.tool_call_status.side_effect = _status
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         parser._inside_call = True
         parser._buffer.write("prefix")
         parser._tool_buffer.write("prefix")
@@ -1562,7 +1590,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             ToolCallParser.ToolCallBufferStatus.OPEN,
             ToolCallParser.ToolCallBufferStatus.CLOSED,
         ]
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         parser._inside_call = True
         parser._buffer.write("prefix")
         parser._tool_buffer.write("prefix")
@@ -1579,7 +1607,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = ToolManager.create_instance(enable_tools=[])
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
 
         items: list = []
         for part in (
@@ -1612,7 +1642,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_malformed_tool_tag_stream_emits_diagnostic_event(self):
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         items = await parser.push("<tool>not json</tool>")
 
@@ -1635,7 +1665,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = ToolManager.create_instance(enable_tools=[])
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
 
         items = await parser.push(
             '<tool_call>{"name": "bad..name", "arguments": {}}</tool_call>'
@@ -1676,7 +1708,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "first", "arguments": {}}</tool_call>'
@@ -1709,7 +1741,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "first", "arguments": {}}</tool_call>'
@@ -1744,7 +1776,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "first", "arguments": {}}'
@@ -1776,7 +1808,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "first", "arguments": {}}</tool'
@@ -1799,7 +1831,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             enable_tools=[],
             settings=ToolManagerSettings(tool_format=ToolFormat.HARMONY),
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             "<|start|>assistant<|channel|>commentary "
@@ -1859,7 +1891,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
             return original_status(buffer, final=final)
 
         setattr(manager, "tool_call_status", MagicMock(side_effect=status))
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         await parser.push(
             '<tool_call>{"name": "math.calculator", "arguments": '
@@ -1895,7 +1927,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = ToolManager.create_instance(enable_tools=[])
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
         fenced_suffix = (
             "\n```xml\n"
             '<tool_call>{"name": "second", "arguments": {}}</tool_call>\n'
@@ -1927,7 +1961,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         first = await parser.push(
             '<tool_call>{"name": "first", "arguments": {}}</tool_call>'
@@ -1971,7 +2005,9 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = ToolManager.create_instance(enable_tools=[])
         event_manager = MagicMock()
         event_manager.trigger = AsyncMock()
-        parser = ToolCallResponseParser(manager, event_manager)
+        parser = ToolCallResponseParser(
+            manager, event_manager, legacy_fixture=True
+        )
 
         items = await parser.push(
             '<tool_call>{"name": "math.calculator", '
@@ -2004,7 +2040,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         manager = DiagnosticFallbackToolManager.create_instance(
             enable_tools=[]
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         items = await parser.push("<tool_call></tool_call>")
 
@@ -2022,7 +2058,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         manager = NoDiagnosticToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         items = await parser.push("<tool_call></tool_call>")
 
@@ -2033,7 +2069,7 @@ class ToolCallParserExtraTestCase(IsolatedAsyncioTestCase):
 
     async def test_flush_unterminated_stream_emits_diagnostic_event(self):
         manager = ToolManager.create_instance(enable_tools=[])
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
 
         pushed = await parser.push(
             '<tool_call>{"name": "calculator", "arguments": {}}'

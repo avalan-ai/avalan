@@ -27,7 +27,9 @@ class ToolCallParserFixtureTestCase(IsolatedAsyncioTestCase):
         for case in cases:
             with self.subTest(case=case["name"]):
                 manager = ToolManager.create_instance(enable_tools=[])
-                parser = ToolCallResponseParser(manager, None)
+                parser = ToolCallResponseParser(
+                    manager, None, legacy_fixture=True
+                )
                 items: list[Any] = []
 
                 for token in case["tokens"]:
@@ -82,7 +84,7 @@ class ToolCallParserFixtureTestCase(IsolatedAsyncioTestCase):
             enable_tools=[],
             settings=ToolManagerSettings(tool_format=ToolFormat.HARMONY),
         )
-        parser = ToolCallResponseParser(manager, None)
+        parser = ToolCallResponseParser(manager, None, legacy_fixture=True)
         items: list[Any] = []
 
         for token in fixture["tokens"]:
