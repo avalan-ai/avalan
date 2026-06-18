@@ -9,7 +9,7 @@ from asyncio import (
 from asyncio import (
     Event as AsyncioEvent,
 )
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from dataclasses import dataclass
 from io import StringIO
 from json import dumps, loads
@@ -78,6 +78,19 @@ class _DummyEngine:
     def __init__(self):
         self.model_id = "m"
         self.tokenizer = MagicMock()
+
+
+class _ConfirmationAwaitable:
+    def __init__(self, value: bool, awaited: list[bool]) -> None:
+        self._value = value
+        self._awaited = awaited
+
+    def __await__(self) -> Generator[Any, None, bool]:
+        async def resolve() -> bool:
+            self._awaited.append(True)
+            return self._value
+
+        return resolve().__await__()
 
 
 def _dummy_operation() -> AgentOperation:
@@ -3871,6 +3884,14 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.STREAM_CLOSED,
             ],
         )
+        self.assertEqual(
+            canonical_items[-3].data["code"],
+            ToolCallDiagnosticCode.CANCELLED.value,
+        )
+        self.assertEqual(
+            canonical_items[-3].data["stage"],
+            ToolCallDiagnosticStage.DISPATCH.value,
+        )
 
     async def test_cancellation_checker_stops_queued_tool_before_execution(
         self,
@@ -3918,6 +3939,14 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 StreamItemKind.STREAM_CANCELLED,
                 StreamItemKind.STREAM_CLOSED,
             ],
+        )
+        self.assertEqual(
+            canonical_items[5].data["code"],
+            ToolCallDiagnosticCode.CANCELLED.value,
+        )
+        self.assertEqual(
+            canonical_items[5].data["stage"],
+            ToolCallDiagnosticStage.GUARD.value,
         )
         self.assertFalse(
             any(
@@ -6477,7 +6506,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 (
                     "call-1",
                     StreamItemKind.TOOL_EXECUTION_CANCELLED,
-                    None,
+                    ToolCallDiagnosticCode.CANCELLED.value,
                 ),
                 (
                     "call-2",
@@ -6583,7 +6612,11 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 )
             ],
             [
-                ("call-1", StreamItemKind.TOOL_EXECUTION_CANCELLED, None),
+                (
+                    "call-1",
+                    StreamItemKind.TOOL_EXECUTION_CANCELLED,
+                    ToolCallDiagnosticCode.CANCELLED.value,
+                ),
                 (
                     "call-2",
                     StreamItemKind.TOOL_EXECUTION_CANCELLED,
@@ -6650,6 +6683,165 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             diagnostics[0].data["code"],
             ToolCallDiagnosticCode.USER_REJECTED.value,
+        )
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_single_confirmation_accepts_true(self) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        executed: list[str] = []
+
+        async def tracked(name: str) -> str:
+            executed.append(name)
+            return name
+
+        tool = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[tracked])],
+            enable_tools=["tracked"],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="tracked",
+            arguments={"name": "first"},
+        )
+
+        agent.return_value = _string_response("done", async_gen=True)
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+            tool_confirm=lambda _: True,
+            enable_tool_parsing=False,
+        )
+
+        self.assertEqual(await response.to_str(), "done")
+        self.assertEqual(executed, ["first"])
+        self.assertNotIn(
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            [item.kind for item in response.canonical_items],
+        )
+        self.assertIn(
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            [item.kind for item in response.canonical_items],
+        )
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_single_confirmation_accepts_future(self) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        executed: list[str] = []
+
+        async def tracked(name: str) -> str:
+            executed.append(name)
+            return name
+
+        tool = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[tracked])],
+            enable_tools=["tracked"],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="tracked",
+            arguments={"name": "first"},
+        )
+
+        def confirm(_: ToolCall) -> Future[bool]:
+            future: Future[bool] = get_running_loop().create_future()
+            future.set_result(True)
+            return future
+
+        agent.return_value = _string_response("done", async_gen=True)
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+            tool_confirm=confirm,
+            enable_tool_parsing=False,
+        )
+
+        self.assertEqual(await response.to_str(), "done")
+        self.assertEqual(executed, ["first"])
+        self.assertNotIn(
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            [item.kind for item in response.canonical_items],
+        )
+        self.assertIn(
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            [item.kind for item in response.canonical_items],
+        )
+        validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_single_confirmation_accepts_custom_awaitable(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = AsyncMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        awaited: list[bool] = []
+        executed: list[str] = []
+
+        async def tracked(name: str) -> str:
+            executed.append(name)
+            return name
+
+        tool = ToolManager.create_instance(
+            available_toolsets=[ToolSet(tools=[tracked])],
+            enable_tools=["tracked"],
+            settings=ToolManagerSettings(),
+        )
+        call = ToolCall(
+            id="call-1",
+            name="tracked",
+            arguments={"name": "first"},
+        )
+
+        def confirm(_: ToolCall) -> _ConfirmationAwaitable:
+            return _ConfirmationAwaitable(True, awaited)
+
+        agent.return_value = _string_response("done", async_gen=True)
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _tool_call_response(call),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+            tool=tool,
+            tool_confirm=confirm,
+            enable_tool_parsing=False,
+        )
+
+        self.assertEqual(await response.to_str(), "done")
+        self.assertEqual(awaited, [True])
+        self.assertEqual(executed, ["first"])
+        self.assertNotIn(
+            StreamItemKind.TOOL_EXECUTION_ERROR,
+            [item.kind for item in response.canonical_items],
+        )
+        self.assertIn(
+            StreamItemKind.TOOL_EXECUTION_COMPLETED,
+            [item.kind for item in response.canonical_items],
         )
         validate_tool_lifecycle_items(response.canonical_items)
 
@@ -6766,6 +6958,85 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(await response.to_str(), "done")
         self.assertEqual(peak_active, 2)
         validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_parallel_confirmation_accepts_true_and_future(
+        self,
+    ) -> None:
+        for confirmation_kind in ("true", "future"):
+            with self.subTest(confirmation_kind=confirmation_kind):
+                engine = _DummyEngine()
+                agent = AsyncMock(spec=EngineAgent)
+                agent.engine = engine
+                operation = _dummy_operation()
+                event_manager = MagicMock(spec=EventManager)
+                event_manager.trigger = AsyncMock()
+                executed: list[str] = []
+                confirmed: list[str] = []
+
+                async def tracked(name: str) -> str:
+                    executed.append(name)
+                    return name
+
+                setattr(tracked, "parallel_safe", True)
+                setattr(tracked, "side_effecting", False)
+                tool = ToolManager.create_instance(
+                    available_toolsets=[ToolSet(tools=[tracked])],
+                    enable_tools=["tracked"],
+                    settings=ToolManagerSettings(parallel_tool_calls=True),
+                )
+                calls = [
+                    ToolCall(
+                        id="call-1",
+                        name="tracked",
+                        arguments={"name": "first"},
+                    ),
+                    ToolCall(
+                        id="call-2",
+                        name="tracked",
+                        arguments={"name": "second"},
+                    ),
+                ]
+
+                def confirm(call: ToolCall) -> bool | Future[bool]:
+                    confirmed.append(str(call.id))
+                    if confirmation_kind == "true":
+                        return True
+                    future: Future[bool] = get_running_loop().create_future()
+                    future.set_result(True)
+                    return future
+
+                agent.return_value = _string_response("done", async_gen=True)
+                response = _make_response(
+                    Message(role=MessageRole.USER, content="hi"),
+                    _tool_call_response(*calls),
+                    agent,
+                    operation,
+                    {},
+                    event_manager=event_manager,
+                    tool=tool,
+                    tool_confirm=confirm,
+                    enable_tool_parsing=False,
+                )
+
+                self.assertEqual(await response.to_str(), "done")
+                self.assertEqual(confirmed, ["call-1", "call-2"])
+                self.assertCountEqual(executed, ["first", "second"])
+                self.assertNotIn(
+                    StreamItemKind.TOOL_EXECUTION_ERROR,
+                    [item.kind for item in response.canonical_items],
+                )
+                self.assertEqual(
+                    [
+                        item.correlation.tool_call_id
+                        for item in response.canonical_items
+                        if (
+                            item.kind
+                            is StreamItemKind.TOOL_EXECUTION_COMPLETED
+                        )
+                    ],
+                    ["call-1", "call-2"],
+                )
+                validate_tool_lifecycle_items(response.canonical_items)
 
     async def test_iteration_parallel_results_emit_before_continuation(
         self,
