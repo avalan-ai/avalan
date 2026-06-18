@@ -1,8 +1,9 @@
 import unittest
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from io import StringIO
+from logging import getLogger
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
@@ -24,7 +25,20 @@ from avalan.cli.theme import (
 from avalan.cli.theme import (
     fancy as fancy_theme_module,
 )
-from avalan.cli.theme.fancy import FancyTheme
+from avalan.cli.display import CliStreamDisplayConfig
+from avalan.cli.display_snapshot import (
+    CliDisplayTokenSnapshot,
+    CliProjectionMetadataSummarySnapshot,
+    CliStreamSnapshot,
+    CliStreamSnapshotBuilder,
+)
+from avalan.cli.theme.fancy import FancyStreamPresenter, FancyTheme
+from avalan.cli.theme.stream_presenter import (
+    CliStreamAnswerTextChunk,
+    CliStreamPresenterContext,
+    CliStreamPresenterRequest,
+    CliStreamRenderableFrame,
+)
 from avalan.entities import (
     EngineMessage,
     EngineMessageScored,
@@ -158,6 +172,77 @@ def _token_state(
     )
 
 
+def _stream_config(**overrides: object) -> CliStreamDisplayConfig:
+    values = {
+        "quiet": False,
+        "stats": True,
+        "display_tools": True,
+        "display_events": True,
+        "display_tools_events": 2,
+        "record": False,
+        "interactive": True,
+        "refresh_per_second": 10,
+        "answer_height": 12,
+        "answer_height_expand": False,
+        "display_tokens": 4,
+        "display_pause": 0,
+        "display_probabilities": True,
+        "display_probabilities_maximum": 0.8,
+        "display_probabilities_sample_minimum": 0.1,
+        "display_time_to_n_token": 2,
+        "display_reasoning_time": True,
+    }
+    values.update(overrides)
+    return CliStreamDisplayConfig(**values)
+
+
+def _stream_context(**overrides: object) -> CliStreamPresenterContext:
+    values = {
+        "model_id": "model",
+        "console_width": 96,
+        "input_token_count": 3,
+        "tokenizer_tokens": ("added",),
+        "tokenizer_special_tokens": ("<eos>",),
+        "token_probability_pick": 3,
+        "start_thinking": False,
+    }
+    values.update(overrides)
+    return CliStreamPresenterContext(**values)
+
+
+def _stream_request(
+    config: CliStreamDisplayConfig,
+    snapshot: CliStreamSnapshot,
+    *,
+    context: CliStreamPresenterContext | None = None,
+    mode: str = "live",
+) -> CliStreamPresenterRequest:
+    return CliStreamPresenterRequest(
+        snapshot=snapshot,
+        display_config=config,
+        context=_stream_context() if context is None else context,
+        mode=mode,  # type: ignore[arg-type]
+    )
+
+
+async def _collect_stream_items(
+    presenter: FancyStreamPresenter,
+    request: CliStreamPresenterRequest,
+) -> list[object]:
+    return [item async for item in presenter.present(request)]
+
+
+def _render_visible_text(*renderables: object) -> str:
+    console = Console(file=StringIO(), record=True, width=240)
+    for renderable in renderables:
+        console.print(renderable)
+    return console.export_text()
+
+
+def _frame_text(frame: CliStreamRenderableFrame) -> str:
+    return _render_visible_text(frame.renderable)
+
+
 class FancyThemeFlowProgressTestCase(unittest.TestCase):
     def test_flow_run_progress_message_reports_active_node(self):
         theme = FancyTheme(lambda s: s, lambda s, p, n: s if n == 1 else p)
@@ -213,6 +298,18 @@ class FancyThemeFlowProgressTestCase(unittest.TestCase):
         self.assertEqual(
             theme.flow_run_progress_message("flow_cancelled"),
             "Flow run cancelled.",
+        )
+        self.assertEqual(
+            theme.flow_run_progress_message("flow_started"),
+            "Flow run started.",
+        )
+        self.assertEqual(
+            theme.flow_run_progress_message("flow_completed"),
+            "Flow run completed.",
+        )
+        self.assertEqual(
+            theme.flow_run_progress_message("unknown"),
+            "Flow run is active.",
         )
 
     def test_flow_run_progress_inverts_running_node_class(self):
@@ -448,6 +545,716 @@ class FancyThemeFlowProgressTestCase(unittest.TestCase):
 
         self.assertIn("Diagram renderer unavailable", output)
         self.assertIn("RuntimeError", output)
+
+
+class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.theme = FancyTheme(
+            lambda s: s, lambda s, p, n: s if n == 1 else p
+        )
+
+    async def test_presenter_renders_snapshot_native_rich_surfaces(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools_events=None)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("think before acting\n")
+        builder.append_tool_call_request_text('{"name": "calc"}')
+        builder.append_answer_text("Answer is 25.")
+        builder.update_token_counts(input_tokens=7, output_tokens=8)
+        builder.update_timing(
+            started_at=1.0,
+            updated_at=3.0,
+            first_token_seconds=0.2,
+            reasoning_seconds=0.4,
+            time_to_n_token_seconds=0.6,
+            elapsed_seconds=2.0,
+        )
+        builder.add_active_tool(
+            tool_call_id="active-call",
+            name="calc",
+            arguments={"expr": "(4 + 6) * 5 / 2"},
+        )
+        builder.add_event_summary(
+            event_type=EventType.FLOW_NODE_STARTED,
+            payload={"node": "math"},
+            elapsed=1.2,
+        )
+        builder.add_usage_summary(
+            {"input_tokens": 7, "output_tokens": 8},
+            kind="stream.completed",
+        )
+        builder.add_display_token(
+            TokenDetail(
+                id=1,
+                token="25",
+                probability=0.3,
+                tokens=[
+                    Token(id=1, token="25", probability=0.3),
+                    Token(id=2, token="24", probability=0.7),
+                    Token(id=3, token="26", probability=0.1),
+                ],
+            )
+        )
+        builder.add_display_token(Token(id=4, token="low", probability=0.4))
+        builder.add_display_token(Token(id=5, token="added", probability=0.9))
+        builder.add_display_token(Token(id=6, token="plain", probability=0.9))
+        snapshot = replace(
+            builder.snapshot(),
+            projection_metadata_summaries=(
+                CliProjectionMetadataSummarySnapshot(
+                    sequence=11,
+                    kind="chunk",
+                    data_summary="projection-data",
+                ),
+            ),
+        )
+        event_stats = EventStats()
+        event_stats.total_triggers = 3
+        event_stats.triggers = {
+            EventType.TOOL_EXECUTE: 1,
+            EventType.TOOL_RESULT: 1,
+        }
+        presenter = FancyStreamPresenter(
+            self.theme,
+            getLogger(__name__),
+            event_stats=event_stats,
+        )
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, snapshot),
+        )
+
+        frames = [
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+        ]
+        self.assertEqual(
+            [frame.role for frame in frames],
+            ["tools", "events", "stats", "stream"],
+        )
+        self.assertEqual(frames[-1].current_token.text, "25")
+        output = _render_visible_text(*(frame.renderable for frame in frames))
+        for fragment in (
+            "Tool calls",
+            "Executing tool calc",
+            "active-c",
+            "Events",
+            "flow_node_started",
+            "math",
+            "Stats",
+            "usage stream.completed",
+            "projection chunk",
+            "projection-data",
+            "model reasoning",
+            "think before acting",
+            "Tool call requests",
+            '{"name": "calc"}',
+            "Answer is 25.",
+            "token distribution",
+            "25",
+            "70%",
+            "3 events",
+            "1 tool call",
+            "1 result",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, output)
+
+    def test_theme_factory_returns_fancy_stream_presenter(self) -> None:
+        presenter = self.theme.stream_presenter(getLogger(__name__))
+
+        self.assertIsInstance(presenter, FancyStreamPresenter)
+
+    async def test_tool_history_renders_completed_result_diagnostic_and_event(
+        self,
+    ) -> None:
+        config = _stream_config(display_events=False, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_active_tool(
+            tool_call_id="done-call",
+            name="calc",
+            arguments={"x": 1},
+        )
+        builder.complete_tool(
+            tool_call_id="done-call",
+            name="calc",
+            elapsed_seconds=0.5,
+        )
+        builder.add_tool_result_summary(
+            tool_call_id="done-call",
+            name="calc",
+            status="result",
+            result=25,
+            arguments_count=1,
+            elapsed_seconds=0.5,
+        )
+        builder.add_tool_diagnostic(
+            ToolCallDiagnostic(
+                id="diag-details",
+                call_id="done-call",
+                requested_name="calc",
+                canonical_name="math.calculator",
+                code=ToolCallDiagnosticCode.ARGUMENT_VALIDATION_FAILED,
+                stage=ToolCallDiagnosticStage.VALIDATE,
+                message="Bad arguments.",
+                retryable=True,
+                details={"field": "expr"},
+            )
+        )
+        builder.add_tool_diagnostic(
+            ToolCallDiagnostic(
+                id="diag-plain",
+                requested_name="calc",
+                code=ToolCallDiagnosticCode.UNKNOWN_TOOL,
+                stage=ToolCallDiagnosticStage.RESOLVE,
+                message="Unknown tool.",
+            )
+        )
+        builder.add_tool_event(
+            Event(
+                type=EventType.TOOL_MODEL_RUN,
+                payload={"model_id": "react"},
+                elapsed=0.2,
+            ),
+            tool_call_id="done-call",
+            name="calc",
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        tools_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "tools"
+        )
+        output = _frame_text(tools_frame)
+        for fragment in (
+            "Completed tool calc",
+            "Executed tool calc",
+            'Got result "25"',
+            "Tool diagnostic tool_call.arguments_invalid",
+            "Bad arguments",
+            "Retryable",
+            "Tool diagnostic tool.unknown",
+            "Unknown tool",
+            "Tool event tool_model_run",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, output)
+
+    async def test_display_tools_events_zero_keeps_active_and_clears_stale(
+        self,
+    ) -> None:
+        config = _stream_config(
+            stats=False,
+            display_events=False,
+            display_tools_events=0,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("working")
+        builder.add_active_tool(
+            tool_call_id="active-call",
+            name="calc",
+            arguments={"x": 1},
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        no_tool_builder = CliStreamSnapshotBuilder(config)
+        no_tool_builder.append_answer_text("working")
+        no_tool_snapshot = no_tool_builder.snapshot()
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, no_tool_snapshot),
+        )
+
+        first_frames = [
+            item
+            for item in first
+            if isinstance(item, CliStreamRenderableFrame)
+        ]
+        self.assertEqual([frame.role for frame in first_frames], ["tools"])
+        self.assertIn("Executing tool calc", _frame_text(first_frames[0]))
+        self.assertNotIn("Completed tool", _frame_text(first_frames[0]))
+        second_frames = [
+            item
+            for item in second
+            if isinstance(item, CliStreamRenderableFrame)
+        ]
+        self.assertEqual([frame.role for frame in second_frames], ["tools"])
+        self.assertEqual(second_frames[0].renderable, "")
+        self.assertEqual(
+            [
+                item.text
+                for item in (*first, *second)
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ["working"],
+        )
+
+    async def test_events_and_stats_frames_clear_stale_surfaces(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=False,
+            display_events=True,
+            display_tokens=0,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("answer")
+        builder.add_event_summary(
+            event_type=EventType.FLOW_NODE_STARTED,
+            payload={"node": "math"},
+        )
+        builder.add_usage_summary(
+            {"input_tokens": 1, "output_tokens": 2},
+            kind="stream.completed",
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        first = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+        second_builder = CliStreamSnapshotBuilder(config)
+        second_builder.append_answer_text("answer")
+        second = await _collect_stream_items(
+            presenter,
+            _stream_request(config, second_builder.snapshot()),
+        )
+
+        first_frames = [
+            item
+            for item in first
+            if isinstance(item, CliStreamRenderableFrame)
+        ]
+        self.assertEqual(
+            [frame.role for frame in first_frames],
+            ["events", "stats", "stream"],
+        )
+        self.assertIn("flow_node_started", _frame_text(first_frames[0]))
+        self.assertIn("usage stream.completed", _frame_text(first_frames[1]))
+
+        second_frames = [
+            item
+            for item in second
+            if isinstance(item, CliStreamRenderableFrame)
+        ]
+        self.assertEqual(
+            [frame.role for frame in second_frames],
+            ["events", "stats", "stream"],
+        )
+        self.assertEqual(second_frames[0].renderable, "")
+        self.assertEqual(second_frames[1].renderable, "")
+        second_output = _render_visible_text(
+            *(frame.renderable for frame in second_frames)
+        )
+        self.assertNotIn("flow_node_started", second_output)
+        self.assertNotIn("usage stream.completed", second_output)
+
+    async def test_combined_tools_and_events_does_not_duplicate_tool_events(
+        self,
+    ) -> None:
+        config = _stream_config(stats=False, display_tools_events=4)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.add_tool_event(
+            Event(type=EventType.TOOL_MODEL_RUN, payload={"model": "react"}),
+            tool_call_id="tool-call",
+            name="calc",
+        )
+        builder.add_event_summary(
+            event_type=EventType.FLOW_NODE_COMPLETED,
+            payload={"node": "math"},
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        tools_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "tools"
+        )
+        events_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "events"
+        )
+        self.assertIn("tool_model_run", _frame_text(tools_frame))
+        event_output = _frame_text(events_frame)
+        self.assertIn("flow_node_completed", event_output)
+        self.assertNotIn("tool_model_run", event_output)
+
+    async def test_answer_height_and_expand_are_preserved(self) -> None:
+        answer = "\n".join(f"line {index}" for index in range(6))
+        limited_config = _stream_config(
+            display_tools=False,
+            display_events=False,
+            display_tokens=0,
+            answer_height=3,
+        )
+        limited_builder = CliStreamSnapshotBuilder(limited_config)
+        limited_builder.append_answer_text(answer)
+        expanded_config = _stream_config(
+            display_tools=False,
+            display_events=False,
+            display_tokens=0,
+            answer_height=3,
+            answer_height_expand=True,
+        )
+        expanded_builder = CliStreamSnapshotBuilder(expanded_config)
+        expanded_builder.append_answer_text(answer)
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        limited_items = await _collect_stream_items(
+            presenter,
+            _stream_request(limited_config, limited_builder.snapshot()),
+        )
+        expanded_items = await _collect_stream_items(
+            presenter,
+            _stream_request(expanded_config, expanded_builder.snapshot()),
+        )
+
+        limited_frame = next(
+            item
+            for item in limited_items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        expanded_frame = next(
+            item
+            for item in expanded_items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        limited_panel = limited_frame.renderable.renderables[0]
+        expanded_panel = expanded_frame.renderable.renderables[0]
+        self.assertEqual(limited_panel.height, 5)
+        self.assertIsNone(expanded_panel.height)
+        self.assertNotIn("line 0", _frame_text(limited_frame))
+        self.assertIn("line 0", _frame_text(expanded_frame))
+
+    async def test_reasoning_height_truncates_to_legacy_content_budget(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text(
+            "\n".join(f"reasoning-line-{index}" for index in range(5))
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        output = _frame_text(stream_frame)
+        self.assertNotIn("reasoning-line-0", output)
+        for index in range(1, 5):
+            with self.subTest(index=index):
+                self.assertIn(f"reasoning-line-{index}", output)
+
+    async def test_tool_request_height_truncates_to_legacy_content_budget(
+        self,
+    ) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_tool_call_request_text("drop0 keep1 keep2 keep3 keep4")
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                config,
+                builder.snapshot(),
+                context=_stream_context(console_width=9),
+            ),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        output = _frame_text(stream_frame)
+        self.assertNotIn("drop0", output)
+        for index in range(1, 5):
+            with self.subTest(index=index):
+                self.assertIn(f"keep{index}", output)
+
+    async def test_probability_disabled_shows_tokens_without_current_token(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=False,
+            display_events=False,
+            display_probabilities=False,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("token output")
+        builder.add_display_token(Token(id=1, token="<eos>", probability=0.1))
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        self.assertIsNone(stream_frame.current_token)
+        output = _frame_text(stream_frame)
+        self.assertIn("token distribution", output)
+        self.assertIn("<eos>", output)
+
+    async def test_probability_maximum_zero_shows_tokens_without_panel(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=False,
+            display_events=False,
+            display_probabilities=True,
+            display_probabilities_maximum=0.0,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("token output")
+        builder.add_display_token(
+            TokenDetail(
+                id=1,
+                token="base",
+                probability=0.2,
+                tokens=[
+                    Token(id=1, token="base", probability=0.2),
+                    Token(id=2, token="alternate", probability=0.7),
+                ],
+            )
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        self.assertIsNone(stream_frame.current_token)
+        output = _frame_text(stream_frame)
+        self.assertIn("token distribution", output)
+        self.assertIn("base", output)
+        self.assertNotIn("#1", output)
+        self.assertNotIn("alternate", output)
+        self.assertNotIn("70%", output)
+
+    async def test_probability_pick_zero_shows_tokens_without_panel(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_tools=False,
+            display_events=False,
+            display_probabilities=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("token output")
+        builder.add_display_token(
+            TokenDetail(
+                id=1,
+                token="base",
+                probability=0.2,
+                tokens=[
+                    Token(id=1, token="base", probability=0.2),
+                    Token(id=2, token="alternate", probability=0.7),
+                ],
+            )
+        )
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                config,
+                builder.snapshot(),
+                context=_stream_context(token_probability_pick=0),
+            ),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        self.assertIsNone(stream_frame.current_token)
+        output = _frame_text(stream_frame)
+        self.assertIn("token distribution", output)
+        self.assertIn("base", output)
+        self.assertNotIn("#1", output)
+        self.assertNotIn("alternate", output)
+        self.assertNotIn("70%", output)
+
+    async def test_low_probability_token_without_candidates_is_current(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=False, display_events=False)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("token output")
+        builder.add_display_token(Token(id=7, token="solo", probability=0.2))
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        current_token = stream_frame.current_token
+        self.assertIsNotNone(current_token)
+        assert current_token is not None
+        self.assertEqual(current_token.token_id, 7)
+        self.assertEqual(current_token.text, "solo")
+        output = _frame_text(stream_frame)
+        self.assertIn("token distribution", output)
+        self.assertIn("#7", output)
+        self.assertIn("solo", output)
+        self.assertNotIn("20%", output)
+
+    async def test_event_stat_title_suppresses_missing_and_zero_counts(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=False, display_events=False)
+        builder = CliStreamSnapshotBuilder(config)
+        event_stats = EventStats()
+        event_stats.total_triggers = 0
+        event_stats.triggers = {EventType.TOOL_EXECUTE: 0}
+        presenter = FancyStreamPresenter(
+            self.theme,
+            getLogger(__name__),
+            event_stats=event_stats,
+        )
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        output = _frame_text(stream_frame)
+        self.assertIn("0 events", output)
+        self.assertNotIn("tool call", output)
+        self.assertNotIn("result", output)
+
+    async def test_empty_events_do_not_emit_event_frame(self) -> None:
+        config = _stream_config(stats=False, display_tools=False)
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                config, CliStreamSnapshotBuilder(config).snapshot()
+            ),
+        )
+
+        self.assertEqual(
+            [
+                item.role
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+            [],
+        )
+
+    def test_probability_helpers_handle_empty_candidates(self) -> None:
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+        current_token = CliDisplayTokenSnapshot(
+            sequence=1,
+            token_id=7,
+            text="solo",
+            probability=0.2,
+        )
+
+        renderables = presenter._probability_renderables(current_token, 2)
+        empty_chart = fancy_theme_module._fancy_probability_chart([], 2)
+
+        output = _render_visible_text(*renderables, empty_chart)
+        self.assertIn("solo", output)
+        self.assertIn("#7", output)
+        self.assertIn("1 2", output)
+
+    async def test_answer_mode_reset_replays_answer(self) -> None:
+        config = _stream_config(stats=False)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("hello")
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+        request = _stream_request(config, builder.snapshot(), mode="answer")
+
+        first = await _collect_stream_items(presenter, request)
+        second = await _collect_stream_items(presenter, request)
+        presenter.reset()
+        third = await _collect_stream_items(presenter, request)
+
+        self.assertEqual(
+            [
+                item.text
+                for item in (*first, *second, *third)
+                if isinstance(item, CliStreamAnswerTextChunk)
+            ],
+            ["hello", "hello"],
+        )
+
+    def test_fancy_elapsed_seconds_fallbacks(self) -> None:
+        config = _stream_config()
+        builder = CliStreamSnapshotBuilder(config)
+        builder.update_timing(started_at=5.0, updated_at=7.5)
+        started_updated = builder.snapshot()
+        empty = CliStreamSnapshotBuilder(config).snapshot()
+
+        self.assertEqual(
+            fancy_theme_module._fancy_elapsed_seconds(started_updated),
+            2.5,
+        )
+        self.assertEqual(fancy_theme_module._fancy_elapsed_seconds(empty), 0.0)
 
 
 class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
