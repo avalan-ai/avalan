@@ -460,7 +460,7 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_stream_render_items_skips_display_token_by_default"
+            "::test_projection_display_token_uses_canonical_metadata"
         ),
         (
             "tests/cli/model_test.py"
@@ -472,12 +472,12 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_token_stream_closes_theme_frames_on_pause_cancel"
+            "::test_token_stream_sets_stop_signal_on_pause_cancel"
         ),
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_token_stream_closes_unused_theme_frames"
+            "::test_token_stream_consumes_sync_theme_frames"
         ),
         (
             "tests/model/model_stream_contract_test.py"
@@ -773,12 +773,12 @@ HARDENING_COVERAGE_TESTS = {
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_stream_render_items_legacy_rejection_mixed_stream"
+            "::test_render_projections_rejects_legacy_mixed_stream"
         ),
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_stream_render_items_rejects_bad_projection_api_item"
+            "::test_render_projections_rejects_bad_api_item"
         ),
         (
             "tests/cli/model_test.py"
@@ -1017,7 +1017,7 @@ FINAL_NEGATIVE_E2E_SUITE_TESTS = {
         (
             "tests/cli/model_test.py"
             "::CliTokenGenerationTestCase"
-            "::test_stream_render_items_rejects_unsupported_stream_item"
+            "::test_render_projections_rejects_unsupported_item"
         ),
         (
             "tests/cli/model_test.py"

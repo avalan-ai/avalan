@@ -469,21 +469,6 @@ _NON_STRING_LEGACY_STREAMING_RETURN_SYMBOL_NAMES = (
     _LEGACY_STREAMING_RETURN_SYMBOL_NAMES - {"str"}
 )
 _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING = {
-    (
-        "avalan.cli.commands.model",
-        "TokenFrameStream",
-        "alias",
-    ): frozenset({"Token"}),
-    (
-        "avalan.cli.theme.__init__",
-        "Theme.tokens",
-        "return",
-    ): frozenset({"Token"}),
-    (
-        "avalan.cli.theme.fancy",
-        "FancyTheme.tokens",
-        "return",
-    ): frozenset({"Token"}),
     ("avalan.event.manager", "EventManager.listen", "return"): frozenset(
         {"Event"}
     ),

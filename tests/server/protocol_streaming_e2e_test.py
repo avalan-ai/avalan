@@ -6,7 +6,7 @@ from dataclasses import replace
 from json import loads
 from logging import getLogger
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock, call
 from uuid import uuid4
 
@@ -414,7 +414,8 @@ async def _assert_lossy_cli_projection(
     async def fake_tokens(
         *parameters: object, **_: object
     ) -> AsyncIterator[tuple[object | None, str]]:
-        answer_text = "".join(cast(list[str], parameters[9]))
+        state = cast(Any, parameters[0])
+        answer_text = "".join(state.answer_text_tokens)
         try:
             yielded_frames.append(f"first:{answer_text}")
             yield None, f"frame:{answer_text}:first"
@@ -424,7 +425,7 @@ async def _assert_lossy_cli_projection(
             closed_frames.append(answer_text)
 
     theme = MagicMock()
-    theme.tokens = MagicMock(side_effect=fake_tokens)
+    theme.token_frames = MagicMock(side_effect=fake_tokens)
     args = Namespace(
         skip_display_reasoning_time=False,
         display_time_to_n_token=1,
@@ -461,8 +462,8 @@ async def _assert_lossy_cli_projection(
         with_stats=True,
     )
 
-    assert yielded_frames == ["first:A", "first:AB"]
-    assert closed_frames == ["A", "AB"]
+    assert yielded_frames == ["first:AB", "second:AB"]
+    assert closed_frames == ["AB"]
 
 
 async def _assert_simple_mcp_projection(

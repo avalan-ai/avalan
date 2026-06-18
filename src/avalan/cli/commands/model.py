@@ -2,14 +2,19 @@ from ...agent import Specification
 from ...agent.orchestrator import Orchestrator
 from ...cli import confirm, get_input, has_input
 from ...cli.commands.cache import cache_delete, cache_download
-from ...cli.theme import Theme
+from ...cli.theme import (
+    Theme,
+    TokenRenderDisplayToken,
+    TokenRenderDisplayTokenCandidate,
+    TokenRenderFrame,
+    TokenRenderState,
+)
 from ...entities import (
     GenerationSettings,  # noqa: F401
     Input,
     Message,
     Modality,
     Model,
-    Token,
 )
 from ...event import TOOL_TYPES, Event, EventStats
 from ...model.call import ModelCall, ModelCallContext
@@ -22,9 +27,9 @@ from ...model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
+    StreamItemKind,
     project_stream_consumer_item,
     stream_consumer_iterator,
-    stream_projection_display_token,
     stream_projection_is_reasoning,
     stream_projection_is_tool_call,
     stream_projection_text_delta,
@@ -45,8 +50,11 @@ from asyncio import (
 from asyncio import (
     Event as EventSignal,
 )
-from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from asyncio import (
+    run as asyncio_run,
+)
+from collections.abc import AsyncIterable, Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from functools import partial
 from logging import Logger
@@ -54,9 +62,7 @@ from time import perf_counter
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncGenerator,
     AsyncIterator,
-    Awaitable,
     TypeAlias,
     cast,
 )
@@ -72,17 +78,6 @@ from rich.padding import Padding
 from rich.prompt import Prompt
 
 _HAS_INPUT = has_input
-
-
-@dataclass(frozen=True, slots=True)
-class _StreamRenderItem:
-    projection: StreamConsumerProjection | None = None
-    source_token: Token | None = None
-
-
-TokenFrameStream: TypeAlias = AsyncGenerator[
-    tuple[Token | None, RenderableType], None
-]
 
 
 class _FrameRateRenderer:
@@ -163,27 +158,164 @@ class _FrameRateRenderer:
         )
 
 
-async def _coerce_token_frame_stream(
-    token_frames_result: TokenFrameStream | Awaitable[TokenFrameStream],
-) -> TokenFrameStream:
-    if isinstance(token_frames_result, Awaitable):
-        return await token_frames_result
-    return token_frames_result
+class _LatestTokenFrameBuilder:
+    def __init__(
+        self,
+        args: Namespace,
+        console: Console,
+        theme: Theme,
+        logger: Logger,
+        frame_renderer: _FrameRateRenderer,
+        *,
+        refresh_per_second: int,
+        display_pause: int,
+        frame_minimum_pause_ms: int,
+        tool_events_limit: int | None,
+        height: int,
+        limit_answer_height: bool,
+        start_thinking: bool,
+    ) -> None:
+        assert refresh_per_second > 0
+        assert display_pause >= 0
+        assert frame_minimum_pause_ms >= 0
+        self._args = args
+        self._console = console
+        self._theme = theme
+        self._logger = logger
+        self._frame_renderer = frame_renderer
+        self._interval = 1 / refresh_per_second
+        self._display_pause = display_pause
+        self._frame_minimum_pause_ms = frame_minimum_pause_ms
+        self._tool_events_limit = tool_events_limit
+        self._height = height
+        self._limit_answer_height = limit_answer_height
+        self._start_thinking = start_thinking
+        self._dirty = EventSignal()
+        self._latest_state: TokenRenderState | None = None
+        self._latest_version = 0
+        self._built_version = 0
+        self._stopped = False
+        self._last_current_dtoken: TokenRenderDisplayToken | None = None
+        self._task = create_task(self._run())
+
+    def mark_dirty(self, state: TokenRenderState) -> None:
+        self._latest_state = state
+        self._latest_version += 1
+        self._dirty.set()
+
+    async def close(self) -> None:
+        self._stopped = True
+        self._dirty.set()
+        await self._task
+
+    async def _run(self) -> None:
+        while True:
+            await self._dirty.wait()
+            self._dirty.clear()
+            if self._latest_version == self._built_version:
+                if self._stopped:
+                    return
+                continue
+
+            if not self._stopped:
+                await sleep(self._interval)
+                self._dirty.clear()
+
+            state = self._latest_state
+            assert state is not None
+            version = self._latest_version
+            await self._build_and_render(state, version=version)
+            self._built_version = version
+
+            if self._stopped and self._built_version == self._latest_version:
+                return
+
+    async def _build_and_render(
+        self, state: TokenRenderState, *, version: int
+    ) -> None:
+        token_frames = await to_thread(
+            _collect_token_frames,
+            self._theme,
+            state,
+            console_width=self._console.width,
+            logger=self._logger,
+            height=self._height,
+            tool_events_limit=self._tool_events_limit,
+            limit_answer_height=self._limit_answer_height,
+            maximum_frames=1,
+            start_thinking=self._start_thinking,
+        )
+        if not token_frames:
+            await sleep(0)
+            return
+
+        for current_dtoken, frame in token_frames:
+            if self._latest_version != version:
+                break
+            self._frame_renderer.mark_dirty(frame)
+            await self._pause_after_frame(state, current_dtoken)
+        await sleep(0)
+
+    async def _pause_after_frame(
+        self,
+        state: TokenRenderState,
+        current_dtoken: TokenRenderDisplayToken | None,
+    ) -> None:
+        if current_dtoken and current_dtoken != self._last_current_dtoken:
+            self._last_current_dtoken = current_dtoken
+            if self._display_pause > 0:
+                await sleep(self._display_pause / 1000)
+            elif self._frame_minimum_pause_ms > 0:
+                await sleep(
+                    self._frame_minimum_pause_ms / 1000
+                )  # pragma: no cover - unreachable
+        elif (
+            state.pick > 0
+            and not state.display_probabilities
+            and self._display_pause > 0
+        ):
+            await sleep(self._display_pause / 1000)
+        elif (
+            state.pick > 0
+            and state.display_probabilities
+            and self._frame_minimum_pause_ms > 0
+        ):
+            await sleep(self._frame_minimum_pause_ms / 1000)
 
 
-async def _next_token_frame(
-    token_frames_stream: TokenFrameStream,
-) -> tuple[Token | None, RenderableType] | None:
-    try:
-        return await token_frames_stream.__anext__()
-    except StopAsyncIteration:
-        return None
+def _collect_token_frames(
+    theme: Theme,
+    state: TokenRenderState,
+    *,
+    console_width: int,
+    logger: Logger,
+    maximum_frames: int | None = None,
+    tool_events_limit: int | None = None,
+    height: int = 12,
+    limit_answer_height: bool = False,
+    start_thinking: bool = False,
+) -> tuple[TokenRenderFrame, ...]:
+    frames = theme.token_frames(
+        state,
+        console_width=console_width,
+        logger=logger,
+        height=height,
+        tool_events_limit=tool_events_limit,
+        limit_answer_height=limit_answer_height,
+        maximum_frames=maximum_frames,
+        start_thinking=start_thinking,
+    )
+    if isinstance(frames, tuple):
+        return frames
+    if isinstance(frames, AsyncIterable):
+        return asyncio_run(_collect_async_token_frames(frames))
+    return tuple(frames)
 
 
-async def _close_token_frame_stream(
-    token_frames_stream: TokenFrameStream,
-) -> None:
-    await token_frames_stream.aclose()
+async def _collect_async_token_frames(
+    frames: AsyncIterable[TokenRenderFrame],
+) -> tuple[TokenRenderFrame, ...]:
+    return tuple([frame async for frame in frames])
 
 
 def _supports_optional_stdin(modality: Modality) -> bool:
@@ -591,12 +723,11 @@ async def token_generation(
 ) -> None:
     # If no statistics needed, return as early as possible
     if not with_stats:
-        async for token in _plain_stdout_projections(response):
-            if token.channel != StreamChannel.ANSWER:
+        async for projection in _plain_stdout_projections(response):
+            if projection.kind is not StreamItemKind.ANSWER_DELTA:
                 continue
-            text_token = stream_projection_text_delta(token)
-            if text_token is None:
-                continue
+            text_token = stream_projection_text_delta(projection)
+            assert text_token is not None
             console.print(text_token, end="")
             await sleep(0)
         return
@@ -873,7 +1004,10 @@ async def _token_stream(
     render_lock: Lock | None = None,
 ) -> None:
     display_time_to_n_token = args.display_time_to_n_token
-    display_reasoning_time = not getattr(args, "skip_display_reasoning_time")
+    display_reasoning = getattr(args, "display_reasoning", False)
+    display_reasoning_time = not getattr(
+        args, "skip_display_reasoning_time", False
+    )
     display_pause = (
         args.display_pause
         if args.display_pause and args.display_pause > 0
@@ -883,7 +1017,7 @@ async def _token_stream(
         args.start_thinking if hasattr(args, "start_thinking") else False
     )
     collect_display_tokens = display_tokens > 0 or dtokens_pick > 0
-    tokens: list[Token] = []
+    display_token_details: list[TokenRenderDisplayToken] = []
     answer_text_tokens: list[str] = []
     thinking_text_tokens: list[str] = []
     tool_text_tokens: list[str] = []
@@ -911,7 +1045,6 @@ async def _token_stream(
     assert lm.model_id is not None
     ttft: float | None = None
     ttnt: float | None = None
-    last_current_dtoken: Token | None = None
 
     if start_thinking and response.can_think and not response.is_thinking:
         response.set_thinking(start_thinking)
@@ -927,6 +1060,10 @@ async def _token_stream(
     start = perf_counter()
     started_reasoning = perf_counter() if response.is_thinking else None
     reasoning_time = None
+    limit_answer_height = not getattr(
+        args, "display_answer_height_expand", False
+    )
+    answer_height = getattr(args, "display_answer_height", 12)
     frame_renderer = _FrameRateRenderer(
         args,
         console,
@@ -936,18 +1073,50 @@ async def _token_stream(
         refresh_per_second=refresh_per_second,
         render_lock=render_lock,
     )
+    frame_builder = _LatestTokenFrameBuilder(
+        args,
+        console,
+        theme,
+        logger,
+        frame_renderer,
+        refresh_per_second=refresh_per_second,
+        display_pause=display_pause,
+        frame_minimum_pause_ms=frame_minimum_pause_ms,
+        tool_events_limit=tool_events_limit,
+        height=answer_height,
+        limit_answer_height=limit_answer_height,
+        start_thinking=start_thinking,
+    )
+
+    def _focus_on_display_token(
+        dtoken: TokenRenderDisplayToken,
+    ) -> bool:
+        if (
+            not display_tokens
+            or not args.display_probabilities
+            or args.display_probabilities_maximum <= 0
+        ):
+            return False
+        low_probability = (
+            dtoken.probability is not None
+            and dtoken.probability < args.display_probabilities_maximum
+        )
+        sampled_alternative = any(
+            candidate.id != dtoken.id
+            and candidate.probability is not None
+            and candidate.probability
+            >= args.display_probabilities_sample_minimum
+            for candidate in dtoken.tokens
+        )
+        return low_probability or sampled_alternative
 
     try:
-        async for render_item in _stream_render_items(
+        async for projection in _stream_render_projections(
             response,
             stream_session_id="cli-render-stream",
             run_id="cli-render-run",
             turn_id="cli-render-turn",
-            include_display_token=collect_display_tokens,
         ):
-            projection = render_item.projection
-            source_token = render_item.source_token
-            assert projection is not None
             is_reasoning_token = _is_reasoning_stream_item(projection)
             if (
                 display_reasoning_time
@@ -960,7 +1129,8 @@ async def _token_stream(
             text_token = _stream_text(projection)
             if text_token is None:
                 continue
-            if _is_tool_call_stream_item(projection):
+            is_tool_token = _is_tool_stream_item(projection)
+            if is_tool_token:
                 tool_text_tokens.append(text_token)
                 tool_tokens += _tool_token_count(text_token)
             elif is_reasoning_token:
@@ -968,17 +1138,17 @@ async def _token_stream(
                     started_reasoning = perf_counter()
                 thinking_text_tokens.append(text_token)
             else:
+                assert projection.kind is StreamItemKind.ANSWER_DELTA
                 answer_text_tokens.append(text_token)
 
             elapsed = perf_counter() - start
-            is_tool_call_token = _is_tool_call_stream_item(projection)
-            if not is_tool_call_token:
+            if not is_tool_token:
                 total_tokens += 1
 
-            if not is_tool_call_token and ttft is None:
+            if not is_tool_token and ttft is None:
                 ttft = elapsed
             if (
-                not is_tool_call_token
+                not is_tool_token
                 and ttnt is None
                 and display_time_to_n_token
                 and total_tokens >= display_time_to_n_token
@@ -989,121 +1159,70 @@ async def _token_stream(
             if display_reasoning_time and reasoning_time:
                 ttsr = reasoning_time
 
-            if display_tokens and source_token is not None:
-                tokens.append(source_token)
-            limit_answer_height = not getattr(
-                args, "display_answer_height_expand", False
+            display_token = (
+                _projection_display_token(projection)
+                if collect_display_tokens
+                else None
             )
-            answer_height = getattr(args, "display_answer_height", 12)
-
-            token_frames_result = theme.tokens(
-                lm.model_id,
-                tokenizer_tokens,
-                tokenizer_special_tokens,
-                display_tokens,
-                args.display_probabilities if dtokens_pick > 0 else False,
-                dtokens_pick,
-                # Which tokens to mark as interesting
-                lambda dtoken: (
-                    (
-                        dtoken.probability is not None
-                        and dtoken.probability
-                        < args.display_probabilities_maximum
-                        or len(
-                            [
-                                t
-                                for t in cast(
-                                    list[Token],
-                                    getattr(dtoken, "tokens", []) or [],
-                                )
-                                if t.id != dtoken.id
-                                and t.probability is not None
-                                and t.probability
-                                >= args.display_probabilities_sample_minimum
-                            ]
-                        )
-                        > 0
+            if (
+                display_tokens
+                and display_token is not None
+                and (
+                    projection.kind is StreamItemKind.ANSWER_DELTA
+                    or (
+                        display_reasoning
+                        and projection.kind is StreamItemKind.REASONING_DELTA
                     )
-                    if display_tokens
-                    and args.display_probabilities
-                    and args.display_probabilities_maximum > 0
-                    and args.display_probabilities_maximum > 0
-                    else False
+                )
+            ):
+                display_token_details.append(display_token)
+
+            render_state = TokenRenderState(
+                model_id=lm.model_id,
+                projection_sequence=projection.sequence,
+                projection_kind=projection.kind,
+                projection_channel=projection.channel,
+                added_tokens=(
+                    tuple(tokenizer_tokens) if tokenizer_tokens else None
                 ),
-                thinking_text_tokens,
-                tool_text_tokens,
-                answer_text_tokens,
-                tokens or None,
-                display_input_token_count,
-                total_tokens,
-                [],
-                [],
-                [],
-                None,
-                ttft,
-                ttnt,
-                ttsr,
-                elapsed,
-                console.width,
-                logger,
-                event_stats,
+                special_tokens=(
+                    tuple(tokenizer_special_tokens)
+                    if tokenizer_special_tokens
+                    else None
+                ),
+                display_token_size=display_tokens or None,
+                display_probabilities=(
+                    args.display_probabilities if dtokens_pick > 0 else False
+                ),
+                pick=dtokens_pick,
+                focus_on_token_when=_focus_on_display_token,
+                reasoning_text_tokens=tuple(thinking_text_tokens),
+                tool_text_tokens=tuple(tool_text_tokens),
+                answer_text_tokens=tuple(answer_text_tokens),
+                display_tokens=tuple(display_token_details),
+                display_reasoning=display_reasoning,
+                display_tools=getattr(args, "display_tools", False),
+                input_token_count=display_input_token_count,
+                total_tokens=total_tokens,
                 tool_token_count=tool_tokens,
-                height=answer_height,
-                tool_events_limit=tool_events_limit,
-                limit_answer_height=limit_answer_height,
-                maximum_frames=1,
+                ttft=ttft,
+                ttnt=ttnt,
+                ttsr=ttsr,
+                elapsed=elapsed,
+                event_stats=event_stats,
                 start_thinking=start_thinking,
             )
-
-            token_frames_stream = await _coerce_token_frame_stream(
-                cast(
-                    TokenFrameStream | Awaitable[TokenFrameStream],
-                    token_frames_result,
-                )
-            )
-            try:
-                first_token_frame = await _next_token_frame(
-                    token_frames_stream
-                )
-                if first_token_frame is None:
-                    await sleep(0)
-                    continue
-
-                current_dtoken, frame = first_token_frame
-                frame_renderer.mark_dirty(frame)
-
-                if current_dtoken and current_dtoken != last_current_dtoken:
-                    last_current_dtoken = current_dtoken
-                    if display_pause > 0:
-                        await sleep(display_pause / 1000)
-                    elif frame_minimum_pause_ms > 0:
-                        await sleep(
-                            frame_minimum_pause_ms / 1000
-                        )  # pragma: no cover - unreachable
-                elif (
-                    dtokens_pick > 0
-                    and not args.display_probabilities
-                    and display_pause > 0
-                ):
-                    await sleep(display_pause / 1000)
-
-                if dtokens_pick > 0 and args.display_probabilities:
-                    async for current_dtoken, frame in token_frames_stream:
-                        frame_renderer.mark_dirty(frame)
-
-                        if current_dtoken and display_pause > 0:
-                            await sleep(display_pause / 1000)
-                        elif frame_minimum_pause_ms > 0:
-                            await sleep(frame_minimum_pause_ms / 1000)
-                await sleep(0)
-            finally:
-                await _close_token_frame_stream(token_frames_stream)
+            frame_builder.mark_dirty(render_state)
+            await sleep(0)
     except (CancelledError, KeyboardInterrupt):
         raise
     finally:
-        await frame_renderer.close()
-        if stop_signal:
-            stop_signal.set()
+        try:
+            await frame_builder.close()
+        finally:
+            await frame_renderer.close()
+            if stop_signal:
+                stop_signal.set()
 
 
 async def _plain_stdout_projections(
@@ -1119,16 +1238,13 @@ async def _plain_stdout_projections(
         yield projection
 
 
-async def _stream_render_items(
+async def _stream_render_projections(
     response: TextGenerationResponse | AsyncIterator[Any],
     *,
     stream_session_id: str,
     run_id: str,
     turn_id: str,
-    include_display_token: bool = False,
-) -> AsyncIterator[_StreamRenderItem]:
-    assert isinstance(include_display_token, bool)
-
+) -> AsyncIterator[StreamConsumerProjection]:
     async for projection in stream_consumer_iterator(
         response,
         stream_session_id=stream_session_id,
@@ -1136,14 +1252,86 @@ async def _stream_render_items(
         turn_id=turn_id,
         unsupported_message="unsupported CLI stream item",
     ):
-        yield _StreamRenderItem(
-            projection=projection,
-            source_token=(
-                stream_projection_display_token(projection)
-                if include_display_token
-                else None
-            ),
+        yield projection
+
+
+def _projection_display_token(
+    projection: StreamConsumerProjection,
+) -> TokenRenderDisplayToken | None:
+    assert isinstance(projection, StreamConsumerProjection)
+    if projection.kind not in {
+        StreamItemKind.ANSWER_DELTA,
+        StreamItemKind.REASONING_DELTA,
+    }:
+        return None
+
+    text = stream_projection_text_delta(projection)
+    assert text is not None
+
+    metadata = projection.metadata
+    if not any(
+        key in metadata
+        for key in (
+            "token_id",
+            "probability",
+            "step",
+            "probability_distribution",
+            "tokens",
         )
+    ):
+        return None
+
+    token_id = metadata.get("token_id")
+    probability = metadata.get("probability")
+    step = metadata.get("step")
+    probability_distribution = metadata.get("probability_distribution")
+    return TokenRenderDisplayToken(
+        sequence=projection.sequence,
+        kind=projection.kind,
+        channel=projection.channel,
+        token=text,
+        id=token_id if isinstance(token_id, int) else None,
+        probability=(
+            float(probability)
+            if isinstance(probability, int | float)
+            else None
+        ),
+        step=step if isinstance(step, int) else None,
+        probability_distribution=(
+            probability_distribution
+            if isinstance(probability_distribution, str)
+            else None
+        ),
+        tokens=_projection_display_token_candidates(metadata.get("tokens")),
+    )
+
+
+def _projection_display_token_candidates(
+    value: object,
+) -> tuple[TokenRenderDisplayTokenCandidate, ...]:
+    if not isinstance(value, list):
+        return ()
+    candidates: list[TokenRenderDisplayTokenCandidate] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        text = item.get("token")
+        if not isinstance(text, str):
+            continue
+        token_id = item.get("token_id")
+        probability = item.get("probability")
+        candidates.append(
+            TokenRenderDisplayTokenCandidate(
+                token=text,
+                id=token_id if isinstance(token_id, int) else None,
+                probability=(
+                    float(probability)
+                    if isinstance(probability, int | float)
+                    else None
+                ),
+            )
+        )
+    return tuple(candidates)
 
 
 def _stream_text(
@@ -1159,10 +1347,13 @@ def _is_reasoning_stream_item(token: object) -> bool:
     return stream_projection_is_reasoning(token)
 
 
-def _is_tool_call_stream_item(token: object) -> bool:
+def _is_tool_stream_item(token: object) -> bool:
     if not isinstance(token, StreamConsumerProjection):
         return False
-    return stream_projection_is_tool_call(token)
+    return token.channel in {
+        StreamChannel.TOOL_CALL,
+        StreamChannel.TOOL_EXECUTION,
+    } or stream_projection_is_tool_call(token)
 
 
 def _stream_projection(

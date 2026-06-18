@@ -5,7 +5,7 @@ from uuid import UUID
 
 import numpy as np
 
-from avalan.cli.theme import Theme
+from avalan.cli.theme import Theme, TokenRenderState
 from avalan.entities import Model
 from avalan.event import Event
 
@@ -285,6 +285,11 @@ class ThemeAbstractMethodsTestCase(unittest.TestCase):
             lambda: self.theme.memory_search_matches("id", "ns", []),
             lambda: self.theme.tokenizer_config(None),
             lambda: self.theme.tokenizer_tokens([]),
+            lambda: self.theme.token_frames(
+                TokenRenderState(model_id="m"),
+                console_width=80,
+                logger=SimpleNamespace(),
+            ),
             lambda: self.theme.display_image_entities([], False),
             lambda: self.theme.display_image_entity(None),
             lambda: self.theme.welcome("u", "n", "v", "lic", None),
@@ -298,27 +303,7 @@ class ThemeAbstractMethodsTestCase(unittest.TestCase):
 
         async def run_tokens():
             await self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=[],
-                tokens=None,
-                input_token_count=0,
-                total_tokens=0,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=0.0,
+                TokenRenderState(model_id="m"),
                 console_width=80,
                 logger=SimpleNamespace(),
             )
@@ -434,6 +419,12 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
             ),
             lambda: Theme.tokenizer_config(self.theme, None),
             lambda: Theme.tokenizer_tokens(self.theme, [], None, None),
+            lambda: Theme.token_frames(
+                self.theme,
+                TokenRenderState(model_id="m"),
+                console_width=80,
+                logger=SimpleNamespace(),
+            ),
             lambda: Theme.display_image_entities(self.theme, [], False),
             lambda: Theme.display_image_entity(self.theme, None),
             lambda: Theme.display_audio_labels(self.theme, {}),
@@ -449,27 +440,7 @@ class ThemeBaseMethodsCoverageTestCase(unittest.TestCase):
         async def run_tokens():
             await Theme.tokens(
                 self.theme,
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=[],
-                tokens=None,
-                input_token_count=0,
-                total_tokens=0,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=0.0,
+                TokenRenderState(model_id="m"),
                 console_width=80,
                 logger=SimpleNamespace(),
             )

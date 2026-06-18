@@ -1202,6 +1202,11 @@ class CLI:
             help="Don't display total reasoning time",
         )
         model_inference_display_parser.add_argument(
+            "--display-reasoning",
+            action="store_true",
+            help="Display streamed reasoning text in the live response panel",
+        )
+        model_inference_display_parser.add_argument(
             "--display-tokens",
             type=int,
             nargs="?",

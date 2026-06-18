@@ -1,6 +1,14 @@
 from ...agent.orchestrator import Orchestrator
 from ...cli.download import DownloadCompleteColumn
-from ...cli.theme import Data, Spinner, Theme
+from ...cli.theme import (
+    Data,
+    Spinner,
+    Theme,
+    TokenRenderDisplayToken,
+    TokenRenderDisplayTokenCandidate,
+    TokenRenderFrame,
+    TokenRenderState,
+)
 from ...entities import (
     EngineMessage,
     EngineMessageScored,
@@ -19,7 +27,7 @@ from ...entities import (
     ToolCallError,
     User,
 )
-from ...event import TOOL_TYPES, Event, EventStats, EventType
+from ...event import TOOL_TYPES, Event, EventType
 from ...memory.permanent import PermanentMemoryPartition
 from ...utils import (
     _j,
@@ -29,7 +37,7 @@ from ...utils import (
     tool_call_error_payload,
 )
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from importlib import import_module
 from locale import format_string
@@ -42,6 +50,7 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
+    Protocol,
     cast,
 )
 from uuid import UUID
@@ -83,6 +92,17 @@ else:
 def norm(value: object) -> Any:
     numpy_linalg = __import__("numpy.linalg", fromlist=["norm"])
     return cast(Any, numpy_linalg.norm(value))
+
+
+class _TokenPanelToken(Protocol):
+    @property
+    def id(self) -> object: ...  # pragma: no cover
+
+    @property
+    def token(self) -> str: ...  # pragma: no cover
+
+    @property
+    def probability(self) -> float | None: ...  # pragma: no cover
 
 
 class FancyTheme(Theme):
@@ -1677,6 +1697,25 @@ class FancyTheme(Theme):
         current_dtoken: Token | None = None,
         dtokens_selected: list[Token] | None = None,
     ) -> RenderableType:
+        return self._token_panels(
+            dtokens,
+            added_tokens,
+            special_tokens,
+            display_details=display_details,
+            current_dtoken=current_dtoken,
+            dtokens_selected=dtokens_selected,
+        )
+
+    def _token_panels(
+        self,
+        dtokens: Sequence[_TokenPanelToken],
+        added_tokens: tuple[str, ...] | list[str] | None,
+        special_tokens: tuple[str, ...] | list[str] | None,
+        *,
+        display_details: bool = False,
+        current_dtoken: _TokenPanelToken | None = None,
+        dtokens_selected: Sequence[_TokenPanelToken] | None = None,
+    ) -> RenderableType:
         # Build token panels
         compact_dtokens = True  # For future configurability
         token_panels = [
@@ -1829,33 +1868,12 @@ class FancyTheme(Theme):
                 table.add_row(token, label)
         return Align(table, align="center")
 
-    async def tokens(
+    def token_frames(
         self,
-        model_id: str,
-        added_tokens: list[str] | None,
-        special_tokens: list[str] | None,
-        display_token_size: int | None,
-        display_probabilities: bool,
-        pick: int,
-        focus_on_token_when: Callable[[Token], bool] | None,
-        thinking_text_tokens: list[str],
-        tool_text_tokens: list[str],
-        answer_text_tokens: list[str],
-        tokens: list[Token] | None,
-        input_token_count: int,
-        total_tokens: int,
-        tool_events: list[Event] | None,
-        tool_event_calls: list[Event] | None,
-        tool_event_results: list[Event] | None,
-        tool_running_spinner: Spinner | None,
-        ttft: float | None,
-        ttnt: float | None,
-        ttsr: float | None,
-        elapsed: float,
+        state: TokenRenderState,
+        *,
         console_width: int,
         logger: Logger,
-        event_stats: EventStats | None = None,
-        tool_token_count: int = 0,
         maximum_frames: int | None = None,
         logits_count: int | None = None,
         tool_events_limit: int | None = None,
@@ -1870,8 +1888,122 @@ class FancyTheme(Theme):
         limit_tool_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> AsyncGenerator[tuple[Token | None, RenderableType], None]:
+    ) -> tuple[TokenRenderFrame, ...]:
+        return tuple(
+            self._iter_token_frames(
+                state,
+                console_width=console_width,
+                logger=logger,
+                maximum_frames=maximum_frames,
+                logits_count=logits_count,
+                tool_events_limit=tool_events_limit,
+                think_height=think_height,
+                think_padding=think_padding,
+                tool_height=tool_height,
+                tool_padding=tool_padding,
+                height=height,
+                padding=padding,
+                wrap_padding=wrap_padding,
+                limit_think_height=limit_think_height,
+                limit_tool_height=limit_tool_height,
+                limit_answer_height=limit_answer_height,
+                start_thinking=start_thinking,
+            )
+        )
+
+    async def tokens(
+        self,
+        state: TokenRenderState,
+        *,
+        console_width: int,
+        logger: Logger,
+        maximum_frames: int | None = None,
+        logits_count: int | None = None,
+        tool_events_limit: int | None = None,
+        think_height: int = 6,
+        think_padding: int = 1,
+        tool_height: int = 6,
+        tool_padding: int = 1,
+        height: int = 12,
+        padding: int = 1,
+        wrap_padding: int = 4,
+        limit_think_height: bool = True,
+        limit_tool_height: bool = True,
+        limit_answer_height: bool = False,
+        start_thinking: bool = False,
+    ) -> AsyncGenerator[TokenRenderFrame, None]:
+        for frame in self._iter_token_frames(
+            state,
+            console_width=console_width,
+            logger=logger,
+            maximum_frames=maximum_frames,
+            logits_count=logits_count,
+            tool_events_limit=tool_events_limit,
+            think_height=think_height,
+            think_padding=think_padding,
+            tool_height=tool_height,
+            tool_padding=tool_padding,
+            height=height,
+            padding=padding,
+            wrap_padding=wrap_padding,
+            limit_think_height=limit_think_height,
+            limit_tool_height=limit_tool_height,
+            limit_answer_height=limit_answer_height,
+            start_thinking=start_thinking,
+        ):
+            yield frame
+
+    def _iter_token_frames(
+        self,
+        state: TokenRenderState,
+        *,
+        console_width: int,
+        logger: Logger,
+        maximum_frames: int | None = None,
+        logits_count: int | None = None,
+        tool_events_limit: int | None = None,
+        think_height: int = 6,
+        think_padding: int = 1,
+        tool_height: int = 6,
+        tool_padding: int = 1,
+        height: int = 12,
+        padding: int = 1,
+        wrap_padding: int = 4,
+        limit_think_height: bool = True,
+        limit_tool_height: bool = True,
+        limit_answer_height: bool = False,
+        start_thinking: bool = False,
+    ) -> Iterator[TokenRenderFrame]:
+        assert isinstance(state, TokenRenderState)
+        _ = logits_count, tool_events_limit, start_thinking
         _, _n, _f, _l = self._, self._n, self._f, logger.debug
+        model_id = state.model_id
+        added_tokens = state.added_tokens
+        special_tokens = state.special_tokens
+        display_token_size = state.display_token_size
+        display_probabilities = state.display_probabilities
+        pick = state.pick
+        focus_on_token_when = state.focus_on_token_when
+        thinking_text_tokens = (
+            list(state.reasoning_text_tokens)
+            if state.display_reasoning
+            else []
+        )
+        tool_text_tokens = (
+            list(state.tool_text_tokens) if state.display_tools else []
+        )
+        answer_text_tokens = list(state.answer_text_tokens)
+        tokens = list(state.display_tokens) or None
+        input_token_count = state.input_token_count
+        total_tokens = state.total_tokens
+        tool_token_count = state.tool_token_count
+        tool_running = state.tool_running
+        tool_running_spinner = state.tool_running_spinner
+        ttft = state.ttft
+        ttnt = state.ttnt
+        ttsr = state.ttsr
+        elapsed = state.elapsed
+        event_stats = state.event_stats
 
         pick_first = ceil(pick / 2) if pick > 1 else pick
         max_width = console_width - wrap_padding
@@ -2125,9 +2257,7 @@ class FancyTheme(Theme):
 
         tool_running_panel: RenderableType | None = None
 
-        if tool_running_spinner and len(tool_event_calls or []) != len(
-            tool_event_results or []
-        ):
+        if tool_running_spinner and tool_running:
             tool_running_panel = Padding(
                 tool_running_spinner, pad=(1, 0, 1, 0)
             )
@@ -2160,10 +2290,13 @@ class FancyTheme(Theme):
             tokens_distribution_panel: Panel | None = None
 
             if display_token_size and tokens:
+                assert dtokens is not None
                 # Pick current token to highlight
                 current_data = None
-                current_dtoken: Token | None = None
-                current_dtoken_tokens: list[Token] | None = None
+                current_dtoken: TokenRenderDisplayToken | None = None
+                current_dtoken_tokens: (
+                    tuple[TokenRenderDisplayTokenCandidate, ...] | None
+                ) = None
                 if display_probabilities and dtokens_selected:
                     current_selected_index = (
                         0
@@ -2187,13 +2320,9 @@ class FancyTheme(Theme):
                         selected_token = dtokens_selected[
                             current_selected_index
                         ]
-                        if hasattr(selected_token, "tokens"):
+                        if selected_token.tokens:
                             current_dtoken = selected_token
-                            current_dtoken_tokens = getattr(
-                                selected_token,
-                                "tokens",
-                                None,
-                            )
+                            current_dtoken_tokens = selected_token.tokens
                     current_data = (
                         [
                             t.probability
@@ -2214,8 +2343,8 @@ class FancyTheme(Theme):
                             + f"and {current_dtoken_tokens}"
                         )
 
-                tokens_panel = self.tokenizer_tokens(
-                    cast(list[Token], dtokens),
+                tokens_panel = self._token_panels(
+                    dtokens,
                     added_tokens,
                     special_tokens,
                     display_details=False,
@@ -2723,9 +2852,9 @@ class FancyTheme(Theme):
 
     def _tokens_table(
         self,
-        dbatch: list[Token],
-        current_dtoken: Token | None,
-        max_dtoken: Token,
+        dbatch: Sequence[_TokenPanelToken],
+        current_dtoken: _TokenPanelToken | None,
+        max_dtoken: _TokenPanelToken,
     ) -> Table:
         _p = self._percentage
 

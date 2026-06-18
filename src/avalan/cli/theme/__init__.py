@@ -18,10 +18,11 @@ from ...entities import (
 from ...event import Event, EventStats
 from ...memory.permanent import Memory as Memory
 from ...memory.permanent import PermanentMemoryPartition
+from ...model.stream import StreamChannel, StreamItemKind
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from datetime import datetime
 from logging import Logger
 from typing import (
@@ -37,6 +38,7 @@ from uuid import UUID
 
 from humanize import intcomma, intword, naturalsize, naturaltime
 from rich.console import RenderableType
+from rich.spinner import Spinner as RichSpinner
 
 if TYPE_CHECKING:
     from numpy import ndarray
@@ -61,6 +63,64 @@ Data = str
 DataValue = datetime | float | int | str | UUID | None
 Styler: TypeAlias = Callable[[Data, DataValue, str | None, bool | str], str]
 Stylers = dict[Data, Styler]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TokenRenderDisplayTokenCandidate:
+    token: str
+    id: int | None = None
+    probability: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TokenRenderDisplayToken:
+    sequence: int
+    kind: StreamItemKind
+    channel: StreamChannel
+    token: str
+    id: int | None = None
+    probability: float | None = None
+    step: int | None = None
+    probability_distribution: str | None = None
+    tokens: tuple[TokenRenderDisplayTokenCandidate, ...] = ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TokenRenderState:
+    model_id: str
+    projection_sequence: int | None = None
+    projection_kind: StreamItemKind | None = None
+    projection_channel: StreamChannel | None = None
+    added_tokens: tuple[str, ...] | None = None
+    special_tokens: tuple[str, ...] | None = None
+    display_token_size: int | None = None
+    display_probabilities: bool = False
+    pick: int = 0
+    focus_on_token_when: Callable[[TokenRenderDisplayToken], bool] | None = (
+        None
+    )
+    reasoning_text_tokens: tuple[str, ...] = ()
+    tool_text_tokens: tuple[str, ...] = ()
+    answer_text_tokens: tuple[str, ...] = ()
+    display_tokens: tuple[TokenRenderDisplayToken, ...] = ()
+    display_reasoning: bool = False
+    display_tools: bool = False
+    input_token_count: int = 0
+    total_tokens: int = 0
+    tool_token_count: int = 0
+    tool_running: bool = False
+    tool_running_spinner: RichSpinner | None = None
+    ttft: float | None = None
+    ttnt: float | None = None
+    ttsr: float | None = None
+    elapsed: float = 0.0
+    event_stats: EventStats | None = None
+    start_thinking: bool = False
+
+
+TokenRenderFrame: TypeAlias = tuple[
+    TokenRenderDisplayToken | None, RenderableType
+]
 
 
 class Theme(ABC):
@@ -343,34 +403,12 @@ class Theme(ABC):
     ) -> RenderableType:
         raise NotImplementedError()
 
-    @abstractmethod
-    def tokens(
+    def token_frames(
         self,
-        model_id: str,
-        added_tokens: list[str] | None,
-        special_tokens: list[str] | None,
-        display_token_size: int | None,
-        display_probabilities: bool,
-        pick: int,
-        focus_on_token_when: Callable[[Token], bool] | None,
-        thinking_text_tokens: list[str],
-        tool_text_tokens: list[str],
-        answer_text_tokens: list[str],
-        tokens: list[Token] | None,
-        input_token_count: int,
-        total_tokens: int,
-        tool_events: list[Event] | None,
-        tool_event_calls: list[Event] | None,
-        tool_event_results: list[Event] | None,
-        tool_running_spinner: Spinner | None,
-        ttft: float | None,
-        ttnt: float | None,
-        ttsr: float | None,
-        elapsed: float,
+        state: TokenRenderState,
+        *,
         console_width: int,
         logger: Logger,
-        event_stats: EventStats | None = None,
-        tool_token_count: int = 0,
         maximum_frames: int | None = None,
         logits_count: int | None = None,
         tool_events_limit: int | None = None,
@@ -385,7 +423,31 @@ class Theme(ABC):
         limit_tool_height: bool = True,
         limit_answer_height: bool = False,
         start_thinking: bool = False,
-    ) -> AsyncGenerator[tuple[Token | None, RenderableType], None]:
+    ) -> tuple[TokenRenderFrame, ...]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def tokens(
+        self,
+        state: TokenRenderState,
+        *,
+        console_width: int,
+        logger: Logger,
+        maximum_frames: int | None = None,
+        logits_count: int | None = None,
+        tool_events_limit: int | None = None,
+        think_height: int = 6,
+        think_padding: int = 1,
+        tool_height: int = 6,
+        tool_padding: int = 1,
+        height: int = 12,
+        padding: int = 1,
+        wrap_padding: int = 4,
+        limit_think_height: bool = True,
+        limit_tool_height: bool = True,
+        limit_answer_height: bool = False,
+        start_thinking: bool = False,
+    ) -> AsyncGenerator[TokenRenderFrame, None]:
         raise NotImplementedError()
 
     @abstractmethod

@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from json import loads
 from logging import getLogger
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -441,24 +441,22 @@ def _assert_stdout_projection(
     )
     assert text == "final answer"
     assert any(model_cmds._is_reasoning_stream_item(p) for p in projections)
-    assert any(model_cmds._is_tool_call_stream_item(p) for p in projections)
+    assert any(model_cmds._is_tool_stream_item(p) for p in projections)
 
 
 async def _assert_cli_projection(
     items: tuple[CanonicalStreamItem, ...],
 ) -> None:
     render_items = [
-        item.projection
-        async for item in model_cmds._stream_render_items(
+        projection
+        async for projection in model_cmds._stream_render_projections(
             _CanonicalResponse(items),
             stream_session_id="cli-conformance-stream",
             run_id="cli-conformance-run",
             turn_id="cli-conformance-turn",
         )
     ]
-    projections = tuple(
-        projection for projection in render_items if projection is not None
-    )
+    projections = tuple(render_items)
     assert [projection.sequence for projection in projections] == [
         item.sequence for item in items
     ]
@@ -492,12 +490,13 @@ async def _assert_cli_projection(
     captured_frames: list[dict[str, object]] = []
 
     async def fake_tokens(*parameters: object, **_: object):
+        state = cast(Any, parameters[0])
         captured_frames.append(
             {
-                "thinking_text_tokens": list(cast(list[str], parameters[7])),
-                "tool_text_tokens": list(cast(list[str], parameters[8])),
-                "answer_text_tokens": list(cast(list[str], parameters[9])),
-                "total_tokens": parameters[12],
+                "thinking_text_tokens": list(state.reasoning_text_tokens),
+                "tool_text_tokens": list(state.tool_text_tokens),
+                "answer_text_tokens": list(state.answer_text_tokens),
+                "total_tokens": state.total_tokens,
             }
         )
         yield None, "frame"
@@ -515,7 +514,7 @@ async def _assert_cli_projection(
         record=False,
     )
     theme = MagicMock()
-    theme.tokens = MagicMock(side_effect=fake_tokens)
+    theme.token_frames = MagicMock(side_effect=fake_tokens)
     await model_cmds._token_stream(
         args=args,
         console=MagicMock(width=80),
@@ -545,15 +544,15 @@ async def _assert_cli_projection(
     assert captured_frames[-1]["tool_text_tokens"] == [
         '{"query":"',
         'docs"}',
-    ]
-    assert captured_frames[-1]["answer_text_tokens"] == [
         "live",
         " warning",
         " trace",
+    ]
+    assert captured_frames[-1]["answer_text_tokens"] == [
         "final ",
         "answer",
     ]
-    assert captured_frames[-1]["total_tokens"] == 6
+    assert captured_frames[-1]["total_tokens"] == 3
 
 
 def _assert_flow_projection(
