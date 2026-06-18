@@ -292,15 +292,25 @@ def _prog_from_help(block: str) -> str:
 
 
 def _find_parser(parser: ArgumentParser, prog: str) -> ArgumentParser:
+    prog_suffix = _parser_prog_suffix(prog)
     stack = [parser]
     while stack:
         candidate = stack.pop()
-        if candidate.prog == prog:
+        if (
+            candidate.prog == prog
+            or (candidate is parser and prog == "avalan")
+            or candidate.prog.endswith(prog_suffix)
+        ):
             return candidate
         for action in candidate._actions:
             if isinstance(action, _SubParsersAction):
                 stack.extend(action.choices.values())
-    raise AssertionError(f"Parser {prog!r} was not found.")
+    raise AssertionError(f"Parser ending with {prog_suffix!r} was not found.")
+
+
+def _parser_prog_suffix(prog: str) -> str:
+    suffix = prog.removeprefix("avalan").strip()
+    return suffix or prog
 
 
 def _option_description(block: str, option: str) -> str:
