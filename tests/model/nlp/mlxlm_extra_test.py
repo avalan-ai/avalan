@@ -1,7 +1,11 @@
 import importlib
 import sys
 import types
+from asyncio import CancelledError, create_task, sleep, to_thread
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from logging import getLogger
+from threading import Event as ThreadEvent
 from threading import get_ident
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
@@ -245,6 +249,35 @@ class MlxLmStreamTestCase(IsolatedAsyncioTestCase):
         self.assertTrue(owner_threads)
         self.assertEqual(len(set(owner_threads)), 1)
         self.assertEqual(set(next_threads), set(owner_threads))
+
+    async def test_stream_does_not_close_external_executor(self) -> None:
+        stub = types.ModuleType("mlx_lm")
+        stub.generate = MagicMock()
+        stub.load = MagicMock()
+        stub.stream_generate = MagicMock()
+        sampler_mod = types.ModuleType("mlx_lm.sample_utils")
+        sampler_mod.make_sampler = MagicMock()
+        from avalan.model.nlp.text import generation as gen_mod
+
+        sys.modules["avalan.model"].TextGenerationModel = (
+            gen_mod.TextGenerationModel
+        )
+        with patch.dict(
+            sys.modules,
+            {"mlx_lm": stub, "mlx_lm.sample_utils": sampler_mod},
+        ):
+            from avalan.model.nlp.text.mlxlm import MlxLmStream
+
+            executor = ThreadPoolExecutor(max_workers=1)
+            try:
+                stream = MlxLmStream(iter(["a"]), executor=executor)
+                await stream.aclose()
+                result = executor.submit(lambda: "alive").result()
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
+
+        del sys.modules["avalan.model"].TextGenerationModel
+        self.assertEqual(result, "alive")
 
     async def test_stream_close_short_circuits_iteration(self) -> None:
         stub = types.ModuleType("mlx_lm")
@@ -632,11 +665,24 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             ),
             logger=getLogger(),
         )
+        calling_thread = get_ident()
+        load_threads: list[int] = []
+
+        def load_model(_model_id: str) -> tuple[str, str]:
+            load_threads.append(get_ident())
+            return "model", "tokenizer"
+
+        self.stub.load.side_effect = load_model
         out = model._load_model()
-        self.stub.load.assert_called_once_with("id")
-        self.assertEqual(out, "model")
-        self.assertEqual(model._tokenizer, "tokenizer")
-        self.assertTrue(model._loaded_tokenizer)
+        try:
+            self.stub.load.assert_called_once_with("id")
+            self.assertEqual(out, "model")
+            self.assertEqual(model._tokenizer, "tokenizer")
+            self.assertTrue(model._loaded_tokenizer)
+            self.assertEqual(len(load_threads), 1)
+            self.assertNotEqual(load_threads[0], calling_thread)
+        finally:
+            model.close()
 
     async def test_stream_generator(self) -> None:
         model = self.mod.MlxLmModel(
@@ -656,31 +702,34 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
             ]
         )
         chunks = []
-        async for c in model._stream_generator(
-            {"input_ids": [[1]]}, GenerationSettings(), False
-        ):
-            chunks.append(c)
-        self.assertEqual(
-            [chunk.kind for chunk in chunks],
-            [
-                StreamItemKind.STREAM_STARTED,
-                StreamItemKind.ANSWER_DELTA,
-                StreamItemKind.ANSWER_DELTA,
-                StreamItemKind.ANSWER_DONE,
-                StreamItemKind.STREAM_COMPLETED,
-                StreamItemKind.STREAM_CLOSED,
-            ],
-        )
-        self.assertEqual(
-            [
-                chunk.text_delta
-                for chunk in chunks
-                if chunk.kind is StreamItemKind.ANSWER_DELTA
-            ],
-            ["a", "b"],
-        )
+        try:
+            async for c in model._stream_generator(
+                {"input_ids": [[1]]}, GenerationSettings(), False
+            ):
+                chunks.append(c)
+            self.assertEqual(
+                [chunk.kind for chunk in chunks],
+                [
+                    StreamItemKind.STREAM_STARTED,
+                    StreamItemKind.ANSWER_DELTA,
+                    StreamItemKind.ANSWER_DELTA,
+                    StreamItemKind.ANSWER_DONE,
+                    StreamItemKind.STREAM_COMPLETED,
+                    StreamItemKind.STREAM_CLOSED,
+                ],
+            )
+            self.assertEqual(
+                [
+                    chunk.text_delta
+                    for chunk in chunks
+                    if chunk.kind is StreamItemKind.ANSWER_DELTA
+                ],
+                ["a", "b"],
+            )
+        finally:
+            model.close()
 
-    async def test_stream_generator_uses_calling_thread(self) -> None:
+    async def test_stream_generator_uses_worker_thread(self) -> None:
         model = self.mod.MlxLmModel(
             "id",
             TransformerEngineSettings(
@@ -691,7 +740,7 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         model._model = "m"
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "p"
-        calling_thread = get_ident()
+        event_loop_thread = get_ident()
         factory_threads: list[int] = []
         next_threads: list[int] = []
 
@@ -717,21 +766,90 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
 
         self.stub.stream_generate.side_effect = stream_generate
         chunks = []
-        async for c in model._stream_generator(
-            {"input_ids": [[1]]}, GenerationSettings(), False
-        ):
-            chunks.append(c)
+        try:
+            async for c in model._stream_generator(
+                {"input_ids": [[1]]}, GenerationSettings(), False
+            ):
+                chunks.append(c)
 
-        self.assertEqual(
-            [
-                chunk.text_delta
-                for chunk in chunks
-                if chunk.kind is StreamItemKind.ANSWER_DELTA
-            ],
-            ["a", "b"],
+            self.assertEqual(
+                [
+                    chunk.text_delta
+                    for chunk in chunks
+                    if chunk.kind is StreamItemKind.ANSWER_DELTA
+                ],
+                ["a", "b"],
+            )
+            self.assertEqual(len(factory_threads), 1)
+            worker_thread = factory_threads[0]
+            self.assertNotEqual(worker_thread, event_loop_thread)
+            self.assertEqual(set(next_threads), {worker_thread})
+        finally:
+            model.close()
+
+    async def test_stream_generator_does_not_block_event_loop(self) -> None:
+        model = self.mod.MlxLmModel(
+            "id",
+            TransformerEngineSettings(
+                auto_load_model=False, auto_load_tokenizer=False
+            ),
+            logger=getLogger(),
         )
-        self.assertEqual(factory_threads, [calling_thread])
-        self.assertEqual(set(next_threads), {calling_thread})
+        model._model = "m"
+        model._tokenizer = MagicMock()
+        model._tokenizer.decode.return_value = "p"
+        next_started = ThreadEvent()
+        release_next = ThreadEvent()
+
+        class BlockingIterator:
+            def __init__(self) -> None:
+                self._sent = False
+
+            def __iter__(self) -> "BlockingIterator":
+                return self
+
+            def __next__(self) -> object:
+                if self._sent:
+                    raise StopIteration
+                self._sent = True
+                next_started.set()
+                release_next.wait(1)
+                return types.SimpleNamespace(text="a")
+
+        self.stub.stream_generate.return_value = BlockingIterator()
+        stream = model._stream_generator(
+            {"input_ids": [[1]]}, GenerationSettings(), False
+        )
+        second_item = None
+        try:
+            started = await stream.__anext__()
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            second_item = create_task(stream.__anext__())
+            self.assertTrue(await to_thread(next_started.wait, 1))
+            loop_moved = False
+
+            async def mark_loop_progress() -> None:
+                nonlocal loop_moved
+                await sleep(0)
+                loop_moved = True
+
+            marker = create_task(mark_loop_progress())
+            await marker
+            self.assertTrue(loop_moved)
+            self.assertFalse(second_item.done())
+
+            release_next.set()
+            delta = await second_item
+            self.assertIs(delta.kind, StreamItemKind.ANSWER_DELTA)
+            self.assertEqual(delta.text_delta, "a")
+        finally:
+            release_next.set()
+            if second_item is not None and not second_item.done():
+                second_item.cancel()
+                with suppress(CancelledError):
+                    await second_item
+            await stream.aclose()
+            model.close()
 
     def test_input_ids_from_inputs_validation(self) -> None:
         with self.assertRaisesRegex(ValueError, "include input_ids"):
@@ -767,18 +885,30 @@ class MlxLmModelAdditionalTestCase(IsolatedAsyncioTestCase):
         model._model = "m"
         model._tokenizer = MagicMock()
         model._tokenizer.decode.return_value = "p"
-        self.stub.generate.return_value = "text"
-        out = model._string_output(
-            {"input_ids": [[1]]}, GenerationSettings(), False
-        )
-        self.assertEqual(out, "text")
-        self.stub.generate.assert_called_with(
-            "m",
-            model._tokenizer,
-            "p",
-            sampler="sampler",
-            max_tokens=None,
-        )
+        event_loop_thread = get_ident()
+        generate_threads: list[int] = []
+
+        def generate(*_args: object, **_kwargs: object) -> str:
+            generate_threads.append(get_ident())
+            return "text"
+
+        self.stub.generate.side_effect = generate
+        try:
+            out = model._string_output(
+                {"input_ids": [[1]]}, GenerationSettings(), False
+            )
+            self.assertEqual(out, "text")
+            self.stub.generate.assert_called_with(
+                "m",
+                model._tokenizer,
+                "p",
+                sampler="sampler",
+                max_tokens=None,
+            )
+            self.assertEqual(len(generate_threads), 1)
+            self.assertNotEqual(generate_threads[0], event_loop_thread)
+        finally:
+            model.close()
 
     async def test_call_string_path(self) -> None:
         model = self.mod.MlxLmModel(
@@ -974,18 +1104,21 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
             ]
         )
         chunks = []
-        async for chunk in model._stream_generator(
-            {"input_ids": [[1]]}, GenerationSettings(), False
-        ):
-            chunks.append(chunk)
-        self.assertEqual(
-            [
-                chunk.text_delta
-                for chunk in chunks
-                if chunk.kind is StreamItemKind.ANSWER_DELTA
-            ],
-            ["z", "y"],
-        )
+        try:
+            async for chunk in model._stream_generator(
+                {"input_ids": [[1]]}, GenerationSettings(), False
+            ):
+                chunks.append(chunk)
+            self.assertEqual(
+                [
+                    chunk.text_delta
+                    for chunk in chunks
+                    if chunk.kind is StreamItemKind.ANSWER_DELTA
+                ],
+                ["z", "y"],
+            )
+        finally:
+            model.close()
 
     def test_get_sampler_and_prompt_rejects_non_mapping_inputs(self) -> None:
         model = self.mod.MlxLmModel(
