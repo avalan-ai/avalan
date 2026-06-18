@@ -1,4 +1,5 @@
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import AsyncMock
 
 from pytest import raises
 from sympy.core.sympify import SympifyError
@@ -20,6 +21,16 @@ class CalculatorToolTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             await self.calc("2*(3+4)", context=ToolCallContext()), "14"
         )
+
+    async def test_production_calculator_does_not_stream_or_delay(self):
+        stream_event = AsyncMock()
+        context = ToolCallContext(stream_event=stream_event)
+
+        self.assertEqual(
+            await self.calc("(4 + 6) * 5 / 2", context=context),
+            "25",
+        )
+        stream_event.assert_not_awaited()
 
     async def test_invalid(self):
         with raises(SympifyError) as exc:
