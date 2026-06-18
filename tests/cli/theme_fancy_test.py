@@ -1,4 +1,5 @@
 import unittest
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
@@ -15,7 +16,14 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from avalan.cli.theme import fancy as fancy_theme_module
+from avalan.cli.theme import (
+    TokenRenderDisplayToken,
+    TokenRenderDisplayTokenCandidate,
+    TokenRenderState,
+)
+from avalan.cli.theme import (
+    fancy as fancy_theme_module,
+)
 from avalan.cli.theme.fancy import FancyTheme
 from avalan.entities import (
     EngineMessage,
@@ -47,11 +55,107 @@ from avalan.event import (
 )
 from avalan.memory.partitioner.text import TextPartition
 from avalan.memory.permanent import PermanentMemoryPartition
+from avalan.model.stream import StreamChannel, StreamItemKind
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _DisplayToken(Token):
     tokens: list[Token] | None = None
+
+
+def _render_display_token(
+    token: Token, sequence: int = 1
+) -> TokenRenderDisplayToken:
+    candidates = tuple(
+        TokenRenderDisplayTokenCandidate(
+            token=candidate.token,
+            id=candidate.id if isinstance(candidate.id, int) else None,
+            probability=candidate.probability,
+        )
+        for candidate in getattr(token, "tokens", []) or []
+    )
+    probability_distribution = getattr(token, "probability_distribution", None)
+    return TokenRenderDisplayToken(
+        sequence=sequence,
+        kind=StreamItemKind.ANSWER_DELTA,
+        channel=StreamChannel.ANSWER,
+        token=token.token,
+        id=token.id if isinstance(token.id, int) else None,
+        probability=token.probability,
+        step=getattr(token, "step", None),
+        probability_distribution=(
+            str(probability_distribution)
+            if probability_distribution is not None
+            else None
+        ),
+        tokens=candidates,
+    )
+
+
+def _token_state(
+    *,
+    model_id: str = "m",
+    added_tokens: list[str] | None = None,
+    special_tokens: list[str] | None = None,
+    display_token_size: int | None = None,
+    display_probabilities: bool = False,
+    pick: int = 0,
+    focus_on_token_when: (
+        Callable[[TokenRenderDisplayToken], bool] | None
+    ) = None,
+    thinking_text_tokens: list[str] | None = None,
+    tool_text_tokens: list[str] | None = None,
+    answer_text_tokens: list[str] | None = None,
+    tokens: list[Token] | None = None,
+    input_token_count: int = 0,
+    total_tokens: int = 0,
+    tool_running_spinner: Spinner | None = None,
+    ttft: float | None = None,
+    ttnt: float | None = None,
+    ttsr: float | None = None,
+    elapsed: float = 0.0,
+    event_stats: EventStats | None = None,
+    tool_token_count: int = 0,
+    display_reasoning: bool | None = None,
+    display_tools: bool | None = None,
+) -> TokenRenderState:
+    reasoning_tokens = tuple(thinking_text_tokens or [])
+    tool_tokens = tuple(tool_text_tokens or [])
+    display_tokens = tuple(
+        _render_display_token(token, sequence)
+        for sequence, token in enumerate(tokens or [], start=1)
+    )
+    return TokenRenderState(
+        model_id=model_id,
+        added_tokens=tuple(added_tokens) if added_tokens else None,
+        special_tokens=tuple(special_tokens) if special_tokens else None,
+        display_token_size=display_token_size,
+        display_probabilities=display_probabilities,
+        pick=pick,
+        focus_on_token_when=focus_on_token_when,
+        reasoning_text_tokens=reasoning_tokens,
+        tool_text_tokens=tool_tokens,
+        answer_text_tokens=tuple(answer_text_tokens or []),
+        display_tokens=display_tokens,
+        display_reasoning=(
+            bool(reasoning_tokens)
+            if display_reasoning is None
+            else display_reasoning
+        ),
+        display_tools=(
+            bool(tool_tokens) if display_tools is None else display_tools
+        ),
+        input_token_count=input_token_count,
+        total_tokens=total_tokens,
+        tool_token_count=tool_token_count,
+        tool_running=tool_running_spinner is not None,
+        tool_running_spinner=tool_running_spinner,
+        ttft=ttft,
+        ttnt=ttnt,
+        ttsr=ttsr,
+        elapsed=elapsed,
+        event_stats=event_stats,
+    )
 
 
 class FancyThemeFlowProgressTestCase(unittest.TestCase):
@@ -354,29 +458,14 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=["a"],
-                tokens=None,
-                input_token_count=0,
-                total_tokens=0,
-                tool_events=[],
-                tool_event_calls=[
-                    Event(type=EventType.TOOL_PROCESS, payload=[])
-                ],
-                tool_event_results=[],
-                tool_running_spinner=spinner,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    answer_text_tokens=["a"],
+                    tool_running_spinner=spinner,
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=80,
                 logger=MagicMock(),
             )
@@ -394,27 +483,14 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=["tool"],
-                answer_text_tokens=["answer"],
-                tokens=None,
-                input_token_count=0,
-                total_tokens=0,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    tool_text_tokens=["tool"],
+                    answer_text_tokens=["answer"],
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=80,
                 logger=MagicMock(),
             )
@@ -434,30 +510,18 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=["a"],
-                tokens=None,
-                input_token_count=1,
-                total_tokens=1,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    answer_text_tokens=["a"],
+                    input_token_count=1,
+                    total_tokens=1,
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                    event_stats=es,
+                ),
                 console_width=80,
                 logger=MagicMock(),
-                event_stats=es,
             )
             _, frame = await gen.__anext__()
         subtitle = frame.renderables[0].subtitle
@@ -479,31 +543,19 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=["a"],
-                tokens=None,
-                input_token_count=2,
-                total_tokens=2,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    answer_text_tokens=["a"],
+                    input_token_count=2,
+                    total_tokens=2,
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                    event_stats=es,
+                    tool_token_count=3,
+                ),
                 console_width=80,
                 logger=MagicMock(),
-                event_stats=es,
-                tool_token_count=3,
             )
             _, frame = await gen.__anext__()
         subtitle = frame.renderables[0].subtitle
@@ -523,30 +575,17 @@ class FancyThemeTokensTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=[],
-                tokens=None,
-                input_token_count=4,
-                total_tokens=0,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=None,
-                ttnt=None,
-                ttsr=None,
-                elapsed=2.0,
+                _token_state(
+                    input_token_count=4,
+                    total_tokens=0,
+                    ttft=None,
+                    ttnt=None,
+                    ttsr=None,
+                    elapsed=2.0,
+                    event_stats=es,
+                ),
                 console_width=80,
                 logger=MagicMock(),
-                event_stats=es,
             )
             _, frame = await gen.__anext__()
 
@@ -1196,27 +1235,18 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=1,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=lambda x: True,
-                thinking_text_tokens=["x\n"],
-                tool_text_tokens=[],
-                answer_text_tokens=["y"],
-                tokens=[t],
-                input_token_count=0,
-                total_tokens=1,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    display_token_size=1,
+                    focus_on_token_when=lambda x: True,
+                    thinking_text_tokens=["x\n"],
+                    answer_text_tokens=["y"],
+                    tokens=[t],
+                    total_tokens=1,
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
                 maximum_frames=1,
@@ -1242,27 +1272,20 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             ),
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=1,
-                display_probabilities=True,
-                pick=2,
-                focus_on_token_when=lambda x: True,
-                thinking_text_tokens=["x\n"],
-                tool_text_tokens=[],
-                answer_text_tokens=["y"],
-                tokens=[dtoken],
-                input_token_count=0,
-                total_tokens=1,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.1,
-                ttnt=0.1,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    display_token_size=1,
+                    display_probabilities=True,
+                    pick=2,
+                    focus_on_token_when=lambda x: True,
+                    thinking_text_tokens=["x\n"],
+                    answer_text_tokens=["y"],
+                    tokens=[dtoken],
+                    total_tokens=1,
+                    ttft=0.1,
+                    ttnt=0.1,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
                 maximum_frames=2,
@@ -1295,34 +1318,28 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             ),
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=1,
-                display_probabilities=True,
-                pick=1,
-                focus_on_token_when=lambda x: True,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=["y"],
-                tokens=[dtoken],
-                input_token_count=0,
-                total_tokens=1,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.1,
-                ttnt=0.1,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    display_token_size=1,
+                    display_probabilities=True,
+                    pick=1,
+                    focus_on_token_when=lambda x: True,
+                    answer_text_tokens=["y"],
+                    tokens=[dtoken],
+                    total_tokens=1,
+                    ttft=0.1,
+                    ttnt=0.1,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
                 maximum_frames=1,
             )
             token, frame = await gen.__anext__()
 
-        self.assertIs(token, dtoken)
+        self.assertIsNotNone(token)
+        assert token is not None
+        self.assertEqual(token.token, dtoken.token)
         self.assertTrue(frame.renderables)
 
     async def test_tokens_probability_ignores_plain_display_token(self):
@@ -1339,27 +1356,19 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             ),
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=1,
-                display_probabilities=True,
-                pick=1,
-                focus_on_token_when=lambda x: True,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=["y"],
-                tokens=[token],
-                input_token_count=0,
-                total_tokens=1,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.1,
-                ttnt=0.1,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    display_token_size=1,
+                    display_probabilities=True,
+                    pick=1,
+                    focus_on_token_when=lambda x: True,
+                    answer_text_tokens=["y"],
+                    tokens=[token],
+                    total_tokens=1,
+                    ttft=0.1,
+                    ttnt=0.1,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
                 maximum_frames=1,
@@ -1374,27 +1383,13 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=["x\n"],
-                tokens=None,
-                input_token_count=0,
-                total_tokens=0,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    answer_text_tokens=["x\n"],
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
             )
@@ -1419,27 +1414,19 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             ),
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=1,
-                display_probabilities=True,
-                pick=1,
-                focus_on_token_when=lambda x: True,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=["x\n"],
-                tokens=[dtoken],
-                input_token_count=0,
-                total_tokens=1,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    display_token_size=1,
+                    display_probabilities=True,
+                    pick=1,
+                    focus_on_token_when=lambda x: True,
+                    answer_text_tokens=["x\n"],
+                    tokens=[dtoken],
+                    total_tokens=1,
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
                 maximum_frames=1,
@@ -1454,27 +1441,13 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[],
-                tool_text_tokens=[],
-                answer_text_tokens=[f"{long1}\n", long2],
-                tokens=None,
-                input_token_count=0,
-                total_tokens=0,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    answer_text_tokens=[f"{long1}\n", long2],
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
             )
@@ -1493,27 +1466,17 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=[f"{think_line}\n", f"{think_line}\n"],
-                tool_text_tokens=[],
-                answer_text_tokens=[f"{answer_line}\n", answer_line],
-                tokens=None,
-                input_token_count=0,
-                total_tokens=0,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    thinking_text_tokens=[
+                        f"{think_line}\n",
+                        f"{think_line}\n",
+                    ],
+                    answer_text_tokens=[f"{answer_line}\n", answer_line],
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
             )
@@ -1532,27 +1495,13 @@ class FancyThemeTestCase(IsolatedAsyncioTestCase):
             "avalan.cli.theme.fancy._lf", lambda i: list(filter(None, i or []))
         ):
             gen = self.theme.tokens(
-                model_id="m",
-                added_tokens=None,
-                special_tokens=None,
-                display_token_size=None,
-                display_probabilities=False,
-                pick=0,
-                focus_on_token_when=None,
-                thinking_text_tokens=lines,
-                tool_text_tokens=[],
-                answer_text_tokens=[],
-                tokens=None,
-                input_token_count=0,
-                total_tokens=0,
-                tool_events=None,
-                tool_event_calls=None,
-                tool_event_results=None,
-                tool_running_spinner=None,
-                ttft=0.0,
-                ttnt=0.0,
-                ttsr=0.0,
-                elapsed=1.0,
+                _token_state(
+                    thinking_text_tokens=lines,
+                    ttft=0.0,
+                    ttnt=0.0,
+                    ttsr=0.0,
+                    elapsed=1.0,
+                ),
                 console_width=40,
                 logger=MagicMock(),
             )

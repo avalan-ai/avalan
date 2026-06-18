@@ -234,7 +234,7 @@ class PrimaryConsumerProjectionGoldenTestCase(IsolatedAsyncioTestCase):
             any(model_cmds._is_reasoning_stream_item(p) for p in projections)
         )
         self.assertTrue(
-            any(model_cmds._is_tool_call_stream_item(p) for p in projections)
+            any(model_cmds._is_tool_stream_item(p) for p in projections)
         )
 
         chat_text = "".join(
