@@ -55,6 +55,38 @@ class _CanonicalResponse:
         self.is_thinking = value
 
 
+class _TrackedDirectCanonicalResponse:
+    input_token_count = 0
+    output_token_count = 0
+    can_think = False
+    is_thinking = False
+
+    def __init__(self, items: tuple[CanonicalStreamItem, ...]) -> None:
+        self._items = items
+        self._index = 0
+        self.cancel_count = 0
+        self.close_count = 0
+
+    def __aiter__(self) -> "_TrackedDirectCanonicalResponse":
+        return self
+
+    async def __anext__(self) -> CanonicalStreamItem:
+        if self._index == len(self._items):
+            raise StopAsyncIteration
+        item = self._items[self._index]
+        self._index += 1
+        return item
+
+    async def cancel(self) -> None:
+        self.cancel_count += 1
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+    def set_thinking(self, value: bool) -> None:
+        self.is_thinking = value
+
+
 class _SyncingOrchestrator:
     def __init__(self) -> None:
         self.synced = False
@@ -269,6 +301,50 @@ async def _run_default_protocol_routes_legacy_rejection_first_item() -> None:
     await _assert_a2a_legacy_rejection_first_item()
 
 
+def test_protocol_routes_close_direct_sources_once() -> None:
+    asyncio.run(_run_protocol_routes_close_direct_sources_once())
+
+
+async def _run_protocol_routes_close_direct_sources_once() -> None:
+    items = (
+        _stream_item(0, StreamItemKind.STREAM_STARTED),
+        _stream_item(1, StreamItemKind.ANSWER_DELTA, text_delta="ok"),
+        _stream_item(2, StreamItemKind.ANSWER_DONE),
+        _stream_item(
+            3,
+            StreamItemKind.STREAM_COMPLETED,
+            usage={"output_tokens": 1},
+            terminal_outcome=StreamTerminalOutcome.COMPLETED,
+        ),
+    )
+
+    mcp_response = _TrackedDirectCanonicalResponse(items)
+    mcp_payloads = await _collect_mcp_payloads(
+        mcp_response,
+        "direct-source-close",
+    )
+    assert any("result" in payload for payload in mcp_payloads)
+    assert mcp_response.cancel_count == 0
+    assert mcp_response.close_count == 1
+
+    a2a_response = _TrackedDirectCanonicalResponse(items)
+    store = TaskStore()
+    task_id = "direct-source-close"
+    await store.create_task(
+        task_id,
+        model="test-model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+    _ = [event async for event in translator.run_stream(a2a_response)]
+    task = await store.get_task(task_id)
+    assert task["status"] == "completed"
+    assert a2a_response.cancel_count == 0
+    assert a2a_response.close_count == 1
+
+
 def test_lossy_cli_frames_do_not_drop_lossless_public_surfaces() -> None:
     asyncio.run(_run_lossy_cli_frames_do_not_drop_lossless_public_surfaces())
 
@@ -457,7 +533,11 @@ async def _assert_simple_a2a_projection(
 
 
 async def _collect_mcp_payloads(
-    response: _CanonicalResponse | _LegacyRejectionResponse,
+    response: (
+        _CanonicalResponse
+        | _LegacyRejectionResponse
+        | _TrackedDirectCanonicalResponse
+    ),
     request_id: str,
 ) -> tuple[dict[str, object], ...]:
     request_model = ChatCompletionRequest(

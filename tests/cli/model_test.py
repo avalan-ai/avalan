@@ -1425,27 +1425,47 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             channel=StreamChannel.CONTROL,
         )
 
-        for item in (
-            canonical_item,
-            project_canonical_stream_item(canonical_item),
-        ):
-            with self.subTest(item_type=type(item).__name__):
+        legacy_first_items = (
+            "legacy",
+            Token(token="legacy"),
+            TokenDetail(token="legacy", id=1),
+            ReasoningToken(token="legacy"),
+            ToolCallToken(
+                token="{}",
+                call=ToolCall(
+                    id="legacy-call",
+                    name="legacy",
+                    arguments={},
+                ),
+            ),
+            Event(type=EventType.START),
+        )
 
-                async def gen():
-                    yield "legacy"
-                    yield item
-
-                with self.assertRaisesRegex(
-                    StreamValidationError,
-                    "unsupported CLI stream item",
+        for legacy_first_item in legacy_first_items:
+            for item in (
+                canonical_item,
+                project_canonical_stream_item(canonical_item),
+            ):
+                with self.subTest(
+                    legacy_item_type=type(legacy_first_item).__name__,
+                    item_type=type(item).__name__,
                 ):
-                    stream = model_cmds._stream_render_items(
-                        gen(),
-                        stream_session_id="fallback-stream",
-                        run_id="fallback-run",
-                        turn_id="fallback-turn",
-                    )
-                    [render_item async for render_item in stream]
+
+                    async def gen():
+                        yield legacy_first_item
+                        yield item
+
+                    with self.assertRaisesRegex(
+                        StreamValidationError,
+                        "unsupported CLI stream item",
+                    ):
+                        stream = model_cmds._stream_render_items(
+                            gen(),
+                            stream_session_id="fallback-stream",
+                            run_id="fallback-run",
+                            turn_id="fallback-turn",
+                        )
+                        [render_item async for render_item in stream]
 
     async def test_stream_render_items_prefers_consumer_projections(self):
         class Response:
@@ -1561,27 +1581,48 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
     async def test_plain_stdout_legacy_rejection_first_item(
         self,
     ):
-        async def gen():
-            yield "legacy"
-            yield CanonicalStreamItem(
-                stream_session_id="stream",
-                run_id="run",
-                turn_id="turn",
-                sequence=0,
-                kind=StreamItemKind.STREAM_STARTED,
-                channel=StreamChannel.CONTROL,
-            )
+        legacy_first_items = (
+            "legacy",
+            Token(token="legacy"),
+            TokenDetail(token="legacy", id=1),
+            ReasoningToken(token="legacy"),
+            ToolCallToken(
+                token="{}",
+                call=ToolCall(
+                    id="legacy-call",
+                    name="legacy",
+                    arguments={},
+                ),
+            ),
+            Event(type=EventType.START),
+        )
 
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "unsupported CLI stream item",
-        ):
-            [
-                projection
-                async for projection in model_cmds._plain_stdout_projections(
-                    gen()
-                )
-            ]
+        for legacy_first_item in legacy_first_items:
+            with self.subTest(
+                legacy_item_type=type(legacy_first_item).__name__
+            ):
+
+                async def gen():
+                    yield legacy_first_item
+                    yield CanonicalStreamItem(
+                        stream_session_id="stream",
+                        run_id="run",
+                        turn_id="turn",
+                        sequence=0,
+                        kind=StreamItemKind.STREAM_STARTED,
+                        channel=StreamChannel.CONTROL,
+                    )
+
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported CLI stream item",
+                ):
+                    [
+                        projection
+                        async for projection in (
+                            model_cmds._plain_stdout_projections(gen())
+                        )
+                    ]
 
     async def test_token_generation_no_stats_uses_response_projection(self):
         async def gen():

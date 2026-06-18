@@ -555,6 +555,8 @@ class A2AResponseTranslator:
                 stream_session_id="a2a-stream",
                 run_id=self._task_id,
                 turn_id="a2a-turn",
+                unsupported_message="unsupported legacy A2A stream item",
+                close_source_on_generator_exit=False,
             )
             async for item in response_iterator:
                 for event in await self._process_item(item):

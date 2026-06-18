@@ -8,11 +8,19 @@ from asyncio import (
 from collections.abc import AsyncIterator
 from unittest import IsolatedAsyncioTestCase
 
+from avalan.entities import (
+    ReasoningToken,
+    Token,
+    TokenDetail,
+    ToolCall,
+    ToolCallToken,
+)
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager, EventManagerMode
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
     StreamRetentionPolicy,
@@ -163,7 +171,7 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await anext(iterator)
 
-    async def test_stream_consumer_iterator_falls_back_to_stream_iterator(
+    async def test_stream_consumer_iterator_rejects_raw_fallback_items(
         self,
     ) -> None:
         async def gen() -> AsyncIterator[str]:
@@ -174,9 +182,525 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
             stream_session_id="stream",
             run_id="run",
             turn_id="turn",
+            unsupported_message="unsupported raw fallback",
         )
 
-        self.assertEqual(await anext(iterator), "raw")
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported raw fallback",
+        ):
+            await anext(iterator)
+
+    async def test_stream_consumer_iterator_rejects_legacy_first_items(
+        self,
+    ) -> None:
+        legacy_rejection_items = (
+            "legacy",
+            Token(token="legacy"),
+            TokenDetail(token="legacy", id=1),
+            ReasoningToken(token="legacy"),
+            ToolCallToken(
+                token="{}",
+                call=ToolCall(
+                    id="legacy-call",
+                    name="legacy",
+                    arguments={},
+                ),
+            ),
+            Event(type=EventType.START),
+            object(),
+        )
+
+        for legacy_rejection_item in legacy_rejection_items:
+            with self.subTest(item_type=type(legacy_rejection_item).__name__):
+
+                async def gen() -> AsyncIterator[object]:
+                    yield legacy_rejection_item
+
+                iterator = stream_consumer_iterator(
+                    gen(),
+                    stream_session_id="stream",
+                    run_id="run",
+                    turn_id="turn",
+                    unsupported_message="unsupported shared consumer item",
+                )
+
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported shared consumer item",
+                ):
+                    await anext(iterator)
+
+    async def test_stream_consumer_iterator_projects_canonical_async_iterable(
+        self,
+    ) -> None:
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.ANSWER_DELTA,
+                channel=StreamChannel.ANSWER,
+                correlation=StreamItemCorrelation(
+                    tool_call_id="tool-1",
+                ),
+                text_delta="canonical",
+                provider_family="fixture",
+                provider_event_type="answer",
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.ANSWER_DONE,
+                channel=StreamChannel.ANSWER,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=3,
+                kind=StreamItemKind.USAGE_UPDATE,
+                channel=StreamChannel.USAGE,
+                usage={"input_tokens": 1},
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=4,
+                kind=StreamItemKind.STREAM_COMPLETED,
+                channel=StreamChannel.CONTROL,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                usage={"output_tokens": 1},
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=5,
+                kind=StreamItemKind.STREAM_CLOSED,
+                channel=StreamChannel.CONTROL,
+            )
+
+        iterator = stream_consumer_iterator(
+            gen(),
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        self.assertIs(
+            (await anext(iterator)).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        projection = await anext(iterator)
+        self.assertIsInstance(projection, StreamConsumerProjection)
+        self.assertEqual(projection.stream_session_id, "s")
+        self.assertEqual(projection.run_id, "r")
+        self.assertEqual(projection.turn_id, "t")
+        self.assertEqual(projection.sequence, 1)
+        self.assertIs(projection.channel, StreamChannel.ANSWER)
+        self.assertIs(projection.kind, StreamItemKind.ANSWER_DELTA)
+        self.assertEqual(projection.tool_call_id, "tool-1")
+        self.assertEqual(projection.text_delta, "canonical")
+        self.assertEqual(projection.provider_family, "fixture")
+        self.assertEqual(projection.provider_event_type, "answer")
+        self.assertIs((await anext(iterator)).kind, StreamItemKind.ANSWER_DONE)
+        usage = await anext(iterator)
+        self.assertIs(usage.kind, StreamItemKind.USAGE_UPDATE)
+        self.assertEqual(usage.usage, {"input_tokens": 1})
+        terminal = await anext(iterator)
+        self.assertIs(terminal.kind, StreamItemKind.STREAM_COMPLETED)
+        self.assertEqual(terminal.usage, {"output_tokens": 1})
+        self.assertIs(
+            (await anext(iterator)).kind,
+            StreamItemKind.STREAM_CLOSED,
+        )
+        with self.assertRaises(StopAsyncIteration):
+            await anext(iterator)
+
+    async def test_stream_consumer_iterator_closes_distinct_iterator(
+        self,
+    ) -> None:
+        class Iterator:
+            def __init__(self) -> None:
+                self.close_count = 0
+                self._items = iter(
+                    (
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            terminal_outcome=(StreamTerminalOutcome.COMPLETED),
+                            usage={},
+                        ),
+                    )
+                )
+
+            def __aiter__(self) -> "Iterator":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                try:
+                    return next(self._items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        class Source:
+            def __init__(self) -> None:
+                self.iterator = Iterator()
+                self.close_count = 0
+
+            def __aiter__(self) -> Iterator:
+                return self.iterator
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        source = Source()
+        iterator = stream_consumer_iterator(
+            source,
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        items = [item async for item in iterator]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
+        )
+        self.assertEqual(source.iterator.close_count, 1)
+        self.assertEqual(source.close_count, 0)
+
+    async def test_stream_consumer_iterator_closes_direct_generator_on_aclose(
+        self,
+    ) -> None:
+        closed = False
+
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            nonlocal closed
+            try:
+                yield CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                )
+                yield CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                    usage={},
+                )
+            finally:
+                closed = True
+
+        iterator = stream_consumer_iterator(
+            gen(),
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        self.assertIs(
+            (await anext(iterator)).kind,
+            StreamItemKind.STREAM_STARTED,
+        )
+        await iterator.aclose()
+
+        self.assertTrue(closed)
+
+    async def test_stream_consumer_iterator_closes_direct_source_on_rejection(
+        self,
+    ) -> None:
+        class Source:
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            def __aiter__(self) -> "Source":
+                return self
+
+            async def __anext__(self) -> object:
+                return "legacy"
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        source = Source()
+        iterator = stream_consumer_iterator(
+            source,
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+            unsupported_message="unsupported direct source",
+        )
+
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "unsupported direct source",
+        ):
+            await anext(iterator)
+
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_consumer_iterator_closes_direct_source_on_cancel(
+        self,
+    ) -> None:
+        class Source:
+            def __init__(self) -> None:
+                self.close_count = 0
+                self.started = AsyncEvent()
+                self.pull_cancelled = False
+
+            def __aiter__(self) -> "Source":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                self.started.set()
+                try:
+                    await AsyncEvent().wait()
+                except CancelledError:
+                    self.pull_cancelled = True
+                    raise
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        source = Source()
+        iterator = stream_consumer_iterator(
+            source,
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+        task = create_task(anext(iterator))
+        await source.started.wait()
+        task.cancel()
+
+        with self.assertRaises(CancelledError):
+            await task
+
+        self.assertTrue(source.pull_cancelled)
+        self.assertEqual(source.close_count, 1)
+
+    async def test_stream_consumer_iterator_leaves_direct_source_open(
+        self,
+    ) -> None:
+        class Source:
+            def __init__(self) -> None:
+                self.close_count = 0
+                self._items = iter(
+                    (
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=0,
+                            kind=StreamItemKind.STREAM_STARTED,
+                            channel=StreamChannel.CONTROL,
+                        ),
+                        CanonicalStreamItem(
+                            stream_session_id="s",
+                            run_id="r",
+                            turn_id="t",
+                            sequence=1,
+                            kind=StreamItemKind.STREAM_COMPLETED,
+                            channel=StreamChannel.CONTROL,
+                            terminal_outcome=(StreamTerminalOutcome.COMPLETED),
+                            usage={},
+                        ),
+                    )
+                )
+
+            def __aiter__(self) -> "Source":
+                return self
+
+            async def __anext__(self) -> CanonicalStreamItem:
+                try:
+                    return next(self._items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        source = Source()
+        iterator = stream_consumer_iterator(
+            source,
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        items = [item async for item in iterator]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_COMPLETED,
+            ],
+        )
+        self.assertEqual(source.close_count, 0)
+
+    async def test_stream_consumer_iterator_preserves_terminal_error_data(
+        self,
+    ) -> None:
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.STREAM_ERRORED,
+                channel=StreamChannel.CONTROL,
+                data={"message": "provider failed", "code": "upstream"},
+                terminal_outcome=StreamTerminalOutcome.ERRORED,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.STREAM_CLOSED,
+                channel=StreamChannel.CONTROL,
+            )
+
+        iterator = stream_consumer_iterator(
+            gen(),
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        self.assertIs(
+            (await anext(iterator)).kind, StreamItemKind.STREAM_STARTED
+        )
+        terminal = await anext(iterator)
+        self.assertIs(terminal.kind, StreamItemKind.STREAM_ERRORED)
+        self.assertEqual(
+            terminal.data,
+            {"message": "provider failed", "code": "upstream"},
+        )
+        self.assertIs(
+            terminal.terminal_outcome,
+            StreamTerminalOutcome.ERRORED,
+        )
+        self.assertIs(
+            (await anext(iterator)).kind,
+            StreamItemKind.STREAM_CLOSED,
+        )
+        with self.assertRaises(StopAsyncIteration):
+            await anext(iterator)
+
+    async def test_stream_consumer_iterator_preserves_terminal_cancelled_data(
+        self,
+    ) -> None:
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=1,
+                kind=StreamItemKind.STREAM_CANCELLED,
+                channel=StreamChannel.CONTROL,
+                data={"reason": "client_disconnect", "retryable": False},
+                terminal_outcome=StreamTerminalOutcome.CANCELLED,
+            )
+            yield CanonicalStreamItem(
+                stream_session_id="s",
+                run_id="r",
+                turn_id="t",
+                sequence=2,
+                kind=StreamItemKind.STREAM_CLOSED,
+                channel=StreamChannel.CONTROL,
+            )
+
+        iterator = stream_consumer_iterator(
+            gen(),
+            stream_session_id="fallback-stream",
+            run_id="fallback-run",
+            turn_id="fallback-turn",
+        )
+
+        self.assertIs(
+            (await anext(iterator)).kind, StreamItemKind.STREAM_STARTED
+        )
+        terminal = await anext(iterator)
+        self.assertIs(terminal.kind, StreamItemKind.STREAM_CANCELLED)
+        self.assertEqual(
+            terminal.data,
+            {"reason": "client_disconnect", "retryable": False},
+        )
+        self.assertIs(
+            terminal.terminal_outcome,
+            StreamTerminalOutcome.CANCELLED,
+        )
+        self.assertFalse(stream_terminal_succeeded(terminal))
+        snapshot = protocol_stream_terminal_snapshot(terminal)
+        self.assertEqual(
+            snapshot.data,
+            {"reason": "client_disconnect", "retryable": False},
+        )
+        self.assertIs(snapshot.outcome, StreamTerminalOutcome.CANCELLED)
+        self.assertFalse(snapshot.succeeded)
+        self.assertIs(
+            (await anext(iterator)).kind,
+            StreamItemKind.STREAM_CLOSED,
+        )
         with self.assertRaises(StopAsyncIteration):
             await anext(iterator)
 

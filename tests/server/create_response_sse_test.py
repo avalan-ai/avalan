@@ -506,6 +506,90 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(response.close_count, 1)
         orchestrator.sync_messages.assert_awaited_once()
 
+    async def test_streaming_flushes_pending_event_at_iterator_end(
+        self,
+    ) -> None:
+        logger = getLogger()
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.sync_messages = AsyncMock()
+        request = ResponsesRequest(
+            model="m",
+            input=[ChatMessage(role=MessageRole.USER, content="hi")],
+            stream=True,
+        )
+
+        class EmptyResponse:
+            input_token_count = 0
+            output_token_count = 0
+            usage = None
+
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            def __aiter__(self) -> AsyncIterator[object]:
+                return self
+
+            async def __anext__(self) -> object:
+                raise StopAsyncIteration
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        response = EmptyResponse()
+
+        def fake_stream_consumer_iterator(*_args, **_kwargs):
+            async def gen():
+                for item in (
+                    CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=0,
+                        kind=StreamItemKind.STREAM_STARTED,
+                        channel=StreamChannel.CONTROL,
+                    ),
+                    CanonicalStreamItem(
+                        stream_session_id="s",
+                        run_id="r",
+                        turn_id="t",
+                        sequence=1,
+                        kind=StreamItemKind.ANSWER_DELTA,
+                        channel=StreamChannel.ANSWER,
+                        text_delta="pending",
+                    ),
+                ):
+                    yield project_canonical_stream_item(item)
+
+            return gen()
+
+        async def orchestrate_stub(request, logger, orch):
+            return response, uuid4(), 0
+
+        original_orchestrate = self.responses.orchestrate
+        original_iterator = self.responses.stream_consumer_iterator
+        self.responses.orchestrate = orchestrate_stub  # type: ignore[attr-defined]
+        self.responses.stream_consumer_iterator = fake_stream_consumer_iterator
+        try:
+            streaming_resp = await self.responses.create_response(
+                request, logger, orchestrator
+            )
+            iterator = streaming_resp.body_iterator
+            chunks: list[str] = []
+            for _ in range(4):
+                chunk = await anext(iterator)
+                chunks.append(
+                    chunk.decode() if isinstance(chunk, bytes) else chunk
+                )
+            await iterator.aclose()
+        finally:
+            self.responses.orchestrate = original_orchestrate
+            self.responses.stream_consumer_iterator = original_iterator
+
+        text = "".join(chunks)
+        self.assertIn("response.output_text.delta", text)
+        self.assertIn("pending", text)
+        self.assertEqual(response.close_count, 1)
+
     async def test_repeated_response_stream_requests_release_sources(
         self,
     ) -> None:

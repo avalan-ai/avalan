@@ -1,5 +1,6 @@
 from ...agent.orchestrator import Orchestrator
 from ...model.stream import (
+    CanonicalStreamItem,
     StreamConsumerProjection,
     StreamItemKind,
     StreamTerminalOutcome,
@@ -220,6 +221,10 @@ async def create_response(
                 stream_session_id="responses-sse-stream",
                 run_id=str(response_id),
                 turn_id="responses-sse-turn",
+                unsupported_message=(
+                    "unsupported stream item for Responses SSE projection"
+                ),
+                close_source_on_generator_exit=False,
             )
             cancelled = False
 
@@ -402,7 +407,7 @@ def _token_to_sse_events(
 
 
 def _stream_projection(
-    token: object,
+    token: CanonicalStreamItem | StreamConsumerProjection,
     seq: int,
 ) -> StreamConsumerProjection:
     return project_stream_consumer_item(

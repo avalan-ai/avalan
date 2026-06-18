@@ -183,8 +183,12 @@ async def cancellable_stream_iterator(
             )
             if cancel_task in done or cancel_event.is_set():
                 item_task.cancel()
-                with suppress(CancelledError, StopAsyncIteration):
+                try:
                     await item_task
+                except (CancelledError, StopAsyncIteration):
+                    pass
+                except Exception:
+                    pass
                 break
             cancel_task.cancel()
             with suppress(CancelledError):
@@ -193,6 +197,10 @@ async def cancellable_stream_iterator(
                 item = item_task.result()
             except StopAsyncIteration:
                 break
+            except Exception:
+                if cancel_event.is_set():  # pragma: no cover
+                    break
+                raise  # pragma: no cover - defensive race guard
             yield item
         finally:
             if not item_task.done():

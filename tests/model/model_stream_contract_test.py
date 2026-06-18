@@ -45,6 +45,7 @@ from avalan.entities import (
     ToolCall,
     ToolCallToken,
 )
+from avalan.event import Event, EventType
 from avalan.model.provider import ProviderFamily
 from avalan.model.stream import (
     CanonicalStreamAccumulator,
@@ -1958,7 +1959,22 @@ class StreamContractTestCase(TestCase):
             turn_id="turn",
             text_delta="canonical",
         )
-        legacy_rejection_token = Token(token="legacy")
+        legacy_rejection_items = (
+            "legacy",
+            Token(token="legacy"),
+            TokenDetail(token="legacy", id=1),
+            ReasoningToken(token="legacy"),
+            ToolCallToken(
+                token="{}",
+                call=ToolCall(
+                    id="legacy-call",
+                    name="legacy",
+                    arguments={},
+                ),
+            ),
+            Event(type=EventType.START),
+            object(),
+        )
 
         canonical_projection = project_stream_consumer_item(
             canonical,
@@ -1968,18 +1984,20 @@ class StreamContractTestCase(TestCase):
             turn_id="fallback-turn",
             unsupported_message="unsupported helper stream item",
         )
-        with self.assertRaisesRegex(
-            StreamValidationError,
-            "unsupported helper stream item",
-        ):
-            project_stream_consumer_item(
-                legacy_rejection_token,
-                5,
-                stream_session_id="fallback-stream",
-                run_id="fallback-run",
-                turn_id="fallback-turn",
-                unsupported_message="unsupported helper stream item",
-            )
+        for legacy_rejection_item in legacy_rejection_items:
+            with self.subTest(item_type=type(legacy_rejection_item).__name__):
+                with self.assertRaisesRegex(
+                    StreamValidationError,
+                    "unsupported helper stream item",
+                ):
+                    project_stream_consumer_item(
+                        legacy_rejection_item,
+                        5,
+                        stream_session_id="fallback-stream",
+                        run_id="fallback-run",
+                        turn_id="fallback-turn",
+                        unsupported_message="unsupported helper stream item",
+                    )
 
         self.assertEqual(canonical_projection.stream_session_id, "stream")
         self.assertEqual(canonical_projection.sequence, 3)
