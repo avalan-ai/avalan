@@ -1264,6 +1264,160 @@ class DisplayReducerTestCase(TestCase):
         self.assertFalse(argument_changed)
         self.assertTrue(start_changed)
 
+    def test_apply_projection_change_matrix_for_hidden_surfaces(self) -> None:
+        projections = {
+            "answer": _projection(
+                StreamItemKind.ANSWER_DELTA,
+                0,
+                text_delta="a",
+            ),
+            "reasoning": _projection(
+                StreamItemKind.REASONING_DELTA,
+                0,
+                text_delta="r",
+            ),
+            "tool_argument": _projection(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                0,
+                text_delta='{"x": 1}',
+                tool_call_id="tool-1",
+            ),
+            "tool_execution": _projection(
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                0,
+                tool_call_id="tool-1",
+            ),
+            "event": _projection(StreamItemKind.FLOW_EVENT, 0),
+            "usage": _projection(
+                StreamItemKind.USAGE_UPDATE,
+                0,
+                usage={"input_tokens": 1},
+            ),
+            "terminal": _projection(
+                StreamItemKind.STREAM_COMPLETED,
+                0,
+                terminal_outcome=StreamTerminalOutcome.COMPLETED,
+            ),
+        }
+        cases = (
+            (
+                "quiet",
+                _config(
+                    quiet=True,
+                    stats=True,
+                    display_tools=True,
+                    display_events=True,
+                ),
+                {
+                    "answer": True,
+                    "reasoning": False,
+                    "tool_argument": False,
+                    "tool_execution": False,
+                    "event": False,
+                    "usage": False,
+                    "terminal": True,
+                },
+            ),
+            (
+                "default",
+                _config(
+                    stats=False,
+                    display_tools=False,
+                    display_events=False,
+                ),
+                {
+                    "answer": True,
+                    "reasoning": False,
+                    "tool_argument": False,
+                    "tool_execution": False,
+                    "event": False,
+                    "usage": False,
+                    "terminal": True,
+                },
+            ),
+            (
+                "stats",
+                _config(
+                    stats=True,
+                    display_tools=False,
+                    display_events=False,
+                ),
+                {
+                    "answer": True,
+                    "reasoning": True,
+                    "tool_argument": True,
+                    "tool_execution": False,
+                    "event": False,
+                    "usage": True,
+                    "terminal": True,
+                },
+            ),
+            (
+                "tools",
+                _config(
+                    stats=False,
+                    display_tools=True,
+                    display_events=False,
+                ),
+                {
+                    "answer": True,
+                    "reasoning": False,
+                    "tool_argument": False,
+                    "tool_execution": True,
+                    "event": False,
+                    "usage": False,
+                    "terminal": True,
+                },
+            ),
+            (
+                "events",
+                _config(
+                    stats=False,
+                    display_tools=False,
+                    display_events=True,
+                ),
+                {
+                    "answer": True,
+                    "reasoning": False,
+                    "tool_argument": False,
+                    "tool_execution": False,
+                    "event": True,
+                    "usage": False,
+                    "terminal": True,
+                },
+            ),
+            (
+                "stderr",
+                _config(
+                    stats=True,
+                    display_tools=True,
+                    display_events=True,
+                    interactive=False,
+                ),
+                {
+                    "answer": True,
+                    "reasoning": True,
+                    "tool_argument": True,
+                    "tool_execution": True,
+                    "event": True,
+                    "usage": True,
+                    "terminal": True,
+                },
+            ),
+        )
+
+        for label, config, expected in cases:
+            for projection_name, projection in projections.items():
+                with self.subTest(label=label, projection=projection_name):
+                    reducer = CliStreamSnapshotReducer(
+                        config,
+                        clock=FakeClock(1.0),
+                    )
+                    self.assertEqual(
+                        reducer.apply_projection(projection),
+                        expected[projection_name],
+                    )
+
     def test_apply_projection_reports_display_token_before_metadata(
         self,
     ) -> None:
@@ -1413,6 +1567,52 @@ class DisplayReducerTestCase(TestCase):
 
         self.assertNotIn(tool_id, states)
         self.assertEqual(final_snapshot.tool_results[0].arguments_count, 1)
+
+    def test_split_sensitive_tool_argument_marker_redacts_after_truncation(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(),
+            clock=FakeClock(*[float(index) for index in range(6)]),
+        )
+        tool_id = "sensitive-tool"
+
+        for index, chunk in enumerate(
+            (
+                "api",
+                "_",
+                "key",
+                "=" + ("x" * MAX_SUMMARY_CHARS),
+            )
+        ):
+            reducer.apply_projection(
+                _projection(
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    index,
+                    text_delta=chunk,
+                    tool_call_id=tool_id,
+                )
+            )
+
+        states = cast(
+            dict[str, object],
+            getattr(reducer, "_tool_argument_state"),
+        )
+        materialize = getattr(states[tool_id], "materialize")
+        self.assertTrue(callable(materialize))
+        self.assertEqual(cast(str, materialize()), "<redacted>")
+
+        snapshot = reducer.reduce_projection(
+            _projection(
+                StreamItemKind.TOOL_EXECUTION_STARTED,
+                4,
+                tool_call_id=tool_id,
+            )
+        )
+        self.assertIn(
+            "<redacted>",
+            snapshot.active_tools[0].arguments_summary or "",
+        )
 
     def test_reduce_projection_uses_canonical_helper_validation(self) -> None:
         reducer = CliStreamSnapshotReducer(_config())
