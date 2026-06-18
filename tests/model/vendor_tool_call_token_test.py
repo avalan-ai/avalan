@@ -181,7 +181,8 @@ class VendorBuildToolCallTokenTestCase(TestCase):
 
     def test_stream_exposes_provider_metadata(self) -> None:
         async def generator():
-            yield "token"
+            if False:
+                yield _canonical_item(StreamItemKind.STREAM_STARTED, 0)
 
         stream = TextGenerationVendorStream(
             generator(),
@@ -249,7 +250,10 @@ class VendorBuildToolCallTokenTestCase(TestCase):
 
         async def collect_stream() -> Source:
             source = Source()
-            stream = TextGenerationVendorStream(generator(), sources=(source,))
+            stream = TextGenerationVendorStream(
+                cast(Any, generator()),
+                sources=(source,),
+            )
             with self.assertRaisesRegex(
                 StreamValidationError,
                 "unsupported legacy vendor stream item",
@@ -281,7 +285,7 @@ class VendorBuildToolCallTokenTestCase(TestCase):
             yield "legacy"
 
         async def collect_stream() -> list[CanonicalStreamItem]:
-            stream = TextGenerationVendorStream(generator())
+            stream = TextGenerationVendorStream(cast(Any, generator()))
             items: list[CanonicalStreamItem] = []
             with self.assertRaisesRegex(
                 StreamValidationError,

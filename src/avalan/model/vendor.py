@@ -227,7 +227,7 @@ class TextGenerationVendorStream(TextGenerationStream):
     _DEFAULT_RUN_ID = "vendor-run"
     _DEFAULT_TURN_ID = "vendor-turn"
 
-    _generator: AsyncIterator[Any]
+    _generator: AsyncIterator[CanonicalStreamItem]
     _provider_family: str | None
     _stream_sources: tuple[object, ...]
     _stream_closed: bool
@@ -237,7 +237,7 @@ class TextGenerationVendorStream(TextGenerationStream):
 
     def __init__(
         self,
-        generator: AsyncIterator[Any],
+        generator: AsyncIterator[CanonicalStreamItem],
         *,
         provider_family: ProviderFamily | str | None = None,
         sources: Iterable[object] = (),
@@ -316,7 +316,7 @@ class TextGenerationVendorStream(TextGenerationStream):
         _ = run_id
         _ = turn_id
         _ = close_after_terminal
-        iterator = self._generator.__aiter__()
+        iterator = cast(AsyncIterator[Any], self._generator.__aiter__())
         try:
             first = await iterator.__anext__()
         except StopAsyncIteration:

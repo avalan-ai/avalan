@@ -33,11 +33,29 @@ class HuggingfaceStream(TextGenerationVendorStream):
     def __init__(self, stream: AsyncIterator[Any]) -> None:
         self._stream = stream
 
+        async def generator() -> AsyncIterator[CanonicalStreamItem]:
+            async for item in self.canonical_stream(
+                stream_session_id=self._DEFAULT_STREAM_SESSION_ID,
+                run_id=self._DEFAULT_RUN_ID,
+                turn_id=self._DEFAULT_TURN_ID,
+            ):
+                yield item
+
         super().__init__(
-            stream,
+            generator(),
             provider_family=ProviderFamily.HUGGING_FACE,
             sources=(stream,),
         )
+
+    def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+        assert self._generator
+        return self._generator
+
+    async def __anext__(self) -> CanonicalStreamItem:
+        return await super().__anext__()
+
+    def _cleanup_sources(self) -> tuple[object, ...]:
+        return self._stream_sources
 
     def canonical_stream(
         self,
@@ -67,16 +85,19 @@ class HuggingfaceStream(TextGenerationVendorStream):
 
     async def _provider_events(self) -> AsyncIterator[StreamProviderEvent]:
         terminal_usage: object | None = None
+        terminal_usage_payload: LooseJsonValue | None = None
         async for chunk in self._stream:
+            provider_payload = self._provider_payload(chunk)
             usage = HuggingfaceClient._field(chunk, "usage")
             if usage is not None:
                 terminal_usage = usage
+                terminal_usage_payload = provider_payload
             text = HuggingfaceClient._delta_text(chunk)
             if text is not None:
                 yield StreamProviderEvent(
                     kind=StreamItemKind.ANSWER_DELTA,
                     text_delta=text,
-                    provider_payload=self._provider_payload(chunk),
+                    provider_payload=provider_payload,
                     provider_event_type="chat_completion.delta",
                 )
         if terminal_usage is not None:
@@ -84,6 +105,7 @@ class HuggingfaceStream(TextGenerationVendorStream):
             yield StreamProviderEvent(
                 kind=StreamItemKind.USAGE_COMPLETED,
                 usage=cast(LooseJsonValue, terminal_usage),
+                provider_payload=terminal_usage_payload,
                 provider_event_type="chat_completion.usage",
             )
 

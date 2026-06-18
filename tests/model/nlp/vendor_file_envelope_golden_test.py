@@ -5,7 +5,7 @@ import types
 from contextlib import AsyncExitStack
 from importlib.machinery import ModuleSpec
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +17,11 @@ from avalan.entities import (
     MessageContentText,
     MessageRole,
 )
-from avalan.model.stream import StreamValidationError
+from avalan.model.stream import (
+    CanonicalStreamItem,
+    StreamItemKind,
+    StreamValidationError,
+)
 from avalan.model.vendor import (
     TextGenerationVendor,
     TextGenerationVendorStream,
@@ -200,7 +204,7 @@ def test_base_vendor_boundary_branches() -> None:
         yield "token"
 
     async def first_public_item_kind() -> None:
-        stream = TextGenerationVendorStream(agen())
+        stream = TextGenerationVendorStream(cast(Any, agen()))
         iterator = stream()
         assert iterator is not stream
         await anext(iterator)
@@ -325,8 +329,20 @@ def test_openai_stream_skips_custom_tool_call_without_string_id() -> None:
         )
     )
 
-    with pytest.raises(StopAsyncIteration):
-        asyncio.run(stream._generator.__anext__())
+    async def collect() -> list[CanonicalStreamItem]:
+        return [item async for item in stream]
+
+    items = asyncio.run(collect())
+
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.STREAM_ERRORED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+    assert (
+        items[1].data["message"]
+        == "response tool call id must be a non-empty string"
+    )
 
 
 def test_anthropic_file_envelopes_cover_streaming_and_non_streaming() -> None:

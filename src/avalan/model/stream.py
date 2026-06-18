@@ -407,6 +407,29 @@ class StreamProviderEvent:
             )
 
 
+class StreamProviderAdapterError(Exception):
+    error: Exception
+    provider_payload: LooseJsonValue | None
+    provider_event_type: str | None
+
+    def __init__(
+        self,
+        error: Exception,
+        *,
+        provider_payload: LooseJsonValue | None = None,
+        provider_event_type: str | None = None,
+    ) -> None:
+        assert isinstance(error, Exception)
+        if provider_event_type is not None:
+            _assert_non_empty_string(
+                provider_event_type, "provider_event_type"
+            )
+        super().__init__(str(error))
+        self.error = error
+        self.provider_payload = provider_payload
+        self.provider_event_type = provider_event_type
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class StreamSessionLifecycle:
     single_use: bool = True
@@ -1878,136 +1901,6 @@ _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
         (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
         "model.vendor",
         "Vendor call surfaces return canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.vendor",
-        "TextGenerationVendorStream.__init__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (StreamLegacyBoundaryDirection.ACCEPTS,),
-        "model.vendor",
-        "Vendor stream constructors accept canonical stream sources.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.openai",
-        "OpenAIClient.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.vendor.openai",
-        "OpenAI client call surfaces return canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.anthropic",
-        "AnthropicClient.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.vendor.anthropic",
-        "Anthropic client call surfaces return canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.bedrock",
-        "BedrockClient.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-            StreamLegacySurface.REASONING_TOKEN,
-            StreamLegacySurface.TOOL_CALL_TOKEN,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.vendor.bedrock",
-        "Bedrock client call surfaces return canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.litellm",
-        "LiteLLMClient.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.vendor.litellm",
-        "LiteLLM streaming returns canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.google",
-        "GoogleClient.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.vendor.google",
-        "Google streaming returns canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.ollama",
-        "OllamaClient.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.vendor.ollama",
-        "Ollama client call surfaces return canonical stream sessions.",
-    ),
-    _runtime_boundary(
-        "avalan.model.nlp.text.vendor.huggingface",
-        "HuggingfaceClient.__call__",
-        (
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.TOKEN_DETAIL,
-        ),
-        StreamLegacyBoundaryCategory.PRODUCER,
-        (
-            StreamLegacyBoundaryDirection.EMITS,
-            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
-        ),
-        "model.vendor.huggingface",
-        "HuggingFace streaming returns canonical stream sessions.",
     ),
     _runtime_boundary(
         "avalan.model.nlp.text.ds4",
@@ -4217,6 +4110,20 @@ class _ProviderStreamNormalizer:
         return self._terminal(StreamItemKind.STREAM_CANCELLED)
 
     def errored(self, exc: Exception) -> tuple[CanonicalStreamItem, ...]:
+        if isinstance(exc, StreamProviderAdapterError):
+            error = exc.error
+            return self._terminal(
+                StreamItemKind.STREAM_ERRORED,
+                provider_event=StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_ERRORED,
+                    data={
+                        "error_type": error.__class__.__name__,
+                        "message": str(error),
+                    },
+                    provider_payload=exc.provider_payload,
+                    provider_event_type=exc.provider_event_type,
+                ),
+            )
         return self._terminal(
             StreamItemKind.STREAM_ERRORED,
             data={
