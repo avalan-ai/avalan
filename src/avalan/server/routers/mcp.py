@@ -1,36 +1,21 @@
 from ...agent.orchestrator import Orchestrator
-from ...entities import (
-    MessageRole,
-    Token,
-    ToolCall,
-    ToolCallDiagnostic,
-    ToolCallError,
-    ToolCallResult,
-)
-from ...event import Event, EventType
+from ...entities import MessageRole
 from ...model.stream import (
     CanonicalStreamItem,
-    StreamChannel,
     StreamConsumerProjection,
-    StreamItemCorrelation,
     StreamItemKind,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamValidationError,
     canonical_item_from_consumer_projection,
-    canonical_item_from_token,
 )
 from ...server.entities import (
     ChatCompletionRequest,
     ChatMessage,
     MCPToolRequest,
 )
-from ...types import JsonObject, JsonScalar, LooseJsonValue, MutableJsonValue
-from ...utils import (
-    to_json,
-    tool_call_diagnostic_payload,
-    tool_call_error_payload,
-)
+from ...types import JsonObject, JsonScalar, MutableJsonValue
+from ...utils import to_json
 from ..sse import sse_bytes, sse_headers
 from . import (
     MODEL_FALLBACK as DEFAULT_MODEL_FALLBACK,
@@ -41,7 +26,6 @@ from . import (
 )
 from .streaming import (
     ProtocolStreamAccumulator,
-    ProtocolStreamProjectionState,
     ProtocolStreamSnapshot,
     cancellable_stream_iterator,
     cleanup_stream_sources,
@@ -52,11 +36,10 @@ from .streaming import (
 from asyncio import CancelledError, Lock, create_task
 from asyncio import Event as AsyncEvent
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
 from typing import (
-    Any,
     AsyncGenerator,
     AsyncIterator,
     Final,
@@ -93,9 +76,7 @@ NotificationMethod = Literal[
 ]
 AllowedMethod = Method | NotificationMethod
 
-ResponseItem = (
-    CanonicalStreamItem | StreamConsumerProjection | Token | Event | str
-)
+ResponseItem = CanonicalStreamItem | StreamConsumerProjection
 
 
 def _default_model_id(orchestrator: Orchestrator) -> str:
@@ -290,254 +271,12 @@ class MCPResourceStore:
 
 
 @dataclass(slots=True)
-class _MCPLegacyStreamAdapter:
-    stream_session_id: str = "mcp-legacy-stream"
-    run_id: str = "mcp-legacy-run"
-    turn_id: str = "mcp-legacy-turn"
-    sequence: int = 0
-    tool_execution_started_ids: set[str] = field(default_factory=set)
-
-    def map(self, item: object) -> tuple[CanonicalStreamItem, ...] | None:
-        if isinstance(item, (Token, str)):
-            return self._canonical_items_from_token(item)
-
-        if isinstance(item, Event):
-            return self.canonical_items_from_event(item)
-
-        return None
-
-    def canonical_items_from_event(
-        self,
-        event: Event,
-    ) -> tuple[CanonicalStreamItem, ...]:
-        if event.type not in (
-            EventType.TOOL_DIAGNOSTIC,
-            EventType.TOOL_PROCESS,
-            EventType.TOOL_RESULT,
-        ):
-            return ()
-
-        item = _tool_call_event_item(event)
-        if item is None:
-            return ()
-
-        tool_call_id = item.get("id")
-        if not isinstance(tool_call_id, str):
-            return ()
-
-        result: list[CanonicalStreamItem] = []
-        self._append_stream_start(result)
-
-        if event.type is EventType.TOOL_PROCESS:
-            self._append_tool_execution_start(
-                result, tool_call_id, item, event
-            )
-            return tuple(result)
-
-        if "diagnostic" in item:
-            diagnostic_payload = item["diagnostic"]
-            message = (
-                diagnostic_payload.get("message")
-                if isinstance(diagnostic_payload, dict)
-                else None
-            )
-            result.append(
-                self._canonical_item(
-                    StreamItemKind.STREAM_DIAGNOSTIC,
-                    correlation=StreamItemCorrelation(
-                        tool_call_id=tool_call_id
-                    ),
-                    text_delta=message if isinstance(message, str) else "",
-                    data={
-                        "toolCallId": tool_call_id,
-                        "name": item.get("name"),
-                        "arguments": item.get("arguments"),
-                        "diagnostic": diagnostic_payload,
-                        "timings": _event_timings(event),
-                    },
-                )
-            )
-            return tuple(result)
-
-        if "result" in item:
-            self._append_tool_execution_start(
-                result, tool_call_id, item, event, synthetic=True
-            )
-            for category, content in _legacy_tool_execution_output_items(
-                tool_call_id, item["result"]
-            ):
-                result.append(
-                    self._canonical_item(
-                        StreamItemKind.TOOL_EXECUTION_OUTPUT,
-                        correlation=StreamItemCorrelation(
-                            tool_call_id=tool_call_id
-                        ),
-                        text_delta=content,
-                        data={"category": category, "content": content},
-                        metadata=_tool_metadata(item),
-                    )
-                )
-            result.append(
-                self._canonical_item(
-                    StreamItemKind.TOOL_EXECUTION_COMPLETED,
-                    correlation=StreamItemCorrelation(
-                        tool_call_id=tool_call_id
-                    ),
-                    data={
-                        "name": item.get("name"),
-                        "arguments": item.get("arguments"),
-                        "result": item["result"],
-                        "timings": _event_timings(event),
-                    },
-                )
-            )
-            return tuple(result)
-
-        if "error" in item:
-            self._append_tool_execution_start(
-                result, tool_call_id, item, event, synthetic=True
-            )
-            result.append(
-                self._canonical_item(
-                    StreamItemKind.TOOL_EXECUTION_ERROR,
-                    correlation=StreamItemCorrelation(
-                        tool_call_id=tool_call_id
-                    ),
-                    data={
-                        "name": item.get("name"),
-                        "arguments": item.get("arguments"),
-                        "error": item["error"],
-                        "timings": _event_timings(event),
-                    },
-                )
-            )
-
-        return tuple(result)
-
-    def _append_tool_execution_start(
-        self,
-        items: list[CanonicalStreamItem],
-        tool_call_id: str,
-        item: dict[str, JSONValue],
-        event: Event,
-        *,
-        synthetic: bool = False,
-    ) -> None:
-        if tool_call_id in self.tool_execution_started_ids:
-            return
-        self.tool_execution_started_ids.add(tool_call_id)
-        items.append(
-            self._canonical_item(
-                StreamItemKind.TOOL_EXECUTION_STARTED,
-                correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
-                data={
-                    "name": item.get("name"),
-                    "arguments": item.get("arguments"),
-                    "timings": _event_timings(event),
-                },
-                metadata=(
-                    {"mcp.synthetic_tool_execution_start": True}
-                    if synthetic
-                    else None
-                ),
-            )
-        )
-
-    def _canonical_items_from_token(
-        self,
-        item: Token | str,
-    ) -> tuple[CanonicalStreamItem, ...]:
-        result: list[CanonicalStreamItem] = []
-        self._append_stream_start(result)
-        result.append(
-            canonical_item_from_token(
-                item,
-                self._next_sequence(),
-                stream_session_id=self.stream_session_id,
-                run_id=self.run_id,
-                turn_id=self.turn_id,
-            )
-        )
-        return tuple(result)
-
-    def _append_stream_start(
-        self,
-        items: list[CanonicalStreamItem],
-    ) -> None:
-        if self.sequence != 0:
-            return
-        items.append(
-            CanonicalStreamItem(
-                stream_session_id=self.stream_session_id,
-                run_id=self.run_id,
-                turn_id=self.turn_id,
-                sequence=0,
-                kind=StreamItemKind.STREAM_STARTED,
-                channel=StreamChannel.CONTROL,
-            )
-        )
-        self.sequence = 1
-
-    def _canonical_item(
-        self,
-        kind: StreamItemKind,
-        *,
-        correlation: StreamItemCorrelation | None = None,
-        text_delta: str | None = None,
-        data: LooseJsonValue | None = None,
-        metadata: dict[str, LooseJsonValue] | None = None,
-    ) -> CanonicalStreamItem:
-        channel = (
-            StreamChannel.CONTROL
-            if kind is StreamItemKind.STREAM_DIAGNOSTIC
-            else StreamChannel.TOOL_EXECUTION
-        )
-        return CanonicalStreamItem(
-            stream_session_id=self.stream_session_id,
-            run_id=self.run_id,
-            turn_id=self.turn_id,
-            sequence=self._next_sequence(),
-            kind=kind,
-            channel=channel,
-            correlation=correlation or StreamItemCorrelation(),
-            text_delta=text_delta,
-            data=data,
-            metadata={} if metadata is None else metadata,
-        )
-
-    def _next_sequence(self) -> int:
-        sequence = self.sequence
-        self.sequence += 1
-        return sequence
-
-
-@dataclass(slots=True)
 class _MCPStreamProjectionState:
     accumulator: ProtocolStreamAccumulator
     tool_summaries: dict[str, dict[str, JSONValue]]
     resources: dict[str, MCPResource]
     resource_store: MCPResourceStore
     base_path: str
-    legacy_adapter: _MCPLegacyStreamAdapter = field(
-        default_factory=_MCPLegacyStreamAdapter
-    )
-    projection_state: ProtocolStreamProjectionState = field(init=False)
-
-    def __post_init__(self) -> None:
-        self.projection_state = ProtocolStreamProjectionState(
-            stream_session_id=self.legacy_adapter.stream_session_id,
-            run_id=self.legacy_adapter.run_id,
-            turn_id=self.legacy_adapter.turn_id,
-            accumulate=False,
-        )
-
-    @property
-    def has_canonical_items(self) -> bool:
-        return self.projection_state.has_canonical_items
-
-    @property
-    def legacy_stream_seen(self) -> bool:
-        return self.projection_state.legacy_stream_seen
 
 
 def create_router() -> APIRouter:
@@ -1056,7 +795,7 @@ async def _stream_mcp_response(
         base_path=base_path,
     )
     finished_normally = False
-    response_iterator: AsyncIterator[ResponseItem] | None = None
+    response_iterator: AsyncIterator[StreamConsumerProjection] | None = None
     stream_error_message: JSONObject | None = None
 
     def emit(message: JSONObject) -> Iterator[bytes]:
@@ -1134,78 +873,78 @@ async def _stream_mcp_response(
         return
 
     if finished_normally:
-        snapshot = state.accumulator.snapshot()
-        if state.has_canonical_items:
+        try:
+            state.accumulator.validate_complete()
+        except StreamValidationError as exc:
+            logger.exception("Invalid MCP canonical stream", exc_info=exc)
+            await _cleanup_mcp_stream_sources(
+                logger, response, response_iterator, cancelled=False
+            )
+            validation_error_message: JSONObject = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32603,
+                    "message": "An internal server error occurred.",
+                },
+            }
+            terminal_messages = await _collect_terminal_mcp_messages(
+                resource_store,
+                state.resources,
+                validation_error_message,
+            )
             try:
-                state.accumulator.validate_complete()
-            except StreamValidationError as exc:
-                logger.exception("Invalid MCP canonical stream", exc_info=exc)
-                await _cleanup_mcp_stream_sources(
-                    logger, response, response_iterator, cancelled=False
-                )
-                validation_error_message: JSONObject = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32603,
-                        "message": "An internal server error occurred.",
-                    },
-                }
-                terminal_messages = await _collect_terminal_mcp_messages(
-                    resource_store,
-                    state.resources,
-                    validation_error_message,
-                )
-                try:
-                    for message in terminal_messages:
-                        for payload in emit(message):
-                            yield payload
-                finally:
-                    await orchestrator.sync_messages()
-                return
-            if snapshot.terminal_outcome is StreamTerminalOutcome.CANCELLED:
-                await _cleanup_mcp_stream_sources(
-                    logger, response, response_iterator, cancelled=True
-                )
-                terminal_cancel_error_message: JSONObject = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32000, "message": "Request cancelled"},
-                }
-                terminal_messages = await _collect_terminal_mcp_messages(
-                    resource_store,
-                    state.resources,
-                    terminal_cancel_error_message,
-                )
-                try:
-                    for message in terminal_messages:
-                        for payload in emit(message):
-                            yield payload
-                finally:
-                    await orchestrator.sync_messages()
-                return
-            if snapshot.terminal_outcome is StreamTerminalOutcome.ERRORED:
-                await _cleanup_mcp_stream_sources(
-                    logger, response, response_iterator, cancelled=False
-                )
-                error_message = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32603,
-                        "message": _canonical_error_message(snapshot),
-                    },
-                }
-                terminal_messages = await _collect_terminal_mcp_messages(
-                    resource_store, state.resources, error_message
-                )
-                try:
-                    for message in terminal_messages:
-                        for payload in emit(message):
-                            yield payload
-                finally:
-                    await orchestrator.sync_messages()
-                return
+                for message in terminal_messages:
+                    for payload in emit(message):
+                        yield payload
+            finally:
+                await orchestrator.sync_messages()
+            return
+
+        snapshot = state.accumulator.snapshot()
+        if snapshot.terminal_outcome is StreamTerminalOutcome.CANCELLED:
+            await _cleanup_mcp_stream_sources(
+                logger, response, response_iterator, cancelled=True
+            )
+            terminal_cancel_error_message: JSONObject = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32000, "message": "Request cancelled"},
+            }
+            terminal_messages = await _collect_terminal_mcp_messages(
+                resource_store,
+                state.resources,
+                terminal_cancel_error_message,
+            )
+            try:
+                for message in terminal_messages:
+                    for payload in emit(message):
+                        yield payload
+            finally:
+                await orchestrator.sync_messages()
+            return
+        if snapshot.terminal_outcome is StreamTerminalOutcome.ERRORED:
+            await _cleanup_mcp_stream_sources(
+                logger, response, response_iterator, cancelled=False
+            )
+            error_message = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32603,
+                    "message": _canonical_error_message(snapshot),
+                },
+            }
+            terminal_messages = await _collect_terminal_mcp_messages(
+                resource_store, state.resources, error_message
+            )
+            try:
+                for message in terminal_messages:
+                    for payload in emit(message):
+                        yield payload
+            finally:
+                await orchestrator.sync_messages()
+            return
 
         answer_text = snapshot.answer_text
         reasoning_text = snapshot.reasoning_text
@@ -1237,10 +976,9 @@ async def _stream_mcp_response(
         }
         if reasoning_text:
             summary["reasoning"] = reasoning_text
-        if state.has_canonical_items:
-            _merge_canonical_tool_call_arguments(
-                state.tool_summaries, snapshot.tool_call_arguments
-            )
+        _merge_canonical_tool_call_arguments(
+            state.tool_summaries, snapshot.tool_call_arguments
+        )
         if state.tool_summaries:
             summary["toolCalls"] = list(state.tool_summaries.values())
 
@@ -1263,17 +1001,6 @@ async def _stream_mcp_response(
             resource_store, state.resources, cast(JSONObject, result_message)
         )
         try:
-            if not state.has_canonical_items:
-                completion: JSONObject = {
-                    "jsonrpc": "2.0",
-                    "method": "notifications/progress",
-                    "params": {
-                        "progressToken": progress_token,
-                        "progress": {"type": "answer.completed"},
-                    },
-                }
-                for payload in emit(completion):
-                    yield payload
             for message in terminal_messages:
                 for payload in emit(message):
                     yield payload
@@ -1282,7 +1009,7 @@ async def _stream_mcp_response(
 
 
 async def _mcp_notifications(
-    item: ResponseItem,
+    item: StreamConsumerProjection,
     state: _MCPStreamProjectionState,
     progress_token: str,
 ) -> list[JSONObject]:
@@ -1290,62 +1017,15 @@ async def _mcp_notifications(
 
 
 async def _mcp_stream_item_notifications(
-    item: ResponseItem,
+    item: StreamConsumerProjection,
     state: _MCPStreamProjectionState,
     progress_token: str,
 ) -> list[JSONObject]:
-    sequence = (
-        item.sequence
-        if isinstance(item, CanonicalStreamItem)
-        else state.legacy_adapter.sequence
+    return await _mcp_canonical_stream_item_notifications(
+        canonical_item_from_consumer_projection(item),
+        state,
+        progress_token,
     )
-    projections = state.projection_state.project_many(
-        item,
-        sequence,
-        unsupported_message="unsupported MCP stream item",
-    )
-    notifications: list[JSONObject] = []
-    for projection in projections:
-        notifications.extend(
-            await _mcp_canonical_stream_item_notifications(
-                canonical_item_from_consumer_projection(projection),
-                state,
-                progress_token,
-            )
-        )
-    return notifications
-
-
-def _canonical_items_from_mcp_event(
-    event: Event,
-    state: _MCPStreamProjectionState,
-) -> tuple[CanonicalStreamItem, ...]:
-    return state.legacy_adapter.canonical_items_from_event(event)
-
-
-def _legacy_tool_execution_output_items(
-    tool_call_id: str,
-    result: JSONValue,
-) -> tuple[tuple[str, str], ...]:
-    return tuple(
-        (name, text)
-        for name, text in _extract_append_streams(
-            tool_call_id, result
-        ).values()
-    )
-
-
-def _event_timings(event: Event) -> dict[str, LooseJsonValue]:
-    return {
-        "started": event.started,
-        "finished": event.finished,
-        "elapsed": event.elapsed,
-    }
-
-
-def _tool_metadata(item: Mapping[str, JSONValue]) -> dict[str, LooseJsonValue]:
-    name = item.get("name")
-    return {"tool_name": name} if isinstance(name, str) and name else {}
 
 
 async def _mcp_canonical_stream_item_notifications(
@@ -1565,8 +1245,6 @@ def _canonical_tool_execution_notification(
         timings = cast(JSONValue, data.get("timings"))
         if isinstance(timings, dict):
             tool_summary["started"] = timings.get("started")
-        if item.metadata.get("mcp.synthetic_tool_execution_start") is True:
-            return None
         return _tool_call_notification(
             tool_call_id=tool_call_id,
             name=name,
@@ -1873,128 +1551,6 @@ async def _terminal_mcp_messages(
         resource_store, resources, terminal_message
     ):
         yield message
-
-
-def _extract_append_streams(
-    tool_call_id: str, result: JSONValue
-) -> dict[str, tuple[str, str]]:
-    streams: dict[str, tuple[str, str]] = {}
-    if isinstance(result, dict):
-        for key in ("stdout", "stderr", "logs"):
-            value = result.get(key)
-            if isinstance(value, str) and value:
-                resource_key = f"{tool_call_id}:{key}"
-                streams[resource_key] = (key, value)
-    return streams
-
-
-def _tool_call_event_item(event: Event) -> dict[str, JSONValue] | None:
-    if not event.payload:
-        return None
-    if event.type is EventType.TOOL_RESULT:
-        tool_result = (
-            event.payload.get("result")
-            if isinstance(event.payload, dict)
-            else None
-        )
-        if isinstance(tool_result, ToolCallDiagnostic):
-            call = (
-                event.payload.get("call")
-                if isinstance(event.payload, dict)
-                else None
-            )
-            return _tool_call_diagnostic_item(
-                tool_result,
-                call if isinstance(call, ToolCall) else None,
-            )
-        if isinstance(tool_result, ToolCallError):
-            return {
-                "id": str(tool_result.call.id),
-                "name": tool_result.name,
-                "arguments": cast(JSONValue, tool_result.arguments),
-                "error": cast(JSONValue, tool_call_error_payload(tool_result)),
-            }
-        if isinstance(tool_result, ToolCallResult):
-            result: JSONValue = (
-                cast(JSONValue, tool_result.result)
-                if isinstance(
-                    tool_result.result, (dict, list, str, int, float, bool)
-                )
-                else to_json(tool_result.result)
-            )
-            return {
-                "id": str(tool_result.call.id),
-                "name": tool_result.name,
-                "arguments": cast(JSONValue, tool_result.arguments),
-                "result": result,
-            }
-    if event.type is EventType.TOOL_DIAGNOSTIC:
-        payload = event.payload if isinstance(event.payload, dict) else {}
-        diagnostic = _payload_diagnostic(payload)
-        if diagnostic is None:
-            return None
-        call = payload.get("call")
-        return _tool_call_diagnostic_item(
-            diagnostic,
-            call if isinstance(call, ToolCall) else None,
-        )
-    if isinstance(event.payload, list) and event.payload:
-        call = event.payload[0]
-    else:
-        call = (
-            event.payload.get("call")
-            if isinstance(event.payload, dict)
-            else None
-        )
-    if call is None:
-        return None
-    return {
-        "id": str(call.id),
-        "name": call.name,
-        "arguments": cast(JSONValue, call.arguments),
-    }
-
-
-def _payload_diagnostic(
-    payload: dict[str, Any],
-) -> ToolCallDiagnostic | None:
-    diagnostic = payload.get("diagnostic")
-    if isinstance(diagnostic, ToolCallDiagnostic):
-        return diagnostic
-    diagnostics = payload.get("diagnostics")
-    if isinstance(diagnostics, list):
-        return next(
-            (
-                item
-                for item in diagnostics
-                if isinstance(item, ToolCallDiagnostic)
-            ),
-            None,
-        )
-    return None
-
-
-def _tool_call_diagnostic_item(
-    diagnostic: ToolCallDiagnostic, call: ToolCall | None
-) -> dict[str, JSONValue]:
-    diagnostic_payload = {
-        "id": str(diagnostic.id),
-        **tool_call_diagnostic_payload(diagnostic),
-    }
-    if diagnostic.call_id is not None:
-        diagnostic_payload["call_id"] = str(diagnostic.call_id)
-    return {
-        "id": str(call.id if call else diagnostic.call_id or diagnostic.id),
-        "name": (
-            call.name
-            if call
-            else diagnostic.canonical_name
-            or diagnostic.requested_name
-            or "tool"
-        ),
-        "arguments": cast(JSONValue, call.arguments if call else None),
-        "diagnostic": cast(JSONValue, diagnostic_payload),
-    }
 
 
 def _get_resource_store(request: Request) -> MCPResourceStore:

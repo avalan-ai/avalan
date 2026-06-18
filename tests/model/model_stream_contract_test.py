@@ -326,8 +326,6 @@ _LEGACY_CLASSIFIER_STRING_SITES = {
         "OpenAIClient._non_stream_response_content",
     ),
     ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
-    ("avalan.server.routers.mcp", "_MCPLegacyStreamAdapter.map"),
-    ("avalan.server.routers.mcp", "_extract_append_streams"),
     ("avalan.model.stream", "_LegacyTokenStreamAdapter.item_from_token"),
     ("avalan.model.stream", "_LegacyTokenStreamAdapter.events_from_token"),
 }
@@ -413,20 +411,6 @@ _PHASE_1_1_LEGACY_CLASSIFIER_DEBT_CEILING = {
             StreamLegacySurface.TOOL_CALL_TOKEN,
         }
     ),
-    (
-        "avalan.server.routers.mcp",
-        "_MCPLegacyStreamAdapter.map",
-    ): frozenset(
-        {
-            StreamLegacySurface.STRING,
-            StreamLegacySurface.TOKEN,
-            StreamLegacySurface.EVENT,
-        }
-    ),
-    (
-        "avalan.server.routers.mcp",
-        "_extract_append_streams",
-    ): frozenset({StreamLegacySurface.STRING}),
     ("avalan.task.event", "_raw_event_payload"): frozenset(
         {StreamLegacySurface.EVENT}
     ),
@@ -463,7 +447,6 @@ _LEGACY_STREAMING_RETURN_SYMBOL_NAMES = {
     "OutputItem",
     "LegacyOutputItem",
     "OutputGenerator",
-    "ResponseItem",
 }
 _NON_STRING_LEGACY_STREAMING_RETURN_SYMBOL_NAMES = (
     _LEGACY_STREAMING_RETURN_SYMBOL_NAMES - {"str"}
@@ -472,16 +455,6 @@ _PHASE_1_1_PUBLIC_STREAMING_RETURN_DEBT_CEILING = {
     ("avalan.event.manager", "EventManager.listen", "return"): frozenset(
         {"Event"}
     ),
-    (
-        "avalan.server.routers.mcp",
-        "StreamResponse._response_iterator",
-        "alias",
-    ): frozenset({"Event", "Token", "str"}),
-    (
-        "avalan.server.routers.mcp",
-        "StreamResponse.__aiter__",
-        "return",
-    ): frozenset({"Event", "Token", "str"}),
 }
 
 _PHASE_1_1_INHERITED_TEXT_STREAM_CANONICALIZATION_CEILING: set[
@@ -7849,7 +7822,10 @@ class StreamContractTestCase(TestCase):
         self.assertEqual(
             {category for entry in inventory for category in entry.categories},
             _PRODUCTION_LEGACY_BOUNDARY_CATEGORIES
-            - {StreamLegacyBoundaryCategory.ORCHESTRATOR},
+            - {
+                StreamLegacyBoundaryCategory.MCP,
+                StreamLegacyBoundaryCategory.ORCHESTRATOR,
+            },
         )
 
         canonical_surface_kinds = {
@@ -8061,6 +8037,7 @@ class StreamContractTestCase(TestCase):
                 StreamLegacyBoundaryCategory.ORCHESTRATOR,
                 StreamLegacyBoundaryCategory.SDK_RESPONSE,
                 StreamLegacyBoundaryCategory.CHAT_SSE,
+                StreamLegacyBoundaryCategory.MCP,
                 StreamLegacyBoundaryCategory.RESPONSES_SSE,
             },
         )
@@ -8118,9 +8095,6 @@ class StreamContractTestCase(TestCase):
                 "ToolCallResponseParser",
             ),
             ("avalan.cli.commands.model", "_stream_projection"),
-            ("avalan.server.routers.mcp", "ResponseItem"),
-            ("avalan.server.routers.mcp", "_MCPLegacyStreamAdapter.map"),
-            ("avalan.server.routers.mcp", "_extract_append_streams"),
             ("avalan.server.a2a.router", "_A2ALegacyStreamAdapter.map"),
             ("avalan.flow.stream", "FlowEventSink"),
             ("avalan.flow.stream", "FlowCanonicalEventListener.__call__"),
@@ -8138,15 +8112,6 @@ class StreamContractTestCase(TestCase):
                     StreamLegacyBoundaryDirection.EMITS,
                     StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
                 ),
-            ),
-            ("avalan.server.routers.mcp", "ResponseItem"): (
-                (
-                    StreamLegacySurface.STRING,
-                    StreamLegacySurface.TOKEN,
-                    StreamLegacySurface.EVENT,
-                ),
-                StreamLegacyBoundaryCategory.MCP,
-                (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
             ),
             (
                 "avalan.server.a2a.router",
@@ -8747,7 +8712,6 @@ class InheritsCanonical(CanonicalBase):
                 StreamLegacyBoundaryCategory.PARSER,
                 StreamLegacyBoundaryCategory.SDK_RESPONSE,
                 StreamLegacyBoundaryCategory.A2A,
-                StreamLegacyBoundaryCategory.MCP,
             },
         )
         self.assertNotIn(
@@ -8849,14 +8813,6 @@ class InheritsCanonical(CanonicalBase):
         self.assertIs(
             a2a_entry.category,
             StreamLegacyBoundaryCategory.A2A,
-        )
-        mcp_entry = classify_legacy_stream_classifier(
-            "avalan.server.routers.mcp",
-            "_MCPLegacyStreamAdapter.map",
-        )
-        self.assertIs(
-            mcp_entry.category,
-            StreamLegacyBoundaryCategory.MCP,
         )
         for entry in inventory:
             with self.subTest(module=entry.module, qualname=entry.qualname):
