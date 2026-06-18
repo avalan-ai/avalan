@@ -1140,11 +1140,13 @@ def stream_consumer_iterator(
     stream_session_id: str,
     run_id: str,
     turn_id: str,
-    prefer_consumer_projection_api: bool = True,
-) -> AsyncIterator[Any]:
-    assert isinstance(prefer_consumer_projection_api, bool)
+    unsupported_message: str = "unsupported stream consumer item",
+    close_source_on_generator_exit: bool = True,
+) -> AsyncIterator[StreamConsumerProjection]:
+    _assert_non_empty_string(unsupported_message, "unsupported_message")
+    assert isinstance(close_source_on_generator_exit, bool)
     consumer_projections = getattr(source, "consumer_projections", None)
-    if prefer_consumer_projection_api and callable(consumer_projections):
+    if callable(consumer_projections):
         iterator = consumer_projections(
             stream_session_id=stream_session_id,
             run_id=run_id,
@@ -1152,7 +1154,56 @@ def stream_consumer_iterator(
         )
         assert isinstance(iterator, AsyncIterable)
         return _validated_consumer_projection_iterator(iterator.__aiter__())
-    return stream_iterator(source)
+    assert isinstance(
+        source, AsyncIterable
+    ), "stream consumer source must be an async iterable"
+    return _validated_stream_consumer_item_iterator(
+        source.__aiter__(),
+        source=source,
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+        unsupported_message=unsupported_message,
+        close_source_on_generator_exit=close_source_on_generator_exit,
+    )
+
+
+async def _validated_stream_consumer_item_iterator(
+    iterator: AsyncIterator[Any],
+    *,
+    source: AsyncIterable[Any],
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+    unsupported_message: str,
+    close_source_on_generator_exit: bool,
+) -> AsyncIterator[StreamConsumerProjection]:
+    state = StreamProjectionState(
+        stream_session_id=stream_session_id,
+        run_id=run_id,
+        turn_id=turn_id,
+    )
+    sequence = 0
+    close_source = False
+    try:
+        async for item in iterator:
+            projection = state.project(
+                item,
+                sequence,
+                unsupported_message=unsupported_message,
+            )
+            yield projection
+            sequence += 1
+        state.validate_complete()
+    except (GeneratorExit, CancelledError):
+        close_source = close_source_on_generator_exit
+        raise
+    except Exception:
+        close_source = close_source_on_generator_exit
+        raise
+    finally:
+        if iterator is not source or close_source:
+            await _close_async_iterable(iterator)
 
 
 async def _validated_consumer_projection_iterator(

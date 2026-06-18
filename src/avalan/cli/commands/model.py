@@ -19,13 +19,9 @@ from ...model.manager import ModelManager
 from ...model.nlp.text.generation import TextGenerationModel
 from ...model.response.text import TextGenerationResponse
 from ...model.stream import (
-    CanonicalStreamAccumulator,
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
-    StreamProjectionState,
-    StreamValidationError,
-    canonical_item_from_consumer_projection,
     project_stream_consumer_item,
     stream_consumer_iterator,
     stream_projection_display_token,
@@ -1113,34 +1109,14 @@ async def _token_stream(
 async def _plain_stdout_projections(
     response: TextGenerationResponse | AsyncIterator[Any],
 ) -> AsyncIterator[StreamConsumerProjection]:
-    consumer_projections = getattr(response, "consumer_projections", None)
-    if callable(consumer_projections):
-        accumulator = CanonicalStreamAccumulator()
-        async for projection in consumer_projections(
-            stream_session_id="cli-stdout-stream",
-            run_id="cli-stdout-run",
-            turn_id="cli-stdout-turn",
-        ):
-            if not isinstance(projection, StreamConsumerProjection):
-                raise StreamValidationError(
-                    "consumer projection stream item must be "
-                    "StreamConsumerProjection"
-                )
-            accumulator.add(
-                canonical_item_from_consumer_projection(projection)
-            )
-            yield projection
-        accumulator.validate_complete()
-        return
-
-    async for item in _stream_render_items(
+    async for projection in stream_consumer_iterator(
         response,
         stream_session_id="cli-stdout-stream",
         run_id="cli-stdout-run",
         turn_id="cli-stdout-turn",
+        unsupported_message="unsupported CLI stream item",
     ):
-        assert item.projection is not None
-        yield item.projection
+        yield projection
 
 
 async def _stream_render_items(
@@ -1152,24 +1128,14 @@ async def _stream_render_items(
     include_display_token: bool = False,
 ) -> AsyncIterator[_StreamRenderItem]:
     assert isinstance(include_display_token, bool)
-    state = StreamProjectionState(
-        stream_session_id=stream_session_id,
-        run_id=run_id,
-        turn_id=turn_id,
-    )
-    sequence = 0
 
-    async for token in stream_consumer_iterator(
+    async for projection in stream_consumer_iterator(
         response,
         stream_session_id=stream_session_id,
         run_id=run_id,
         turn_id=turn_id,
+        unsupported_message="unsupported CLI stream item",
     ):
-        projection = state.project(
-            token,
-            sequence,
-            unsupported_message="unsupported CLI stream item",
-        )
         yield _StreamRenderItem(
             projection=projection,
             source_token=(
@@ -1178,10 +1144,6 @@ async def _stream_render_items(
                 else None
             ),
         )
-        if projection.text_delta is not None:
-            sequence += 1
-
-    state.validate_complete()
 
 
 def _stream_text(
@@ -1204,7 +1166,7 @@ def _is_tool_call_stream_item(token: object) -> bool:
 
 
 def _stream_projection(
-    token: CanonicalStreamItem | StreamConsumerProjection | Token | str,
+    token: CanonicalStreamItem | StreamConsumerProjection,
 ) -> StreamConsumerProjection:
     return project_stream_consumer_item(
         token,

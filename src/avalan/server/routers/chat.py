@@ -3,6 +3,7 @@ from ...entities import (
     MessageRole,
 )
 from ...model.stream import (
+    CanonicalStreamItem,
     StreamConsumerProjection,
     StreamItemKind,
     StreamTerminalOutcome,
@@ -133,6 +134,10 @@ async def create_chat_completion(
                 stream_session_id="chat-sse-stream",
                 run_id=str(response_id),
                 turn_id="chat-sse-turn",
+                unsupported_message=(
+                    "unsupported stream item for Chat SSE projection"
+                ),
+                close_source_on_generator_exit=False,
             )
             cancelled = False
             try:
@@ -272,7 +277,7 @@ def _chat_terminal_event(
 
 
 def _stream_projection(
-    token: object,
+    token: CanonicalStreamItem | StreamConsumerProjection,
     sequence: int,
 ) -> StreamConsumerProjection:
     return project_stream_consumer_item(

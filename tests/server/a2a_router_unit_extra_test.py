@@ -1934,6 +1934,83 @@ async def _run_translator_prefers_consumer_projection_stream() -> None:
     assert artifacts["answer"]["content"][0]["text"] == "projected"
 
 
+def test_translator_run_stream_closes_open_artifact_after_iterator_end() -> (
+    None
+):
+    asyncio.run(_run_open_artifact_iterator_end())
+
+
+async def _run_open_artifact_iterator_end() -> None:
+    store = TaskStore()
+    task_id = "open-artifact-finalization"
+    await store.create_task(
+        task_id,
+        model="model",
+        instructions=None,
+        input_messages=[],
+        metadata={},
+    )
+    translator = A2AResponseTranslator(task_id, store)
+
+    class Source:
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        def __aiter__(self) -> "Source":
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+        async def aclose(self) -> None:
+            self.close_count += 1
+
+    def fake_stream_consumer_iterator(*_args, **_kwargs):
+        async def gen():
+            for item in (
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="open",
+                ),
+            ):
+                yield project_canonical_stream_item(item)
+
+        return gen()
+
+    source = Source()
+    router_module = importlib.import_module("avalan.server.a2a.router")
+    original_iterator = router_module.stream_consumer_iterator
+    router_module.stream_consumer_iterator = fake_stream_consumer_iterator
+    try:
+        events = []
+        with pytest.raises(
+            StreamValidationError,
+            match="stream missing terminal outcome",
+        ):
+            async for event in translator.run_stream(source):
+                events.append(event)
+    finally:
+        router_module.stream_consumer_iterator = original_iterator
+
+    assert any(event["event"] == "artifact.completed" for event in events)
+    task = await store.get_task(task_id)
+    assert task["status"] == "failed"
+    assert source.close_count == 1
+
+
 def test_translator_rejects_malformed_consumer_projection_stream() -> None:
     asyncio.run(_run_translator_rejects_bad_projection_stream())
 

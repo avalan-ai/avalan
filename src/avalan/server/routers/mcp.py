@@ -1072,6 +1072,8 @@ async def _stream_mcp_response(
             stream_session_id="mcp-stream",
             run_id=str(response_id),
             turn_id="mcp-turn",
+            unsupported_message="unsupported MCP stream item",
+            close_source_on_generator_exit=False,
         )
         async for item in cancellable_stream_iterator(
             response_iterator, cancel_event

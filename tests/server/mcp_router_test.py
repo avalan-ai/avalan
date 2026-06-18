@@ -4549,6 +4549,94 @@ class MCPRouterAsyncTestCase(IsolatedAsyncioTestCase):
         self.assertTrue((await resource_store.get(resource_id)).closed)
         orchestrator.sync_messages.assert_awaited_once()
 
+    async def test_stream_response_handles_protocol_validation_failure(
+        self,
+    ) -> None:
+        response = DummyResponse(
+            [
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=0,
+                    kind=StreamItemKind.STREAM_STARTED,
+                    channel=StreamChannel.CONTROL,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=1,
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    channel=StreamChannel.ANSWER,
+                    text_delta="answer",
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=2,
+                    kind=StreamItemKind.ANSWER_DONE,
+                    channel=StreamChannel.ANSWER,
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=3,
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    channel=StreamChannel.USAGE,
+                    usage={},
+                ),
+                CanonicalStreamItem(
+                    stream_session_id="s",
+                    run_id="r",
+                    turn_id="t",
+                    sequence=4,
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    channel=StreamChannel.CONTROL,
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+            ]
+        )
+        request_model = ChatCompletionRequest(
+            model="gpt",
+            messages=[ChatMessage(role="user", content="hi")],
+            stream=True,
+        )
+        orchestrator = MagicMock()
+        orchestrator.sync_messages = AsyncMock()
+
+        with patch.object(
+            mcp_router.ProtocolStreamAccumulator,
+            "validate_complete",
+            side_effect=StreamValidationError("forced protocol failure"),
+        ):
+            payloads: list[dict[str, Any]] = []
+            async for chunk in mcp_router._stream_mcp_response(
+                request_id="id",
+                request_model=request_model,
+                response=response,
+                response_id=uuid4(),
+                timestamp=1,
+                progress_token="tok",
+                orchestrator=orchestrator,
+                logger=MagicMock(),
+                resource_store=mcp_router.MCPResourceStore(),
+                base_path="/base",
+                cancel_event=AsyncEvent(),
+            ):
+                payloads.extend(
+                    loads(part)
+                    for part in chunk.decode("utf-8").splitlines()
+                    if part
+                )
+
+        errors = [item for item in payloads if "error" in item]
+        self.assertEqual(errors[-1]["error"]["code"], -32603)
+        self.assertTrue(response._closed)
+        orchestrator.sync_messages.assert_awaited()
+
     async def test_stream_response_honors_cancellation_after_pull(
         self,
     ) -> None:
