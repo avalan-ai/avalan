@@ -1042,32 +1042,6 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
         self.assertIn("usage usage.delta", str(frames[2].renderable))
         self.assertIn("projection flow.event", str(frames[2].renderable))
 
-    async def test_live_adapter_renders_real_fancy_theme_frame(self) -> None:
-        config = _config()
-        theme = FancyTheme(lambda message: message, lambda s, p, n: s)
-        presenter = LegacyThemeStreamPresenter(theme, getLogger(__name__))
-
-        items = await _collect(
-            presenter,
-            _request(
-                config,
-                _snapshot(
-                    config,
-                    answer="hello",
-                    display_token=Token(id=1, token="hello"),
-                    input_tokens=1,
-                ),
-            ),
-        )
-
-        self.assertTrue(
-            any(
-                isinstance(item, CliStreamRenderableFrame)
-                and item.role == "stream"
-                for item in items
-            )
-        )
-
     async def test_live_adapter_uses_context_input_count_when_missing(
         self,
     ) -> None:

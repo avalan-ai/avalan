@@ -589,6 +589,8 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
                 id=1,
                 token="25",
                 probability=0.3,
+                step=4,
+                probability_distribution="softmax",
                 tokens=[
                     Token(id=1, token="25", probability=0.3),
                     Token(id=2, token="24", probability=0.7),
@@ -635,7 +637,15 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
             [frame.role for frame in frames],
             ["tools", "events", "stats", "stream"],
         )
-        self.assertEqual(frames[-1].current_token.text, "25")
+        current_token = frames[-1].current_token
+        self.assertIsNotNone(current_token)
+        assert current_token is not None
+        self.assertEqual(current_token.token_id, 1)
+        self.assertEqual(current_token.text, "25")
+        self.assertEqual(current_token.step, 4)
+        self.assertEqual(current_token.probability_distribution, "softmax")
+        self.assertEqual(current_token.candidates[0].text, "25")
+        self.assertEqual(current_token.candidates[1].probability, 0.7)
         output = _render_visible_text(*(frame.renderable for frame in frames))
         for fragment in (
             "Tool calls",
@@ -662,6 +672,139 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, output)
+
+    async def test_progress_title_pluralization_singular(self) -> None:
+        config = _stream_config(display_tools=False, display_events=False)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("a", tokens=1)
+        builder.update_token_counts(input_tokens=1, output_tokens=1)
+        event_stats = EventStats()
+        event_stats.triggers = {
+            EventType.TOOL_EXECUTE: 1,
+            EventType.TOOL_RESULT: 1,
+        }
+        event_stats.total_triggers = 1
+        presenter = FancyStreamPresenter(
+            self.theme,
+            getLogger(__name__),
+            event_stats=event_stats,
+        )
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        output = _frame_text(stream_frame)
+        self.assertIn("1 token in", output)
+        self.assertIn("1 token out", output)
+        self.assertIn("1 event", output)
+        self.assertIn("1 tool call", output)
+        self.assertIn("1 result", output)
+
+    async def test_progress_title_pluralization_plural(self) -> None:
+        config = _stream_config(display_tools=False, display_events=False)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_tool_call_request_text("tool", tokens=3)
+        builder.append_answer_text("answer", tokens=2)
+        builder.update_token_counts(input_tokens=2, output_tokens=2)
+        event_stats = EventStats()
+        event_stats.triggers = {
+            EventType.TOOL_EXECUTE: 2,
+            EventType.TOOL_RESULT: 2,
+        }
+        event_stats.total_triggers = 2
+        presenter = FancyStreamPresenter(
+            self.theme,
+            getLogger(__name__),
+            event_stats=event_stats,
+        )
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        output = _frame_text(stream_frame)
+        self.assertIn("2 tokens in", output)
+        self.assertIn("2 tokens out", output)
+        self.assertIn("3 tool tokens", output)
+        self.assertIn("2 events", output)
+        self.assertIn("2 tool calls", output)
+        self.assertIn("2 results", output)
+
+    async def test_progress_panel_without_text_output(self) -> None:
+        config = _stream_config(display_tools=False, display_events=False)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.update_token_counts(input_tokens=4, output_tokens=0)
+        event_stats = EventStats()
+        event_stats.triggers = {}
+        event_stats.total_triggers = 3
+        presenter = FancyStreamPresenter(
+            self.theme,
+            getLogger(__name__),
+            event_stats=event_stats,
+        )
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(config, builder.snapshot()),
+        )
+
+        frames = [
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+        ]
+        self.assertEqual([frame.role for frame in frames], ["stream"])
+        output = _frame_text(frames[0])
+        self.assertIn("Token stats", output)
+        self.assertIn("4 tokens in", output)
+        self.assertIn("0 tokens out", output)
+        self.assertIn("3 events", output)
+
+    async def test_answer_wraps_long_lines(self) -> None:
+        config = _stream_config(
+            display_tools=False,
+            display_events=False,
+            display_tokens=0,
+            answer_height_expand=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_answer_text("Word " * 20 + "\n" + "Another word " * 20)
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                config,
+                builder.snapshot(),
+                context=_stream_context(console_width=40),
+            ),
+        )
+
+        stream_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "stream"
+        )
+        output = _frame_text(stream_frame)
+        self.assertIn("Word Word", output)
+        self.assertIn("Another word", output)
+        self.assertGreaterEqual(output.count("\n"), 1)
 
     def test_theme_factory_returns_fancy_stream_presenter(self) -> None:
         presenter = self.theme.stream_presenter(getLogger(__name__))
@@ -2711,13 +2854,6 @@ class FancyThemeMoreTests(unittest.TestCase):
         panel = self.theme.tokenizer_config(cfg)
         headers = panel.renderable.columns[0]._cells
         self.assertIn("Added tokens", headers)
-
-    def test_tokens_table_multiple(self):
-        t1 = Token(id=1, token="a", probability=0.1)
-        t2 = Token(id=2, token="b", probability=0.2)
-        table = self.theme._tokens_table([t1, t2], t1, t2)
-        self.assertEqual(table.row_count, 2)
-        self.assertIn("[cyan]", table.columns[1]._cells[1])
 
     def test_parameter_count_none(self):
         self.assertEqual(self.theme._parameter_count(None), "N/A")
