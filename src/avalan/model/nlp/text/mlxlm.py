@@ -27,12 +27,13 @@ from importlib.util import find_spec
 from logging import Logger, getLogger
 from subprocess import DEVNULL, TimeoutExpired, run
 from sys import executable, modules
-from typing import Any, AsyncGenerator, AsyncIterator, Literal, cast
+from typing import Any, AsyncGenerator, AsyncIterator, Literal, TypeVar, cast
 
 from torch import Tensor
 from transformers.tokenization_utils_base import BatchEncoding
 
 _MLX_IMPORT_CHECK_TIMEOUT_SECONDS = 10
+_T = TypeVar("_T")
 
 
 def _mlx_unavailable_message() -> str:
@@ -92,9 +93,12 @@ class MlxLmStream(TextGenerationVendorStream):
         generator: Iterator[object] | Callable[[], Iterator[object]],
         *,
         use_executor: bool = True,
+        executor: ThreadPoolExecutor | None = None,
     ) -> None:
         self._closed = False
-        self._executor = (
+        assert use_executor or executor is None
+        self._owns_executor = executor is None and use_executor
+        self._executor = executor or (
             ThreadPoolExecutor(max_workers=1) if use_executor else None
         )
         if isinstance(generator, Iterator):
@@ -120,7 +124,7 @@ class MlxLmStream(TextGenerationVendorStream):
         if self._closed:
             return
         self._closed = True
-        if self._executor:
+        if self._executor and self._owns_executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _next_chunk(self) -> object:
@@ -288,11 +292,23 @@ class MlxLmModel(TextGenerationModel):
         settings = settings or TransformerEngineSettings()
         if settings.auto_load_tokenizer:
             settings = replace(settings, auto_load_tokenizer=False)
+        self._worker: ThreadPoolExecutor | None = None
         super().__init__(model_id, settings, logger)
 
     @property
     def supports_sample_generation(self) -> bool:
         return False
+
+    def _worker_executor(self) -> ThreadPoolExecutor:
+        if self._worker is None:
+            self._worker = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="mlx-lm"
+            )
+        return self._worker
+
+    def _run_on_worker(self, call: Callable[[], _T]) -> _T:
+        assert callable(call)
+        return self._worker_executor().submit(call).result()
 
     def _load_model(self) -> Any:
         assert self._model_id, "A model id is required."
@@ -300,7 +316,9 @@ class MlxLmModel(TextGenerationModel):
         load_fn = cast(
             Callable[[str], tuple[Any, Any]], getattr(mlx_lm, "load")
         )
-        model, tokenizer = load_fn(self._model_id)
+        model, tokenizer = self._run_on_worker(
+            lambda: load_fn(cast(str, self._model_id))
+        )
         self._tokenizer = tokenizer
         self._loaded_tokenizer = True
         return model
@@ -311,24 +329,29 @@ class MlxLmModel(TextGenerationModel):
         settings: GenerationSettings,
         skip_special_tokens: bool,
     ) -> AsyncGenerator[CanonicalStreamItem, None]:
-        sampler, prompt = self._get_sampler_and_prompt(
-            inputs, settings, skip_special_tokens
-        )
         mlx_lm = _require_mlx_lm()
         stream_generate_fn = cast(
             Callable[..., Iterator[object]], getattr(mlx_lm, "stream_generate")
         )
-        # mlx_lm's generation stream is thread-local, so keep generation on
-        # the same thread that loaded the model and initialized MLX.
-        stream = MlxLmStream(
-            lambda: stream_generate_fn(
+
+        def stream_generate() -> Iterator[object]:
+            sampler, prompt = self._get_sampler_and_prompt(
+                inputs, settings, skip_special_tokens
+            )
+            return stream_generate_fn(
                 self._model,
                 self._tokenizer,
                 prompt,
                 sampler=sampler,
                 max_tokens=settings.max_new_tokens,
-            ),
-            use_executor=False,
+            )
+
+        # mlx_lm.stream_generate returns a synchronous iterator. Build and
+        # advance it on one worker so canonical deltas reach the event loop
+        # without adding a queue or batching layer.
+        stream = MlxLmStream(
+            stream_generate,
+            executor=self._worker_executor(),
         )
         try:
             while True:
@@ -346,17 +369,42 @@ class MlxLmModel(TextGenerationModel):
         settings: GenerationSettings,
         skip_special_tokens: bool,
     ) -> str:
-        sampler, prompt = self._get_sampler_and_prompt(
-            inputs, settings, skip_special_tokens
-        )
         mlx_lm = _require_mlx_lm()
         generate_fn = cast(Callable[..., str], getattr(mlx_lm, "generate"))
-        return generate_fn(
-            self._model,
-            self._tokenizer,
-            prompt,
-            sampler=sampler,
-            max_tokens=settings.max_new_tokens,
+
+        def generate_text() -> str:
+            sampler, prompt = self._get_sampler_and_prompt(
+                inputs, settings, skip_special_tokens
+            )
+            return generate_fn(
+                self._model,
+                self._tokenizer,
+                prompt,
+                sampler=sampler,
+                max_tokens=settings.max_new_tokens,
+            )
+
+        return self._run_on_worker(generate_text)
+
+    def close(self) -> None:
+        """Close MLX worker resources."""
+        worker = self._worker
+        if worker is None:
+            return
+        self._worker = None
+        worker.shutdown(wait=False, cancel_futures=True)
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any | None,
+    ) -> Literal[False]:
+        self.close()
+        return super().__exit__(
+            exc_type,
+            exc_value,
+            traceback,
         )
 
     async def __call__(
