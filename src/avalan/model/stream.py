@@ -113,6 +113,36 @@ class StreamLegacySurfaceClassification(StrEnum):
     TEMPORARY_COMPATIBILITY_SHIM = "temporary_compatibility_shim"
 
 
+class StreamLegacyBoundaryCategory(StrEnum):
+    PRODUCER = "producer"
+    SDK_RESPONSE = "sdk_response"
+    ORCHESTRATOR = "orchestrator"
+    PARSER = "parser"
+    EVENTING = "eventing"
+    CLI_STDOUT = "cli_stdout"
+    CHAT_SSE = "chat_sse"
+    RESPONSES_SSE = "responses_sse"
+    MCP = "mcp"
+    A2A = "a2a"
+    FLOW = "flow"
+    TEST_FIXTURE = "test_fixture"
+    HELPER_ONLY = "helper_only"
+
+
+class StreamLegacyInventoryScope(StrEnum):
+    PRODUCTION_RUNTIME = "production_runtime"
+    TEST_FIXTURE = "test_fixture"
+    HELPER_ONLY = "helper_only"
+
+
+class StreamLegacyBoundaryDirection(StrEnum):
+    ACCEPTS = "accepts"
+    EMITS = "emits"
+    PROJECTS = "projects"
+    PUBLIC_RETURN_TYPE = "public_return_type"
+    CONTROL = "control"
+
+
 class StreamProducerBackend(StrEnum):
     HOSTED = "hosted"
     LOCAL = "local"
@@ -177,6 +207,8 @@ class StreamProviderCapabilities:
 class StreamLegacySurfaceInventoryEntry:
     surface: StreamLegacySurface
     classification: StreamLegacySurfaceClassification
+    categories: tuple[StreamLegacyBoundaryCategory, ...]
+    scope: StreamLegacyInventoryScope
     owner: str
     removal_condition: str
     ingestion_shim: str | None = None
@@ -189,6 +221,9 @@ class StreamLegacySurfaceInventoryEntry:
             self.classification,
             StreamLegacySurfaceClassification,
         )
+        _assert_legacy_inventory_metadata(
+            self.categories, self.scope, self.classification
+        )
         _assert_non_empty_string(self.owner, "owner")
         _assert_non_empty_string(self.removal_condition, "removal_condition")
         if self.ingestion_shim is not None:
@@ -197,6 +232,9 @@ class StreamLegacySurfaceInventoryEntry:
             assert isinstance(self.canonical_kind, StreamItemKind)
         if self.canonical_channel is not None:
             assert isinstance(self.canonical_channel, StreamChannel)
+        assert (self.canonical_kind is None) is (
+            self.canonical_channel is None
+        )
         if (
             self.canonical_kind is not None
             and self.canonical_channel is not None
@@ -222,6 +260,8 @@ class StreamLegacyClassifierInventoryEntry:
     qualname: str
     surfaces: tuple[StreamLegacySurface, ...]
     classification: StreamLegacySurfaceClassification
+    category: StreamLegacyBoundaryCategory
+    scope: StreamLegacyInventoryScope
     owner: str
     removal_condition: str
 
@@ -237,11 +277,51 @@ class StreamLegacyClassifierInventoryEntry:
             self.classification,
             StreamLegacySurfaceClassification,
         )
-        assert self.classification in (
-            StreamLegacySurfaceClassification.MIGRATE_LATER,
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM,
-            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM,
+        _assert_legacy_inventory_metadata(
+            (self.category,), self.scope, self.classification
         )
+        _assert_legacy_inventory_namespace(
+            self.module, self.qualname, self.scope
+        )
+        _assert_non_empty_string(self.owner, "owner")
+        _assert_non_empty_string(self.removal_condition, "removal_condition")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class StreamLegacyRuntimeBoundaryInventoryEntry:
+    module: str
+    qualname: str
+    surfaces: tuple[StreamLegacySurface, ...]
+    classification: StreamLegacySurfaceClassification
+    category: StreamLegacyBoundaryCategory
+    scope: StreamLegacyInventoryScope
+    directions: tuple[StreamLegacyBoundaryDirection, ...]
+    owner: str
+    removal_condition: str
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.module, "module")
+        _assert_non_empty_string(self.qualname, "qualname")
+        assert isinstance(self.surfaces, tuple)
+        assert self.surfaces
+        assert len(set(self.surfaces)) == len(self.surfaces)
+        for surface in self.surfaces:
+            assert isinstance(surface, StreamLegacySurface)
+        assert isinstance(
+            self.classification,
+            StreamLegacySurfaceClassification,
+        )
+        _assert_legacy_inventory_metadata(
+            (self.category,), self.scope, self.classification
+        )
+        _assert_legacy_inventory_namespace(
+            self.module, self.qualname, self.scope
+        )
+        assert isinstance(self.directions, tuple)
+        assert self.directions
+        assert len(set(self.directions)) == len(self.directions)
+        for direction in self.directions:
+            assert isinstance(direction, StreamLegacyBoundaryDirection)
         _assert_non_empty_string(self.owner, "owner")
         _assert_non_empty_string(self.removal_condition, "removal_condition")
 
@@ -1332,6 +1412,51 @@ def _assert_non_empty_string(value: object, field_name: str) -> None:
     assert value.strip(), f"{field_name} must not be empty"
 
 
+def _assert_legacy_inventory_metadata(
+    categories: tuple[StreamLegacyBoundaryCategory, ...],
+    scope: StreamLegacyInventoryScope,
+    classification: StreamLegacySurfaceClassification,
+) -> None:
+    assert isinstance(categories, tuple), "categories must be a tuple"
+    assert categories, "categories must not be empty"
+    assert len(set(categories)) == len(categories)
+    for category in categories:
+        assert isinstance(category, StreamLegacyBoundaryCategory)
+    assert isinstance(scope, StreamLegacyInventoryScope)
+    assert isinstance(classification, StreamLegacySurfaceClassification)
+    if scope is StreamLegacyInventoryScope.PRODUCTION_RUNTIME:
+        assert StreamLegacyBoundaryCategory.TEST_FIXTURE not in categories
+        assert classification is StreamLegacySurfaceClassification.REMOVE_NOW
+    elif scope is StreamLegacyInventoryScope.TEST_FIXTURE:
+        assert categories == (StreamLegacyBoundaryCategory.TEST_FIXTURE,)
+        assert (
+            classification is not StreamLegacySurfaceClassification.REMOVE_NOW
+        )
+    else:
+        assert categories == (StreamLegacyBoundaryCategory.HELPER_ONLY,)
+        assert (
+            classification is not StreamLegacySurfaceClassification.REMOVE_NOW
+        )
+
+
+def _assert_legacy_inventory_namespace(
+    module: str,
+    qualname: str,
+    scope: StreamLegacyInventoryScope,
+) -> None:
+    _assert_non_empty_string(module, "module")
+    _assert_non_empty_string(qualname, "qualname")
+    assert isinstance(scope, StreamLegacyInventoryScope)
+    if scope is StreamLegacyInventoryScope.PRODUCTION_RUNTIME:
+        return
+    if scope is StreamLegacyInventoryScope.TEST_FIXTURE:
+        assert module.startswith("tests.")
+        assert "legacy_fixture" in qualname or "legacy_rejection" in qualname
+        return
+    assert module.startswith("avalan.") or module.startswith("tests.")
+    assert "legacy_helper" in qualname or "migration_helper" in qualname
+
+
 def stream_channel_for_kind(kind: StreamItemKind) -> StreamChannel:
     assert isinstance(kind, StreamItemKind)
     return _STREAM_KIND_CHANNELS[kind]
@@ -1349,74 +1474,129 @@ _LEGACY_STREAM_SURFACE_INVENTORY: tuple[
 ] = (
     StreamLegacySurfaceInventoryEntry(
         surface=StreamLegacySurface.STRING,
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        categories=(
+            StreamLegacyBoundaryCategory.PRODUCER,
+            StreamLegacyBoundaryCategory.SDK_RESPONSE,
+            StreamLegacyBoundaryCategory.ORCHESTRATOR,
+            StreamLegacyBoundaryCategory.PARSER,
+            StreamLegacyBoundaryCategory.CLI_STDOUT,
+            StreamLegacyBoundaryCategory.CHAT_SSE,
+            StreamLegacyBoundaryCategory.RESPONSES_SSE,
+            StreamLegacyBoundaryCategory.MCP,
+            StreamLegacyBoundaryCategory.A2A,
+            StreamLegacyBoundaryCategory.FLOW,
+            StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.stream",
         removal_condition=(
             "Canonical item iteration replaces string stream output."
         ),
-        ingestion_shim="canonical_item_from_token",
         canonical_kind=StreamItemKind.ANSWER_DELTA,
         canonical_channel=StreamChannel.ANSWER,
     ),
     StreamLegacySurfaceInventoryEntry(
         surface=StreamLegacySurface.TOKEN,
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        categories=(
+            StreamLegacyBoundaryCategory.PRODUCER,
+            StreamLegacyBoundaryCategory.SDK_RESPONSE,
+            StreamLegacyBoundaryCategory.ORCHESTRATOR,
+            StreamLegacyBoundaryCategory.CLI_STDOUT,
+            StreamLegacyBoundaryCategory.CHAT_SSE,
+            StreamLegacyBoundaryCategory.RESPONSES_SSE,
+            StreamLegacyBoundaryCategory.MCP,
+            StreamLegacyBoundaryCategory.A2A,
+            StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.stream",
         removal_condition=(
             "Canonical item iteration replaces Token stream output."
         ),
-        ingestion_shim="canonical_item_from_token",
         canonical_kind=StreamItemKind.ANSWER_DELTA,
         canonical_channel=StreamChannel.ANSWER,
     ),
     StreamLegacySurfaceInventoryEntry(
         surface=StreamLegacySurface.TOKEN_DETAIL,
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        categories=(
+            StreamLegacyBoundaryCategory.PRODUCER,
+            StreamLegacyBoundaryCategory.SDK_RESPONSE,
+            StreamLegacyBoundaryCategory.ORCHESTRATOR,
+            StreamLegacyBoundaryCategory.CLI_STDOUT,
+            StreamLegacyBoundaryCategory.CHAT_SSE,
+            StreamLegacyBoundaryCategory.RESPONSES_SSE,
+            StreamLegacyBoundaryCategory.MCP,
+            StreamLegacyBoundaryCategory.A2A,
+            StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.stream",
         removal_condition=(
             "Canonical item metadata replaces TokenDetail stream output."
         ),
-        ingestion_shim="canonical_item_from_token",
         canonical_kind=StreamItemKind.ANSWER_DELTA,
         canonical_channel=StreamChannel.ANSWER,
     ),
     StreamLegacySurfaceInventoryEntry(
         surface=StreamLegacySurface.REASONING_TOKEN,
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        categories=(
+            StreamLegacyBoundaryCategory.PRODUCER,
+            StreamLegacyBoundaryCategory.SDK_RESPONSE,
+            StreamLegacyBoundaryCategory.ORCHESTRATOR,
+            StreamLegacyBoundaryCategory.PARSER,
+            StreamLegacyBoundaryCategory.CLI_STDOUT,
+            StreamLegacyBoundaryCategory.CHAT_SSE,
+            StreamLegacyBoundaryCategory.RESPONSES_SSE,
+            StreamLegacyBoundaryCategory.MCP,
+            StreamLegacyBoundaryCategory.A2A,
+            StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.stream",
         removal_condition=(
             "Canonical reasoning channel replaces ReasoningToken output."
         ),
-        ingestion_shim="canonical_item_from_token",
         canonical_kind=StreamItemKind.REASONING_DELTA,
         canonical_channel=StreamChannel.REASONING,
     ),
     StreamLegacySurfaceInventoryEntry(
         surface=StreamLegacySurface.TOOL_CALL_TOKEN,
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        categories=(
+            StreamLegacyBoundaryCategory.PRODUCER,
+            StreamLegacyBoundaryCategory.SDK_RESPONSE,
+            StreamLegacyBoundaryCategory.ORCHESTRATOR,
+            StreamLegacyBoundaryCategory.PARSER,
+            StreamLegacyBoundaryCategory.CLI_STDOUT,
+            StreamLegacyBoundaryCategory.CHAT_SSE,
+            StreamLegacyBoundaryCategory.RESPONSES_SSE,
+            StreamLegacyBoundaryCategory.MCP,
+            StreamLegacyBoundaryCategory.A2A,
+            StreamLegacyBoundaryCategory.HELPER_ONLY,
         ),
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.stream",
         removal_condition=(
             "Canonical tool-call items replace ToolCallToken output."
         ),
-        ingestion_shim="canonical_item_from_token",
         canonical_kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
         canonical_channel=StreamChannel.TOOL_CALL,
     ),
     StreamLegacySurfaceInventoryEntry(
         surface=StreamLegacySurface.EVENT,
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        categories=(
+            StreamLegacyBoundaryCategory.ORCHESTRATOR,
+            StreamLegacyBoundaryCategory.PARSER,
+            StreamLegacyBoundaryCategory.EVENTING,
+            StreamLegacyBoundaryCategory.MCP,
+            StreamLegacyBoundaryCategory.FLOW,
         ),
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="event",
         removal_condition=(
             "Event streaming is projected through canonical observability."
@@ -1438,9 +1618,9 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
             StreamLegacySurface.REASONING_TOKEN,
             StreamLegacySurface.TOOL_CALL_TOKEN,
         ),
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PRODUCER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.stream",
         removal_condition=(
             "Local and SDK producers emit canonical stream items before "
@@ -1451,9 +1631,9 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
         module="avalan.model.stream",
         qualname="_LegacyTokenStreamAdapter.events_from_token",
         surfaces=(StreamLegacySurface.STRING,),
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PARSER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.stream",
         removal_condition=(
             "Local producers emit parsed provider events or canonical items "
@@ -1461,12 +1641,144 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
         ),
     ),
     StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.ds4",
+        qualname="Ds4Worker._generate_dsml_tool_chunks",
+        surfaces=(StreamLegacySurface.TOKEN_DETAIL,),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PRODUCER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.ds4",
+        removal_condition=(
+            "DS4 worker tool chunks are emitted as canonical stream items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.ds4",
+        qualname="Ds4Worker._generate_text_chunks",
+        surfaces=(StreamLegacySurface.TOKEN_DETAIL,),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PRODUCER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.ds4",
+        removal_condition=(
+            "DS4 worker text chunks are emitted as canonical stream items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.ds4",
+        qualname="Ds4Worker.generate_string_async",
+        surfaces=(
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PRODUCER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.ds4",
+        removal_condition=(
+            "DS4 final text accumulation reads canonical answer items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.mlxlm",
+        qualname="MlxLmModel._stream_generator",
+        surfaces=(StreamLegacySurface.STRING,),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PRODUCER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.mlxlm",
+        removal_condition=(
+            "MLX-LM model generation emits canonical stream items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.mlxlm",
+        qualname="MlxLmStream.__init__._generator",
+        surfaces=(
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PRODUCER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.mlxlm",
+        removal_condition=(
+            "MLX-LM stream construction receives canonical stream items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.mlxlm",
+        qualname="MlxLmStream.__anext__",
+        surfaces=(
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PRODUCER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.mlxlm",
+        removal_condition=(
+            "MLX-LM stream iteration emits canonical stream items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.vllm",
+        qualname="VllmModel._stream_generator",
+        surfaces=(StreamLegacySurface.STRING,),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.PRODUCER,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.vllm",
+        removal_condition=(
+            "vLLM model generation emits canonical stream items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.vendor.openai",
+        qualname="OpenAIClient._non_stream_response_content",
+        surfaces=(StreamLegacySurface.STRING,),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.vendor.openai",
+        removal_condition=(
+            "OpenAI non-stream response content is projected through "
+            "canonical response items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.nlp.text.vendor.anthropic",
+        qualname="AnthropicClient._non_stream_response_content",
+        surfaces=(StreamLegacySurface.STRING,),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.vendor.anthropic",
+        removal_condition=(
+            "Anthropic non-stream response content is projected through "
+            "canonical response items."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.model.response.text",
+        qualname="_text_from_non_stream_result",
+        surfaces=(StreamLegacySurface.STRING,),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="model.response",
+        removal_condition=(
+            "Non-stream SDK responses are normalized into canonical answer "
+            "items before public iteration."
+        ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
         module="avalan.model.response.text",
         qualname="TextGenerationResponse.__aiter__",
         surfaces=(StreamLegacySurface.STRING,),
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
-        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.response",
         removal_condition=(
             "Public SDK async iteration no longer accepts bare string "
@@ -1483,9 +1795,9 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
             StreamLegacySurface.REASONING_TOKEN,
             StreamLegacySurface.TOOL_CALL_TOKEN,
         ),
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
-        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.response",
         removal_condition=(
             "Public SDK async iteration yields canonical stream projections."
@@ -1495,9 +1807,9 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
         module="avalan.model.response.text",
         qualname="TextGenerationResponse._record_returned_token",
         surfaces=(StreamLegacySurface.TOOL_CALL_TOKEN,),
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
-        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="model.response",
         removal_condition=(
             "Legacy tool-call token finalization is replaced by canonical "
@@ -1512,9 +1824,9 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
             StreamLegacySurface.TOOL_CALL_TOKEN,
             StreamLegacySurface.EVENT,
         ),
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_COMPATIBILITY_SHIM
-        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.ORCHESTRATOR,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="agent.orchestrator",
         removal_condition=(
             "Orchestrator public iteration and parser queues carry canonical "
@@ -1531,9 +1843,9 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
             StreamLegacySurface.REASONING_TOKEN,
             StreamLegacySurface.TOOL_CALL_TOKEN,
         ),
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.A2A,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="server.a2a",
         removal_condition=(
             "A2A response streams receive canonical consumer projections."
@@ -1547,13 +1859,897 @@ _LEGACY_STREAM_CLASSIFIER_INVENTORY: tuple[
             StreamLegacySurface.TOKEN,
             StreamLegacySurface.EVENT,
         ),
-        classification=(
-            StreamLegacySurfaceClassification.TEMPORARY_INGESTION_SHIM
-        ),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.MCP,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
         owner="server.mcp",
         removal_condition=(
             "MCP response streams receive canonical consumer projections."
         ),
+    ),
+    StreamLegacyClassifierInventoryEntry(
+        module="avalan.server.routers.mcp",
+        qualname="_extract_append_streams",
+        surfaces=(StreamLegacySurface.STRING,),
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=StreamLegacyBoundaryCategory.MCP,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        owner="server.mcp",
+        removal_condition=(
+            "MCP append streams are emitted from canonical tool execution "
+            "output items."
+        ),
+    ),
+)
+
+
+def _runtime_boundary(
+    module: str,
+    qualname: str,
+    surfaces: tuple[StreamLegacySurface, ...],
+    category: StreamLegacyBoundaryCategory,
+    directions: tuple[StreamLegacyBoundaryDirection, ...],
+    owner: str,
+    removal_condition: str,
+) -> StreamLegacyRuntimeBoundaryInventoryEntry:
+    return StreamLegacyRuntimeBoundaryInventoryEntry(
+        module=module,
+        qualname=qualname,
+        surfaces=surfaces,
+        classification=StreamLegacySurfaceClassification.REMOVE_NOW,
+        category=category,
+        scope=StreamLegacyInventoryScope.PRODUCTION_RUNTIME,
+        directions=directions,
+        owner=owner,
+        removal_condition=removal_condition,
+    )
+
+
+_LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY: tuple[
+    StreamLegacyRuntimeBoundaryInventoryEntry, ...
+] = (
+    _runtime_boundary(
+        "avalan.model.stream",
+        "TextGenerationStream.__aiter__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.stream",
+        "Producer streams expose canonical stream items directly.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "TextGenerationSingleStream.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.stream",
+        "Single-result producer streams expose canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "TextGenerationSingleStream.__aiter__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.stream",
+        "Single-result producer iteration yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "TextGenerationSingleStream.__anext__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.stream",
+        "Single-result producer emission yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.vendor",
+        "TextGenerationVendor.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+        "model.vendor",
+        "Vendor call surfaces return canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.vendor",
+        "TextGenerationVendorStream.__anext__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.vendor",
+        "Vendor stream iteration yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.vendor",
+        "TextGenerationVendorStream.__init__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.ACCEPTS,),
+        "model.vendor",
+        "Vendor stream constructors accept canonical stream sources.",
+    ),
+    _runtime_boundary(
+        "avalan.model.vendor",
+        "TextGenerationVendorStream.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+        "model.vendor",
+        "Vendor stream calls expose canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.vendor",
+        "TextGenerationVendorStream.__aiter__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+        "model.vendor",
+        "Vendor stream async iteration exposes canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.openai",
+        "OpenAIStream.__anext__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.vendor.openai",
+        "OpenAI streaming uses provider canonical events directly.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.openai",
+        "OpenAIClient.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.vendor.openai",
+        "OpenAI client call surfaces return canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.anthropic",
+        "AnthropicStream.__anext__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.vendor.anthropic",
+        "Anthropic streaming uses provider canonical events directly.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.anthropic",
+        "AnthropicClient.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.vendor.anthropic",
+        "Anthropic client call surfaces return canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.bedrock",
+        "BedrockStream.__anext__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.vendor.bedrock",
+        "Bedrock streaming uses provider canonical events directly.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.bedrock",
+        "BedrockClient.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.vendor.bedrock",
+        "Bedrock client call surfaces return canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.litellm",
+        "LiteLLMClient.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.vendor.litellm",
+        "LiteLLM streaming returns canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.google",
+        "GoogleClient.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.vendor.google",
+        "Google streaming returns canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.ollama",
+        "OllamaStream.__anext__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.vendor.ollama",
+        "Ollama streaming yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.ollama",
+        "OllamaClient.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.vendor.ollama",
+        "Ollama client call surfaces return canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vendor.huggingface",
+        "HuggingfaceClient.__call__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.vendor.huggingface",
+        "HuggingFace streaming returns canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.mlxlm",
+        "MlxLmStream.__anext__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.local.mlxlm",
+        "MLX-LM streaming yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.vllm",
+        "VllmStream.__anext__",
+        (StreamLegacySurface.STRING,),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.local.vllm",
+        "vLLM streaming yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.ds4",
+        "Ds4Worker.stream",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.local.ds4",
+        "DS4 worker streaming yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.ds4",
+        "Ds4Model._generation_stream",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.local.ds4",
+        "DS4 model streaming yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.nlp.text.generation",
+        "TextGenerationModel._stream_generator",
+        (StreamLegacySurface.STRING,),
+        StreamLegacyBoundaryCategory.PRODUCER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.local.transformers",
+        "Local transformer generation yields canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "stream_consumer_projection_from_token",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.HELPER_ONLY,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.stream",
+        "Projection helpers accept canonical stream items only.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "project_stream_consumer_item",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.HELPER_ONLY,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.stream",
+        "Shared stream projection accepts canonical stream items only.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "StreamProjectionState.project",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.HELPER_ONLY,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.stream",
+        "Projection state accepts canonical stream items only.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "StreamProjectionState.project_many",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.HELPER_ONLY,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.stream",
+        "Projection state batch mapping accepts canonical stream items only.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "normalize_local_stream",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.HELPER_ONLY,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.stream",
+        "Local stream normalization accepts provider events or canonical"
+        " items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "_LegacyTokenStreamAdapter.item_from_token",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.HELPER_ONLY,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.stream",
+        "Legacy token adapter is removed after producers emit canonical"
+        " items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.stream",
+        "_LegacyTokenStreamAdapter.events_from_token",
+        (StreamLegacySurface.STRING,),
+        StreamLegacyBoundaryCategory.HELPER_ONLY,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.stream",
+        "String parser adapter is removed after local producers emit events.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.text",
+        "_canonical_item_from_output_item",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.response",
+        "SDK response output item conversion accepts canonical items only.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.text",
+        "_text_from_non_stream_result",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.response",
+        "Non-stream SDK responses normalize through canonical answer items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.text",
+        "OutputItem",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+        ),
+        StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+        "model.response",
+        "SDK response output item type is canonical-only.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.text",
+        "TextGenerationResponse.__aiter__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "model.response",
+        "SDK response iteration sources are canonical stream sessions.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.text",
+        "TextGenerationResponse.canonical_stream",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.response",
+        "SDK canonical stream output accepts canonical items only.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.text",
+        "TextGenerationResponse._canonical_stream_from_output",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.response",
+        "SDK response stream adapters normalize canonical items directly.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.text",
+        "TextGenerationResponse.__anext__",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.EMITS,
+        ),
+        "model.response",
+        "SDK response iteration consumes and emits canonical items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.text",
+        "TextGenerationResponse._record_returned_token",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.SDK_RESPONSE,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "model.response",
+        "SDK response token accounting uses canonical tool-call items.",
+    ),
+    _runtime_boundary(
+        "avalan.agent.orchestrator.response.orchestrator_response",
+        "OrchestratorResponse",
+        (
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.EVENT,
+        ),
+        StreamLegacyBoundaryCategory.ORCHESTRATOR,
+        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+        "agent.orchestrator",
+        "Orchestrator iteration surface is canonical-only.",
+    ),
+    _runtime_boundary(
+        "avalan.agent.orchestrator.response.orchestrator_response",
+        "OrchestratorResponse._stream_item_projection",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+            StreamLegacySurface.EVENT,
+        ),
+        StreamLegacyBoundaryCategory.ORCHESTRATOR,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "agent.orchestrator",
+        "Orchestrator projection accepts canonical items only.",
+    ),
+    _runtime_boundary(
+        "avalan.agent.orchestrator.response.orchestrator_response",
+        "OrchestratorResponse._emit",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+            StreamLegacySurface.EVENT,
+        ),
+        StreamLegacyBoundaryCategory.ORCHESTRATOR,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.EMITS,
+        ),
+        "agent.orchestrator",
+        "Orchestrator emit surface accepts canonical items only.",
+    ),
+    _runtime_boundary(
+        "avalan.agent.orchestrator.response.orchestrator_response",
+        "_legacy_tool_event",
+        (StreamLegacySurface.EVENT,),
+        StreamLegacyBoundaryCategory.EVENTING,
+        (
+            StreamLegacyBoundaryDirection.CONTROL,
+            StreamLegacyBoundaryDirection.EMITS,
+        ),
+        "agent.orchestrator",
+        "Tool lifecycle control uses canonical stream items.",
+    ),
+    _runtime_boundary(
+        "avalan.event.manager",
+        "EventManager.trigger",
+        (StreamLegacySurface.EVENT,),
+        StreamLegacyBoundaryCategory.EVENTING,
+        (StreamLegacyBoundaryDirection.ACCEPTS,),
+        "event",
+        "Event publishing accepts canonical stream observability payloads.",
+    ),
+    _runtime_boundary(
+        "avalan.event.manager",
+        "EventManager.listen",
+        (StreamLegacySurface.EVENT,),
+        StreamLegacyBoundaryCategory.EVENTING,
+        (
+            StreamLegacyBoundaryDirection.EMITS,
+            StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,
+        ),
+        "event",
+        "Event listening yields canonical stream observability payloads.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.parsers.tool",
+        "ToolCallResponseParser",
+        (
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+            StreamLegacySurface.EVENT,
+        ),
+        StreamLegacyBoundaryCategory.PARSER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.parsers.tool",
+        "Tool-call parsing emits canonical tool-call lifecycle items.",
+    ),
+    _runtime_boundary(
+        "avalan.model.response.parsers.reasoning",
+        "ReasoningParser",
+        (StreamLegacySurface.REASONING_TOKEN,),
+        StreamLegacyBoundaryCategory.PARSER,
+        (StreamLegacyBoundaryDirection.EMITS,),
+        "model.parsers.reasoning",
+        "Reasoning parsing emits canonical reasoning items.",
+    ),
+    _runtime_boundary(
+        "avalan.cli.commands.model",
+        "_stream_projection",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.CLI_STDOUT,
+        (StreamLegacyBoundaryDirection.PROJECTS,),
+        "cli.model",
+        "CLI stdout and rendering consume canonical projections only.",
+    ),
+    _runtime_boundary(
+        "avalan.server.routers.chat",
+        "_stream_projection",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.CHAT_SSE,
+        (StreamLegacyBoundaryDirection.PROJECTS,),
+        "server.chat",
+        "Chat SSE projects canonical stream items only.",
+    ),
+    _runtime_boundary(
+        "avalan.server.routers.responses",
+        "_stream_projection",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.RESPONSES_SSE,
+        (StreamLegacyBoundaryDirection.PROJECTS,),
+        "server.responses",
+        "Responses SSE projects canonical stream items only.",
+    ),
+    _runtime_boundary(
+        "avalan.server.routers.mcp",
+        "ResponseItem",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.EVENT,
+        ),
+        StreamLegacyBoundaryCategory.MCP,
+        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+        "server.mcp",
+        "MCP response item type is canonical-only.",
+    ),
+    _runtime_boundary(
+        "avalan.server.routers.mcp",
+        "_MCPLegacyStreamAdapter.map",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.EVENT,
+        ),
+        StreamLegacyBoundaryCategory.MCP,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "server.mcp",
+        "MCP streaming accepts canonical projections only.",
+    ),
+    _runtime_boundary(
+        "avalan.server.routers.mcp",
+        "_extract_append_streams",
+        (StreamLegacySurface.STRING,),
+        StreamLegacyBoundaryCategory.MCP,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "server.mcp",
+        "MCP append streams are projected from canonical tool output items.",
+    ),
+    _runtime_boundary(
+        "avalan.server.a2a.router",
+        "_A2ALegacyStreamAdapter.map",
+        (
+            StreamLegacySurface.STRING,
+            StreamLegacySurface.TOKEN,
+            StreamLegacySurface.TOKEN_DETAIL,
+            StreamLegacySurface.REASONING_TOKEN,
+            StreamLegacySurface.TOOL_CALL_TOKEN,
+        ),
+        StreamLegacyBoundaryCategory.A2A,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "server.a2a",
+        "A2A streaming accepts canonical projections only.",
+    ),
+    _runtime_boundary(
+        "avalan.flow.stream",
+        "FlowEventSink",
+        (StreamLegacySurface.EVENT,),
+        StreamLegacyBoundaryCategory.FLOW,
+        (StreamLegacyBoundaryDirection.PUBLIC_RETURN_TYPE,),
+        "flow.stream",
+        "Flow stream subscribers consume canonical flow items.",
+    ),
+    _runtime_boundary(
+        "avalan.flow.stream",
+        "FlowCanonicalEventListener.__call__",
+        (StreamLegacySurface.EVENT,),
+        StreamLegacyBoundaryCategory.FLOW,
+        (
+            StreamLegacyBoundaryDirection.ACCEPTS,
+            StreamLegacyBoundaryDirection.PROJECTS,
+        ),
+        "flow.stream",
+        "Flow event projection is canonical-only.",
     ),
 )
 
@@ -1568,6 +2764,12 @@ def legacy_stream_classifier_inventory() -> (
     tuple[StreamLegacyClassifierInventoryEntry, ...]
 ):
     return _LEGACY_STREAM_CLASSIFIER_INVENTORY
+
+
+def legacy_stream_runtime_boundary_inventory() -> (
+    tuple[StreamLegacyRuntimeBoundaryInventoryEntry, ...]
+):
+    return _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY
 
 
 def classify_legacy_stream_surface(
@@ -1590,6 +2792,18 @@ def classify_legacy_stream_classifier(
         if entry.module == module and entry.qualname == qualname:
             return entry
     raise StreamValidationError("unknown legacy stream classifier")
+
+
+def classify_legacy_stream_runtime_boundary(
+    module: str,
+    qualname: str,
+) -> StreamLegacyRuntimeBoundaryInventoryEntry:
+    _assert_non_empty_string(module, "module")
+    _assert_non_empty_string(qualname, "qualname")
+    for entry in _LEGACY_STREAM_RUNTIME_BOUNDARY_INVENTORY:
+        if entry.module == module and entry.qualname == qualname:
+            return entry
+    raise StreamValidationError("unknown legacy stream runtime boundary")
 
 
 def is_stream_terminal_kind(kind: StreamItemKind) -> bool:
